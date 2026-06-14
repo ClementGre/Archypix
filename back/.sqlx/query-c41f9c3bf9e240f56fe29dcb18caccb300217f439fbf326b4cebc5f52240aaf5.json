@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE outgoing_shares\n               SET next_retry_at = NULL\n               WHERE id = $1\n                 AND status IN (\n                   'errored'::share_status,\n                   'pending_first_announcement'::share_status\n                 )\n               RETURNING owner_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "owner_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c41f9c3bf9e240f56fe29dcb18caccb300217f439fbf326b4cebc5f52240aaf5"
+}

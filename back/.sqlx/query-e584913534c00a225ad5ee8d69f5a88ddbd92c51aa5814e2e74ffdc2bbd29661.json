@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(DISTINCT p.id) AS \"count!\"\n               FROM pictures p\n               WHERE p.deleted_at IS NULL\n                 AND (\n                   p.last_pipeline_run_at IS NULL\n                   OR EXISTS (\n                     SELECT 1 FROM tagging_services ts\n                     WHERE ts.owner_id = p.local_user_id\n                       AND ts.enabled = true\n                       AND p.last_pipeline_run_at < ts.last_invalidated_at\n                   )\n                 )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e584913534c00a225ad5ee8d69f5a88ddbd92c51aa5814e2e74ffdc2bbd29661"
+}

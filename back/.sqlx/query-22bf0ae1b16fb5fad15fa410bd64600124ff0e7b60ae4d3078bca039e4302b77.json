@@ -1,0 +1,117 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT os.id, os.owner_id, u.username AS owner_username,\n                      os.tag_path::text AS \"tag_path!\",\n                      os.recipient_username, os.recipient_instance,\n                      os.next_retry_at, os.last_error_at, os.created_at\n               FROM outgoing_shares os\n               JOIN users u ON u.id = os.owner_id\n               WHERE os.status = 'errored'::share_status\n               ORDER BY os.last_error_at DESC NULLS LAST",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "tag_path!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "recipient_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "recipient_username"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "recipient_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "recipient_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "next_retry_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "next_retry_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "last_error_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "last_error_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "22bf0ae1b16fb5fad15fa410bd64600124ff0e7b60ae4d3078bca039e4302b77"
+}

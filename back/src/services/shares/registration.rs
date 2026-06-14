@@ -47,6 +47,7 @@ pub async fn register_received_pictures(
             pic.width,
             pic.height,
             pic.captured_at,
+            pic.blurhash.as_ref(),
             pic.gps_lat,
             pic.gps_lng,
             pic.gps_alt,

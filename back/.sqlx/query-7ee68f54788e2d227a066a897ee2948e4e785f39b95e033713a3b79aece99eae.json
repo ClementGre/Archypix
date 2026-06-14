@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status AS \"status: ShareStatus\", COUNT(*) AS \"count!\"\n               FROM incoming_shares WHERE recipient_id = $1 GROUP BY status",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status: ShareStatus",
+        "type_info": {
+          "Custom": {
+            "name": "share_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "pending_first_announcement",
+                "active",
+                "errored",
+                "revoked",
+                "tombstoned"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "7ee68f54788e2d227a066a897ee2948e4e785f39b95e033713a3b79aece99eae"
+}

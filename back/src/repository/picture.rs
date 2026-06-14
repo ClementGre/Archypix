@@ -99,6 +99,7 @@ impl PictureRepository {
         width: Option<i32>,
         height: Option<i32>,
         captured_at: Option<NaiveDateTime>,
+        blurhash: Option<&String>,
         gps_lat: Option<f64>,
         gps_lng: Option<f64>,
         gps_alt: Option<i32>,
@@ -114,9 +115,9 @@ impl PictureRepository {
             r#"INSERT INTO pictures
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                     filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,
-                    gps_lat, gps_lng, gps_alt, orientation)
+                    blurhash, gps_lat, gps_lng, gps_alt, orientation)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,
-                       $12, $13, $14, $15)
+                       $12, $13, $14, $15, $16)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -126,6 +127,7 @@ impl PictureRepository {
                    width     = COALESCE(EXCLUDED.width,     pictures.width),
                    height    = COALESCE(EXCLUDED.height,    pictures.height),
                    captured_at = COALESCE(EXCLUDED.captured_at, pictures.captured_at),
+                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),
                    gps_lat     = COALESCE(EXCLUDED.gps_lat,     pictures.gps_lat),
                    gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),
                    gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),
@@ -148,6 +150,7 @@ impl PictureRepository {
             height,
             captured_at,
             exif_json as serde_json::Value,
+            blurhash,
             gps_lat,
             gps_lng,
             gps_alt,

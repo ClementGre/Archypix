@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+    /* ── Neutral palette: zinc ─────────────────────────────────────────────── */
+    --color-background: var(--color-zinc-950);
+    --color-foreground: var(--color-zinc-50);
+    --color-card: var(--color-zinc-900);
+    --color-card-foreground: var(--color-zinc-50);
+    --color-popover: var(--color-zinc-900);
+    --color-popover-foreground: var(--color-zinc-50);
+    --color-muted: var(--color-zinc-800);
+    --color-muted-foreground: var(--color-zinc-400);
+    --color-border: var(--color-zinc-800);
+    --color-input: var(--color-zinc-800);
+    --color-ring: var(--color-sky-500);
+
+    /* ── Primary accent: sky ───────────────────────────────────────────────── */
+    --color-primary: var(--color-sky-500);
+    --color-primary-foreground: var(--color-zinc-950);
+    --color-secondary: var(--color-zinc-800);
+    --color-secondary-foreground: var(--color-zinc-50);
+    --color-accent: var(--color-zinc-800);
+    --color-accent-foreground: var(--color-zinc-50);
+    --color-destructive: oklch(0.577 0.245 27.325);
+    --color-destructive-foreground: var(--color-zinc-50);
+
+    /* ── Radius ────────────────────────────────────────────────────────────── */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+}
+
+/* Light mode overrides (activated via .light class on <html>) */
+.light {
+    --color-background: var(--color-zinc-50);
+    --color-foreground: var(--color-zinc-950);
+    --color-card: #ffffff;
+    --color-card-foreground: var(--color-zinc-950);
+    --color-popover: #ffffff;
+    --color-popover-foreground: var(--color-zinc-950);
+    --color-muted: var(--color-zinc-100);
+    --color-muted-foreground: var(--color-zinc-500);
+    --color-border: var(--color-zinc-200);
+    --color-input: var(--color-zinc-200);
+    --color-ring: var(--color-sky-500);
+    --color-primary: var(--color-sky-600);
+    --color-primary-foreground: #ffffff;
+    --color-secondary: var(--color-zinc-100);
+    --color-secondary-foreground: var(--color-zinc-900);
+    --color-accent: var(--color-zinc-100);
+    --color-accent-foreground: var(--color-zinc-900);
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+}

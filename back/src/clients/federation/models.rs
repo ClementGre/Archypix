@@ -84,6 +84,7 @@ pub struct AnnouncedPicture {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
+    pub blurhash: Option<String>,
     #[serde(default)]
     pub gps_lat: Option<f64>,
     #[serde(default)]
@@ -162,6 +163,7 @@ impl AnnouncedPicture {
             width: picture.width,
             height: picture.height,
             captured_at: picture.captured_at,
+            blurhash: picture.blurhash.clone(),
             gps_lat: picture.gps_lat,
             gps_lng: picture.gps_lng,
             gps_alt: picture.gps_alt,

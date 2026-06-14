@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT recipient_instance AS \"instance!\",\n                      COUNT(*) AS \"total!\",\n                      COUNT(*) FILTER (WHERE status = 'errored'::share_status) AS \"errored!\"\n               FROM outgoing_shares\n               GROUP BY recipient_instance",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "instance!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "recipient_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "errored!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "d8579f2f768cf0e56968be370683e5f46d36c68ac129cc6c0e2c3fb169bfad39"
+}
