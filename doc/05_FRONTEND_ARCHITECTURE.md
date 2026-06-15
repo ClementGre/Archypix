@@ -1,312 +1,225 @@
-# Frontend Architecture (MVP)
+# Frontend Architecture
+
+Documentation of the **implemented** Archypix web frontend (`front/`) for developers and AI agents working on it. For the HTTP contract it consumes,
+see [06_API_REFERENCE.md](06_API_REFERENCE.md); for product semantics, [01_GENERAL_SPECIFICATIONS.md](01_GENERAL_SPECIFICATIONS.md).
+
+---
 
 ## 1. Goals and constraints
 
-The frontend serves as both the PoC validation tool and the shipped MVP interface. Key constraints:
-
-- **AI-agent-friendly codebase** — component source lives in the repo, not buried in `node_modules`. Agents can grep, read, and edit every
-  component file directly.
-- **Minimal boilerplate** — no SSR, no build-time data fetching, no framework-level opinions beyond routing. The architecture doc specifies a
-  "static CDN" deployment; the frontend is a pure SPA.
-- **Complete design system** — Archypix requires complex UI: hierarchical tag pickers, nested date-range pickers for segmentation, pipeline
-  configuration forms, virtualized photo grids.
-- **MVP-quality UX** — not a throwaway wireframe. Visual design, loading states, error handling, and responsive layout should be close to the
-  final product.
+- **Pure static SPA** — no SSR, no build-time data fetching. The `dist/` bundle is served from any CDN with an `index.html` fallback for all routes.
+  The architecture spec places the frontend as a "static CDN" peer; SSR would add ceremony with no benefit.
+- **Agent-friendly** — all component source (including shadcn/ui primitives) lives in `src/`, not `node_modules`. Every component can be read,
+  grepped,
+  and edited as a normal project file.
+- **Federated by design** — there is no single API base URL. The client resolves, per logged-in user, which backend hosts their identity and talks to
+  it directly (see §3).
+- **MVP-quality UX** — real loading/empty/error states, dark-first theme, responsive three-pane workspace.
 
 ---
 
-## 2. Technology stack
+## 2. Stack and build
 
-| Concern        | Choice                          | Rationale                                                                                                          |
-|----------------|---------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| UI framework   | **React 19 + TypeScript**       | Largest AI training corpus, mature ecosystem, no overhead                                                          |
-| Bundler        | **Vite**                        | Near-zero config, fast HMR, static output matches "static CDN" deployment model                                    |
-| Routing        | **React Router v7**             | Simple file-based-ish routing, no SSR complexity                                                                   |
-| Server state   | **TanStack Query v5**           | Handles caching, pagination, background refetch, optimistic updates — eliminates most manual fetch code            |
-| Client state   | **Zustand**                     | Minimal store for auth session and UI-only state (sidebar open, selected photos)                                   |
-| Design system  | **shadcn/ui + Tailwind CSS v4** | Component source copied into repo → fully editable; Radix UI primitives ensure accessibility and complex behaviors |
-| Forms          | **React Hook Form + Zod**       | Uncontrolled forms with schema validation; Zod schemas serve as API contract documentation                         |
-| Date pickers   | **react-day-picker v9**         | Already integrated with shadcn/ui Calendar; supports range and multi-month modes                                   |
-| Virtualization | **@tanstack/virtual**           | Virtualized photo grid for large collections                                                                       |
-| Drag-and-drop  | **@dnd-kit**                    | Reordering pipeline services within the tagging pipeline editor                                                    |
-| HTTP client    | **axios**                       | Interceptor for JWT attach + auto-refresh; consistent error shape                                                  |
+| Concern       | Choice                                                                              |
+|---------------|-------------------------------------------------------------------------------------|
+| UI / language | React 19 + TypeScript (strict: `noUnusedLocals/Parameters`, `verbatimModuleSyntax`) |
+| Bundler       | Vite (`@` → `src` alias in `vite.config.ts` + `tsconfig.app.json`)                  |
+| Styling       | Tailwind CSS v4 — CSS-first `@theme` in `src/index.css` (zinc neutral, sky primary) |
+| Components    | shadcn/ui in `src/components/ui/` (Radix primitives, copied source)                 |
+| Server state  | TanStack Query v5                                                                   |
+| Client state  | Zustand                                                                             |
+| Routing       | React Router v7                                                                     |
+| Forms         | React Hook Form + Zod (`src/lib/schemas.ts`)                                        |
+| HTTP          | axios                                                                               |
+| Drag & drop   | @dnd-kit (pipeline reordering)                                                      |
+| Misc          | blurhash (thumbnail placeholders), sonner (toasts), lucide-react (icons)            |
 
-### Why shadcn/ui over Mantine or Ant Design
-
-shadcn/ui runs `npx shadcn add <component>` which copies the component's TypeScript source directly into `src/components/ui/`. The file is then
-a plain project file — agents can read it with `Read`, grep it, and edit it like any other source file. Mantine and Ant Design components live in
-`node_modules` and cannot be directly modified without forking. For Archypix's custom components (hierarchical tag picker, pipeline editor), this
-matters significantly.
-
-### Why not Next.js
-
-The backend architecture spec §5.1 explicitly places the frontend as a "static CDN". SSR/ISR provides no benefit here and adds significant
-framework ceremony that impedes AI-agent development.
+Commands: `npm run dev` (Vite :5173), `npm run build` (`tsc -b && vite build`). Node 24 / npm. **Theme:** dark is the base `@theme`; light mode is the
+`.light` class on `<html>` (toggled by `stores/theme.ts`). The repo runs a code formatter — match surrounding style; don't fight it.
 
 ---
 
-## 3. Project structure
+## 3. Connection model (federated)
 
-```
-front/
-├── src/
-│   ├── api/               # Typed axios wrappers, one file per domain
-│   │   ├── client.ts      # Axios instance + JWT interceptor + refresh logic
-│   │   ├── pictures.ts
-│   │   ├── tags.ts
-│   │   ├── tagging.ts
-│   │   ├── shares.ts
-│   │   ├── auth.ts
-│   │   └── settings.ts
-│   ├── components/
-│   │   ├── ui/            # shadcn/ui copied components (auto-managed by shadcn CLI)
-│   │   ├── photos/        # PhotoGrid, PhotoCard, PhotoDetail, UploadDropzone
-│   │   ├── tags/          # TagPicker, TagTree, TagBadge, TagBreadcrumb
-│   │   ├── tagging/       # PipelineList, ServiceCard, RuleEditor, SegmentEditor
-│   │   ├── shares/        # ShareList, IncomingShareCard, OutgoingShareCard
-│   │   └── layout/        # AppShell, Sidebar, TopBar, Breadcrumb
-│   ├── hooks/             # Custom hooks wrapping TanStack Query calls
-│   │   ├── usePictures.ts
-│   │   ├── useTags.ts
-│   │   ├── useTaggingServices.ts
-│   │   └── useShares.ts
-│   ├── stores/
-│   │   ├── auth.ts        # Zustand: current user, JWT, refresh token
-│   │   └── selection.ts   # Zustand: multi-photo selection set
-│   ├── pages/             # Route-level components
-│   │   ├── LoginPage.tsx
-│   │   ├── GalleryPage.tsx
-│   │   ├── PhotoPage.tsx
-│   │   ├── TagsPage.tsx
-│   │   ├── TaggingPage.tsx
-│   │   ├── SharesPage.tsx
-│   │   ├── SettingsPage.tsx
-│   │   ├── TrashPage.tsx
-│   │   └── AdminPage.tsx
-│   ├── lib/
-│   │   ├── schemas.ts     # Zod schemas mirroring API request/response shapes
-│   │   ├── utils.ts       # cn(), date formatting, tag path helpers
-│   │   └── constants.ts
-│   ├── App.tsx            # Router setup
-│   └── main.tsx
-├── public/
-├── index.html
-├── vite.config.ts
-├── tailwind.config.ts
-├── tsconfig.json
-└── package.json
-```
+There is **no `VITE_API_BASE_URL`**. Flow:
+
+1. **WebFinger** (`api/webfinger.ts` → `resolveBackendUrl(username, instance)`) queries
+   `{scheme}://{instance}/.well-known/webfinger?resource=archypix:@user:instance`
+   and returns the `backend_url` link (scheme + host).
+2. **Login** (`api/auth.ts` → `login`) resolves the backend, POSTs `/api/auth/login` there, stores
+   `{ accessToken, refreshToken, backendUrl, instance }`
+   in the auth store, then loads `/api/auth/me`.
+3. **Authenticated calls** go through `api/client.ts` → `apiClient` (a single axios instance). Its request interceptor reads `backendUrl` +
+   `accessToken`
+   from the auth store **at request time**, so every call targets the right instance. The response interceptor does a **single-flight refresh** on 401
+   (dedup'd across concurrent 401s); if refresh fails it clears the session and `ProtectedRoute` redirects to `/login`.
+4. **Registration** (`api/auth.ts` → `register`) is auto-detecting: it tries the resolver `POST {global}/api/register`; on a 404 (a standalone backend
+   has
+   no such route) it falls back to `POST {global}/api/public/users`. `VITE_REGISTRATION_MODE` (`auto`|`resolver`|`standalone`) and
+   `VITE_REGISTRATION_URL`
+   override this.
+
+**Env** (`.env`, all `VITE_`-prefixed, documented in `.env.example`): `VITE_GLOBAL_DOMAIN`, `VITE_USE_HTTPS`, `VITE_REGISTRATION_MODE`,
+`VITE_REGISTRATION_URL`. Resolved in `lib/constants.ts` (`GLOBAL_DOMAIN`, `USE_HTTPS`, `SCHEME`, `originFor(domain)`). Cross-instance picture fetching
+relies on dev `CORS_ORIGINS=*`.
+
+The **login page** has the handle as an editable control: `@<username>` + a click-to-edit instance field defaulting to `GLOBAL_DOMAIN`, so a user can
+authenticate against any instance.
 
 ---
 
-## 4. Routes
+## 4. Routes (`src/App.tsx`)
 
-| Path           | Page              | Auth           |
-|----------------|-------------------|----------------|
-| `/login`       | LoginPage         | Public         |
-| `/register`    | RegisterPage      | Public         |
-| `/`            | GalleryPage       | Required       |
-| `/photos/:id`  | PhotoPage         | Required       |
-| `/tags`        | TagsPage          | Required       |
-| `/tagging`     | TaggingPage       | Required       |
-| `/tagging/:id` | ServiceEditorPage | Required       |
-| `/shares`      | SharesPage        | Required       |
-| `/settings`    | SettingsPage      | Required       |
-| `/trash`       | TrashPage         | Required       |
-| `/admin`       | AdminPage         | Admin JWT only |
+| Path           | Page                | Auth       | Notes                                             |
+|----------------|---------------------|------------|---------------------------------------------------|
+| `/login`       | `LoginPage`         | public     | WebFinger login + instance switcher               |
+| `/register`    | `RegisterPage`      | public     | registers on the global domain, then auto-logs in |
+| `/`            | `GalleryPage`       | required   | the main three-pane workspace                     |
+| `/tags`        | `TagsPage`          | required   | placeholder (tag tree lives in the gallery panel) |
+| `/tagging`     | `TaggingPage`       | required   | tagging-pipeline editor                           |
+| `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                     |
+| `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel) |
+| `/settings`    | `SettingsPage`      | required   | profile + versioning mode                         |
+| `/trash`       | `TrashPage`         | required   | placeholder                                       |
+| `/admin`       | `AdminPage`         | admin only | placeholder                                       |
+| `*`            | → `/`               | —          |                                                   |
 
-A `<ProtectedRoute>` wrapper component checks `authStore.user` and redirects to `/login` if absent. Admin routes additionally check `user.is_admin`.
-
----
-
-## 5. Authentication flow
-
-The backend issues a short-lived JWT (`/api/auth/login`) and a refresh token. The frontend stores both in `localStorage` (acceptable for an MVP;
-httpOnly cookies are the v2 hardening step).
-
-`src/api/client.ts` sets up two Axios interceptors:
-
-1. **Request interceptor** — attaches `Authorization: Bearer <access_token>` to every request.
-2. **Response interceptor** — on 401, calls `/api/auth/refresh` once, updates the stored token, and retries the original request. If refresh also
-   fails, clears auth state and redirects to `/login`.
-
-Zustand `authStore` holds `{ user, accessToken, refreshToken }`. It is initialized at app boot by reading `localStorage`, then kept in sync by
-the interceptor.
+`ProtectedRoute` (`components/layout/ProtectedRoute.tsx`) gates auth and (with `adminOnly`) the admin role. Authenticated routes render inside
+`AppShell` (unified `TopBar` + routed `<Outlet/>`). **There is no `/photos/:id`** — full-size viewing is the `Lightbox` carousel and details live in
+the
+right panel.
 
 ---
 
-## 6. Server state with TanStack Query
+## 5. State management
 
-All API reads go through TanStack Query. Query keys follow the pattern `['domain', 'list'|'detail', ...params]`:
+### Zustand stores (`src/stores/`)
 
-```ts
-// hooks/usePictures.ts
-export function usePictures(filters: PictureFilters) {
-    return useInfiniteQuery({
-        queryKey: ['pictures', filters],
-        queryFn: ({pageParam = 1}) => api.pictures.list({...filters, page: pageParam}),
-        getNextPageParam: (last) => last.has_next ? last.page + 1 : undefined,
-    });
-}
+| Store          | Shape                                                                                | Persistence (`localStorage`) |
+|----------------|--------------------------------------------------------------------------------------|------------------------------|
+| `auth.ts`      | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`            | `archypix_auth`              |
+| `ui.ts`        | `leftSidebarOpen, rightSidebarOpen, rowHeight, tagProvenance` + actions              | `archypix_ui`                |
+| `theme.ts`     | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot         | `archypix_theme`             |
+| `selection.ts` | `selected: string[], anchor` — gallery multi-select (click / ⌘-toggle / shift-range) | none (session only)          |
 
-export function useAddTag() {
-    const qc = useQueryClient();
-    return useMutation({
-        mutationFn: api.tags.batchEdit,
-        onSuccess: (_, vars) => {
-            qc.invalidateQueries({queryKey: ['pictures']});
-            qc.invalidateQueries({queryKey: ['tags', 'detail', vars.picture_ids[0]]});
-        },
-    });
-}
-```
+`hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
-Mutations always invalidate the relevant query keys on success. There is no manual cache management.
+### URL as view state (`hooks/useGalleryParams.ts`)
 
----
+The gallery view lives entirely in the URL so it is shareable and back/forward-friendly. `useGalleryParams()` returns typed `params`, derived
+`filters` (for `usePictures`), and `update(patch, { replace })`. Params (defaults are **omitted** from the URL):
 
-## 7. Design system
-
-### Base
-
-shadcn/ui with the **zinc** neutral palette and a **sky** primary accent. Photos look best on a neutral dark background; the default color mode
-is dark, with a light mode toggle persisted to `localStorage`.
-
-Components added via `npx shadcn add`:
-
-- `button`, `input`, `label`, `textarea`, `select`, `checkbox`, `switch`, `radio-group`
-- `dropdown-menu`, `context-menu`, `popover`, `tooltip`, `dialog`, `alert-dialog`, `sheet`
-- `command` (cmdk) — base for `TagPicker`
-- `calendar` (react-day-picker) — base for `DateRangePicker`
-- `card`, `badge`, `separator`, `scroll-area`, `skeleton`
-- `table`, `tabs`, `accordion`
-- `sonner` (toast notifications)
-- `form` (React Hook Form integration)
-- `avatar`, `breadcrumb`, `pagination`
-
-### Custom components built on top
-
-**`TagPicker`** (`components/tags/TagPicker.tsx`)
-
-Built on shadcn `Command`. Displays an input that opens a popover with a filtered list of tag paths. Supports:
-
-- Fuzzy search over all user tags (fetched via TanStack Query, cached)
-- Keyboard navigation and selection
-- Multiple selection mode (for adding tags to pictures)
-- Creation of new tag paths (any valid `[A-Za-z0-9_/]` string)
-- Visual display of the selected path as `TagBadge` chips
-
-**`TagTree`** (`components/tags/TagTree.tsx`)
-
-Recursive component that renders the tag hierarchy as a collapsible tree. Each node shows the tag label and a count badge. Used in the sidebar
-filter panel and on `TagsPage`. Built on shadcn `Collapsible`.
-
-**`DateRangePicker`** (`components/ui/DateRangePicker.tsx`)
-
-Extends shadcn `Calendar` to expose `{ from: Date, to: Date }` ranges. Used in segmentation service forms and in the gallery date filter.
-Supports month navigation, keyboard input, and optional presets (Last 7 days, Last month, Custom).
-
-**`PhotoGrid`** (`components/photos/PhotoGrid.tsx`)
-
-Virtualized masonry/grid layout using `@tanstack/virtual`. Each cell is a `PhotoCard` with:
-
-- Thumbnail loaded via presigned URL (`/api/authenticated/pictures/{id}/url?variant=small`)
-- BlurHash placeholder while loading (displayed via `blurhash` package)
-- Selection checkbox (controlled by `selectionStore`)
-- Tag badge strip on hover
-
-**`PipelineServiceEditor`** (`components/tagging/`)
-
-A three-panel layout: service list on the left, service header/settings in the center, rule/segment list on the right. Each service type renders
-a different rule editor:
-
-- **SharedTagMapping**: list of `(incoming_share, assign_tag)` pairs, `TagPicker` for tag selection
-- **Rule**: predicate input (text field for MVP, structured builder in v2) + `TagPicker`
-- **Segmentation**: nested `DateRangePicker` + tag assignment + `@dnd-kit` for reordering segments within a level
+| Param              | Meaning                                                              |
+|--------------------|----------------------------------------------------------------------|
+| `q`                | filename search (client-side filter — see §9)                        |
+| `tag`              | active tag filter (wire form)                                        |
+| `scope`            | `all` \| `owned` \| `shared`                                         |
+| `deleted`          | include trashed (`1`)                                                |
+| `sort`             | `ingested_at` \| `captured_at` \| `updated_at`                       |
+| `order`            | `asc` \| `desc`                                                      |
+| `after` / `before` | capture-date bounds (ISO)                                            |
+| `panel`            | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies` |
+| `share`            | incoming share id to highlight (cross-link target)                   |
+| `view`             | open the Lightbox on this picture id (set by `PhotoGrid`)            |
 
 ---
 
-## 8. Pages
+## 6. Data layer
 
-### GalleryPage
+One file per domain under `src/api/` (typed axios wrappers using `apiClient`), with matching hooks under `src/hooks/` (TanStack Query). Types live in
+`src/lib/types.ts`; query keys are centralized in `src/lib/constants.ts` (`queryKeys`).
 
-The main view. Top bar has a search/filter bar (tag filter, date range, owned/shared toggle). Main area is `PhotoGrid` with infinite scroll via
-`useInfiniteQuery`. A collapsible left sidebar shows `TagTree` for filter navigation.
+| Domain   | `api/*`                                                                               | `hooks/*`                                                                                   |
+|----------|---------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
+| auth     | `auth.ts` — `login, logout, register, fetchMe`                                        | (imperative; not query-backed)                                                              |
+| pictures | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob`        | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`       |
+| tags     | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags` | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                  |
+| shares   | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                              | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings` |
+| tagging  | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                 | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`         |
+| settings | `settings.ts` — `getSettings, updateSettings, updateProfile`                          | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                          |
 
-Floating action bar appears when photos are selected (multi-select via checkbox or Shift+click): shows "Add tag", "Remove tag", "Delete" actions.
+`apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` backs the search box.
 
-### PhotoPage
-
-Two-column layout. Left: full-size image (loads via `original` presigned URL). Right: metadata panel with tabs:
-
-- **Tags** — `TagBadge` list, `TagPicker` to add manual tags, provenance toggle to show source per tag
-- **Info** — EXIF data, file size, upload date, version history
-- **Shares** — which outgoing shares cover this picture
-
-### TaggingPage
-
-Lists all tagging services in pipeline order. Each row shows service type, enabled state (toggle), `requires`/`excludes` tags as `TagBadge`
-chips, and a rule count. Drag-and-drop reordering (pipeline order is meaningful for `requires`/`excludes` resolution). Click opens
-`ServiceEditorPage`.
-
-### SharesPage
-
-Tabbed view: **Incoming** | **Outgoing**. Each card shows sender/recipient, shared tag path, status badge, and action buttons (Accept/Reject for
-incoming; Revoke for outgoing). Accepts and rejects call the corresponding API endpoints and invalidate the shares query.
+**Tag paths** are dot-separated ltree **wire form** (`Photos.Travel.Alps`) on the wire and slash **display form** (`/Photos/Travel/Alps`) in the UI.
+Convert via `lib/utils.ts` → `TagPath`: `toDisplay`, `toWire`, `segments`, `leaf`, `isProtected`. Share identities encode `@`→`_AT_`, `.`→`_DOT_`
+within a label (e.g. `SharedToMe.alice_AT_ex_DOT_com.Photos`). `SharedToMe` is the reserved **protected** prefix.
 
 ---
 
-## 9. API client conventions
+## 7. Component map (`src/components/`)
 
-`src/api/client.ts` exports a typed `api` object:
+**`layout/`** — `AppShell` (chrome), `TopBar` (single unified bar: brand + nav + sidebar toggles + gallery search/filters + row-height slider +
+theme +
+user; gallery-only controls keyed on `pathname === '/'`), `LeftPanel` (shadcn `Tabs`: Tags / Incoming / Outgoing / Hierarchies, synced to the `panel`
+URL param), `ProtectedRoute`, `PagePlaceholder`.
 
-```ts
-export const api = {
-    auth: {login, logout, refresh, me},
-    pictures: {list, get, getUrl, beginUpload, completeUpload},
-    tags: {list, listForPicture, batchEdit},
-    tagging: {
-        listServices, getService, createService, updateService, deleteService,
-        addRule, deleteRule, addSegment, deleteSegment, addMapping, deleteMapping
-    },
-    shares: {listOutgoing, listIncoming, createOutgoing, revoke, accept, reject},
-    settings: {get, update},
-};
-```
+**`photos/`** — `PhotoGrid` (justified flex grid + infinite scroll + selection + renders the Lightbox), `PhotoCard` (`flex-basis`/`flex-grow` from the
+picture's aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop), `Blurhash`, `FilterControls` (search + scope + sort + filters,
+rendered inside `TopBar`), `RowHeightSlider`, `Lightbox` (full-screen carousel driven by the `view` param; ←/→/Esc; `large` variant), `SelectionPanel`
+(right panel; see §8).
+**`photos/detail/`** — `Section` (compact foldable section, collapse persisted per id), `ExifEditDialog`.
 
-Each function accepts a typed request object (Zod schema) and returns a typed response. Zod parse runs only in development for cost-free
-production builds (`z.parse` → `z.safeParse` gated on `import.meta.env.DEV`).
+**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; click sets the `tag` filter), `TagPicker` (autocomplete over existing tags +
+create-new;
+`allowProtected` prop — see §9).
 
-Tag paths on the wire are dot-separated ltree form (`Photos.Travel.Alps`) as specified in the API. The `TagPath` helper in `lib/utils.ts`
-converts between display form (`/Photos/Travel/Alps`) and wire form (`Photos.Travel.Alps`).
+**`tagging/`** — `TaggingPage` composes `SharedMappingSection` (shared-tag-mapping services in a **collapsed-by-default accordion, always first**)
+then
+`PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s.
+`RequiresExcludesEditor`
+(gates as a **local draft committed on Save**), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
+`NewServiceMenu`.
+
+**`shares/`** — `IncomingSharesList` (accept / reject(confirm) / view-photos; single local-tag mapping per share via `useShareMappings`),
+`OutgoingSharesList` (**grouped by tag**, per-recipient status + confirm-revoke), `CreateShareDialog`, `ShareStatusBadge`.
+
+**`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions).
 
 ---
 
-## 10. Build and deployment
+## 8. The gallery workspace
 
-```
-pnpm build      # vite build → dist/
-```
+`GalleryPage` is a three-pane layout under the unified `TopBar`; each side panel is shown only when its `ui` store toggle is on:
 
-The `dist/` folder is a static asset bundle (HTML + JS + CSS). It is deployed to any static host or CDN. The `index.html` must be served for
-all routes (SPA fallback). The backend URL is injected at build time via `VITE_API_BASE_URL`.
+- **Left** (`LeftPanel`): tabbed Tags tree / Incoming shares / Outgoing shares / Hierarchies (placeholder).
+- **Center** (`PhotoGrid`): the justified grid; double-click opens the `Lightbox`.
+- **Right** (`SelectionPanel`): for a single selection, foldable `Section`s in order — name (+ size/dimensions), **Tags** (with a persisted
+  list⇄provenance toggle: provenance fetches `with_sources` and shows per-source badges), **Shared with you** (the `SharedToMe.*` tags), **Shared by
+  you** (outgoing shares whose tag covers this picture), **Details**, **EXIF** (with `ExifEditDialog` for owned pictures), **Versions**. For a
+  multi-selection: batch tag-add. Tags, provenance sources, and shared-with-you entries are clickable cross-links (see §9).
 
-For local development:
+---
 
-```
-pnpm dev        # vite dev server on :5173
-```
+## 9. Key behaviours & gotchas
 
-The Vite dev config proxies `/api/*` to the local backend to avoid CORS friction:
+- **Thumbnails:** `usePictures` passes `thumbnail:'medium'` so list items carry presigned URLs — no per-card round-trip. Presigned URLs are cached in
+  Query (`['pictures','url',id,variant]`, ~10 min `staleTime`); the Lightbox uses `large`.
+- **Protected tags:** `TagPicker` hides `SharedToMe.*` unless `allowProtected` is set. It is **off** for manual tagging (SelectionPanel) and
+  share-mappings; **on** only for `CreateShareDialog` (sharing) and `RequiresExcludesEditor` (service gates). Protected tags can never be *created*.
+- **Tag removal is manual-only:** `batchEditTags` `remove_tags` only drops `manual` rows. In the provenance table the ✕ appears only on tags with a
+  manual source; pipeline/share tags reappear after re-evaluation.
+- **Pipeline is async:** tagging-service mutations invalidate `['tagging']`/`['tags']`/`['pictures']`, but the backend re-evaluates tags in the
+  background — assignments converge after a short delay, not synchronously. Service *state* (enabled/gates) does update immediately on refetch; the
+  pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
+- **EXIF editing:** owned pictures only (`picture.owner_username == null`). `useEditExif` POSTs the diff (`set`/`clear`), then polls `getJob`
+  (1/2/4/8/15 s) while `exif_sync_status === 'pending'`.
+- **Single mapping per share:** `useShareMappings.addMapping` deletes any existing mapping first; the tagging `MappingEditor` hides already-mapped
+  shares.
+- **Cross-links:** right-panel tag → sets the `tag` filter; a provenance source badge → `/tagging/:source_id` (or `panel=incoming` + `share` highlight
+  for an `incoming_share` source); a "Shared with you" tag → `tag` filter + `panel=incoming` + highlights the matching card in `IncomingSharesList`.
+- **Search:** the API has **no free-text search**; `q` is a client-side filename filter over already-loaded items (it is still kept in the URL for
+  future server-side search). The capture-date range filter has a reserved slot in the Filters menu but is not built yet.
+- **Sensitive actions** (revoke / reject / delete) are gated by `ConfirmDialog`.
 
-```ts
-// vite.config.ts
-server: {
-    proxy: {
-        '/api'
-    :
-        'http://localhost:3000',
-    }
-,
-}
-```
+---
+
+## 10. Conventions for working on the frontend
+
+- **Adding an API call:** add the typed wrapper to the right `api/*.ts` (use `apiClient`, `import type` for types), a hook in `hooks/`, and a key in
+  `queryKeys` (`lib/constants.ts`). Mutations invalidate the relevant key prefixes on success.
+- **Errors:** surface with `toast.error(apiErrorMessage(e))` (sonner).
+- **Tags on the wire are wire form**; convert at the UI boundary with `TagPath`.
+- **View state belongs in the URL** (`useGalleryParams`); UI preferences belong in the `ui`/`theme` stores.
+- **Strict TS:** type-only imports must use `import type`; avoid `any` (prefer `unknown`/`Record<string, unknown>`). `npm run build` (= `tsc -b` +
+  `vite build`) must stay green.
+- shadcn primitives are editable project files under `components/ui/`; custom domain components live in their domain folder.

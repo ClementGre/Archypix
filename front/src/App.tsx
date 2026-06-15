@@ -6,7 +6,6 @@ import {AppShell} from '@/components/layout/AppShell'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import GalleryPage from '@/pages/GalleryPage'
-import PhotoPage from '@/pages/PhotoPage'
 import TagsPage from '@/pages/TagsPage'
 import TaggingPage from '@/pages/TaggingPage'
 import ServiceEditorPage from '@/pages/ServiceEditorPage'
@@ -37,7 +36,6 @@ export default function App() {
                     <Route element={<ProtectedRoute/>}>
                         <Route element={<AppShell/>}>
                             <Route path="/" element={<GalleryPage/>}/>
-                            <Route path="/photos/:id" element={<PhotoPage/>}/>
                             <Route path="/tags" element={<TagsPage/>}/>
                             <Route path="/tagging" element={<TaggingPage/>}/>
                             <Route path="/tagging/:id" element={<ServiceEditorPage/>}/>

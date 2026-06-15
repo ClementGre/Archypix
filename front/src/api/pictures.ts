@@ -1,5 +1,5 @@
 import {apiClient} from './client'
-import type {PictureDetail, PictureListResponse, PictureVariant} from '@/lib/types'
+import type {EditPictureResponse, ExifField, ExifOverrides, Job, PictureDetail, PictureListResponse, PictureVariant} from '@/lib/types'
 
 export interface ListPicturesParams {
     page: number
@@ -40,5 +40,21 @@ export async function getPictureUrl(
         `/api/authenticated/pictures/${id}/url`,
         {params: {variant}},
     )
+    return data
+}
+
+export async function editPicture(
+    id: string,
+    body: { set?: Partial<ExifOverrides>; clear?: ExifField[] },
+): Promise<EditPictureResponse> {
+    const {data} = await apiClient.post<EditPictureResponse>(
+        `/api/authenticated/pictures/${id}/edit`,
+        body,
+    )
+    return data
+}
+
+export async function getJob(id: string): Promise<Job> {
+    const {data} = await apiClient.get<Job>(`/api/authenticated/jobs/${id}`)
     return data
 }

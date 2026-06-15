@@ -1,0 +1,37 @@
+import type {ReactNode} from 'react'
+import {ChevronDown} from 'lucide-react'
+import {cn} from '@/lib/utils'
+import {usePersistentBool} from '@/hooks/usePersistentBool'
+
+/** Compact foldable section; open/closed state is persisted per `id`. */
+export function Section({
+                            id,
+                            title,
+                            count,
+                            defaultOpen = true,
+                            action,
+                            children,
+                        }: {
+    id: string
+    title: string
+    count?: number
+    defaultOpen?: boolean
+    action?: ReactNode
+    children: ReactNode
+}) {
+    const [open, toggle] = usePersistentBool(`section_${id}`, defaultOpen)
+
+    return (
+        <div className="border-b border-border">
+            <div className="flex items-center gap-1">
+                <button onClick={() => toggle()} className="flex flex-1 items-center gap-1.5 py-2 text-sm font-medium">
+                    <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', !open && '-rotate-90')}/>
+                    {title}
+                    {count !== undefined && <span className="text-xs font-normal text-muted-foreground">{count}</span>}
+                </button>
+                {action && <div className="flex items-center">{action}</div>}
+            </div>
+            {open && <div className="pb-3">{children}</div>}
+        </div>
+    )
+}

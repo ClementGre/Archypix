@@ -16,6 +16,8 @@ export interface GalleryParams {
     capturedAfter: string | null
     capturedBefore: string | null
     panel: LeftPanelTab
+    /** Incoming share to highlight in the left panel (transient cross-link). */
+    share: string | null
 }
 
 /** Patch applied to the URL state; omitted keys are left unchanged. */
@@ -29,6 +31,7 @@ export interface GalleryParamsPatch {
     capturedAfter?: string | null
     capturedBefore?: string | null
     panel?: LeftPanelTab
+    share?: string | null
 }
 
 const DEFAULT_SORT: SortField = 'ingested_at'
@@ -53,6 +56,7 @@ export function useGalleryParams() {
             capturedAfter: sp.get('after'),
             capturedBefore: sp.get('before'),
             panel: (sp.get('panel') as LeftPanelTab) || 'tags',
+            share: sp.get('share'),
         }),
         [sp],
     )
@@ -75,6 +79,7 @@ export function useGalleryParams() {
                     if ('capturedAfter' in patch) setOrDelete('after', patch.capturedAfter, false)
                     if ('capturedBefore' in patch) setOrDelete('before', patch.capturedBefore, false)
                     if ('panel' in patch) setOrDelete('panel', patch.panel, patch.panel === 'tags')
+                    if ('share' in patch) setOrDelete('share', patch.share, false)
                     return next
                 },
                 {replace: opts?.replace},

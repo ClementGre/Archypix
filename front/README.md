@@ -1,76 +1,77 @@
-# React + TypeScript + Vite
+# Archypix Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Web client for [Archypix](../README.md)** — a single-page React app for browsing, tagging, sharing, and organizing a federated photo library.
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The frontend is a pure static SPA (no SSR). It is **federated**: rather than talking to one fixed API server, it resolves — per logged-in user — which
+backend hosts that user's `@username:domain` identity via WebFinger, then talks directly to that backend. Picture files are fetched straight from the
+owner's object storage through short-lived presigned URLs, so large file traffic never passes through a relay.
 
-## React Compiler
+The whole client lives in `src/` (component source included, not hidden in `node_modules`) so it is easy to read, grep, and edit.
+See [doc/05_FRONTEND_ARCHITECTURE.md](../doc/05_FRONTEND_ARCHITECTURE.md) for the full architecture and conventions.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it,
-see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Stack
 
-## Expanding the ESLint configuration
+| Concern      | Choice                                 |
+|--------------|----------------------------------------|
+| UI           | React 19 + TypeScript                  |
+| Build        | Vite                                   |
+| Styling      | Tailwind CSS v4 + shadcn/ui (zinc/sky) |
+| Routing      | React Router v7                        |
+| Server state | TanStack Query v5                      |
+| Client state | Zustand                                |
+| Forms        | React Hook Form + Zod                  |
+| HTTP         | axios (JWT attach + auto-refresh)      |
+| Misc         | @dnd-kit, blurhash, sonner, lucide     |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Getting started
 
-```js
-export default defineConfig([
-    globalIgnores(['dist']),
-    {
-        files: ['**/*.{ts,tsx}'],
-        extends: [
-            // Other configs...
+Prerequisites: **Node 24+** and **npm** (pnpm is not required; the lockfile is `pnpm-lock.yaml` but `npm` works).
 
-            // Remove tseslint.configs.recommended and replace with this
-            tseslint.configs.recommendedTypeChecked,
-            // Alternatively, use this for stricter rules
-            tseslint.configs.strictTypeChecked,
-            // Optionally, add this for stylistic rules
-            tseslint.configs.stylisticTypeChecked,
-
-            // Other configs...
-        ],
-        languageOptions: {
-            parserOptions: {
-                project: ['./tsconfig.node.json', './tsconfig.app.json'],
-                tsconfigRootDir: import.meta.dirname,
-            },
-            // other options...
-        },
-    },
-])
+```bash
+cd front
+npm install
+npm run dev      # Vite dev server on http://localhost:5173
+npm run build    # tsc -b && vite build → dist/
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x)
-and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint
-rules:
+`dist/` is a static bundle servable from any CDN; the host must serve `index.html` for all routes (SPA fallback).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Configuration
 
-export default defineConfig([
-    globalIgnores(['dist']),
-    {
-        files: ['**/*.{ts,tsx}'],
-        extends: [
-            // Other configs...
-            // Enable lint rules for React
-            reactX.configs['recommended-typescript'],
-            // Enable lint rules for React DOM
-            reactDom.configs.recommended,
-        ],
-        languageOptions: {
-            parserOptions: {
-                project: ['./tsconfig.node.json', './tsconfig.app.json'],
-                tsconfigRootDir: import.meta.dirname,
-            },
-            // other options...
-        },
-    },
-])
+Dev values are read from `front/.env` (see [.env.example](.env.example)). All vars are build-time (`VITE_` prefixed):
+
+| Variable                 | Default         | Purpose                                                                                            |
+|--------------------------|-----------------|----------------------------------------------------------------------------------------------------|
+| `VITE_GLOBAL_DOMAIN`     | `archypix.test` | Default identity domain — the part after `:` in `@user:domain`. Used for WebFinger + registration. |
+| `VITE_USE_HTTPS`         | `false`         | Scheme used to reach the global domain (and resolved backends). `false` → http (dev).              |
+| `VITE_REGISTRATION_MODE` | `auto`          | `auto` (try resolver, fall back to standalone), `resolver`, or `standalone`.                       |
+| `VITE_REGISTRATION_URL`  | *(empty)*       | Explicit registration endpoint override; when set, used verbatim.                                  |
+
+## Local development against the dev stack
+
+The repo ships a federation stack in [`docker/docker-compose.dev.yml`](../docker/docker-compose.dev.yml), fronted by Traefik on port 80:
+
+| Host                 | Service                                                  |
+|----------------------|----------------------------------------------------------|
+| `archypix.test`      | Resolver (WebFinger + `/api/register`)                   |
+| `b1.archypix.test`   | Backend 1 (resolver-backed)                              |
+| `b2.archypix.test`   | Backend 2 (resolver-backed)                              |
+| `solo.archypix.test` | Standalone backend (own WebFinger + `/api/public/users`) |
+
+Add the fake hostnames to `/etc/hosts`, then start the stack:
+
+```bash
+sudo tee -a /etc/hosts < ../docker/hosts
+docker compose -f ../docker/docker-compose.dev.yml up --build
+npm run dev
 ```
+
+With `VITE_GLOBAL_DOMAIN=archypix.test`, **log in** as an existing `@user:archypix.test` (WebFinger resolves to `b1`/`b2`) — or switch the instance on
+the login form to `solo.archypix.test` for the standalone backend. **Register** creates a user on the global domain (resolver or standalone,
+auto-detected). Backends run with `CORS_ORIGINS=*` in dev, so the cross-origin direct-to-backend calls work from `localhost:5173`.
+
+## License
+
+Archypix is released under the [GNU AGPL v3.0](../LICENSE).

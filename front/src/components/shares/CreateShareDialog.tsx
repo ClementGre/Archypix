@@ -83,6 +83,7 @@ export function CreateShareDialog() {
                                 onSelect={setTag}
                                 triggerLabel={tag ? 'Change tag' : 'Choose tag'}
                                 allowCreate={false}
+                                allowProtected
                             />
                             {tag && (
                                 <span className="truncate text-sm text-muted-foreground">{TagPath.toDisplay(tag)}</span>
