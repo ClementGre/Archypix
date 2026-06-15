@@ -35,4 +35,15 @@ export const queryKeys = {
     outgoingShares: () => ['shares', 'outgoing'] as const,
     incomingShares: () => ['shares', 'incoming'] as const,
     settings: () => ['settings'] as const,
+    // admin
+    adminInstanceHealth: () => ['admin', 'instance'] as const,
+    adminStats: () => ['admin', 'stats'] as const,
+    adminConsistency: () => ['admin', 'consistency'] as const,
+    adminUsers: () => ['admin', 'users'] as const,
+    adminUserStats: (id: string) => ['admin', 'users', id, 'stats'] as const,
+    adminUserShares: (id: string) => ['admin', 'users', id, 'shares'] as const,
+    adminJobs: (params?: unknown) => ['admin', 'jobs', params] as const,
+    adminStaleJobs: () => ['admin', 'jobs', 'stale'] as const,
+    adminErroredShares: () => ['admin', 'shares', 'errored'] as const,
+    adminFederationInstances: () => ['admin', 'federation', 'instances'] as const,
 }

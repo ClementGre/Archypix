@@ -224,6 +224,132 @@ export interface Job {
     completed_at: string | null
 }
 
+// ---------- Admin ----------
+
+export type JobType = 'gen_thumbnail' | 'ml_style' | 'ml_people' | 'ml_group_location' | 'edit_picture'
+
+export interface InstanceHealth {
+    global_domain: string
+    back_domain: string
+    db_connected: boolean
+    redis_connected: boolean
+    last_worker_activity_at: string | null
+}
+
+export interface InstanceStats {
+    user_count: number
+    owned_picture_count: number
+    received_picture_count: number
+    total_storage_bytes: number
+    job_counts: {
+        pending: number
+        processing: number
+        completed: number
+        failed: number
+    }
+    errored_share_count: number
+    pending_first_announcement_count: number
+    dirty_picture_count: number
+    last_worker_activity_at: string | null
+}
+
+export interface ConsistencyCheck {
+    stuck_exif_pending_count: number
+    pictures_without_thumbnail_count: number
+    broken_mapping_count: number
+}
+
+export interface AdminUserResponse {
+    id: string
+    username: string
+    email: string
+    display_name: string
+    is_admin: boolean
+    storage_bytes: number
+}
+
+export interface UserStats {
+    owned_picture_count: number
+    received_picture_count: number
+    storage_bytes: number
+    job_counts: {
+        pending: number
+        processing: number
+        completed: number
+        failed: number
+    }
+    outgoing_share_counts: Record<ShareStatus, number>
+    incoming_share_counts: Record<ShareStatus, number>
+    dirty_picture_count: number
+    errored_share_count: number
+}
+
+export interface OutgoingShareRow {
+    id: string
+    owner_id: string
+    tag_path: string
+    recipient_username: string
+    recipient_instance: string
+    allow_share_back: boolean
+    future: boolean
+    status: ShareStatus
+    created_at: string
+    revoked_at: string | null
+}
+
+export interface IncomingShareRow {
+    id: string
+    recipient_id: string
+    sender_username: string
+    sender_instance: string
+    outgoing_share_id: string
+    local_mapping_service_id: string | null
+    status: ShareStatus
+    allow_share_back: boolean
+    created_at: string
+    revoked_at: string | null
+}
+
+export interface UserSharesResponse {
+    outgoing: OutgoingShareRow[]
+    incoming: IncomingShareRow[]
+}
+
+export interface AdminJobResponse {
+    id: string
+    owner_id: string
+    owner_username: string
+    job_type: JobType
+    status: JobStatus
+    retry_count: number
+    max_retries: number
+    error_message: string | null
+    picture_id: string | null
+    claimed_by: string | null
+    created_at: string
+    started_at: string | null
+    completed_at: string | null
+}
+
+export interface ErroredShareResponse {
+    id: string
+    owner_id: string
+    owner_username: string
+    tag_path: string
+    recipient_username: string
+    recipient_instance: string
+    next_retry_at: string | null
+    last_error_at: string | null
+    created_at: string
+}
+
+export interface FederationInstanceResponse {
+    instance: string
+    outgoing_share_count: number
+    incoming_share_count: number
+    errored_share_count: number
+}
+
 // ---------- EXIF editing ----------
 
 export interface ExifOverrides {
