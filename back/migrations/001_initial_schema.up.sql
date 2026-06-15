@@ -222,16 +222,17 @@ CREATE TABLE outgoing_shares
 
     -- Timestamps
     created_at         TIMESTAMP    NOT NULL DEFAULT (now() at time zone 'utc'),
-    revoked_at         TIMESTAMP,
-
-    -- Composite unique: one share per recipient per tag
-    CONSTRAINT uq_outgoing_share UNIQUE (owner_id, tag_path, recipient_username, recipient_instance)
+    revoked_at TIMESTAMP
 );
 
 CREATE INDEX idx_outgoing_shares_owner ON outgoing_shares (owner_id);
 CREATE INDEX idx_outgoing_shares_recipient ON outgoing_shares (recipient_username, recipient_instance);
 CREATE INDEX idx_outgoing_shares_tag ON outgoing_shares USING GIST (tag_path);
 CREATE INDEX idx_outgoing_shares_status ON outgoing_shares (status);
+-- Only one live (non-terminal) share per (owner, tag, recipient) at a time.
+-- Revoked/tombstoned rows are excluded so re-sharing after revocation is allowed.
+CREATE UNIQUE INDEX uq_outgoing_share ON outgoing_shares (owner_id, tag_path, recipient_username, recipient_instance)
+    WHERE status NOT IN ('revoked'::share_status, 'tombstoned'::share_status);
 
 -- ============================================================================
 -- SHARE ANNOUNCEMENTS (per-picture presign tokens — sender-side tracking table)
