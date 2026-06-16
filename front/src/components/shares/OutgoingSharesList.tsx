@@ -2,6 +2,7 @@ import {useMemo} from 'react'
 import {Ban, Loader2, Send} from 'lucide-react'
 import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
+import {Section} from '@/components/photos/detail/Section'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {useOutgoingShares, useShareMutations} from '@/hooks/useShares'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
@@ -12,16 +13,47 @@ import {ShareStatusBadge} from './ShareStatusBadge'
 import {CreateShareDialog} from './CreateShareDialog'
 
 const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
+const PENDING = new Set(['pending', 'pending_first_announcement'])
+
+function RevokeButton({share, disabled, onRevoke}: { share: ShareResponse; disabled: boolean; onRevoke: () => void }) {
+    if (!REVOCABLE.has(share.status)) return null
+    return (
+        <ConfirmDialog
+            title="Revoke this share?"
+            description={`Stop sharing with @${share.recipient_username}:${share.recipient_instance}. Their access and the shared pictures are removed immediately.`}
+            confirmLabel="Revoke"
+            destructive
+            onConfirm={onRevoke}
+            trigger={
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                    title="Revoke"
+                    disabled={disabled}
+                >
+                    <Ban className="h-3.5 w-3.5"/>
+                </Button>
+            }
+        />
+    )
+}
 
 export function OutgoingSharesList() {
     const {data: shares, isPending, isError, error} = useOutgoingShares()
     const {revoke} = useShareMutations()
     const {update} = useGalleryParams()
 
-    // Group shares by tag so one tag shared to many recipients is shown together.
+    const onRevoke = (id: string) => revoke.mutate(id, {onError: (e) => toast.error(apiErrorMessage(e))})
+
+    const pending = useMemo(() => (shares ?? []).filter((s) => PENDING.has(s.status)), [shares])
+
+    // Group the settled (non-pending) shares by tag so one tag shared to many
+    // recipients is shown together.
     const groups = useMemo(() => {
         const map = new Map<string, ShareResponse[]>()
         for (const s of shares ?? []) {
+            if (PENDING.has(s.status)) continue
             const list = map.get(s.tag_path) ?? []
             list.push(s)
             map.set(s.tag_path, list)
@@ -54,7 +86,7 @@ export function OutgoingSharesList() {
             </>
         )
     }
-    if (!groups.length) {
+    if (!shares.length) {
         return (
             <>
                 {header}
@@ -69,54 +101,61 @@ export function OutgoingSharesList() {
     return (
         <>
             {header}
-            <div className="space-y-2 p-2">
-                {groups.map(([tag, recipients]) => (
-                    <div key={tag} className="rounded-md border border-border p-2.5">
-                        <button
-                            onClick={() => update({tag})}
-                            className="flex w-full items-center justify-between gap-2 text-left"
-                            title="Filter to this tag"
-                        >
-                            <span className="truncate text-sm font-medium hover:text-primary">{TagPath.toDisplay(tag)}</span>
-                            <span className="shrink-0 text-xs text-muted-foreground">{recipients.length}</span>
-                        </button>
-
-                        <div className="mt-2 space-y-1.5">
-                            {recipients.map((share) => (
-                                <div key={share.id} className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-xs text-muted-foreground">
-                    → @{share.recipient_username}:{share.recipient_instance}
-                  </span>
-                                    <div className="flex shrink-0 items-center gap-1.5">
-                                        <ShareStatusBadge status={share.status}/>
-                                        {REVOCABLE.has(share.status) && (
-                                            <ConfirmDialog
-                                                title="Revoke this share?"
-                                                description={`Stop sharing with @${share.recipient_username}:${share.recipient_instance}. Their access and the shared pictures are removed immediately.`}
-                                                confirmLabel="Revoke"
-                                                destructive
-                                                onConfirm={() =>
-                                                    revoke.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})
-                                                }
-                                                trigger={
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                                                        title="Revoke"
-                                                        disabled={revoke.isPending}
-                                                    >
-                                                        <Ban className="h-3.5 w-3.5"/>
-                                                    </Button>
-                                                }
-                                            />
-                                        )}
+            <div className="p-2">
+                {pending.length > 0 && (
+                    <Section id="outgoing-pending" title="Pending" count={pending.length}>
+                        <div className="space-y-1.5">
+                            {pending.map((share) => (
+                                <div key={share.id} className="rounded-md border border-border px-2 py-1.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="min-w-0 truncate text-xs">
+                                            → @{share.recipient_username}:{share.recipient_instance}
+                                        </span>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                            <ShareStatusBadge status={share.status}/>
+                                            <RevokeButton share={share} disabled={revoke.isPending} onRevoke={() => onRevoke(share.id)}/>
+                                        </div>
                                     </div>
+                                    <button
+                                        onClick={() => update({tag: share.tag_path})}
+                                        className="mt-0.5 block truncate text-left text-[11px] text-muted-foreground hover:text-primary"
+                                    >
+                                        {TagPath.toDisplay(share.tag_path)}
+                                    </button>
                                 </div>
                             ))}
                         </div>
-                    </div>
-                ))}
+                    </Section>
+                )}
+
+                <div className="space-y-1.5 pt-2">
+                    {groups.map(([tag, recipients]) => (
+                        <div key={tag} className="rounded-md border border-border px-2 py-1.5">
+                            <button
+                                onClick={() => update({tag})}
+                                className="flex w-full items-center justify-between gap-2 text-left"
+                                title="Filter to this tag"
+                            >
+                                <span className="truncate text-xs font-medium hover:text-primary">{TagPath.toDisplay(tag)}</span>
+                                <span className="shrink-0 text-[11px] text-muted-foreground">{recipients.length}</span>
+                            </button>
+
+                            <div className="mt-1.5 space-y-1">
+                                {recipients.map((share) => (
+                                    <div key={share.id} className="flex items-center justify-between gap-2">
+                                        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                                            → @{share.recipient_username}:{share.recipient_instance}
+                                        </span>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                            <ShareStatusBadge status={share.status}/>
+                                            <RevokeButton share={share} disabled={revoke.isPending} onRevoke={() => onRevoke(share.id)}/>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         </>
     )

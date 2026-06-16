@@ -4,6 +4,7 @@ import {useQuery} from '@tanstack/react-query'
 import {ChevronLeft, ChevronRight, Loader2, X} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {getPictureUrl} from '@/api/pictures'
+import {OrientedContainImage} from './OrientedImage'
 
 /**
  * Full-screen carousel viewer. Driven by the `view=<pictureId>` URL param so it
@@ -88,11 +89,21 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
                     <ChevronLeft className="h-6 w-6"/>
                 </button>
 
-                <div className="flex h-full w-full items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                <div className="relative h-full w-full" onClick={(e) => e.stopPropagation()}>
                     {url ? (
-                        <img src={url.url} alt={current.filename ?? ''} className="max-h-full max-w-full object-contain"/>
+                        <OrientedContainImage
+                            src={url.url}
+                            alt={current.filename ?? ''}
+                            orientation={current.orientation}
+                            width={current.width}
+                            height={current.height}
+                        />
                     ) : (
-                        isFetching && <Loader2 className="h-8 w-8 animate-spin text-white/70"/>
+                        isFetching && (
+                            <div className="flex h-full w-full items-center justify-center">
+                                <Loader2 className="h-8 w-8 animate-spin text-white/70"/>
+                            </div>
+                        )
                     )}
                 </div>
 

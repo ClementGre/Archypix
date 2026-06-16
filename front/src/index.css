@@ -12,10 +12,10 @@
     --color-muted-foreground: var(--color-zinc-400);
     --color-border: var(--color-zinc-800);
     --color-input: var(--color-zinc-800);
-    --color-ring: var(--color-sky-500);
+    --color-ring: var(--color-emerald-500);
 
-    /* ── Primary accent: sky ───────────────────────────────────────────────── */
-    --color-primary: var(--color-sky-500);
+    /* ── Primary accent: emerald ──────────────────────────────────────────── */
+    --color-primary: var(--color-emerald-500);
     --color-primary-foreground: var(--color-zinc-950);
     --color-secondary: var(--color-zinc-800);
     --color-secondary-foreground: var(--color-zinc-50);
@@ -43,8 +43,8 @@
     --color-muted-foreground: var(--color-zinc-500);
     --color-border: var(--color-zinc-200);
     --color-input: var(--color-zinc-200);
-    --color-ring: var(--color-sky-500);
-    --color-primary: var(--color-sky-600);
+    --color-ring: var(--color-emerald-500);
+    --color-primary: var(--color-emerald-600);
     --color-primary-foreground: #ffffff;
     --color-secondary: var(--color-zinc-100);
     --color-secondary-foreground: var(--color-zinc-900);
@@ -63,5 +63,16 @@
         text-rendering: optimizeLegibility;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Strip the native number-input spinners everywhere — they ignore the theme.
+       Styled steppers are provided by components/ui/number-input.tsx. */
+    input[type='number']::-webkit-inner-spin-button,
+    input[type='number']::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    input[type='number'] {
+        -moz-appearance: textfield;
     }
 }

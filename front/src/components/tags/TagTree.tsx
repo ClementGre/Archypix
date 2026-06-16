@@ -1,4 +1,4 @@
-import {useMemo, useState} from 'react'
+import {useEffect, useMemo, useRef, useState} from 'react'
 import {ChevronRight, Hash, Images, Loader2} from 'lucide-react'
 import {useAllTags} from '@/hooks/useTags'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
@@ -54,6 +54,7 @@ function TreeRow({
                      node,
                      depth,
                      activeTag,
+                     activeRef,
                      expanded,
                      toggle,
                      onPick,
@@ -61,6 +62,7 @@ function TreeRow({
     node: TreeNode
     depth: number
     activeTag: string | null
+    activeRef: (el: HTMLDivElement | null) => void
     expanded: Set<string>
     toggle: (path: string) => void
     onPick: (path: string) => void
@@ -72,6 +74,7 @@ function TreeRow({
     return (
         <div>
             <div
+                ref={isActive ? activeRef : undefined}
                 className={cn(
                     'group flex items-center gap-1 rounded-md py-1 pr-2 text-sm',
                     isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted',
@@ -98,6 +101,7 @@ function TreeRow({
                             node={child}
                             depth={depth + 1}
                             activeTag={activeTag}
+                            activeRef={activeRef}
                             expanded={expanded}
                             toggle={toggle}
                             onPick={onPick}
@@ -122,6 +126,23 @@ export function TagTree() {
             else next.add(path)
             return next
         })
+
+    // When the active tag changes (e.g. via a cross-link), expand its ancestors so
+    // it becomes visible without collapsing what the user has already opened.
+    useEffect(() => {
+        if (!params.tag) return
+        setExpanded((prev) => {
+            const next = new Set(prev)
+            for (const anc of ancestorsOf(params.tag)) next.add(anc)
+            return next
+        })
+    }, [params.tag])
+
+    // Scroll the active row into view once it (and its ancestors) are expanded.
+    const activeRowRef = useRef<HTMLDivElement | null>(null)
+    useEffect(() => {
+        if (params.tag) activeRowRef.current?.scrollIntoView({block: 'nearest'})
+    }, [params.tag, expanded])
 
     const pick = (path: string) => update({tag: path})
 
@@ -154,6 +175,7 @@ export function TagTree() {
                         node={node}
                         depth={0}
                         activeTag={params.tag}
+                        activeRef={(el) => (activeRowRef.current = el)}
                         expanded={expanded}
                         toggle={toggle}
                         onPick={pick}

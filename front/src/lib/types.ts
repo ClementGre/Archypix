@@ -28,6 +28,7 @@ export interface PictureListItem {
     captured_at: string | null
     ingested_at: string
     blurhash: string | null
+    orientation: number | null
     thumbnail_url: string | null
     owned: boolean
     owner_username: string | null

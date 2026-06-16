@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {type ReactNode, useState} from 'react'
 import {Plus, Tag as TagIcon} from 'lucide-react'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList} from '@/components/ui/command'
@@ -7,6 +7,16 @@ import {useAllTags} from '@/hooks/useTags'
 import {TagPath} from '@/lib/utils'
 
 const LABEL_OK = /^[A-Za-z0-9_/]+$/
+
+/** Returns all ancestor wire paths for a given wire path (e.g. `A.B.C` → [`A`, `A.B`]). */
+function ancestorWirePaths(wire: string): string[] {
+    const parts = wire.split('.')
+    const result: string[] = []
+    for (let i = 1; i < parts.length; i++) {
+        result.push(parts.slice(0, i).join('.'))
+    }
+    return result
+}
 
 interface TagPickerProps {
   /** Called with the chosen/created tag in WIRE form (e.g. `Photos.Travel`). */
@@ -21,6 +31,8 @@ interface TagPickerProps {
   allowProtected?: boolean
   triggerLabel?: string
   placeholder?: string
+    /** Custom trigger element (rendered `asChild`); overrides the default button. */
+    trigger?: ReactNode
 }
 
 /** Autocomplete over the user's existing tags, with optional create-new. */
@@ -31,13 +43,34 @@ export function TagPicker({
                             allowProtected = false,
                             triggerLabel = 'Add tag',
                             placeholder = 'Search or create tag…',
+                              trigger,
                           }: TagPickerProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const {data: tags} = useAllTags()
 
-  const exclude = new Set(excludePaths)
-  const all = (tags ?? []).filter((t) => !exclude.has(t) && (allowProtected || !TagPath.isProtected(t)))
+    const allTags = tags ?? []
+
+    // Ancestors virtually covered by already-assigned tags must also be excluded.
+    const excludeSet = new Set(excludePaths)
+    for (const exc of excludePaths) {
+        for (const anc of ancestorWirePaths(exc)) {
+            excludeSet.add(anc)
+        }
+    }
+
+    // Expand the suggestion universe to include ancestor paths of every known tag.
+    const expandedSet = new Set<string>(allTags)
+    for (const t of allTags) {
+        for (const anc of ancestorWirePaths(t)) {
+            expandedSet.add(anc)
+        }
+    }
+
+    const all = Array.from(expandedSet)
+        .filter((t) => !excludeSet.has(t) && (allowProtected || !TagPath.isProtected(t)))
+        .sort()
+
   const q = query.trim()
   const options = q ? all.filter((t) => TagPath.toDisplay(t).toLowerCase().includes(q.toLowerCase())) : all
 
@@ -49,7 +82,7 @@ export function TagPicker({
       LABEL_OK.test(q.replace(/^\/+/, '')) &&
       !!wireFromInput &&
       !TagPath.isProtected(wireFromInput) &&
-      !all.includes(wireFromInput)
+      !expandedSet.has(wireFromInput)
 
   const choose = (wire: string) => {
     onSelect(wire)
@@ -60,10 +93,12 @@ export function TagPicker({
   return (
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <Plus className="h-3.5 w-3.5"/>
-            {triggerLabel}
-          </Button>
+            {trigger ?? (
+                <Button variant="outline" size="sm" className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5"/>
+                    {triggerLabel}
+                </Button>
+            )}
         </PopoverTrigger>
         <PopoverContent className="w-72 p-0" align="start">
           <Command shouldFilter={false}>

@@ -1,7 +1,9 @@
+import type {ReactNode} from 'react'
 import {Check, Images, Inbox, Loader2, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
+import {Section} from '@/components/photos/detail/Section'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {useIncomingShares, useShareMutations} from '@/hooks/useShares'
 import {type ShareMapping, useShareMappings} from '@/hooks/useShareMappings'
@@ -17,7 +19,7 @@ function sharedToMeTag(share: IncomingShareResponse): string {
   return `SharedToMe.${label}`
 }
 
-/** A share carries a single local-tag mapping: show it, or offer to add one. */
+/** A share carries a single local-tag mapping: show it inline, or offer to add one. */
 function MappingControl({
                           shareId,
                           mapping,
@@ -32,14 +34,14 @@ function MappingControl({
   onRemove: (serviceId: string, ruleId: string) => void
 }) {
   return (
-      <div className="mt-2 border-t border-border pt-2">
-        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Local tag</p>
+      <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="shrink-0 text-[11px] text-muted-foreground">Tag</span>
         {mapping ? (
             <Badge
                 variant="secondary"
                 className={cn('gap-1 font-normal', mapping.is_broken && 'line-through opacity-60')}
             >
-              {TagPath.toDisplay(mapping.assign_tag)}
+                <span className="truncate">{TagPath.toDisplay(mapping.assign_tag)}</span>
               <ConfirmDialog
                   title="Remove mapping?"
                   description="This local tag will be removed from the pictures received through this share."
@@ -47,15 +49,98 @@ function MappingControl({
                   destructive
                   onConfirm={() => onRemove(mapping.serviceId, mapping.ruleId)}
                   trigger={
-                    <button aria-label="Remove mapping" disabled={busy} className="ml-0.5">
+                      <button aria-label="Remove mapping" disabled={busy} className="ml-0.5 shrink-0">
                       <X className="h-3 w-3"/>
                     </button>
                   }
               />
             </Badge>
         ) : (
-            <TagPicker onSelect={(wire) => onAdd(shareId, wire)} triggerLabel="Map tag"/>
+            <TagPicker
+                onSelect={(wire) => onAdd(shareId, wire)}
+                trigger={
+                    <Button variant="outline" size="sm" className="h-6 gap-1 px-1.5 text-[11px]">
+                        Map tag
+                    </Button>
+                }
+            />
         )}
+      </div>
+  )
+}
+
+function ShareRow({
+                      share,
+                      highlighted,
+                      accepting,
+                      rejecting,
+                      onAccept,
+                      onReject,
+                      onView,
+                      mapping,
+                  }: {
+    share: IncomingShareResponse
+    highlighted: boolean
+    accepting: boolean
+    rejecting: boolean
+    onAccept: () => void
+    onReject: () => void
+    onView: () => void
+    mapping?: ReactNode
+}) {
+    const rejectable = share.status === 'pending' || share.status === 'active'
+    return (
+        <div className={cn('rounded-md border border-border px-2 py-1.5', highlighted && 'ring-2 ring-primary')}>
+            <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs font-medium">
+            @{share.sender_username}
+              <span className="text-muted-foreground">:{share.sender_instance}</span>
+          </span>
+                <div className="flex shrink-0 items-center gap-1">
+                    <ShareStatusBadge status={share.status}/>
+                    {share.status === 'active' && (
+                        <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            title="View photos"
+                            onClick={onView}
+                        >
+                            <Images className="h-3.5 w-3.5"/>
+                        </Button>
+                    )}
+                    {rejectable && (
+                        <ConfirmDialog
+                            title="Reject this share?"
+                            description="Pictures received through this share will be removed from your library."
+                            confirmLabel="Reject"
+                            destructive
+                            onConfirm={onReject}
+                            trigger={
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    title="Reject"
+                                    disabled={rejecting}
+                                >
+                                    <X className="h-3.5 w-3.5"/>
+                                </Button>
+                            }
+                        />
+                    )}
+                </div>
+            </div>
+
+            {share.status === 'pending' && (
+                <div className="mt-1.5">
+                    <Button size="sm" className="h-6 gap-1 px-2 text-[11px]" disabled={accepting} onClick={onAccept}>
+                        <Check className="h-3.5 w-3.5"/> Accept
+                    </Button>
+                </div>
+            )}
+
+            {share.status === 'active' && mapping}
       </div>
   )
 }
@@ -92,72 +177,39 @@ export function IncomingSharesList() {
     )
   }
 
-  return (
-      <div className="space-y-2 p-2">
-        {shares.map((share) => {
-          const rejectable = share.status === 'pending' || share.status === 'active'
-          return (
-              <div
-                  key={share.id}
-                  className={cn('rounded-md border border-border p-2.5', params.share === share.id && 'ring-2 ring-primary')}
-              >
-                <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-medium">
-                @{share.sender_username}
-                <span className="text-muted-foreground">:{share.sender_instance}</span>
-              </span>
-                  <ShareStatusBadge status={share.status}/>
-                </div>
+    const pending = shares.filter((s) => s.status === 'pending')
+    const rest = shares.filter((s) => s.status !== 'pending')
 
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {share.status === 'pending' && (
-                      <Button
-                          size="sm"
-                          className="h-7 gap-1 px-2"
-                          disabled={accept.isPending}
-                          onClick={() => accept.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
-                      >
-                        <Check className="h-3.5 w-3.5"/> Accept
-                      </Button>
-                  )}
-                  {share.status === 'active' && (
-                      <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 gap-1 px-2 text-muted-foreground"
-                          onClick={() => update({tag: sharedToMeTag(share), scope: 'all'})}
-                      >
-                        <Images className="h-3.5 w-3.5"/> View photos
-                      </Button>
-                  )}
-                  {rejectable && (
-                      <ConfirmDialog
-                          title="Reject this share?"
-                          description="Pictures received through this share will be removed from your library."
-                          confirmLabel="Reject"
-                          destructive
-                          onConfirm={() => reject.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
-                          trigger={
-                            <Button size="sm" variant="outline" className="h-7 gap-1 px-2" disabled={reject.isPending}>
-                              <X className="h-3.5 w-3.5"/> Reject
-                            </Button>
-                          }
-                      />
-                  )}
-                </div>
+    const renderRow = (share: IncomingShareResponse) => (
+        <ShareRow
+            key={share.id}
+            share={share}
+            highlighted={params.share === share.id}
+            accepting={accept.isPending}
+            rejecting={reject.isPending}
+            onAccept={() => accept.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
+            onReject={() => reject.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
+            onView={() => update({tag: sharedToMeTag(share), scope: 'all'})}
+            mapping={
+                <MappingControl
+                    shareId={share.id}
+                    mapping={forShare(share.id)[0]}
+                    busy={isBusy}
+                    onAdd={onAddMapping}
+                    onRemove={onRemoveMapping}
+                />
+            }
+        />
+    )
 
-                {share.status === 'active' && (
-                    <MappingControl
-                        shareId={share.id}
-                        mapping={forShare(share.id)[0]}
-                        busy={isBusy}
-                        onAdd={onAddMapping}
-                        onRemove={onRemoveMapping}
-                    />
-                )}
-              </div>
-          )
-        })}
+    return (
+        <div className="p-2">
+            {pending.length > 0 && (
+                <Section id="incoming-pending" title="Pending" count={pending.length}>
+                    <div className="space-y-1.5">{pending.map(renderRow)}</div>
+                </Section>
+            )}
+            <div className="space-y-1.5 pt-2">{rest.map(renderRow)}</div>
       </div>
   )
 }

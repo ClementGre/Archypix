@@ -3,6 +3,7 @@ import {Check} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {cn} from '@/lib/utils'
 import {Blurhash} from './Blurhash'
+import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
 
 interface PhotoCardProps {
     item: PictureListItem
@@ -20,31 +21,38 @@ interface PhotoCardProps {
  * while preserving each picture's shape — no cropping, minimal JS.
  */
 export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, onSelect, onOpen}: PhotoCardProps) {
-    const ratio = item.width && item.height ? item.width / item.height : 1
+    // Lay the cell out at the picture's *display* orientation (dimensions are
+    // transposed for 90°/270° rotations) so the justified grid stays correct.
+    const {width: dispW, height: dispH} = displayDimensions(item.width, item.height, item.orientation)
+    const ratio = dispW && dispH ? dispW / dispH : 1
     const basis = rowHeight * ratio
+    // Rotate the blurhash placeholder the same way as the thumbnail so it lines up behind it.
+    const blurhash = orientedCoverStyle(item.orientation, item.width, item.height)
 
     return (
         <li
             style={{
                 flexBasis: `${basis}px`,
                 flexGrow: basis,
-                aspectRatio: `${item.width ?? 1} / ${item.height ?? 1}`,
+                aspectRatio: `${dispW ?? 1} / ${dispH ?? 1}`,
             }}
             className={cn(
-                'group relative cursor-pointer overflow-hidden rounded-md bg-muted',
+                'group relative cursor-pointer overflow-hidden rounded-[3px] bg-muted',
                 selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
             )}
             onClick={onSelect}
             onDoubleClick={onOpen}
         >
-            {item.blurhash && <Blurhash hash={item.blurhash} className="absolute inset-0 h-full w-full"/>}
+            {item.blurhash && <Blurhash hash={item.blurhash} className={blurhash.className} style={blurhash.style}/>}
 
             {item.thumbnail_url && (
-                <img
+                <OrientedImage
                     src={item.thumbnail_url}
                     alt={item.filename ?? ''}
-                    loading="lazy"
-                    className="absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-200"
+                    orientation={item.orientation}
+                    width={item.width}
+                    height={item.height}
+                    className="opacity-0 transition-opacity duration-200"
                     onLoad={(e) => {
                         e.currentTarget.style.opacity = '1'
                     }}

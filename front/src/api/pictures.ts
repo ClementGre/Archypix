@@ -1,6 +1,20 @@
 import {apiClient} from './client'
 import type {EditPictureResponse, ExifField, ExifOverrides, Job, PictureDetail, PictureListResponse, PictureVariant} from '@/lib/types'
 
+export interface UploadSlot {
+    picture_id: string
+    presigned_url: string
+}
+
+export interface CompleteUploadBody {
+    mime_type?: string
+    file_size?: number
+    width?: number
+    height?: number
+    captured_at?: string
+    initial_tags?: string[]
+}
+
 export interface ListPicturesParams {
     page: number
     page_size: number
@@ -56,5 +70,18 @@ export async function editPicture(
 
 export async function getJob(id: string): Promise<Job> {
     const {data} = await apiClient.get<Job>(`/api/authenticated/jobs/${id}`)
+    return data
+}
+
+export async function beginUploadBatch(filenames: string[]): Promise<UploadSlot[]> {
+    const {data} = await apiClient.post<UploadSlot[]>('/api/authenticated/pictures/uploads/batch', {filenames})
+    return data
+}
+
+export async function completeUpload(pictureId: string, body: CompleteUploadBody): Promise<{ id: string }> {
+    const {data} = await apiClient.post<{ id: string }>(
+        `/api/authenticated/pictures/uploads/${pictureId}/complete`,
+        body,
+    )
     return data
 }

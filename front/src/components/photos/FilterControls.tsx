@@ -19,9 +19,9 @@ import type {SortField, SortOrder} from '@/lib/types'
 import {cn, TagPath} from '@/lib/utils'
 
 const SCOPES: { value: Scope; label: string }[] = [
-    {value: 'all', label: 'All'},
+  {value: 'all', label: 'All photos'},
     {value: 'owned', label: 'Mine'},
-    {value: 'shared', label: 'Shared'},
+  {value: 'shared', label: 'Shared with me'},
 ]
 
 const SORT_FIELDS: { value: SortField; label: string }[] = [
@@ -48,41 +48,26 @@ export function FilterControls() {
 
     return (
         <>
-            <div className="relative w-full max-w-xs">
+          <div className="relative w-full min-w-0 max-w-[16rem]">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"/>
-                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search filenames…" className="h-9 pl-8"/>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search filenames…" className="h-8 pl-8"/>
             </div>
 
             {params.tag && (
-                <Badge variant="secondary" className="gap-1 whitespace-nowrap font-normal">
-                    {TagPath.toDisplay(params.tag)}
-                    <button onClick={() => update({tag: null})} aria-label="Clear tag filter" className="ml-0.5">
+                <Badge variant="secondary" className="hidden max-w-[12rem] gap-1 font-normal sm:inline-flex">
+                  <span className="truncate">{TagPath.toDisplay(params.tag)}</span>
+                  <button onClick={() => update({tag: null})} aria-label="Clear tag filter" className="ml-0.5 shrink-0">
                         <X className="h-3 w-3"/>
                     </button>
                 </Badge>
             )}
 
-            <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center rounded-md border border-border p-0.5">
-                    {SCOPES.map((s) => (
-                        <button
-                            key={s.value}
-                            onClick={() => update({scope: s.value})}
-                            className={cn(
-                                'rounded px-2.5 py-1 text-xs font-medium transition-colors',
-                                params.scope === s.value ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
-                            )}
-                        >
-                            {s.label}
-                        </button>
-                    ))}
-                </div>
-
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm" className="gap-1.5">
                             <ArrowUpDown className="h-3.5 w-3.5"/>
-                            Sort
+                          <span className="hidden sm:inline">Sort</span>
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-44">
@@ -104,13 +89,25 @@ export function FilterControls() {
 
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm" className="gap-1.5">
+                      <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn('gap-1.5', hasActiveFilters && 'border-primary/50 text-primary')}
+                      >
                             <SlidersHorizontal className="h-3.5 w-3.5"/>
-                            Filters
+                        <span className="hidden sm:inline">Filters</span>
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-52">
-                        <DropdownMenuLabel>Filters</DropdownMenuLabel>
+                      <DropdownMenuLabel>Show</DropdownMenuLabel>
+                      <DropdownMenuRadioGroup value={params.scope} onValueChange={(v) => update({scope: v as Scope})}>
+                        {SCOPES.map((s) => (
+                            <DropdownMenuRadioItem key={s.value} value={s.value}>
+                              {s.label}
+                            </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                      <DropdownMenuSeparator/>
                         <DropdownMenuCheckboxItem
                             checked={params.includeDeleted}
                             onCheckedChange={(checked) => update({includeDeleted: checked})}

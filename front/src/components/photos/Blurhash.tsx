@@ -8,12 +8,14 @@ export function Blurhash({
                              height = 32,
                              punch = 1,
                              className,
+                           style,
                          }: {
     hash: string
     width?: number
     height?: number
     punch?: number
     className?: string
+  style?: React.CSSProperties
 }) {
     const ref = useRef<HTMLCanvasElement>(null)
 
@@ -32,5 +34,5 @@ export function Blurhash({
         }
     }, [hash, width, height, punch])
 
-    return <canvas ref={ref} width={width} height={height} className={className}/>
+  return <canvas ref={ref} width={width} height={height} className={className} style={style}/>
 }

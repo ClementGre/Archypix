@@ -16,12 +16,11 @@ export function LeftPanel() {
     const {params, update} = useGalleryParams()
 
     return (
-        <aside className="w-64 shrink-0 border-r border-border bg-card">
-            <Tabs
-                value={params.panel}
-                onValueChange={(v) => update({panel: v as LeftPanelTab})}
-                className="flex h-full flex-col gap-0"
-            >
+        <Tabs
+            value={params.panel}
+            onValueChange={(v) => update({panel: v as LeftPanelTab})}
+            className="flex h-full min-h-0 flex-col gap-0"
+        >
                 <TabsList className="grid w-full grid-cols-4 rounded-none border-b border-border bg-transparent p-1">
                     {TABS.map(({value, label, icon: Icon}) => (
                         <TabsTrigger key={value} value={value} title={label} aria-label={label} className="px-0">
@@ -47,6 +46,5 @@ export function LeftPanel() {
                     </div>
                 </TabsContent>
             </Tabs>
-        </aside>
     )
 }

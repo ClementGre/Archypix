@@ -1,8 +1,8 @@
 import {useMemo} from 'react'
-import {useNavigate} from 'react-router-dom'
+import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {ImageIcon, List, Pencil, Table2, Trash2, X} from 'lucide-react'
+import {ImageIcon, List, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {getPicture, getPictureUrl} from '@/api/pictures'
@@ -13,51 +13,43 @@ import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
+import {useIsMobile} from '@/hooks/useMediaQuery'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
-import {ExifEditDialog} from '@/components/photos/detail/ExifEditDialog'
+import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
+import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
+import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
-import {TagPath} from '@/lib/utils'
-import type {IncomingShareResponse, TagSource} from '@/lib/types'
+import {cn, formatBytes, formatDateTime, TagPath} from '@/lib/utils'
+import type {IncomingShareResponse, PictureDetail, TagSource} from '@/lib/types'
 
-function formatBytes(bytes: number | null): string {
-    if (!bytes) return '—'
-    const units = ['B', 'KB', 'MB', 'GB']
-    let n = bytes
-    let i = 0
-    while (n >= 1024 && i < units.length - 1) {
-        n /= 1024
-        i++
-    }
-    return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`
-}
-
-function formatDate(iso: string | null): string {
-    if (!iso) return '—'
-    const d = new Date(iso)
-    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function decodeLabel(label: string): string {
     return label.replace(/_AT_/g, '@').replace(/_DOT_/g, '.')
 }
 
-/** Resolve a `SharedToMe.<sender_AT_inst>.…` tag to its incoming share id. */
+/** Format a decoded `alice@ex.com` handle as `@alice:ex.com`. */
+function formatHandle(handle: string): string {
+    const [username, ...rest] = handle.split('@')
+    return rest.length ? `@${username}:${rest.join('@')}` : `@${handle}`
+}
+
+/** Decompose a `SharedToMe.<handle>.<sub.path>` tag into its sender + shared subpath. */
+function parseSharedTag(wire: string): { handle: string; subpath: string } {
+    const seg = wire.split('.')
+    return {
+        handle: seg[1] ? formatHandle(decodeLabel(seg[1])) : 'Unknown',
+        subpath: seg.length > 2 ? TagPath.toDisplay(seg.slice(2).join('.')) : '/',
+    }
+}
+
 function incomingShareIdForTag(wire: string, shares: IncomingShareResponse[]): string | null {
     const seg = wire.split('.')
     if (seg[0] !== 'SharedToMe' || !seg[1]) return null
     const handle = decodeLabel(seg[1])
     return shares.find((s) => `${s.sender_username}@${s.sender_instance}` === handle)?.id ?? null
-}
-
-function InfoRow({label, value}: { label: string; value: string }) {
-    return (
-        <div className="flex items-baseline justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="truncate text-right">{value}</span>
-        </div>
-    )
 }
 
 const SOURCE_LABEL: Record<TagSource, string> = {
@@ -68,103 +60,113 @@ const SOURCE_LABEL: Record<TagSource, string> = {
     incoming_share: 'share',
 }
 
-function TagChips({
-                      tags,
-                      onRemove,
-                      onAdd,
-                      onTagClick,
-                  }: {
+/** Per-source accent colour for the small provenance tags. */
+const SOURCE_COLOR: Record<TagSource, string> = {
+    manual: 'bg-blue-500/15 text-blue-400',
+    rule: 'bg-emerald-500/15 text-emerald-400',
+    segment: 'bg-violet-500/15 text-violet-400',
+    share_mapping: 'bg-amber-500/15 text-amber-400',
+    incoming_share: 'bg-sky-500/15 text-sky-400',
+}
+
+// ── Tag components ────────────────────────────────────────────────────────────
+
+function TagChip({wire, onRemove, onTagClick}: { wire: string; onRemove?: () => void; onTagClick: () => void }) {
+    return (
+        <Badge variant="secondary" className="min-w-0 max-w-full gap-1 font-normal">
+            <button onClick={onTagClick} className="truncate hover:text-primary" title={TagPath.toDisplay(wire)}>
+                {TagPath.toDisplay(wire)}
+            </button>
+            {onRemove && (
+                <button onClick={onRemove} aria-label={`Remove ${wire}`} className="ml-0.5 shrink-0">
+                    <X className="h-3 w-3"/>
+                </button>
+            )}
+        </Badge>
+    )
+}
+
+function TagChips({tags, onRemove, onTagClick}: {
     tags: string[]
     onRemove: (wire: string) => void
-    onAdd: (wire: string) => void
     onTagClick: (wire: string) => void
 }) {
+    if (tags.length === 0) return <span className="text-xs text-muted-foreground">No tags.</span>
     return (
-        <div className="space-y-2">
-            <div className="flex flex-wrap gap-1.5">
-                {tags.length > 0 ? (
-                    tags.map((t) => (
-                        <Badge key={t} variant="secondary" className="gap-1 font-normal">
-                            <button onClick={() => onTagClick(t)} className="hover:text-primary">
-                                {TagPath.toDisplay(t)}
-                            </button>
-                            <button onClick={() => onRemove(t)} aria-label={`Remove ${t}`} className="ml-0.5">
-                                <X className="h-3 w-3"/>
-                            </button>
-                        </Badge>
-                    ))
-                ) : (
-                    <span className="text-xs text-muted-foreground">No tags.</span>
-                )}
-            </div>
-            <TagPicker onSelect={onAdd} excludePaths={tags}/>
+        <div className="flex flex-wrap gap-1.5">
+            {tags.map((t) => (
+                <TagChip key={t} wire={t} onRemove={() => onRemove(t)} onTagClick={() => onTagClick(t)}/>
+            ))}
         </div>
     )
 }
 
-function TagProvenanceTable({
-                                rows,
-                                onRemove,
-                                onAdd,
-                                onTagClick,
-                                onSourceClick,
-                                excludePaths,
-                            }: {
+function TagProvenanceTable({rows, onRemove, onTagClick, onSourceClick}: {
     rows: Array<{ path: string; sources: Array<{ source: TagSource; source_id: string | null }> }>
     onRemove: (wire: string) => void
-    onAdd: (wire: string) => void
     onTagClick: (wire: string) => void
     onSourceClick: (source: TagSource, sourceId: string | null) => void
-    excludePaths: string[]
 }) {
+    if (rows.length === 0) return <span className="text-xs text-muted-foreground">No tags.</span>
     return (
-        <div className="space-y-2">
-            <div className="space-y-1">
-                {rows.length > 0 ? (
-                    rows.map((row) => {
-                        const removable = row.sources.some((s) => s.source === 'manual')
-                        return (
-                            <div key={row.path} className="flex items-center justify-between gap-2 text-sm">
-                                <button onClick={() => onTagClick(row.path)} className="truncate text-left hover:text-primary">
-                                    {TagPath.toDisplay(row.path)}
-                                </button>
-                                <div className="flex shrink-0 items-center gap-1">
-                                    {row.sources.map((s, i) => {
-                                        const clickable = !!s.source_id && s.source !== 'manual'
-                                        return (
-                                            <button
-                                                key={`${s.source}-${s.source_id ?? i}`}
-                                                onClick={() => clickable && onSourceClick(s.source, s.source_id)}
-                                                disabled={!clickable}
-                                                className="rounded bg-muted px-1 text-[10px] leading-4 text-muted-foreground enabled:hover:text-foreground"
-                                                title={clickable ? 'View source' : undefined}
-                                            >
-                                                {SOURCE_LABEL[s.source]}
-                                            </button>
-                                        )
-                                    })}
-                                    {removable && (
-                                        <button onClick={() => onRemove(row.path)} aria-label={`Remove ${row.path}`}>
-                                            <X className="h-3 w-3 text-muted-foreground hover:text-foreground"/>
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        )
-                    })
-                ) : (
-                    <span className="text-xs text-muted-foreground">No tags.</span>
-                )}
-            </div>
-            <TagPicker onSelect={onAdd} excludePaths={excludePaths}/>
+        <div className="space-y-1.5">
+            {rows.map((row) => {
+                const removable = row.sources.some((s) => s.source === 'manual')
+                return (
+                    <div key={row.path} className="flex items-center justify-between gap-2">
+                        <TagChip
+                            wire={row.path}
+                            onRemove={removable ? () => onRemove(row.path) : undefined}
+                            onTagClick={() => onTagClick(row.path)}
+                        />
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                            {row.sources.map((s, i) => {
+                                const clickable = !!s.source_id && s.source !== 'manual'
+                                return (
+                                    <button
+                                        key={`${s.source}-${s.source_id ?? i}`}
+                                        onClick={() => clickable && onSourceClick(s.source, s.source_id)}
+                                        disabled={!clickable}
+                                        className={cn(
+                                            'rounded px-1 text-[10px] font-medium leading-4',
+                                            SOURCE_COLOR[s.source],
+                                            clickable && 'hover:brightness-125',
+                                        )}
+                                        title={clickable ? 'View source' : undefined}
+                                    >
+                                        {SOURCE_LABEL[s.source]}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )
+            })}
         </div>
     )
 }
 
+// ── Single picture ────────────────────────────────────────────────────────────
+
 function SinglePicture({id}: { id: string }) {
+    const {data: picture, isPending} = useQuery({
+        queryKey: queryKeys.picture(id),
+        queryFn: () => getPicture(id),
+    })
+
+    if (isPending || !picture) {
+        return <div className="mx-3 mt-3 h-40 animate-pulse rounded-md bg-muted"/>
+    }
+    return <PictureBody id={id} picture={picture}/>
+}
+
+function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const navigate = useNavigate()
+    const [, setSp] = useSearchParams()
     const {update} = useGalleryParams()
-    const {data: picture, isPending} = useQuery({queryKey: queryKeys.picture(id), queryFn: () => getPicture(id)})
+
+    const exif = useExifDraft(picture)
+
     const {data: preview} = useQuery({
         queryKey: ['pictures', 'url', id, 'medium'],
         queryFn: () => getPictureUrl(id, 'medium'),
@@ -176,6 +178,13 @@ function SinglePicture({id}: { id: string }) {
 
     const tagProvenance = useUIStore((s) => s.tagProvenance)
     const toggleTagProvenance = useUIStore((s) => s.toggleTagProvenance)
+    const setLeftOpen = useUIStore((s) => s.setLeftOpen)
+    const toggleMobileDrawer = useUIStore((s) => s.toggleMobileDrawer)
+    const isMobile = useIsMobile()
+
+    // Surface the left panel for a cross-link: dock it open on desktop, or switch the
+    // mobile overlay from this (right) drawer to the left one.
+    const revealLeftPanel = () => (isMobile ? toggleMobileDrawer('left') : setLeftOpen(true))
 
     const {data: provenance} = useQuery({
         queryKey: ['tags', 'detail', id, 'sources'],
@@ -184,25 +193,40 @@ function SinglePicture({id}: { id: string }) {
     })
 
     const batch = useBatchEditTags()
-    const add = (wire: string) =>
+    const addTag = (wire: string) =>
         batch.mutate(
             {picture_ids: [id], add_tags: [wire]},
             {onError: (e) => toast.error('Could not add tag', {description: apiErrorMessage(e)})},
         )
-    const remove = (wire: string) =>
+    const removeTag = (wire: string) =>
         batch.mutate(
             {picture_ids: [id], remove_tags: [wire]},
             {onError: (e) => toast.error('Could not remove tag', {description: apiErrorMessage(e)})},
         )
 
-    const onTagClick = (wire: string) => update({tag: wire})
+    // Clicking a tag filters by it and reveals it in the Tags tree (opens the left panel + tab).
+    const onTagClick = (wire: string) => {
+        revealLeftPanel()
+        update({tag: wire, panel: 'tags'})
+    }
     const onSourceClick = (source: TagSource, sourceId: string | null) => {
         if (!sourceId) return
-        if (source === 'incoming_share') update({panel: 'incoming', share: sourceId})
-        else if (source !== 'manual') navigate(`/tagging/${sourceId}`)
+        if (source === 'incoming_share') {
+            revealLeftPanel()
+            update({panel: 'incoming', share: sourceId})
+        } else if (source !== 'manual') navigate(`/tagging/${sourceId}`)
     }
-    const onSharedTagClick = (wire: string) =>
+    const onSharedTagClick = (wire: string) => {
+        revealLeftPanel()
         update({tag: wire, panel: 'incoming', share: incomingShareIdForTag(wire, incoming ?? [])})
+    }
+
+    const openLightbox = () =>
+        setSp((prev) => {
+            const next = new URLSearchParams(prev)
+            next.set('view', id)
+            return next
+        })
 
     const tags = plainTags ?? []
     const regularTags = useMemo(() => tags.filter((t) => !TagPath.isProtected(t)), [tags])
@@ -218,88 +242,149 @@ function SinglePicture({id}: { id: string }) {
         [provenance],
     )
 
-    if (isPending || !picture) {
-        return <div className="h-40 animate-pulse rounded-md bg-muted"/>
-    }
-
     const owned = picture.owner_username == null
 
-    const exifRows: Array<[string, string]> = []
-    if (picture.orientation != null) exifRows.push(['Orientation', String(picture.orientation)])
-    if (picture.gps_lat != null && picture.gps_lng != null)
-        exifRows.push(['GPS', `${picture.gps_lat.toFixed(5)}, ${picture.gps_lng.toFixed(5)}`])
-    if (picture.gps_alt != null) exifRows.push(['Altitude', `${picture.gps_alt} m`])
-    for (const [k, v] of Object.entries(picture.exif_data ?? {})) {
-        if (v == null || typeof v === 'object') continue
-        exifRows.push([k, String(v)])
-    }
+    // Live orientation: the served thumbnail is raw pixels, so rotate by the current
+    // (draft) orientation. Rotate buttons update the draft and auto-commit after a debounce.
+    const draftOrientation = exif.draft.orientation ? Number(exif.draft.orientation) : 1
+    const dispDims = displayDimensions(picture.width, picture.height, draftOrientation)
 
     return (
         <div>
-            <div className="overflow-hidden rounded-md bg-muted">
+            {/* Thumbnail — borderless, full width, click opens lightbox */}
+            <div
+                className="group relative w-full cursor-pointer overflow-hidden bg-muted"
+                onClick={openLightbox}
+                title="Open full screen"
+            >
                 {preview ? (
-                    <img src={preview.url} alt={picture.filename ?? ''} className="max-h-56 w-full object-contain"/>
+                    <OrientedContainImage
+                        src={preview.url}
+                        alt={picture.filename ?? ''}
+                        orientation={draftOrientation}
+                        width={picture.width}
+                        height={picture.height}
+                        maxHeight={208}
+                    />
                 ) : (
-                    <div className="flex h-32 items-center justify-center text-muted-foreground">
+                    <div className="flex h-40 items-center justify-center text-muted-foreground">
                         <ImageIcon className="h-8 w-8"/>
+                    </div>
+                )}
+
+                {/* Owner label for received pictures — overlaid on the preview. */}
+                {picture.owner_username && (
+                    <span className="absolute bottom-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                        @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
+                    </span>
+                )}
+
+                {/* Rotate overlays (owned pictures only) */}
+                {owned && (
+                    <div className="absolute bottom-2 right-2 flex gap-1 opacity-40 transition-opacity group-hover:opacity-100">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                exif.rotate('ccw')
+                            }}
+                            title="Rotate left"
+                            className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                        >
+                            <RotateCcw className="h-4 w-4"/>
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                exif.rotate('cw')
+                            }}
+                            title="Rotate right"
+                            className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                        >
+                            <RotateCw className="h-4 w-4"/>
+                        </button>
                     </div>
                 )}
             </div>
 
-            <div className="mt-3">
+            {/* Picture info */}
+            <div className="px-3 pt-2 pb-1">
                 <p className="truncate text-sm font-medium" title={picture.filename ?? undefined}>
                     {picture.filename ?? 'Untitled'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                    {formatBytes(picture.file_size)}
-                    {picture.width && picture.height ? ` · ${picture.width} × ${picture.height}` : ''}
+                    {[
+                        formatBytes(picture.file_size),
+                        dispDims.width && dispDims.height ? `${dispDims.width} × ${dispDims.height}` : null,
+                        picture.mime_type,
+                    ]
+                        .filter(Boolean)
+                        .join(' · ')}
                 </p>
             </div>
 
-            <div className="mt-2">
+            {/* Timestamps above tags */}
+            <div className="flex flex-col gap-0.5 px-3 pb-2 text-xs text-muted-foreground">
+                <span>Added {formatDateTime(picture.ingested_at)}</span>
+                <span>Edited {formatDateTime(picture.updated_at)}</span>
+            </div>
+
+            {/* Sections */}
+            <div className="px-3">
                 <Section
                     id="tags"
                     title="Tags"
                     count={regularTags.length}
                     action={
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={toggleTagProvenance}
-                            title={tagProvenance ? 'Show as list' : 'Show provenance'}
-                        >
-                            {tagProvenance ? <List className="h-3.5 w-3.5"/> : <Table2 className="h-3.5 w-3.5"/>}
-                        </Button>
+                        <div className="flex items-center gap-0.5">
+                            <TagPicker
+                                onSelect={addTag}
+                                excludePaths={regularTags}
+                                trigger={
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Add tag">
+                                        <Plus className="h-3.5 w-3.5"/>
+                                    </Button>
+                                }
+                            />
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={toggleTagProvenance}
+                                title={tagProvenance ? 'Show as list' : 'Show provenance'}
+                            >
+                                {tagProvenance ? <List className="h-3.5 w-3.5"/> : <Table2 className="h-3.5 w-3.5"/>}
+                            </Button>
+                        </div>
                     }
                 >
                     {tagProvenance ? (
                         <TagProvenanceTable
                             rows={provenanceRows}
-                            onRemove={remove}
-                            onAdd={add}
+                            onRemove={removeTag}
                             onTagClick={onTagClick}
                             onSourceClick={onSourceClick}
-                            excludePaths={regularTags}
                         />
                     ) : (
-                        <TagChips tags={regularTags} onRemove={remove} onAdd={add} onTagClick={onTagClick}/>
+                        <TagChips tags={regularTags} onRemove={removeTag} onTagClick={onTagClick}/>
                     )}
                 </Section>
 
                 {sharedToMeTags.length > 0 && (
                     <Section id="shared-with-you" title="Shared with you" count={sharedToMeTags.length} defaultOpen={false}>
-                        <div className="space-y-1">
-                            {sharedToMeTags.map((t) => (
-                                <button
-                                    key={t}
-                                    onClick={() => onSharedTagClick(t)}
-                                    className="block w-full truncate text-left text-xs text-muted-foreground hover:text-primary"
-                                    title={TagPath.toDisplay(t)}
-                                >
-                                    {TagPath.toDisplay(t)}
-                                </button>
-                            ))}
+                        <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                            {sharedToMeTags.map((t) => {
+                                const {handle, subpath} = parseSharedTag(t)
+                                return (
+                                    <button
+                                        key={t}
+                                        onClick={() => onSharedTagClick(t)}
+                                        className="flex w-full flex-col gap-0.5 rounded-md border border-border px-2 py-1.5 text-left transition-colors hover:border-primary/50"
+                                    >
+                                        <span className="truncate text-xs font-medium" title={handle}>{handle}</span>
+                                        <span className="truncate text-[11px] text-muted-foreground" title={subpath}>{subpath}</span>
+                                    </button>
+                                )
+                            })}
                         </div>
                     </Section>
                 )}
@@ -310,66 +395,31 @@ function SinglePicture({id}: { id: string }) {
                             {relatedShares.map((s) => (
                                 <button
                                     key={s.id}
-                                    onClick={() => update({tag: s.tag_path, panel: 'outgoing'})}
+                                    onClick={() => {
+                                        revealLeftPanel()
+                                        update({tag: s.tag_path, panel: 'outgoing'})
+                                    }}
                                     className="flex w-full items-center justify-between gap-2 text-xs hover:text-primary"
                                 >
-                  <span className="min-w-0 truncate">
-                    → @{s.recipient_username}:{s.recipient_instance}
-                  </span>
+                                    <span className="min-w-0 truncate">→ @{s.recipient_username}:{s.recipient_instance}</span>
                                     <ShareStatusBadge status={s.status}/>
                                 </button>
                             ))}
-            </div>
+                        </div>
                     </Section>
                 )}
 
-                <Section id="details" title="Details">
-                    <div className="space-y-1.5">
-                        <InfoRow
-                            label="Dimensions"
-                            value={picture.width && picture.height ? `${picture.width} × ${picture.height}` : '—'}
-                        />
-                        <InfoRow label="Size" value={formatBytes(picture.file_size)}/>
-                        <InfoRow label="Type" value={picture.mime_type ?? '—'}/>
-                        <InfoRow label="Taken" value={formatDate(picture.captured_at)}/>
-                        <InfoRow label="Added" value={formatDate(picture.ingested_at)}/>
-                        {picture.owner_username && (
-                            <InfoRow label="Owner" value={`@${picture.owner_username}:${picture.owner_instance_domain ?? '?'}`}/>
-                        )}
-                        <InfoRow label="EXIF sync" value={picture.exif_sync_status}/>
-                    </div>
-                </Section>
-
-                <Section
-                    id="exif"
-                    title="EXIF"
-                    defaultOpen={false}
-                    action={
-                        owned ? (
-                            <ExifEditDialog picture={picture}/>
-                        ) : (
-                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled title="Received pictures can't be edited">
-                                <Pencil className="h-3.5 w-3.5"/>
-                            </Button>
-                        )
-                    }
-                >
-                    {exifRows.length > 0 ? (
-                        <div className="space-y-1.5">
-                            {exifRows.map(([k, v]) => (
-                                <InfoRow key={k} label={k} value={v}/>
-                            ))}
-                        </div>
-                    ) : (
-                        <span className="text-xs text-muted-foreground">No EXIF data.</span>
-                    )}
-                </Section>
+                {/* EXIF section with inline editing */}
+                <ExifInlineEditor picture={picture} exif={exif}/>
 
                 <Section id="versions" title="Versions" count={picture.versions.length} defaultOpen={false}>
                     {picture.versions.length > 0 ? (
                         <div className="space-y-1.5">
                             {picture.versions.map((v) => (
-                                <InfoRow key={v.id} label={`v${v.version_number}`} value={formatDate(v.created_at)}/>
+                                <div key={v.id} className="flex items-baseline justify-between gap-2 text-sm">
+                                    <span className="text-muted-foreground">v{v.version_number}</span>
+                                    <span>{formatDateTime(v.created_at)}</span>
+                                </div>
                             ))}
                         </div>
                     ) : (
@@ -381,6 +431,8 @@ function SinglePicture({id}: { id: string }) {
     )
 }
 
+// ── Multi-selection ───────────────────────────────────────────────────────────
+
 function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) {
     const batch = useBatchEditTags()
     const add = (wire: string) =>
@@ -390,14 +442,13 @@ function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) 
         )
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-3 px-3 py-2">
             <p className="text-sm">
                 <span className="font-medium">{ids.length}</span> photos selected
             </p>
             <Section id="multi-tags" title="Tag all selected">
                 <TagPicker onSelect={add} triggerLabel="Add tag to all"/>
             </Section>
-            {/* Move-to-trash wires in the deletion milestone. */}
             <Button variant="outline" className="w-full justify-start gap-2 text-destructive" disabled>
                 <Trash2 className="h-4 w-4"/> Move to trash
             </Button>
@@ -408,21 +459,18 @@ function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) 
     )
 }
 
+// ── Panel ─────────────────────────────────────────────────────────────────────
+
 export function SelectionPanel() {
     const selected = useSelectionStore((s) => s.selected)
     const clear = useSelectionStore((s) => s.clear)
 
+    if (selected.length === 0) return null
+
     return (
-        <aside className="w-80 shrink-0 overflow-y-auto border-l border-border bg-card p-4">
-            {selected.length === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-                    <ImageIcon className="h-8 w-8"/>
-                    <p>Select a photo to see its details.</p>
-                    <p className="text-xs">Click to select · ⌘/Ctrl-click to multi-select · Shift-click for a range.</p>
-                </div>
-            )}
+        <div className="h-full overflow-y-auto">
             {selected.length === 1 && <SinglePicture id={selected[0]}/>}
             {selected.length > 1 && <MultiSelection ids={selected} onClear={clear}/>}
-        </aside>
+        </div>
     )
 }

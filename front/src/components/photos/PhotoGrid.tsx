@@ -33,6 +33,7 @@ export function PhotoGrid() {
         e.stopPropagation()
         if (e.metaKey || e.ctrlKey) toggle(id)
         else if (e.shiftKey) selectTo(id, orderedIds)
+        else if (selected.length === 1 && selected[0] === id) clear()
         else select(id)
     }
 
@@ -60,7 +61,7 @@ export function PhotoGrid() {
                 {Array.from({length: 18}).map((_, i) => (
                     <div
                         key={i}
-                        className="animate-pulse rounded-md bg-muted"
+                        className="animate-pulse rounded-[3px] bg-muted"
                         style={{height: rowHeight, flexBasis: `${rowHeight * 1.4}px`, flexGrow: rowHeight * 1.4}}
                     />
                 ))}
