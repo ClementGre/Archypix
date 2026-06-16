@@ -34,7 +34,12 @@
 - [x] **Admin endpoints** — user list/suspend/delete, job status, instance metrics.
 - [ ] **Full frontend** — v1 of a user-friendly frontend, with super simple code for a MvP, but with a realistic user experience that could give an
   idea of what the final front could look like.
-- [ ] **Hierarchies** — CRUD operations for managing hierarchies.
+- [x] **Hierarchies** — node-tree `config` model (mirror/query/static), pure validation, and the read
+  resolver (`build_tree` + most-specific-wins per-directory `TagPredicate`); CRUD + `tree`/`browse`
+  navigation endpoints; generalised `list_pictures` tag predicate plus flat `include_tags`/
+  `exclude_tags`/`match`/`untagged` on `GET /pictures`. Write-back is modelled (op-lists, compliance,
+  `safeDeleteMode`) so the schema is write-ready, but the **write endpoints ship with WebDAV**. See
+  `doc/features/05_hierarchies.md`.
 - [ ] **WebDAV** — virtual directory tree over tags; full-res/thumbnail reads via presigned redirect or back proxy; staging-pattern writes; versioning
   on overwrite. Use `pictures.file_hash` as the WebDAV ETag.
   Two things from the specs have no roadmap item:

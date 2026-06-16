@@ -419,12 +419,14 @@ CREATE TABLE hierarchies
     -- Hierarchy name
     name       VARCHAR(255) NOT NULL,
 
-    -- Configuration as JSONB (simpler than multiple tables)
+    -- Configuration as JSONB: an ordered node tree mapping the tag graph to a directory tree.
+    -- See doc/features/05_hierarchies.md §4 for the full schema.
     config     JSONB        NOT NULL DEFAULT '{
-      "roots": [],
-      "collapsedTags": [],
-      "disabledTags": [],
-      "safeDeleteMode": "singleBranch"
+      "version": 1,
+      "safeDeleteMode": "singleBranch",
+      "naming": "original",
+      "writeBack": true,
+      "nodes": []
     }',
 
     -- Status
@@ -439,17 +441,29 @@ CREATE TABLE hierarchies
 );
 
 CREATE INDEX idx_hierarchies_owner ON hierarchies (owner_id);
-CREATE INDEX idx_hierarchies_config ON hierarchies USING GIN (config);
 
--- Config JSONB structure:
+-- Config JSONB structure (node tree — see doc/features/05_hierarchies.md §4):
 -- {
---   "roots": [
---     {"path": "Photos", "keepDir": false},
---     {"path": "Images", "keepDir": true}
---   ],
---   "collapsedTags": ["Photos.Travel.Alps.Hiking"],
---   "disabledTags": ["Photos.Outdoor"],
---   "safeDeleteMode": "singleBranch" | "fullDelete"
+--   "version": 1,
+--   "safeDeleteMode": "singleBranch" | "fullDelete",
+--   "naming": "original" | "date" | "id",
+--   "writeBack": true,                         -- master read-only switch
+--   "nodes": [                                 -- ordered tree of directory nodes
+--     {
+--       "id": "n_photos", "kind": "mirror", "name": "Photos",
+--       "tagRoot": "Photos", "keepDir": false,
+--       "collapsed": ["Photos.Travel.Alps.Hiking"],
+--       "exclude": ["Photos.Outdoor"]
+--     },
+--     {
+--       "id": "n_fav", "kind": "query", "name": "Favorites",
+--       "match": "all", "include": ["Starred"], "exclude": [], "matchUntagged": false,
+--       "writeBack": { "onAdd": [{"op": "assign", "path": "Starred"}],
+--                      "onRemove": [{"op": "remove", "path": "Starred"}] },
+--       "children": []
+--     },
+--     { "id": "n_albums", "kind": "static", "name": "Albums", "children": [] }
+--   ]
 -- }
 
 -- ============================================================================
@@ -679,7 +693,7 @@ COMMENT ON TABLE tagging_services IS 'Base table for tagging service pipeline; s
 COMMENT ON TABLE shared_tag_mapping_services IS 'Maps incoming shares to local tags';
 COMMENT ON TABLE rule_tagging_services IS 'Assigns tags based on EXIF/metadata predicates';
 COMMENT ON TABLE segmentation_tagging_services IS 'Assigns tags based on date ranges with subsegment support';
-COMMENT ON TABLE hierarchies IS 'WebDAV filesystem mappings; config JSONB stores roots, collapsedTags, disabledTags, safeDeleteMode';
+COMMENT ON TABLE hierarchies IS 'Tag-graph → directory-tree mappings; config JSONB stores an ordered node tree (mirror/query/static), safeDeleteMode, naming, writeBack — see doc/features/05_hierarchies.md §4';
 COMMENT ON TABLE jobs IS 'Async processing queue; config JSONB holds job-specific params (may include picture IDs)';
 COMMENT ON TABLE federation_messages IS 'Federation message log; payload JSONB holds message data (may include picture IDs)';
 

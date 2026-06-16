@@ -1,4 +1,5 @@
 mod auth;
+mod hierarchies;
 mod jobs;
 mod pictures;
 mod settings;
@@ -103,4 +104,16 @@ pub fn authenticated_routes() -> Router<AppState> {
             "/tagging-services/{id}/segments/{segment_id}",
             delete(tagging_services::delete_segment),
         )
+        .route(
+            "/hierarchies",
+            get(hierarchies::list).post(hierarchies::create),
+        )
+        .route(
+            "/hierarchies/{id}",
+            get(hierarchies::get)
+                .patch(hierarchies::update)
+                .delete(hierarchies::delete),
+        )
+        .route("/hierarchies/{id}/tree", get(hierarchies::tree))
+        .route("/hierarchies/{id}/browse", get(hierarchies::browse))
 }

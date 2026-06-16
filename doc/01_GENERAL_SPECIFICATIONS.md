@@ -136,27 +136,52 @@ Service lifecycle interacts with removal explicitly:
 
 ## 4. Hierarchies (Bidirectional WebDAV)
 
-A Hierarchy maps a filtered view of the tag graph to a filesystem tree, exposed as a WebDAV endpoint. It is bidirectional: reads render pictures into
-directory paths; writes translate back into tag mutations.
+A Hierarchy maps a filtered view of the tag graph to a filesystem tree, consumed by two front-ends:
+the webapp navigation and (later) WebDAV. It is bidirectional: reads render pictures into directory
+paths; writes translate back into tag mutations. It stores **no pictures** — every directory resolves
+to a tag-set predicate, so membership, counts, and listings are always derived live.
 
+The `config` is an ordered tree of **nodes**, each rendering to a directory. Three kinds:
+
+- **`mirror`** — dynamically expands the live tag subtree under `tagRoot`. `keepDir` keeps the
+  `tagRoot` label as a directory level; `collapsed` subtrees roll their pictures up to the nearest
+  enabled ancestor; `exclude` subtrees are removed entirely (pictures + directories).
+- **`query`** — an explicit tag predicate; may nest. Effective predicate = own ∧ all ancestors.
+  `match: all | any` combines a flat `include` list; `exclude` rejects; `matchUntagged` selects
+  pictures with no stored tag of any source. A node is writable iff it declares a `writeBack` op-list.
+- **`static`** — a pure container (no predicate, no direct pictures).
+
+```jsonc
+{
+  "version": 1,
+  "safeDeleteMode": "singleBranch",   // singleBranch | fullDelete
+  "naming": "original",               // original | date | id
+  "writeBack": true,                  // master switch; false ⇒ entire hierarchy read-only
+  "nodes": [
+    { "id": "n_photos", "kind": "mirror", "name": "Photos", "tagRoot": "Photos",
+      "keepDir": false,
+      "collapsed": ["Photos.Travel.Alps.Hiking"],
+      "exclude":   ["Photos.Outdoor"] },
+    { "id": "n_fav", "kind": "query", "name": "Favorites", "match": "all",
+      "include": ["Starred"],
+      "writeBack": { "onAdd": [{"op":"assign","path":"Starred"}],
+                     "onRemove": [{"op":"remove","path":"Starred"}] } }
+  ]
+}
 ```
-Hierarchy:
-  id: h-001
-  name: "Photos"
-  roots:  # only tags under these prefixes are shown; prefix itself is not a directory if keepDir is false
-    - {path: /Photos, keepDir: false}
-  collapsedTags:            # these subtrees are collapsed; pictures bubble up to nearest enabled ancestor
-    - /Photos/Travel/Alps/Hiking
-  disabledTags:             # these subtrees are disabled; pictures are excluded from the tree
-    - /Photos/Outdoor
-  safeDeleteMode: singleBranch  # singleBranch | fullDelete
-```
+
+The full data model, validation, read resolver, and write-back semantics are specified in
+`doc/features/05_hierarchies.md`. The CRUD + read resolver (navigable `tree`/`browse` endpoints) are
+implemented; the **write endpoints ship with WebDAV**.
 
 ### 4.1 Read
 
-Each tag node under `roots` (excluding `disabledTags` and `collapsedTags` subtrees) becomes a directory. Pictures appear under their tag's directory.
-A picture with stored tag `/Photos/Travel/Alps` appears in the `/Travel/Alps` or  `/Photos/Travel/Alps` if `keepDir` is `true`.   
-Pictures under collapsed tags surface in the nearest enabled ancestor directory instead of disappearing.
+Each node renders to a directory; a `mirror` node expands into a subtree of directories from the live
+tag paths under `tagRoot`. A picture is a **direct file** of directory `D` iff it matches `D` and
+matches **none** of `D`'s visible children ("most-specific node wins") — no parent/child duplication.
+A picture with stored tag `/Photos/Travel/Alps` appears in `/Travel/Alps` (or `/Photos/Travel/Alps`
+if `keepDir` is `true`). Pictures under collapsed tags surface in the nearest enabled ancestor
+directory instead of disappearing; pictures under excluded subtrees disappear.
 
 ### 4.2 Write semantics
 

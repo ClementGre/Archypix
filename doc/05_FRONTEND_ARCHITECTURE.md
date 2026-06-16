@@ -55,10 +55,8 @@ There is **no `VITE_API_BASE_URL`**. Flow:
    from the auth store **at request time**, so every call targets the right instance. The response interceptor does a **single-flight refresh** on 401
    (dedup'd across concurrent 401s); if refresh fails it clears the session and `ProtectedRoute` redirects to `/login`.
 4. **Registration** (`api/auth.ts` → `register`) is auto-detecting: it tries the resolver `POST {global}/api/register`; on a 404 (a standalone backend
-   has
-   no such route) it falls back to `POST {global}/api/public/users`. `VITE_REGISTRATION_MODE` (`auto`|`resolver`|`standalone`) and
-   `VITE_REGISTRATION_URL`
-   override this.
+   has no such route) it falls back to `POST {global}/api/public/users`. `VITE_REGISTRATION_MODE` (`auto`|`resolver`|`standalone`) and
+   `VITE_REGISTRATION_URL` override this.
 
 **Env** (`.env`, all `VITE_`-prefixed, documented in `.env.example`): `VITE_GLOBAL_DOMAIN`, `VITE_USE_HTTPS`, `VITE_REGISTRATION_MODE`,
 `VITE_REGISTRATION_URL`. Resolved in `lib/constants.ts` (`GLOBAL_DOMAIN`, `USE_HTTPS`, `SCHEME`, `originFor(domain)`). Cross-instance picture fetching
@@ -111,18 +109,21 @@ right panel.
 The gallery view lives entirely in the URL so it is shareable and back/forward-friendly. `useGalleryParams()` returns typed `params`, derived
 `filters` (for `usePictures`), and `update(patch, { replace })`. Params (defaults are **omitted** from the URL):
 
-| Param              | Meaning                                                              |
-|--------------------|----------------------------------------------------------------------|
-| `q`                | filename search (client-side filter — see §9)                        |
-| `tag`              | active tag filter (wire form)                                        |
-| `scope`            | `all` \| `owned` \| `shared`                                         |
-| `deleted`          | include trashed (`1`)                                                |
-| `sort`             | `ingested_at` \| `captured_at` \| `updated_at`                       |
-| `order`            | `asc` \| `desc`                                                      |
-| `after` / `before` | capture-date bounds (ISO)                                            |
-| `panel`            | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies` |
-| `share`            | incoming share id to highlight (cross-link target)                   |
-| `view`             | open the Lightbox on this picture id (set by `PhotoGrid`)            |
+| Param              | Meaning                                                                              |
+|--------------------|--------------------------------------------------------------------------------------|
+| `q`                | filename search (client-side filter — see §9)                                        |
+| `tag`              | active tag filter (wire form)                                                        |
+| `scope`            | `all` \| `owned` \| `shared`                                                         |
+| `deleted`          | include trashed (`1`)                                                                |
+| `sort`             | `ingested_at` \| `captured_at` \| `updated_at`                                       |
+| `order`            | `asc` \| `desc`                                                                      |
+| `after` / `before` | capture-date bounds (ISO)                                                            |
+| `panel`            | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                 |
+| `share`            | incoming share id to highlight (cross-link target)                                   |
+| `hierarchy`        | active hierarchy id — center grid browses it (via `browse`) instead of the flat list |
+| `hpath`            | directory path within the active hierarchy (slash-separated names, `''` = root)      |
+| `hedit`            | hierarchy id whose config editor occupies the center view (overrides the grid)       |
+| `view`             | open the Lightbox on this picture id (set by `PhotoGrid`)                            |
 
 ---
 
@@ -131,14 +132,15 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 One file per domain under `src/api/` (typed axios wrappers using `apiClient`), with matching hooks under `src/hooks/` (TanStack Query). Types live in
 `src/lib/types.ts`; query keys are centralized in `src/lib/constants.ts` (`queryKeys`).
 
-| Domain   | `api/*`                                                                                                          | `hooks/*`                                                                                   |
-|----------|------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| auth     | `auth.ts` — `login, logout, register, fetchMe`                                                                   | (imperative; not query-backed)                                                              |
-| pictures | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob, beginUploadBatch, completeUpload` | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`       |
-| tags     | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                            | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                  |
-| shares   | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                         | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings` |
-| tagging  | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                            | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`         |
-| settings | `settings.ts` — `getSettings, updateSettings, updateProfile`                                                     | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                          |
+| Domain      | `api/*`                                                                                                          | `hooks/*`                                                                                                      |
+|-------------|------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                   | (imperative; not query-backed)                                                                                 |
+| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob, beginUploadBatch, completeUpload` | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`                          |
+| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                            | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                     |
+| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                         | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                    |
+| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                            | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                            |
+| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`                                                  | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations` |
+| settings    | `settings.ts` — `getSettings, updateSettings, updateProfile`                                                     | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                             |
 
 `apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` backs the search box.
 
@@ -205,6 +207,18 @@ single local-tag mapping per share via `useShareMappings`), `OutgoingSharesList`
 rest
 **grouped by tag**, per-recipient status + confirm-revoke), `CreateShareDialog`, `ShareStatusBadge`.
 
+**`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back/edit header over the
+directory
+tree), `HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
+center
+grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs), `CreateHierarchyDialog` (name → create empty →
+open editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
+name/enabled/Save/Reset/Delete + a small **Braces** JSON-debug button; hierarchy-level settings — naming, safeDeleteMode, write-back master switch —
+then the node tree; edits a local draft committed on Save via `PATCH`, re-validated server-side), `NodeEditor` (mutually-recursive `NodeListEditor` +
+per-node card; add/remove/reorder of `mirror`/`query`/`static` nodes with their kind-specific fields and an Advanced disclosure for per-node
+naming/safeDeleteMode), `WriteBackEditor` (query-node write-back op-lists with a "suggest from predicate" helper — forward-looking, exercised by
+WebDAV), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed), `JsonConfigDialog` (raw `config` textarea; applies to the draft).
+
 **`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions).
 
 ---
@@ -214,8 +228,12 @@ rest
 `GalleryPage` is a three-pane layout under the unified `TopBar`; each side panel is wrapped in `SidePanel` (resizable on desktop, overlay drawer on
 mobile) and shown only when its `ui` store toggle is on:
 
-- **Left** (`LeftPanel`): tabbed Tags tree / Incoming shares / Outgoing shares / Hierarchies (placeholder).
-- **Center** (`PhotoGrid`): the justified grid; double-click opens the `Lightbox`; click an already-selected photo deselects it.
+- **Left** (`LeftPanel`): tabbed Tags tree / Incoming shares / Outgoing shares / Hierarchies. The **Hierarchies** tab (`HierarchyPanel`) lists the
+  user's hierarchies and, once one is picked, shows its navigable directory tree.
+- **Center** (`PhotoGrid`): the justified grid; double-click opens the `Lightbox`; click an already-selected photo deselects it. When a `hierarchy`
+  is active it browses that directory (via `useHierarchyBrowse`) with a clickable path breadcrumb instead of the flat picture list; when `hedit` is
+  set
+  the `HierarchyEditor` takes over the center (the right selection panel is suppressed while editing).
 - **Right** (`SelectionPanel`): only mounted when a selection exists (returns `null` otherwise — its `SidePanel` wrapper additionally honours the
   `rightSidebarOpen` toggle). For a single selection: borderless thumbnail (click opens lightbox; received pictures get an `@owner:instance` label
   overlaid on the preview), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via

@@ -37,6 +37,7 @@ domain/
   user.rs / user_settings.rs
   picture.rs        # Picture (includes file_hash, file_size), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
+  hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static), validation, TagPredicate
   share.rs          # OutgoingShare, IncomingShare
   federation.rs     # FederationMessage, BackendMapping
   job.rs            # Job (includes claim_token), re-exports from archypix-common
@@ -45,6 +46,8 @@ domain/
 repository/
   user.rs / picture.rs / picture_version.rs / user_settings.rs
   tag.rs          # per-source tag CRUD, service-tag promotion/removal helpers
+  picture.rs      # picture CRUD + list/count; push_filters renders TagPredicate + legacy `tag`
+  hierarchy.rs    # hierarchy CRUD SQL (load/store config JSONB)
   share.rs / auth.rs / job.rs / tagging.rs
   pipeline.rs     # dirty-picture queries, atomic per-source pipeline tag reconcile
 
@@ -57,6 +60,7 @@ clients/
 
 services/
   auth.rs / users.rs / pictures.rs / user_settings.rs / jobs.rs
+  hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration
   shares.rs         # module root re-exporting the submodules below
   shares/
     lifecycle.rs    # create/accept/revoke/reject + cleanup_incoming_share (share state)
@@ -67,7 +71,7 @@ services/
 
 api/
   middleware/auth_user.rs / auth_admin.rs / auth_resolver.rs / auth_federation.rs / auth_worker.rs
-  user/auth.rs / users.rs / pictures.rs / settings.rs / shares.rs / tags.rs / jobs.rs / tagging_services.rs
+  user/auth.rs / users.rs / pictures.rs / settings.rs / shares.rs / tags.rs / jobs.rs / tagging_services.rs / hierarchies.rs
   admin/handlers.rs + models.rs
   federation/handlers.rs + models.rs
   resolver/handlers.rs + models.rs
@@ -301,11 +305,11 @@ Auth: User JWT with `is_admin = true`.
 
 **Pictures — list & details**
 
-| Method | Path                                   | Description                                                                                                                                                                     |
-|--------|----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `GET`  | `/api/authenticated/pictures`          | Paginated list. Query params: `page`, `page_size`, `sort`, `order`, `tag`, `owned_only`, `shared_with_me`, `include_deleted`, `captured_after`, `captured_before`, `thumbnail`. |
-| `GET`  | `/api/authenticated/pictures/{id}`     | Full picture details + version history.                                                                                                                                         |
-| `GET`  | `/api/authenticated/pictures/{id}/url` | Presigned URL for a variant. Query: `variant=original\|small\|medium\|large`.                                                                                                   |
+| Method | Path                                   | Description                                                                                                                                                                                                                          |
+|--------|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/api/authenticated/pictures`          | Paginated list. Query params: `page`, `page_size`, `sort`, `order`, `tag`, `include_tags`, `exclude_tags`, `match`, `untagged`, `owned_only`, `shared_with_me`, `include_deleted`, `captured_after`, `captured_before`, `thumbnail`. |
+| `GET`  | `/api/authenticated/pictures/{id}`     | Full picture details + version history.                                                                                                                                                                                              |
+| `GET`  | `/api/authenticated/pictures/{id}/url` | Presigned URL for a variant. Query: `variant=original\|small\|medium\|large`.                                                                                                                                                        |
 
 **Pictures — editing**
 
@@ -348,6 +352,22 @@ requests. Allowed label characters are `[A-Za-z0-9_]`.
 | `DELETE` | `/api/authenticated/tagging-services/{id}/rules/{rid}`    | Delete a predicate rule.                                                                                                                     |
 | `POST`   | `/api/authenticated/tagging-services/{id}/segments`       | Add a date-range segment (segmentation only). Body: `{ name, date_start, date_end, assign_tag, parent_segment_id? }`.                        |
 | `DELETE` | `/api/authenticated/tagging-services/{id}/segments/{sid}` | Delete a segment (cascades to child segments).                                                                                               |
+
+**Hierarchies**
+
+A hierarchy maps a filtered view of the tag graph to a directory tree (node-tree `config` JSONB —
+mirror/query/static). It stores no pictures; membership is derived live. Write endpoints ship with
+WebDAV (out of scope here). See `doc/features/05_hierarchies.md`.
+
+| Method   | Path                                         | Description                                                                                                     |
+|----------|----------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| `GET`    | `/api/authenticated/hierarchies`             | List the user's hierarchies (`id`, `name`, `enabled`).                                                          |
+| `POST`   | `/api/authenticated/hierarchies`             | Create. Body: `{ name, config? }`. Validates `config` (§11); stores the normalized form.                        |
+| `GET`    | `/api/authenticated/hierarchies/{id}`        | Get one with full `config`.                                                                                     |
+| `PATCH`  | `/api/authenticated/hierarchies/{id}`        | Update `{ name?, enabled?, config? }`. Re-validates `config`.                                                   |
+| `DELETE` | `/api/authenticated/hierarchies/{id}`        | Delete.                                                                                                         |
+| `GET`    | `/api/authenticated/hierarchies/{id}/tree`   | Directories only. Query: `path` (default root), `depth` (default 1), `counts`.                                  |
+| `GET`    | `/api/authenticated/hierarchies/{id}/browse` | Paginated pictures of one directory. Resolves `path` → `TagPredicate` server-side, then reuses `list_pictures`. |
 
 **Sharing**
 

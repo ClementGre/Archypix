@@ -1,3 +1,4 @@
+use crate::domain::hierarchy::TagPredicate;
 use crate::domain::job::ExifSnapshot;
 use crate::domain::picture::{ExifSyncStatus, Picture};
 use crate::infra::error::{AppError, map_sqlx_error};
@@ -30,6 +31,9 @@ pub struct PictureListFilter {
     pub sort: PictureSortField,
     pub order: SortOrder,
     pub tag: Option<String>,
+    /// Generalised tag-set predicate (hierarchy `browse`, public `include_tags`/`exclude_tags`/
+    /// `match`/`untagged`). Rendered in addition to `tag` (callers set at most one).
+    pub predicate: Option<TagPredicate>,
     pub owned_only: bool,
     pub shared_with_me: bool,
     pub include_deleted: bool,
@@ -423,6 +427,24 @@ impl PictureRepository {
         Ok((items, total))
     }
 
+    /// Count pictures matching `filter` (no pagination). Used by the hierarchy `tree` endpoint's
+    /// per-directory `picture_count` / empty-directory pruning.
+    pub async fn count(
+        db: &PgPool,
+        local_user_id: Uuid,
+        filter: &PictureListFilter,
+    ) -> Result<i64, AppError> {
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*) FROM pictures p WHERE p.local_user_id = ",
+        );
+        q.push_bind(local_user_id);
+        Self::push_filters(&mut q, filter);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
     fn push_filters(q: &mut sqlx::QueryBuilder<Postgres>, filter: &PictureListFilter) {
         if !filter.include_deleted {
             q.push(" AND p.deleted_at IS NULL");
@@ -446,6 +468,60 @@ impl PictureRepository {
             .push_bind(tag.clone())
             .push("::ltree)");
         }
+        if let Some(ref predicate) = filter.predicate {
+            q.push(" AND ");
+            Self::render_predicate(q, predicate);
+        }
+    }
+
+    /// Render a [`TagPredicate`] to a SQL boolean over `pictures p`. Recursive: `minus_children`
+    /// are negated sub-predicates ("most-specific node wins"). See `TagPredicate` docs for the
+    /// membership semantics.
+    fn render_predicate(q: &mut sqlx::QueryBuilder<Postgres>, pred: &TagPredicate) {
+        q.push("(");
+        if pred.untagged {
+            q.push("NOT EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id)");
+        } else if pred.include.is_empty() && pred.exact.is_empty() {
+            // No positive arms ⇒ membership is vacuously true (all pictures).
+            q.push("TRUE");
+        } else {
+            let joiner = if pred.match_all { " AND " } else { " OR " };
+            q.push("(");
+            let mut first = true;
+            for inc in &pred.include {
+                if !first {
+                    q.push(joiner);
+                }
+                first = false;
+                q.push("EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ ")
+                    .push_bind(inc.as_ltree().to_string())
+                    .push("::ltree)");
+            }
+            for ex in &pred.exact {
+                if !first {
+                    q.push(joiner);
+                }
+                first = false;
+                q.push("EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path = ")
+                    .push_bind(ex.as_ltree().to_string())
+                    .push("::ltree)");
+            }
+            q.push(")");
+        }
+        for ex in &pred.exclude {
+            q.push(" AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ ")
+                .push_bind(ex.as_ltree().to_string())
+                .push("::ltree)");
+        }
+        for term in &pred.and_terms {
+            q.push(" AND ");
+            Self::render_predicate(q, term);
+        }
+        for child in &pred.minus_children {
+            q.push(" AND NOT ");
+            Self::render_predicate(q, child);
+        }
+        q.push(")");
     }
 
     pub async fn update_metadata<'e, E>(

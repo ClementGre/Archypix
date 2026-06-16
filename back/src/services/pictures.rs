@@ -1,5 +1,7 @@
 use crate::clients::federation::FederationClient;
+use crate::domain::hierarchy::TagPredicate;
 use crate::domain::picture::{Picture, PictureVersion, UploadSession};
+use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
@@ -95,6 +97,15 @@ pub struct PictureListParams {
     #[serde(default)]
     pub order: SortOrder,
     pub tag: Option<String>,
+    /// Flat tag-set filter (§6.3). Comma-separated ltree paths; combined per `match`.
+    pub include_tags: Option<String>,
+    pub exclude_tags: Option<String>,
+    /// `all` (AND) | `any` (OR) over `include_tags`. Default `all`.
+    #[serde(rename = "match")]
+    pub match_mode: Option<String>,
+    /// `true` ⇒ pictures with no stored tag of any source (mutually exclusive with include/exclude).
+    #[serde(default)]
+    pub untagged: bool,
     #[serde(default)]
     pub owned_only: bool,
     #[serde(default)]
@@ -296,6 +307,53 @@ pub async fn get_picture_details(
     Ok(PictureDetails { picture, versions })
 }
 
+/// Build the flat `TagPredicate` from the public list params (§6.3). Returns `None` when no flat
+/// filter field is set. Comma-separated ltree paths; `match` selects AND/OR. No `exact`/
+/// `minus_children` — hierarchy depth is only produced server-side by the resolver for `browse`.
+fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicate>, AppError> {
+    fn split_parse(raw: &Option<String>) -> Result<Vec<TagPath>, AppError> {
+        let Some(raw) = raw else { return Ok(vec![]) };
+        raw.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            // Filtering (read-only) may reference protected `SharedToMe` paths.
+            .map(|s| TagPath::parse(s, true).map_err(AppError::BadRequest))
+            .collect()
+    }
+
+    let include = split_parse(&params.include_tags)?;
+    let exclude = split_parse(&params.exclude_tags)?;
+
+    if params.untagged && (!include.is_empty() || !exclude.is_empty()) {
+        return Err(AppError::BadRequest(
+            "untagged is mutually exclusive with include_tags/exclude_tags".to_string(),
+        ));
+    }
+    if !params.untagged && include.is_empty() && exclude.is_empty() {
+        return Ok(None);
+    }
+
+    let match_all = match params.match_mode.as_deref() {
+        None | Some("all") => true,
+        Some("any") => false,
+        Some(other) => {
+            return Err(AppError::BadRequest(format!(
+                "invalid match mode {other:?} (expected \"all\" or \"any\")"
+            )));
+        }
+    };
+
+    Ok(Some(TagPredicate {
+        include,
+        match_all,
+        exclude,
+        untagged: params.untagged,
+        exact: vec![],
+        and_terms: vec![],
+        minus_children: vec![],
+    }))
+}
+
 pub async fn list_pictures(
     db: &PgPool,
     cache: &dyn Cache,
@@ -312,12 +370,15 @@ pub async fn list_pictures(
         ));
     }
 
+    let predicate = build_flat_predicate(&params)?;
+
     let filter = PictureListFilter {
         page: params.page as i64,
         page_size: params.page_size as i64,
         sort: params.sort,
         order: params.order,
         tag: params.tag,
+        predicate,
         owned_only: params.owned_only,
         shared_with_me: params.shared_with_me,
         include_deleted: params.include_deleted,
@@ -325,11 +386,41 @@ pub async fn list_pictures(
         captured_before: params.captured_before.map(|dt| dt.naive_utc()),
     };
 
+    list_with_filter(
+        db,
+        cache,
+        storage,
+        config,
+        federation,
+        user_id,
+        filter,
+        params.thumbnail,
+    )
+    .await
+}
+
+/// Run a picture list against a pre-built [`PictureListFilter`], presigning thumbnails for the
+/// returned page. Shared by the public `GET /pictures` list and the hierarchy `browse` endpoint
+/// (which builds its `filter.predicate` server-side from the resolver).
+#[allow(clippy::too_many_arguments)]
+pub async fn list_with_filter(
+    db: &PgPool,
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    config: &Config,
+    federation: &FederationClient,
+    user_id: Uuid,
+    filter: PictureListFilter,
+    thumbnail: Option<ThumbnailSize>,
+) -> Result<PictureListResult, AppError> {
+    let page = filter.page as u32;
+    let page_size = filter.page_size as u32;
+
     let (pictures, total) = PictureRepository::list(db, user_id, &filter).await?;
 
     // Batch-presign thumbnails: one cache lookup + one HTTP call per remote owner backend
     // instead of N sequential calls.
-    let thumbnail_urls = if let Some(variant) = params.thumbnail {
+    let thumbnail_urls = if let Some(variant) = thumbnail {
         Some(
             presign_for_picture_list(
                 db, cache, storage, config, federation, user_id, &pictures, variant,
@@ -364,8 +455,8 @@ pub async fn list_pictures(
 
     Ok(PictureListResult {
         total,
-        page: params.page,
-        page_size: params.page_size,
+        page,
+        page_size,
         items,
     })
 }

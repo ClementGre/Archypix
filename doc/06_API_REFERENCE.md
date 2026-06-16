@@ -405,7 +405,11 @@ Paginated picture list.
 | `page_size` | `number` | `50` | Items per page |
 | `sort` | `"captured_at" \| "ingested_at" \| "updated_at"` | `"ingested_at"` | Sort field |
 | `order` | `"asc" \| "desc"` | `"desc"` | Sort direction |
-| `tag` | `string` | — | Filter by ltree tag path (dot-separated) |
+| `tag` | `string` | — | Filter by a single ltree tag path (dot-separated); convenience alias for one `include_tags` entry |
+| `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match` |
+| `exclude_tags` | `string` | — | Comma-separated ltree paths; reject the picture if it has any (inclusive) |
+| `match` | `"all" \| "any"` | `"all"` | Combinator over `include_tags` (`all` = AND, `any` = OR) |
+| `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. Mutually exclusive with `include_tags`/`exclude_tags` |
 | `owned_only` | `boolean` | `false` | Only show pictures owned by this user |
 | `shared_with_me` | `boolean` | `false` | Only show pictures received via incoming shares |
 | `include_deleted` | `boolean` | `false` | Include soft-deleted pictures (trash view) |
@@ -1172,6 +1176,153 @@ Reject an incoming share. Moves it to `tombstoned` status.
     rejected: true
 }
 ```
+
+---
+
+### 6.9 Hierarchies
+
+A hierarchy maps a filtered view of the tag graph to a navigable directory tree. It stores **no
+pictures** — every directory resolves to a tag-set predicate and its picture list is derived live.
+The `config` is an ordered tree of nodes (`mirror` / `query` / `static`); see
+`doc/01_GENERAL_SPECIFICATIONS.md §4` and `doc/features/05_hierarchies.md` for the full model.
+
+Write operations (move/copy/upload/delete) ship with WebDAV and are **not** part of this API yet;
+the `config` already declares the write-back model so no schema change is needed when WebDAV lands.
+
+#### `config` shape
+
+```ts
+interface HierarchyConfig {
+    version: number;                              // schema version (currently 1)
+    safeDeleteMode: "singleBranch" | "fullDelete"; // hierarchy default
+    naming: "original" | "date" | "id";           // hierarchy default (WebDAV file naming)
+    writeBack: boolean;                            // master switch; false ⇒ entire hierarchy read-only
+    nodes: Node[];                                 // ordered root-level tree
+}
+
+// Common node fields + a kind discriminator.
+type Node =
+    | { id: string; name?: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
+        kind: "mirror"; tagRoot: string; keepDir?: boolean;
+        collapsed?: string[]; exclude?: string[]; }
+    | { id: string; name: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
+        kind: "query"; match?: "all" | "any"; include?: string[]; exclude?: string[];
+        matchUntagged?: boolean; writeBack?: WriteBack | null; children?: Node[]; }
+    | { id: string; name: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
+        kind: "static"; children?: Node[]; };
+
+interface WriteBack {
+    onAdd: Array<{ op: "assign" | "remove"; path: string }>;
+    onRemove: Array<{ op: "assign" | "remove"; path: string }>;
+}
+```
+
+- **`mirror`** — expands the live tag subtree under `tagRoot`. `keepDir` keeps the `tagRoot` label as
+  a directory level; `collapsed` subtrees roll their pictures up to the nearest enabled ancestor;
+  `exclude` subtrees are removed entirely. `mirror` is a leaf in the authored JSON (children are
+  tag-derived). Tag paths in `collapsed`/`exclude` must be under `tagRoot`.
+- **`query`** — explicit predicate; may nest. Effective predicate = own ∧ all ancestors. `match`
+  combines `include` (AND/OR); `exclude` rejects; `matchUntagged: true` means "no stored tag of any
+  source" (requires empty `include`/`exclude`). `writeBack: null` ⇒ read-only directory.
+- **`static`** — pure container, no predicate, no direct pictures, read-only.
+
+Validation (server-side, on create/update) rejects: duplicate node ids, duplicate sibling names,
+`collapsed`/`exclude` not under `tagRoot`, `matchUntagged` with a non-empty `include`/`exclude`, and a
+`writeBack` op-list that cannot satisfy/break the predicate.
+
+#### `GET /api/authenticated/hierarchies`
+
+List the user's hierarchies.
+
+**Response `200`:** `Array<{ id: string; name: string; enabled: boolean }>`
+
+#### `POST /api/authenticated/hierarchies`
+
+Create a hierarchy. `config` defaults to an empty node tree when omitted; the server stores the
+**normalized** config (defaults filled in).
+
+**Request:**
+
+```ts
+{
+    name: string;
+    config ? : HierarchyConfig;
+}
+```
+
+**Response `200`:**
+
+```ts
+interface HierarchyDetail {
+    id: string;
+    name: string;
+    enabled: boolean;
+    config: HierarchyConfig;
+    created_at: string;
+    updated_at: string;
+}
+```
+
+**Errors:** 400 on invalid `config` or empty `name`; 409 if a hierarchy with that name already exists.
+
+#### `GET /api/authenticated/hierarchies/{id}`
+
+Get one hierarchy with its full `config`. **Response `200`:** `HierarchyDetail`. 404 if not found.
+
+#### `PATCH /api/authenticated/hierarchies/{id}`
+
+Update name / enabled / config (any subset; omitted fields unchanged). A supplied `config` is
+re-validated.
+
+**Request:** `{ name?: string; enabled?: boolean; config?: HierarchyConfig }`
+
+**Response `200`:** `HierarchyDetail`.
+
+#### `DELETE /api/authenticated/hierarchies/{id}`
+
+**Response `200`:** `{ deleted: true }`. 404 if not found.
+
+#### `GET /api/authenticated/hierarchies/{id}/tree`
+
+Resolve the directory tree at a path (no pictures — cheap; for the sidebar).
+
+**Query params:**
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `path` | `string` | `""` (root) | Slash-separated directory **names** (not ids), e.g. `Photos/Travel` |
+| `depth` | `number` | `1` | How many levels of children to return |
+| `counts` | `boolean` | `false` | When true, compute `picture_count` per directory and hide empty directories |
+
+**Response `200`:**
+
+```ts
+{
+    path: string;                  // echo of the resolved path
+    directories: DirEntry[];
+}
+
+interface DirEntry {
+    name: string;                  // append to `path` to navigate
+    writable: boolean;
+    child_count: number;           // number of child directories
+    picture_count: number | null;  // null unless counts=true (count of this dir's direct files)
+    children?: DirEntry[];         // present when depth > 1
+}
+```
+
+Directory addressing uses **names**, not node ids. 404 if `path` does not resolve.
+
+#### `GET /api/authenticated/hierarchies/{id}/browse`
+
+Paginated pictures of one directory. The server resolves `path` into the directory's "most-specific
+node wins" predicate and reuses the picture list machinery — the client only ever sends a `path`.
+
+**Query params:** `path` (default root) plus the same pagination/filter params as
+`GET /pictures`: `page`, `page_size`, `sort`, `order`, `include_deleted`, `owned_only`,
+`shared_with_me`, `captured_after`, `captured_before`, `thumbnail`.
+
+**Response `200`:** identical shape to `GET /pictures` (`{ total, page, page_size, items }`). A
+`static` directory (no direct files) returns an empty page.
 
 ---
 
