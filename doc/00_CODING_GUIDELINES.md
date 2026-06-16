@@ -24,4 +24,7 @@ When making changes to the codebase:
 
 - Keep documentation up to date. Match the level of detail already present — do not add overly specific descriptions of what was changed beyond what
   the rest of the doc covers.
-- Keep tests up to date. New features and modified behaviour should be reflected in the test suite.
+- When editing the api, update `06_API_REFERENCE.md`.
+- On back, keep tests up to date. New features and modified behaviour should be reflected in the test suite.
+- On front, don’t start or preview the frontend server yourself. Only check that it builds. The user can give you feedback on the frontend
+  changes.

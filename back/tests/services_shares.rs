@@ -381,6 +381,7 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
         width: None,
         height: None,
         captured_at: None,
+        blurhash: None,
         gps_lat: Some(45.92),
         gps_lng: Some(6.87),
         gps_alt: Some(1200),

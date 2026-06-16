@@ -42,6 +42,36 @@ pub async fn create_upload(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BatchCreateUploadRequest {
+    pub filenames: Vec<String>,
+}
+
+pub async fn batch_create_upload(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(payload): Json<BatchCreateUploadRequest>,
+) -> Result<Json<Vec<CreateUploadResponse>>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), count = payload.filenames.len(), "batch_create_upload");
+    let results = services::pictures::begin_upload_batch(
+        state.cache.as_ref(),
+        state.storage.as_ref(),
+        &state.config,
+        auth.user_id()?,
+        &payload.filenames,
+    )
+    .await?;
+    Ok(Json(
+        results
+            .into_iter()
+            .map(|(picture_id, presigned_url)| CreateUploadResponse {
+                picture_id,
+                presigned_url,
+            })
+            .collect(),
+    ))
+}
+
 pub async fn complete_upload(
     auth: AuthUser,
     State(state): State<AppState>,

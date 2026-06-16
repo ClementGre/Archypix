@@ -54,6 +54,18 @@ impl Cache for InMemoryCache {
         self.store.lock().unwrap().remove(&key.build());
         Ok(())
     }
+
+    async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .store
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.contains(pattern))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into())
+    }
 }
 
 // ── MockStorage ───────────────────────────────────────────────────────────────

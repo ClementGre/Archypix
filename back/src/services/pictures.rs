@@ -11,6 +11,7 @@ use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
 use chrono::{DateTime, NaiveDateTime, Utc};
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -72,6 +73,8 @@ pub struct UploadMetadata {
     pub height: Option<i32>,
     pub exif_data: Option<serde_json::Value>,
     pub captured_at: Option<NaiveDateTime>,
+    /// Optional manual tags (ltree wire form) to assign immediately on creation.
+    pub initial_tags: Option<Vec<String>>,
 }
 
 fn default_page() -> u32 {
@@ -113,6 +116,9 @@ pub struct PictureListItem {
     pub ingested_at: NaiveDateTime,
     /// BlurHash string for progressive loading. `None` until the thumbnail worker runs.
     pub blurhash: Option<String>,
+    /// EXIF orientation value (1–8). Thumbnails are stored in raw pixel orientation, so the
+    /// client rotates them to display correctly.
+    pub orientation: Option<i16>,
     pub thumbnail_url: Option<String>,
     /// `true` when this row is a picture owned by the local user; `false` for a received
     /// (shared) picture. Lets the client label/filter shared pictures.
@@ -137,6 +143,30 @@ pub struct PictureListResult {
 pub struct PictureDetails {
     pub picture: Picture,
     pub versions: Vec<PictureVersion>,
+}
+
+/// Presign upload slots for a batch of files in one call. Returns one (picture_id, presigned_url)
+/// pair per filename in the same order. Each entry is independent — a failure on one does not
+/// affect the others, but the whole call fails if any presign errors.
+pub async fn begin_upload_batch(
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    config: &Config,
+    user_id: Uuid,
+    filenames: &[String],
+) -> Result<Vec<(Uuid, String)>, AppError> {
+    if filenames.is_empty() {
+        return Err(AppError::BadRequest("No filenames provided".to_string()));
+    }
+    if filenames.len() > 100 {
+        return Err(AppError::BadRequest(
+            "Cannot request more than 100 upload slots at once".to_string(),
+        ));
+    }
+    let futures = filenames
+        .iter()
+        .map(|name| begin_upload(cache, storage, config, user_id, name));
+    try_join_all(futures).await
 }
 
 pub async fn begin_upload(
@@ -233,6 +263,14 @@ pub async fn complete_upload(
     // so no job is orphaned if the picture insert rolls back.
     crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, picture_id, true).await?;
 
+    // Assign any caller-supplied initial manual tags within the same transaction so they are
+    // atomically committed with the picture row and the thumbnail job.
+    if let Some(ref tags) = meta.initial_tags {
+        if !tags.is_empty() {
+            TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], tags).await?;
+        }
+    }
+
     tx.commit().await.map_err(map_sqlx_error)?;
 
     // Cache cleanup is after commit — a failure here is non-fatal (session expires on its own).
@@ -312,6 +350,7 @@ pub async fn list_pictures(
             captured_at: pic.captured_at,
             ingested_at: pic.ingested_at,
             blurhash: pic.blurhash,
+            orientation: pic.orientation,
             thumbnail_url: thumbnail_urls
                 .as_ref()
                 .and_then(|m| m.get(&pic.id))

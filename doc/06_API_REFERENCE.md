@@ -315,9 +315,10 @@ Update settings.
 
 ### 6.2 Pictures — Upload
 
-Upload is a two-step process: begin (get presigned S3 URL), PUT directly to S3, then complete.
+Upload is a three-step process for each file: begin (get a presigned S3 URL), PUT directly to S3, then complete. For batch uploads, step 1 can be
+combined for all files in a single call.
 
-#### Step 1: `POST /api/authenticated/pictures/uploads`
+#### Step 1a (single): `POST /api/authenticated/pictures/uploads`
 
 **Request:**
 
@@ -336,6 +337,23 @@ Upload is a two-step process: begin (get presigned S3 URL), PUT directly to S3, 
 }
 ```
 
+#### Step 1b (batch): `POST /api/authenticated/pictures/uploads/batch`
+
+Presigns multiple upload slots in one round-trip. Returns results in the same order as the input array. Capped at 100 filenames per call.
+
+**Request:**
+
+```ts
+{
+    filenames: string[];  // 1–100 non-empty filenames
+}
+```
+
+**Response `200`:** `Array<{ picture_id: string; presigned_url: string }>`
+
+Use this for multi-file uploads to avoid N serial requests before any S3 PUT can begin. The complete step (step 3) is still called individually per
+file as each S3 upload finishes — do not wait for all files to finish before completing any.
+
 #### Step 2: PUT the file
 
 The client PUTs the raw file bytes to `presigned_url`. No auth header needed (presigned URL has embedded credentials). Include `Content-Type` matching
@@ -350,15 +368,16 @@ the file's MIME type.
 ```ts
 {
     mime_type ? : string;
-    file_size ? : number;    // bytes (i64)
-    width ? : number;        // pixels (i32)
+    file_size ? : number;      // bytes (i64)
+    width ? : number;          // pixels (i32)
     height ? : number;
-    exif_data ? : object;    // arbitrary EXIF key-value pairs
-    captured_at ? : string;  // ISO 8601 datetime
+    exif_data ? : object;      // arbitrary EXIF key-value pairs
+    captured_at ? : string;    // ISO 8601 datetime
+    initial_tags ? : string[]; // ltree wire-form paths — assigned as manual tags atomically with picture creation
 }
 ```
 
-All fields are optional — the backend fills them in from EXIF extraction by the worker if omitted.
+All fields are optional — the backend fills in EXIF fields from worker extraction if omitted. `initial_tags` paths must not start with `SharedToMe`.
 
 **Response `200`:**
 
@@ -368,7 +387,8 @@ All fields are optional — the backend fills them in from EXIF extraction by th
 }  // picture UUID
 ```
 
-**Side-effects:** creates the picture row, enqueues a `gen_thumbnail` job (EXIF extraction + thumbnail generation), and wakes the pipeline.
+**Side-effects:** creates the picture row, assigns any `initial_tags` as `manual` source tags, enqueues a `gen_thumbnail` job (EXIF extraction +
+thumbnail generation), and wakes the pipeline. All of these happen atomically in a single DB transaction.
 
 ---
 
@@ -411,6 +431,7 @@ interface PictureListItem {
     captured_at: string | null;
     ingested_at: string;
     blurhash: string | null;
+    orientation: number | null;    // EXIF orientation (1–8); thumbnails are raw pixels — the client rotates them
     thumbnail_url: string | null;  // only when thumbnail query param is set
     owned: boolean;                // false for received (shared-to-me) pictures
     owner_username: string | null; // set when owned=false
@@ -1659,6 +1680,15 @@ type ExifField =
 - **Wire form:** `Photos.Travel.Alps` (dot-separated, no prefix)
 - All API requests and responses use wire form. Convert using `src/lib/utils.ts:TagPath`.
 
+### Picture orientation
+
+Thumbnails and originals are stored in **raw pixel orientation** — the worker does not bake the EXIF orientation into the generated files, and an
+orientation edit does not regenerate thumbnails. The list (`orientation`) and detail (`orientation`) responses carry the EXIF orientation value (1–8);
+the client rotates the image at display time to show it correctly (90°/270° orientations also transpose the displayed width/height). Rotating a
+picture
+is a normal EXIF edit (`set: { orientation }`) — the new value reconciles into the original file via the `edit_picture` job, while the displayed
+rotation updates immediately from the DB value.
+
 ### Presigned URL caching
 
 Presigned URLs are valid for ~15 minutes. Cache them in TanStack Query with `staleTime` set to at most 10 minutes. Do not fetch a new URL on every
@@ -1669,11 +1699,20 @@ render.
 Use the `thumbnail` query param on `GET /api/authenticated/pictures` to embed presigned thumbnail URLs in list items. This saves one round-trip per
 picture compared to calling `GET /api/authenticated/pictures/{id}/url` for each item.
 
+### Batch upload pattern
+
+For multi-file uploads, the recommended flow is:
+
+1. Call `POST /uploads/batch` with all filenames → receive all `(picture_id, presigned_url)` pairs.
+2. Upload all files to S3 in parallel (recommend max 4 concurrent PUTs to avoid saturating the connection).
+3. As each S3 PUT completes, immediately call `POST /uploads/{id}/complete` — do not wait for all files.
+4. Pass `initial_tags` in the complete body to assign tags to every uploaded picture without a separate `PATCH /tags` round-trip.
+
 ### Pipeline wakeup side-effects
 
 Several mutations wake the tagging pipeline asynchronously:
 
-- `POST /uploads/{id}/complete` — new picture
+- `POST /uploads/{id}/complete` — new picture (pipeline also re-evaluates `initial_tags` against services)
 - `PATCH /tags` — manual tag change
 - `PATCH /tagging-services/{id}` — service config change
 - `POST /tagging-services` — new service created

@@ -30,6 +30,10 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/users/me", patch(users::update_me))
         .route("/pictures/uploads", post(pictures::create_upload))
         .route(
+            "/pictures/uploads/batch",
+            post(pictures::batch_create_upload),
+        )
+        .route(
             "/pictures/uploads/{id}/complete",
             post(pictures::complete_upload),
         )

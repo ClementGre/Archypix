@@ -293,10 +293,11 @@ Auth: User JWT with `is_admin = true`.
 
 **Pictures — upload**
 
-| Method | Path                                                        | Description                                                                                                                                                                                    |
-|--------|-------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `POST` | `/api/authenticated/pictures/uploads`                       | Begin upload. Returns `{ picture_id, presigned_url }` (staging bucket).                                                                                                                        |
-| `POST` | `/api/authenticated/pictures/uploads/{picture_id}/complete` | Confirm upload. Optional body: `{ mime_type, file_size, width, height, ... }`. Enqueues a `gen_thumbnail` job; picture row, version record, and job are created atomically in one transaction. |
+| Method | Path                                                        | Description                                                                                                                                                                                                     |
+|--------|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `POST` | `/api/authenticated/pictures/uploads`                       | Begin single upload. Returns `{ picture_id, presigned_url }` (staging bucket).                                                                                                                                  |
+| `POST` | `/api/authenticated/pictures/uploads/batch`                 | Begin batch upload. Body: `{ filenames: string[] }` (max 100). Returns array of `{ picture_id, presigned_url }` in the same order. Presigns all slots in parallel.                                              |
+| `POST` | `/api/authenticated/pictures/uploads/{picture_id}/complete` | Confirm upload. Optional body: `{ mime_type, file_size, width, height, initial_tags?, ... }`. Assigns `initial_tags` as manual tags, enqueues a `gen_thumbnail` job; all created atomically in one transaction. |
 
 **Pictures — list & details**
 
@@ -413,10 +414,14 @@ uncommitted state, and makes a failed delivery self-healing — the next reconci
 
 ### Picture upload
 
-1. Client → `POST /uploads` → gets `{ picture_id, presigned_url }` (staging bucket).
-2. Client → MinIO: `PUT` binary to presigned URL.
-3. Client → `POST /uploads/{id}/complete` → backend: copies staging → pictures bucket (+ versions bucket if versioning enabled); **single DB
-   transaction** creates `pictures` row, `picture_versions` row, and `gen_thumbnail` job.
+For single or batch uploads the flow is the same per file; only step 1 differs:
+
+1. Client → `POST /uploads` (single) **or** `POST /uploads/batch` (multi) → gets `{ picture_id, presigned_url }` per file. Batch presigns all slots
+   in parallel server-side.
+2. Client → MinIO: `PUT` binary to presigned URL (parallel across files, recommended max 4 concurrent).
+3. Client → `POST /uploads/{id}/complete` for each file **as it finishes** (not after all files) → backend: copies staging → pictures bucket (+
+   versions bucket if versioning enabled); **single DB transaction** creates `pictures` row, `picture_versions` row, any `initial_tags` as manual tag
+   rows, and `gen_thumbnail` job.
 4. Worker claims job, processes the original (EXIF, thumbnails, BlurHash, SHA-256), and calls `POST /api/worker/jobs/{id}/complete`. Backend updates
    the picture row and marks the job done in one transaction; rejects on `claim_token` mismatch (409).
 
