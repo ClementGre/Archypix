@@ -373,6 +373,52 @@ async fn query_nested_inherits_ancestor_predicate(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn keep_dir_false_mirror_bubbles_root_tag_into_query_parent(db: PgPool) {
+    // A keep_dir=false mirror strips its tagRoot directory, so a picture tagged exactly at
+    // tagRoot has no mirror directory of its own. When the mirror sits under a `query` parent,
+    // that picture surfaces as a direct file of the query: the query has a predicate, and the
+    // mirror never contributes a tagRoot `own_for_parent` term for the parent to subtract.
+    // Deeper-tag pictures still go to their own hoisted subdirectory (most-specific-wins).
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+
+    let exact = pic_with_tags(&db, user, &["Photos"]).await;
+
+    // Query "Lib" (everything under Photos) containing a keep_dir=false mirror of Photos.
+    let config_json = serde_json::json!({"nodes": [
+        {"id": "lib", "kind": "query", "name": "Lib", "match": "all", "include": ["Photos"],
+         "children": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Photos", "keepDir": false}
+         ]}
+    ]});
+    let id = create(&db, user, "H", config_json).await;
+
+    assert_eq!(
+        browse_ids(&state, user, id, "Lib").await,
+        HashSet::from([exact])
+    );
+
+    let deeper = pic_with_tags(&db, user, &["Photos.Travel"]).await;
+    // Travel is hoisted to a direct child of Lib; the deeper picture lives there.
+    assert_eq!(
+        browse_ids(&state, user, id, "Lib/Travel").await,
+        HashSet::from([deeper])
+    );
+
+    // The exact-`Photos` picture bubbles up into Lib's own direct files; the deeper one does not.
+    let lib = browse_ids(&state, user, id, "Lib").await;
+    assert!(
+        lib.contains(&exact),
+        "exact-tagRoot picture surfaces in the query parent"
+    );
+    assert!(
+        !lib.contains(&deeper),
+        "deeper picture stays in its own subdirectory"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn query_match_untagged(db: PgPool) {
     let cfg = config();
     let state = common::test_app_state(db.clone(), &cfg);
