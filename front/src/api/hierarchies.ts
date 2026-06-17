@@ -1,5 +1,13 @@
 import {apiClient} from './client'
-import type {HierarchyConfig, HierarchyDetail, HierarchySummary, HierarchyTreeResponse, PictureListResponse, PictureVariant,} from '@/lib/types'
+import type {
+    HierarchyConfig,
+    HierarchyDetail,
+    HierarchySummary,
+    HierarchyTreeResponse,
+    PictureListResponse,
+    PictureVariant,
+    WebdavResponse,
+} from '@/lib/types'
 
 const BASE = '/api/authenticated/hierarchies'
 
@@ -33,6 +41,26 @@ export async function updateHierarchy(
 
 export async function deleteHierarchy(id: string): Promise<void> {
     await apiClient.delete(`${BASE}/${id}`)
+}
+
+// --- WebDAV mount (token management) ---
+
+export async function getWebdav(id: string): Promise<WebdavResponse> {
+    const {data} = await apiClient.get<WebdavResponse>(`${BASE}/${id}/webdav`)
+    return data
+}
+
+export async function regenerateWebdavToken(id: string): Promise<WebdavResponse> {
+    const {data} = await apiClient.post<WebdavResponse>(`${BASE}/${id}/webdav/regenerate`)
+    return data
+}
+
+export async function setWebdavUseRedirect(
+    id: string,
+    use_redirect: boolean,
+): Promise<WebdavResponse> {
+    const {data} = await apiClient.patch<WebdavResponse>(`${BASE}/${id}/webdav`, {use_redirect})
+    return data
 }
 
 // --- Navigation (read resolver) ---

@@ -1,7 +1,18 @@
 import {useInfiniteQuery, useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
-import {browseHierarchy, createHierarchy, deleteHierarchy, getHierarchy, getHierarchyTree, listHierarchies, updateHierarchy,} from '@/api/hierarchies'
+import {
+    browseHierarchy,
+    createHierarchy,
+    deleteHierarchy,
+    getHierarchy,
+    getHierarchyTree,
+    getWebdav,
+    listHierarchies,
+    regenerateWebdavToken,
+    setWebdavUseRedirect,
+    updateHierarchy,
+} from '@/api/hierarchies'
 import {queryKeys} from '@/lib/constants'
-import type {HierarchyConfig, PictureFilters} from '@/lib/types'
+import type {HierarchyConfig, PictureFilters, WebdavResponse} from '@/lib/types'
 
 export function useHierarchies() {
     return useQuery({queryKey: queryKeys.hierarchies(), queryFn: listHierarchies})
@@ -52,6 +63,31 @@ export function useHierarchyBrowse(
         getNextPageParam: (last) =>
             last.page * last.page_size < last.total ? last.page + 1 : undefined,
     })
+}
+
+/** WebDAV mount info for a hierarchy — mints a token on first access (so only fetch when needed). */
+export function useWebdav(id: string | null, opts?: { enabled?: boolean }) {
+    return useQuery({
+        queryKey: queryKeys.hierarchyWebdav(id ?? ''),
+        enabled: !!id && (opts?.enabled ?? true),
+        queryFn: () => getWebdav(id!),
+    })
+}
+
+export function useWebdavMutations(id: string) {
+    const qc = useQueryClient()
+    const seed = (data: WebdavResponse) => qc.setQueryData(queryKeys.hierarchyWebdav(id), data)
+
+    return {
+        regenerate: useMutation({
+            mutationFn: () => regenerateWebdavToken(id),
+            onSuccess: seed,
+        }),
+        setUseRedirect: useMutation({
+            mutationFn: (use_redirect: boolean) => setWebdavUseRedirect(id, use_redirect),
+            onSuccess: seed,
+        }),
+    }
 }
 
 export function useHierarchyMutations() {

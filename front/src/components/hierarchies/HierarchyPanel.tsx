@@ -1,4 +1,4 @@
-import {ChevronLeft, FolderTree, Loader2, Pencil, Plus} from 'lucide-react'
+import {ChevronLeft, FolderTree, HardDrive, Loader2, Pencil, Plus} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {useHierarchies} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
@@ -6,6 +6,7 @@ import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
 import {HierarchyDirTree} from './HierarchyDirTree'
 import {CreateHierarchyDialog} from './CreateHierarchyDialog'
+import {WebdavDialog} from './WebdavDialog'
 
 /** Hierarchies tab: a list of hierarchies, and the directory tree of the active one. */
 export function HierarchyPanel() {
@@ -30,6 +31,20 @@ export function HierarchyPanel() {
                         <ChevronLeft className="h-4 w-4"/>
                     </Button>
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{active.name}</span>
+                    <WebdavDialog
+                        hierarchyId={active.id}
+                        trigger={
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0 text-muted-foreground"
+                                aria-label="WebDAV mount"
+                                title="WebDAV mount"
+                            >
+                                <HardDrive className="h-3.5 w-3.5"/>
+                            </Button>
+                        }
+                    />
                     <Button
                         variant="ghost"
                         size="icon"

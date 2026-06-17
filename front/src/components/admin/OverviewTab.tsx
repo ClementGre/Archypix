@@ -129,7 +129,7 @@ function StatsGrid() {
 
     if (!data) return null
 
-    const total = data.job_counts.pending + data.job_counts.processing + data.job_counts.completed + data.job_counts.failed
+    const total = (data.job_counts.pending || 0) + (data.job_counts.processing || 0) + (data.job_counts.completed || 0) + (data.job_counts.failed || 0)
 
     return (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -145,7 +145,7 @@ function StatsGrid() {
                 icon={Activity}
                 label="Jobs (all time)"
                 value={total.toLocaleString()}
-                sub={`${data.job_counts.pending} pending · ${data.job_counts.processing} running`}
+                sub={`${data.job_counts.pending || 0} pending · ${data.job_counts.processing || 0} running · ${data.job_counts.failed || 0} failed`}
             />
             <StatCard
                 icon={RefreshCw}

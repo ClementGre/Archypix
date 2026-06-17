@@ -196,6 +196,14 @@ export interface HierarchyDetail {
     updated_at: string
 }
 
+/** WebDAV mount info from `GET/POST/PATCH /hierarchies/{id}/webdav`. */
+export interface WebdavResponse {
+    url: string
+    token: string
+    use_redirect: boolean
+    enabled: boolean
+}
+
 /** A directory in the resolved `tree` endpoint. */
 export interface DirEntry {
     name: string

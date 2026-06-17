@@ -132,15 +132,15 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 One file per domain under `src/api/` (typed axios wrappers using `apiClient`), with matching hooks under `src/hooks/` (TanStack Query). Types live in
 `src/lib/types.ts`; query keys are centralized in `src/lib/constants.ts` (`queryKeys`).
 
-| Domain      | `api/*`                                                                                                          | `hooks/*`                                                                                                      |
-|-------------|------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
-| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                   | (imperative; not query-backed)                                                                                 |
-| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob, beginUploadBatch, completeUpload` | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`                          |
-| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                            | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                     |
-| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                         | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                    |
-| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                            | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                            |
-| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`                                                  | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations` |
-| settings    | `settings.ts` — `getSettings, updateSettings, updateProfile`                                                     | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                             |
+| Domain      | `api/*`                                                                                                                     | `hooks/*`                                                                                                                                     |
+|-------------|-----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                              | (imperative; not query-backed)                                                                                                                |
+| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob, beginUploadBatch, completeUpload`            | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`                                                         |
+| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                                       | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                                                    |
+| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                                    | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                                                   |
+| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                       | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                           |
+| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect` | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations` |
+| settings    | `settings.ts` — `getSettings, updateSettings, updateProfile`                                                                | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                            |
 
 `apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` backs the search box.
 
@@ -207,9 +207,11 @@ single local-tag mapping per share via `useShareMappings`), `OutgoingSharesList`
 rest
 **grouped by tag**, per-recipient status + confirm-revoke), `CreateShareDialog`, `ShareStatusBadge`.
 
-**`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back/edit header over the
-directory
-tree), `HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
+**`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back header with a **WebDAV**
+(HardDrive) and edit button over the directory
+tree), `WebdavDialog` (mount-info popup: copyable mount URL + token — token hidden by default with show/copy buttons — a **Regenerate token**
+button, and a `use_redirect` toggle; the token is only minted on open via `useWebdav`, since the GET endpoint mints on first access),
+`HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
 center
 grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs), `CreateHierarchyDialog` (name → create empty →
 open editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
