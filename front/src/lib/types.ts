@@ -119,6 +119,97 @@ export interface PictureFilters {
     capturedBefore?: string | null
 }
 
+// ---------- Hierarchies ----------
+
+export type NamingStrategy = 'original' | 'date' | 'id'
+export type SafeDeleteMode = 'singleBranch' | 'fullDelete'
+
+export interface WriteBackOp {
+    op: 'assign' | 'remove'
+    path: string // ltree wire form
+}
+
+export interface WriteBack {
+    onAdd: WriteBackOp[]
+    onRemove: WriteBackOp[]
+}
+
+/** Fields shared by every hierarchy node, regardless of kind. */
+export interface NodeCommon {
+    id: string
+    name?: string
+    naming?: NamingStrategy | null
+    safeDeleteMode?: SafeDeleteMode | null
+}
+
+export interface MirrorNode extends NodeCommon {
+    kind: 'mirror'
+    tagRoot: string // ltree wire form
+    keepDir?: boolean
+    collapsed?: string[]
+    exclude?: string[]
+}
+
+export interface QueryNode extends NodeCommon {
+    kind: 'query'
+    name: string
+    match?: 'all' | 'any'
+    include?: string[]
+    exclude?: string[]
+    matchUntagged?: boolean
+    writeBack?: WriteBack | null
+    children?: HierarchyNode[]
+}
+
+export interface StaticNode extends NodeCommon {
+    kind: 'static'
+    name: string
+    children?: HierarchyNode[]
+}
+
+export type HierarchyNode = MirrorNode | QueryNode | StaticNode
+
+export type NodeKind = HierarchyNode['kind']
+
+export interface HierarchyConfig {
+    version: number
+    safeDeleteMode: SafeDeleteMode
+    naming: NamingStrategy
+    writeBack: boolean
+    nodes: HierarchyNode[]
+}
+
+/** List item shape from `GET /hierarchies`. */
+export interface HierarchySummary {
+    id: string
+    name: string
+    enabled: boolean
+}
+
+/** Full hierarchy from create/get/patch. */
+export interface HierarchyDetail {
+    id: string
+    name: string
+    enabled: boolean
+    config: HierarchyConfig
+    created_at: string
+    updated_at: string
+}
+
+/** A directory in the resolved `tree` endpoint. */
+export interface DirEntry {
+    name: string
+    writable: boolean
+    child_count: number
+    picture_count: number | null
+    children?: DirEntry[]
+}
+
+export interface HierarchyTreeResponse {
+    path: string
+    directories: DirEntry[]
+}
+
 // ---------- Tagging services ----------
 
 export type ServiceType = 'shared_tag_mapping' | 'rule' | 'segmentation'

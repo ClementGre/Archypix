@@ -3,6 +3,7 @@ import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs'
 import {TagTree} from '@/components/tags/TagTree'
 import {IncomingSharesList} from '@/components/shares/IncomingSharesList'
 import {OutgoingSharesList} from '@/components/shares/OutgoingSharesList'
+import {HierarchyPanel} from '@/components/hierarchies/HierarchyPanel'
 import {type LeftPanelTab, useGalleryParams} from '@/hooks/useGalleryParams'
 
 const TABS: { value: LeftPanelTab; label: string; icon: typeof Tag }[] = [
@@ -38,12 +39,8 @@ export function LeftPanel() {
                 <TabsContent value="outgoing" className="m-0 min-h-0 flex-1 overflow-y-auto">
                     <OutgoingSharesList/>
                 </TabsContent>
-                <TabsContent value="hierarchies" className="m-0 min-h-0 flex-1 overflow-y-auto">
-                    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-xs text-muted-foreground">
-                        <FolderTree className="h-6 w-6"/>
-                        <p className="font-medium text-foreground">Hierarchies</p>
-                        <p>Bidirectional WebDAV views of your tag graph. Coming soon.</p>
-                    </div>
+            <TabsContent value="hierarchies" className="m-0 min-h-0 flex-1 overflow-hidden">
+                <HierarchyPanel/>
                 </TabsContent>
             </Tabs>
     )

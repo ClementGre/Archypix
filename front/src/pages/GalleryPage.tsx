@@ -4,9 +4,11 @@ import {LeftPanel} from '@/components/layout/LeftPanel'
 import {SidePanel} from '@/components/layout/SidePanel'
 import {PhotoGrid} from '@/components/photos/PhotoGrid'
 import {SelectionPanel} from '@/components/photos/SelectionPanel'
+import {HierarchyEditor} from '@/components/hierarchies/HierarchyEditor'
 import {useUIStore} from '@/stores/ui'
 import {useSelectionStore} from '@/stores/selection'
 import {useUploadStore} from '@/stores/upload'
+import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {cn} from '@/lib/utils'
 
@@ -28,6 +30,8 @@ export default function GalleryPage() {
     const isMobile = useIsMobile()
     const hasSelection = useSelectionStore((s) => s.selected.length > 0)
     const openUpload = useUploadStore((s) => s.openDialog)
+    const {params} = useGalleryParams()
+    const editingHierarchy = params.hedit
 
     // Desktop docks the panels (persisted toggle); mobile shows them as one-at-a-time
     // overlay drawers driven by the session-only `mobileDrawer` state.
@@ -84,10 +88,10 @@ export default function GalleryPage() {
             </SidePanel>
 
             <div className="min-w-0 flex-1">
-                <PhotoGrid/>
+                {editingHierarchy ? <HierarchyEditor id={editingHierarchy}/> : <PhotoGrid/>}
             </div>
 
-            {hasSelection && (
+            {!editingHierarchy && hasSelection && (
                 <SidePanel
                     side="right"
                     width={rightSidebarWidth}

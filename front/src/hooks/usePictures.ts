@@ -3,9 +3,10 @@ import {listPictures} from '@/api/pictures'
 import {queryKeys} from '@/lib/constants'
 import type {PictureFilters} from '@/lib/types'
 
-export function usePictures(filters: PictureFilters) {
+export function usePictures(filters: PictureFilters, opts?: { enabled?: boolean }) {
     return useInfiniteQuery({
         queryKey: queryKeys.pictures(filters),
+        enabled: opts?.enabled ?? true,
         initialPageParam: 1,
         queryFn: ({pageParam}) => {
             const params = {

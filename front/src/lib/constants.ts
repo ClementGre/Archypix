@@ -34,6 +34,11 @@ export const queryKeys = {
     taggingService: (id: string) => ['tagging', 'detail', id] as const,
     outgoingShares: () => ['shares', 'outgoing'] as const,
     incomingShares: () => ['shares', 'incoming'] as const,
+    hierarchies: () => ['hierarchies', 'list'] as const,
+    hierarchy: (id: string) => ['hierarchies', 'detail', id] as const,
+    hierarchyTree: (id: string, path: string) => ['hierarchies', 'tree', id, path] as const,
+    hierarchyBrowse: (id: string, path: string, filters?: unknown) =>
+        ['hierarchies', 'browse', id, path, filters] as const,
     settings: () => ['settings'] as const,
     // admin
     adminInstanceHealth: () => ['admin', 'instance'] as const,

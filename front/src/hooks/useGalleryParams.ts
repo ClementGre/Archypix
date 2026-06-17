@@ -18,6 +18,12 @@ export interface GalleryParams {
     panel: LeftPanelTab
     /** Incoming share to highlight in the left panel (transient cross-link). */
     share: string | null
+    /** Active hierarchy id — when set, the center grid browses it instead of the flat list. */
+    hierarchy: string | null
+    /** Directory path within the active hierarchy (slash-separated names, '' = root). */
+    hpath: string
+    /** Hierarchy id whose config editor occupies the center view (overrides the grid). */
+    hedit: string | null
 }
 
 /** Patch applied to the URL state; omitted keys are left unchanged. */
@@ -32,6 +38,9 @@ export interface GalleryParamsPatch {
     capturedBefore?: string | null
     panel?: LeftPanelTab
     share?: string | null
+    hierarchy?: string | null
+    hpath?: string
+    hedit?: string | null
 }
 
 const DEFAULT_SORT: SortField = 'ingested_at'
@@ -57,6 +66,9 @@ export function useGalleryParams() {
             capturedBefore: sp.get('before'),
             panel: (sp.get('panel') as LeftPanelTab) || 'tags',
             share: sp.get('share'),
+            hierarchy: sp.get('hierarchy'),
+            hpath: sp.get('hpath') ?? '',
+            hedit: sp.get('hedit'),
         }),
         [sp],
     )
@@ -80,6 +92,9 @@ export function useGalleryParams() {
                     if ('capturedBefore' in patch) setOrDelete('before', patch.capturedBefore, false)
                     if ('panel' in patch) setOrDelete('panel', patch.panel, patch.panel === 'tags')
                     if ('share' in patch) setOrDelete('share', patch.share, false)
+                    if ('hierarchy' in patch) setOrDelete('hierarchy', patch.hierarchy, false)
+                    if ('hpath' in patch) setOrDelete('hpath', patch.hpath, false)
+                    if ('hedit' in patch) setOrDelete('hedit', patch.hedit, false)
                     return next
                 },
                 {replace: opts?.replace},
