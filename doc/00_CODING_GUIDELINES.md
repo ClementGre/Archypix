@@ -18,6 +18,10 @@ For modules with sub-files, use a `module_name.rs` file alongside the `module_na
   the same instance. Multiple instances can have the same global domain. Use `services::users::find_local_user_id` instead to check if a user is on
   the same instance.
 
+# Environment
+
+For things involving the archypix-worker crate, run in `nix develop`.
+
 # Agents
 
 When making changes to the codebase:
@@ -25,6 +29,7 @@ When making changes to the codebase:
 - Keep documentation up to date. Match the level of detail already present — do not add overly specific descriptions of what was changed beyond what
   the rest of the doc covers.
 - When editing the api, update `06_API_REFERENCE.md`.
+- When completing a task, update `99_ROADMAP_MVP.md`, and eventually add things not implemented yet into it.
 - On back, keep tests up to date. New features and modified behaviour should be reflected in the test suite.
 - On front, don’t start or preview the frontend server yourself. Only check that it builds. The user can give you feedback on the frontend
   changes.

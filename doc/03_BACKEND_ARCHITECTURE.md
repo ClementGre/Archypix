@@ -60,7 +60,9 @@ clients/
 
 services/
   auth.rs / users.rs / pictures.rs / user_settings.rs / jobs.rs
-  hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration
+  hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration; load_resolved + WebDAV token mgmt
+  vfs.rs            # protocol-agnostic VirtualFs over the resolver (list/stat/read + PUT/DELETE/MOVE/COPY/MKCOL write-back); 06_webdav.md §5
+  webdav.rs         # WebDAV Basic-auth resolution (token → session) + Redis cache
   shares.rs         # module root re-exporting the submodules below
   shares/
     lifecycle.rs    # create/accept/revoke/reject + cleanup_incoming_share (share state)
@@ -76,6 +78,7 @@ api/
   federation/handlers.rs + models.rs
   resolver/handlers.rs + models.rs
   worker/handlers.rs + models.rs
+  webdav.rs         # hand-rolled WebDAV handler (OPTIONS/PROPFIND/GET/HEAD/PUT/DELETE/MOVE/COPY/MKCOL/PROPPATCH/LOCK); mounted at /webdav/{slug} outside /api
 
 infra/
   config.rs / error.rs / redis.rs / crypto.rs / db.rs / s3.rs
@@ -161,14 +164,15 @@ dirty pictures **or** a `pending_first_announcement`/`errored` share past its ba
 
 ## 1) API layout
 
-| Section                      | Base path                      | Auth                      |
-|------------------------------|--------------------------------|---------------------------|
-| Resolver endpoints           | `/api/resolver/*`              | Resolver JWT              |
-| Admin endpoints              | `/api/admin/*`                 | User JWT with `is_admin`  |
-| Public/auth endpoints        | `/api/auth/*`, `/api/public/*` | Mixed                     |
-| Authenticated user endpoints | `/api/authenticated/*`         | User JWT                  |
-| Federation endpoints         | `/api/federation/*`            | Federation JWT (pairwise) |
-| Worker endpoints             | `/api/worker/*`                | Worker JWT                |
+| Section                      | Base path                      | Auth                             |
+|------------------------------|--------------------------------|----------------------------------|
+| Resolver endpoints           | `/api/resolver/*`              | Resolver JWT                     |
+| Admin endpoints              | `/api/admin/*`                 | User JWT with `is_admin`         |
+| Public/auth endpoints        | `/api/auth/*`, `/api/public/*` | Mixed                            |
+| Authenticated user endpoints | `/api/authenticated/*`         | User JWT                         |
+| Federation endpoints         | `/api/federation/*`            | Federation JWT (pairwise)        |
+| Worker endpoints             | `/api/worker/*`                | Worker JWT                       |
+| WebDAV endpoints             | `/webdav/{slug}/*`             | Per-hierarchy token (HTTP Basic) |
 
 ## 2) Domain terminology
 
@@ -359,15 +363,18 @@ A hierarchy maps a filtered view of the tag graph to a directory tree (node-tree
 mirror/query/static). It stores no pictures; membership is derived live. Write endpoints ship with
 WebDAV (out of scope here). See `doc/features/05_hierarchies.md`.
 
-| Method   | Path                                         | Description                                                                                                     |
-|----------|----------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| `GET`    | `/api/authenticated/hierarchies`             | List the user's hierarchies (`id`, `name`, `enabled`).                                                          |
-| `POST`   | `/api/authenticated/hierarchies`             | Create. Body: `{ name, config? }`. Validates `config` (§11); stores the normalized form.                        |
-| `GET`    | `/api/authenticated/hierarchies/{id}`        | Get one with full `config`.                                                                                     |
-| `PATCH`  | `/api/authenticated/hierarchies/{id}`        | Update `{ name?, enabled?, config? }`. Re-validates `config`.                                                   |
-| `DELETE` | `/api/authenticated/hierarchies/{id}`        | Delete.                                                                                                         |
-| `GET`    | `/api/authenticated/hierarchies/{id}/tree`   | Directories only. Query: `path` (default root), `depth` (default 1), `counts`.                                  |
-| `GET`    | `/api/authenticated/hierarchies/{id}/browse` | Paginated pictures of one directory. Resolves `path` → `TagPredicate` server-side, then reuses `list_pictures`. |
+| Method   | Path                                                    | Description                                                                                                     |
+|----------|---------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| `GET`    | `/api/authenticated/hierarchies`                        | List the user's hierarchies (`id`, `name`, `enabled`).                                                          |
+| `POST`   | `/api/authenticated/hierarchies`                        | Create. Body: `{ name, config? }`. Validates `config` (§11); stores the normalized form.                        |
+| `GET`    | `/api/authenticated/hierarchies/{id}`                   | Get one with full `config`.                                                                                     |
+| `PATCH`  | `/api/authenticated/hierarchies/{id}`                   | Update `{ name?, enabled?, config? }`. Re-validates `config`.                                                   |
+| `DELETE` | `/api/authenticated/hierarchies/{id}`                   | Delete.                                                                                                         |
+| `GET`    | `/api/authenticated/hierarchies/{id}/tree`              | Directories only. Query: `path` (default root), `depth` (default 1), `counts`.                                  |
+| `GET`    | `/api/authenticated/hierarchies/{id}/browse`            | Paginated pictures of one directory. Resolves `path` → `TagPredicate` server-side, then reuses `list_pictures`. |
+| `GET`    | `/api/authenticated/hierarchies/{id}/webdav`            | WebDAV mount URL + per-hierarchy token (minted on first access). See `doc/features/06_webdav.md`.               |
+| `POST`   | `/api/authenticated/hierarchies/{id}/webdav/regenerate` | Rotate the WebDAV token.                                                                                        |
+| `PATCH`  | `/api/authenticated/hierarchies/{id}/webdav`            | Toggle the WebDAV read strategy (`use_redirect`).                                                               |
 
 **Sharing**
 

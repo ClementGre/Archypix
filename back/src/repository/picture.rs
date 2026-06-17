@@ -374,6 +374,90 @@ impl PictureRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// Find an owned picture by its `file_hash` (the WebDAV ETag). Used by the WebDAV PUT
+    /// path to recognise a relocate/copy expressed as a fresh upload and avoid creating a
+    /// duplicate (06_webdav.md §8). `include_deleted` lets the caller also match a recently
+    /// trashed picture (un-delete on rematch).
+    pub async fn find_owned_by_hash<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        file_hash: &str,
+        include_deleted: bool,
+    ) -> Result<Option<Picture>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            Picture,
+            r#"SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
+                      filename, mime_type, file_size, width, height,
+                      exif_data as "exif_data: _", metadata as "metadata: _",
+                      deleted_at, captured_at, ingested_at, updated_at,
+                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                      file_hash, exif_sync_status as "exif_sync_status: _"
+               FROM pictures
+               WHERE local_user_id = $1 AND file_hash = $2
+                 AND remote_picture_id IS NULL
+                 AND ($3 OR deleted_at IS NULL)
+               ORDER BY deleted_at NULLS FIRST
+               LIMIT 1"#,
+            user_id,
+            file_hash,
+            include_deleted,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Rename an owned picture (WebDAV MOVE within a directory, §7.1). Returns false if the
+    /// picture is not owned by the user.
+    pub async fn set_filename<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+        filename: &str,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            "UPDATE pictures SET filename = $3 WHERE id = $1 AND local_user_id = $2",
+            picture_id,
+            user_id,
+            filename,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Set or clear `deleted_at` on an owned picture (WebDAV `fullDelete` / un-delete on
+    /// rematch, §7–8). Returns false if the picture is not owned by the user.
+    pub async fn set_deleted<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+        deleted: bool,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            r#"UPDATE pictures
+               SET deleted_at = CASE WHEN $3 THEN (now() at time zone 'utc') ELSE NULL END
+               WHERE id = $1 AND local_user_id = $2"#,
+            picture_id,
+            user_id,
+            deleted,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn list(
         db: &PgPool,
         local_user_id: Uuid,

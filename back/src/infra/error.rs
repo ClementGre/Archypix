@@ -19,6 +19,8 @@ pub enum AppError {
     DatabaseError(String, String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl IntoResponse for AppError {
@@ -30,6 +32,7 @@ impl IntoResponse for AppError {
             AppError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::DatabaseError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         };
         let body = serde_json::json!({ "error": self.to_string() });
         if status.is_server_error() {

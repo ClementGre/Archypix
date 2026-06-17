@@ -40,9 +40,35 @@
   `exclude_tags`/`match`/`untagged` on `GET /pictures`. Write-back is modelled (op-lists, compliance,
   `safeDeleteMode`) so the schema is write-ready, but the **write endpoints ship with WebDAV**. See
   `doc/features/05_hierarchies.md`.
-- [ ] **WebDAV** — virtual directory tree over tags; full-res/thumbnail reads via presigned redirect or back proxy; staging-pattern writes; versioning
-  on overwrite. Use `pictures.file_hash` as the WebDAV ETag.
-  Two things from the specs have no roadmap item:
+- [x] **WebDAV** — backend implemented: per-hierarchy encrypted token (HTTP Basic) mounted at
+  `/webdav/{slug}`, protocol-agnostic `VirtualFs` over the hierarchy resolver, reads via presigned
+  redirect or backend proxy, writes (PUT/DELETE/MOVE/COPY/MKCOL) as tag write-back with hash-dedupe
+  identity and `pictures.file_hash` as ETag, frontend token dialog, and OS-junk filtering
+  (AppleDouble `._*`, `.DS_Store`, …). See `doc/features/06_webdav.md`.
+  Remaining WebDAV work (see `06_webdav.md` §21):
+    - [ ] **Versioning on overwrite** — consult the user's `versioning_mode` on WebDAV PUT and
+      snapshot a `picture_version` before overwriting (currently in-place overwrite + re-extract).
+    - [ ] **Streamed uploads** — stream the PUT body to S3 (multipart) with inline hashing instead
+      of buffering the whole file in memory; wire `WEBDAV_MAX_UPLOAD_BYTES` as a real env config
+      (currently a constant).
+    - [ ] **Brand-new mirror subdir auto-tag (§9)** — a PUT/COPY/MOVE into a not-yet-existing path
+      whose nearest ancestor is a `mirror` node should mint the deepest tag from the path segments
+      (incl. MKCOL pending-dir tracking). Today MKCOL is accepted transiently but not persisted, so
+      uploads only land in directories the tags already produce.
+    - [ ] **Case-insensitive write-side tag reuse (§10c)** — on write, reuse an existing
+      case-variant sibling tag and reject minting a case-colliding new one (`409`).
+    - [ ] **Directory-level operations** — DELETE/MOVE/COPY on a collection (whole directory) are
+      not supported (only files); decide semantics (bulk re-tag vs reject) and implement.
+    - [ ] **Conditional & range requests** — honor `If-Match`/`If-None-Match` (ETag) and the
+      `Overwrite` header on PUT/MOVE/COPY; support HTTP `Range` in proxy-read mode.
+    - [ ] **Real locking** — replace the fake advisory LOCK/UNLOCK with an enforced lock store
+      (in-memory or Redis) if multi-writer correctness becomes a concern.
+    - [ ] **Quota properties** — expose `quota-used-bytes`/`quota-available-bytes` in PROPFIND.
+    - [ ] **End-to-end VFS tests** — integration tests against a seeded DB for list/stat/read and
+      the full write taxonomy (PUT new/overwrite/dedupe/un-delete, MOVE/COPY/DELETE, 409 path).
+- [ ] **Better workers** – allow a worker to ping multiple backends. Use multi-threaded workers that scale the frequency of number of job claim
+  requests automatically (when a claim is successful, start a new thread and try to claim a new job immediately, in the limit of max_threads.)
+- [ ] **Security audit** — audit the code for security holes.
 - [ ] **Trash & restore** — pictures deletion, announcement to sharing recipients setting their `deleted_at` too. Adding an endpoint allowing to copy
   the picture physically to keep it even if the owner trashed it.
 - [ ] **Tag rename cascade** — expose API endpoint that triggers the in-process `TaskQueue::TagRename` task; add cascade to outgoing shares,
@@ -51,7 +77,6 @@
   access.
 - [ ] **Rate limiting and validators** — Redis-backed limits on auth, federation, and public endpoints; session invalidation on logout. Password,
   emails, usernames validators.
-- [ ] **Full Frontend** — Update the frontend
 
 ## To-do for the v1.0
 

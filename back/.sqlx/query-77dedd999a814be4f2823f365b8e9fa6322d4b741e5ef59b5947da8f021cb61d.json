@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET deleted_at = CASE WHEN $3 THEN (now() at time zone 'utc') ELSE NULL END\n               WHERE id = $1 AND local_user_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "77dedd999a814be4f2823f365b8e9fa6322d4b741e5ef59b5947da8f021cb61d"
+}

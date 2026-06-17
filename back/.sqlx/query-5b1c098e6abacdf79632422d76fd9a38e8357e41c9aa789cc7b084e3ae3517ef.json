@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name, enabled, webdav_token_enc, webdav_use_redirect\n               FROM hierarchies\n               WHERE id = $1 AND owner_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "hierarchies",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "hierarchies",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "webdav_token_enc",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "hierarchies",
+            "name": "webdav_token_enc"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "webdav_use_redirect",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "hierarchies",
+            "name": "webdav_use_redirect"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5b1c098e6abacdf79632422d76fd9a38e8357e41c9aa789cc7b084e3ae3517ef"
+}

@@ -9,7 +9,8 @@
 
 use crate::clients::federation::FederationClient;
 use crate::domain::hierarchy::{
-    HierarchyConfig, MatchMode, NamingStrategy, NodeKind, SafeDeleteMode, TagPredicate,
+    HierarchyConfig, MatchMode, NamingStrategy, NodeKind, SafeDeleteMode, TagOp, TagOpKind,
+    TagPredicate, WriteBack,
 };
 use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
@@ -44,6 +45,10 @@ pub struct ResolvedDir {
     pub subtree: Option<TagPredicate>,
     /// The membership term the parent subtracts as `own(child)`. `None` for `static`.
     own_for_parent: Option<TagPredicate>,
+    /// Effective write-back op-list for this directory (06_webdav.md §7). `None` ⇒ read-only.
+    /// `mirror` dirs synthesize assign/remove of their own tag; writable `query` dirs carry the
+    /// authored op-list. Consumed by the WebDAV write layer.
+    pub write_back: Option<WriteBack>,
     pub children: Vec<ResolvedDir>,
 }
 
@@ -79,6 +84,7 @@ pub fn resolve(config: &HierarchyConfig, distinct_paths: &[String]) -> ResolvedD
         direct: None,
         subtree: None,
         own_for_parent: None,
+        write_back: None,
         children: roots,
     }
 }
@@ -147,14 +153,16 @@ fn build_nodes(
                         .collect(),
                     ..membership.clone()
                 };
+                let writable = cfg_write_back && write_back.is_some() && !*match_untagged;
                 out.push(ResolvedDir {
                     name: node.effective_name().unwrap_or_default(),
-                    writable: cfg_write_back && write_back.is_some() && !*match_untagged,
+                    writable,
                     safe_delete_mode: sdm,
                     naming,
                     direct: Some(direct),
                     subtree: Some(membership),
                     own_for_parent: Some(own_base),
+                    write_back: if writable { write_back.clone() } else { None },
                     children: child_dirs,
                 });
             }
@@ -175,6 +183,7 @@ fn build_nodes(
                     direct: None,
                     subtree: None,
                     own_for_parent: None,
+                    write_back: None,
                     children: child_dirs,
                 });
             }
@@ -331,6 +340,21 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
         ..TagPredicate::all()
     };
     let label = path.rsplit('.').next().unwrap_or(path).to_string();
+    // Mirror write-back is implicit: assign/remove the directory's own tag (§7.1).
+    let write_back = if ctx.cfg_write_back {
+        Some(WriteBack {
+            on_add: vec![TagOp {
+                op: TagOpKind::Assign,
+                path: path.to_string(),
+            }],
+            on_remove: vec![TagOp {
+                op: TagOpKind::Remove,
+                path: path.to_string(),
+            }],
+        })
+    } else {
+        None
+    };
     ResolvedDir {
         name: name_override.unwrap_or(label),
         writable: ctx.cfg_write_back,
@@ -344,6 +368,7 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
             match_all: true,
             ..TagPredicate::all()
         }),
+        write_back,
         children,
     }
 }
@@ -357,7 +382,7 @@ pub fn find_dir<'a>(root: &'a ResolvedDir, segments: &[String]) -> Option<&'a Re
     Some(cur)
 }
 
-fn split_path(path: &str) -> Vec<String> {
+pub fn split_path(path: &str) -> Vec<String> {
     path.split('/')
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -580,6 +605,38 @@ pub async fn list_hierarchies(db: &PgPool, user_id: Uuid) -> Result<Vec<Hierarch
     HierarchyRepository::list_by_owner(db, user_id).await
 }
 
+/// Load an owned hierarchy, parse + validate its config, and resolve the directory tree
+/// against the user's current tags. The single entry point the WebDAV `VirtualFs` uses.
+pub async fn load_resolved(
+    db: &PgPool,
+    user_id: Uuid,
+    hierarchy_id: Uuid,
+) -> Result<(HierarchyRow, HierarchyConfig, ResolvedDir), AppError> {
+    let row = load_owned(db, user_id, hierarchy_id).await?;
+    let config = parse_config(&row.config)?;
+    let distinct = TagRepository::list_paths_by_user(db, user_id).await?;
+    let root = resolve(&config, &distinct);
+    Ok((row, config, root))
+}
+
+/// Build a [`PictureListFilter`] that returns up to `page_size` pictures matching `pred`.
+/// Used by the WebDAV VFS to list a directory's direct files with full picture rows.
+pub fn list_filter_for(pred: &TagPredicate, page_size: i64) -> PictureListFilter {
+    PictureListFilter {
+        page: 1,
+        page_size,
+        sort: PictureSortField::default(),
+        order: SortOrder::default(),
+        tag: None,
+        predicate: Some(pred.clone()),
+        owned_only: false,
+        shared_with_me: false,
+        include_deleted: false,
+        captured_after: None,
+        captured_before: None,
+    }
+}
+
 pub async fn get_hierarchy(
     db: &PgPool,
     user_id: Uuid,
@@ -645,4 +702,91 @@ pub async fn delete_hierarchy(
     hierarchy_id: Uuid,
 ) -> Result<bool, AppError> {
     HierarchyRepository::delete(db, user_id, hierarchy_id).await
+}
+
+// ─── WebDAV token management (06_webdav.md §3, §17) ───────────────────────────────
+
+/// The WebDAV mount info returned to the owner.
+pub struct WebdavInfo {
+    /// `{scheme}://{back_domain}/webdav/{slug}` — the mount URL to paste into a client.
+    pub url: String,
+    /// The plaintext token (Basic-auth password). Decrypted for display.
+    pub token: String,
+    pub use_redirect: bool,
+    pub enabled: bool,
+}
+
+fn webdav_url(config: &Config, name: &str) -> String {
+    format!(
+        "{}://{}/webdav/{}",
+        config.back_scheme(),
+        config.back_domain,
+        crate::domain::hierarchy::slugify(name),
+    )
+}
+
+/// Get the WebDAV mount info, minting a token on first access (so `GET …/webdav` always
+/// returns a usable credential).
+pub async fn get_webdav_info(
+    db: &PgPool,
+    config: &Config,
+    user_id: Uuid,
+    hierarchy_id: Uuid,
+) -> Result<WebdavInfo, AppError> {
+    let row = HierarchyRepository::get_webdav(db, user_id, hierarchy_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let token = match row.webdav_token_enc {
+        Some(blob) => crate::infra::crypto::decrypt_webdav_token(&config.jwt_secret, &blob)?,
+        None => {
+            let token = crate::infra::crypto::generate_webdav_token();
+            let blob = crate::infra::crypto::encrypt_webdav_token(&config.jwt_secret, &token)?;
+            HierarchyRepository::set_webdav_token(db, user_id, hierarchy_id, &blob).await?;
+            token
+        }
+    };
+    Ok(WebdavInfo {
+        url: webdav_url(config, &row.name),
+        token,
+        use_redirect: row.webdav_use_redirect,
+        enabled: row.enabled,
+    })
+}
+
+/// Rotate the WebDAV token (invalidates any mounted client).
+pub async fn regenerate_webdav_token(
+    db: &PgPool,
+    config: &Config,
+    user_id: Uuid,
+    hierarchy_id: Uuid,
+) -> Result<WebdavInfo, AppError> {
+    let row = HierarchyRepository::get_webdav(db, user_id, hierarchy_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let token = crate::infra::crypto::generate_webdav_token();
+    let blob = crate::infra::crypto::encrypt_webdav_token(&config.jwt_secret, &token)?;
+    HierarchyRepository::set_webdav_token(db, user_id, hierarchy_id, &blob).await?;
+    Ok(WebdavInfo {
+        url: webdav_url(config, &row.name),
+        token,
+        use_redirect: row.webdav_use_redirect,
+        enabled: row.enabled,
+    })
+}
+
+/// Toggle the WebDAV read strategy (presigned redirect vs backend proxy).
+pub async fn set_webdav_use_redirect(
+    db: &PgPool,
+    user_id: Uuid,
+    hierarchy_id: Uuid,
+    use_redirect: bool,
+) -> Result<(), AppError> {
+    let updated =
+        HierarchyRepository::set_webdav_use_redirect(db, user_id, hierarchy_id, use_redirect)
+            .await?;
+    if updated {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
 }

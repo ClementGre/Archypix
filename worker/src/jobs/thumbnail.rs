@@ -12,7 +12,7 @@
 
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{exif as exif_mod, hash as hash_mod, thumbnailer};
+use crate::imaging::{exif as exif_mod, thumbnailer};
 use archypix_common::job::{ExtractedExif, GenThumbnailConfig};
 use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
 use tempfile::TempDir;
@@ -86,16 +86,13 @@ pub async fn handle(
 
     // ── File hash (blocking) ─────────────────────────────────────────────────
     let path_for_hash = original_path.clone();
-    let file_hash = match tokio::task::spawn_blocking(move || hash_mod::hash_file(&path_for_hash))
-        .await
-        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
-    {
-        Ok(h) => Some(h),
-        Err(e) => {
-            warn!(error = ?e, "gen_thumbnail: file hash failed; skipping");
-            None
-        }
-    };
+    let file_hash =
+        tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path_for_hash))
+            .await
+            .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+    if file_hash.is_none() {
+        warn!("gen_thumbnail: file hash failed; skipping");
+    }
 
     // ── Thumbnails + BlurHash + upload ────────────────────────────────────────
     let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;

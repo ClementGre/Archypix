@@ -432,6 +432,14 @@ CREATE TABLE hierarchies
     -- Status
     enabled    BOOLEAN      NOT NULL DEFAULT TRUE,
 
+    -- WebDAV: one per-hierarchy access token (the HTTP Basic password for the mount),
+    -- AES-256-GCM encrypted at rest (nonce ‖ ciphertext ‖ tag) with an HKDF sub-key of
+    -- JWT_SECRET. NULL ⇒ no token issued yet. See doc/features/06_webdav.md §3.
+    webdav_token_enc    BYTEA,
+    -- WebDAV read strategy: true ⇒ GET responds 302 to a presigned URL; false ⇒ the
+    -- backend proxies the bytes (for clients that don't follow redirects). §6.
+    webdav_use_redirect BOOLEAN NOT NULL DEFAULT TRUE,
+
     -- Timestamps
     created_at TIMESTAMP    NOT NULL DEFAULT (now() at time zone 'utc'),
     updated_at TIMESTAMP    NOT NULL DEFAULT (now() at time zone 'utc'),
@@ -693,7 +701,7 @@ COMMENT ON TABLE tagging_services IS 'Base table for tagging service pipeline; s
 COMMENT ON TABLE shared_tag_mapping_services IS 'Maps incoming shares to local tags';
 COMMENT ON TABLE rule_tagging_services IS 'Assigns tags based on EXIF/metadata predicates';
 COMMENT ON TABLE segmentation_tagging_services IS 'Assigns tags based on date ranges with subsegment support';
-COMMENT ON TABLE hierarchies IS 'Tag-graph → directory-tree mappings; config JSONB stores an ordered node tree (mirror/query/static), safeDeleteMode, naming, writeBack — see doc/features/05_hierarchies.md §4';
+COMMENT ON TABLE hierarchies IS 'Tag-graph → directory-tree mappings; config JSONB stores an ordered node tree (mirror/query/static), safeDeleteMode, naming, writeBack — see doc/features/05_hierarchies.md §4. webdav_token_enc/webdav_use_redirect drive the WebDAV mount — see doc/features/06_webdav.md.';
 COMMENT ON TABLE jobs IS 'Async processing queue; config JSONB holds job-specific params (may include picture IDs)';
 COMMENT ON TABLE federation_messages IS 'Federation message log; payload JSONB holds message data (may include picture IDs)';
 

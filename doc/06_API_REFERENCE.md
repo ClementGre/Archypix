@@ -14,16 +14,17 @@ The backend exposes all routes from a single base URL. In local development, Vit
 
 ### Route groups
 
-| Prefix                   | Auth type                  | Notes                                           |
-|--------------------------|----------------------------|-------------------------------------------------|
-| `/api/auth/*`            | None / User JWT            | Login, refresh, logout, me                      |
-| `/api/public/*`          | None                       | Registration (standalone mode), public profiles |
-| `/api/authenticated/*`   | User JWT                   | All regular user actions                        |
-| `/api/admin/*`           | User JWT + `is_admin=true` | Admin panel                                     |
-| `/api/worker/*`          | Worker JWT                 | Worker-facing only, not called by frontend      |
-| `/api/federation/*`      | Federation JWT             | Server-to-server only, not called by frontend   |
-| `/api/resolver/*`        | Resolver JWT               | Resolver-facing only, not called by frontend    |
-| `/.well-known/webfinger` | None                       | Identity resolution                             |
+| Prefix                   | Auth type                   | Notes                                                                |
+|--------------------------|-----------------------------|----------------------------------------------------------------------|
+| `/api/auth/*`            | None / User JWT             | Login, refresh, logout, me                                           |
+| `/api/public/*`          | None                        | Registration (standalone mode), public profiles                      |
+| `/api/authenticated/*`   | User JWT                    | All regular user actions                                             |
+| `/api/admin/*`           | User JWT + `is_admin=true`  | Admin panel                                                          |
+| `/api/worker/*`          | Worker JWT                  | Worker-facing only, not called by frontend                           |
+| `/api/federation/*`      | Federation JWT              | Server-to-server only, not called by frontend                        |
+| `/api/resolver/*`        | Resolver JWT                | Resolver-facing only, not called by frontend                         |
+| `/.well-known/webfinger` | None                        | Identity resolution                                                  |
+| `/webdav/{slug}/*`       | Per-hierarchy token (Basic) | WebDAV mount of a hierarchy; external sync clients, not the frontend |
 
 ---
 
@@ -1323,6 +1324,39 @@ node wins" predicate and reuses the picture list machinery — the client only e
 
 **Response `200`:** identical shape to `GET /pictures` (`{ total, page, page_size, items }`). A
 `static` directory (no direct files) returns an empty page.
+
+#### WebDAV mount (token management)
+
+Each hierarchy can be mounted as a WebDAV drive at `{scheme}://{back_domain}/webdav/{slug}`
+(`slug` = the slugified hierarchy name). The mount is authenticated with HTTP **Basic** — the
+username is the `@user` and the password is the per-hierarchy **token** below. The token is
+stored encrypted at rest and shown here so the owner can paste it into a client. See
+`doc/features/06_webdav.md`.
+
+```ts
+interface WebdavResponse {
+  url: string;          // mount URL — {scheme}://{back_domain}/webdav/{slug}
+  token: string;        // Basic-auth password
+  use_redirect: boolean; // true ⇒ reads 302-redirect to presigned URLs; false ⇒ backend proxies bytes
+  enabled: boolean;      // mount is disabled when the hierarchy is disabled
+}
+```
+
+#### `GET /api/authenticated/hierarchies/{id}/webdav`
+
+Returns the mount URL and token, **minting a token on first access**.
+
+**Response `200`:** `WebdavResponse`. 404 if the hierarchy is not found.
+
+#### `POST /api/authenticated/hierarchies/{id}/webdav/regenerate`
+
+Rotate the token (invalidates any currently-mounted client).
+
+**Response `200`:** `WebdavResponse` with the new `token`.
+
+#### `PATCH /api/authenticated/hierarchies/{id}/webdav`
+
+Toggle the read strategy. **Request:** `{ use_redirect: boolean }`. **Response `200`:** `WebdavResponse`.
 
 ---
 

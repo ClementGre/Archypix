@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n                 SELECT 1 FROM tags\n                 WHERE picture_id = $1\n                   AND tag_path <@ ANY($2::ltree[])\n                   AND source <> 'manual'::tag_source\n               ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c9d05885d8e93bcdbb11ec94544eec44269aff9954e8bdb4b0a1b95fd4c27aae"
+}

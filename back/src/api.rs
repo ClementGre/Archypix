@@ -3,6 +3,7 @@ mod federation;
 mod middleware;
 mod resolver;
 mod user;
+mod webdav;
 mod webfinger;
 mod worker;
 
@@ -18,6 +19,8 @@ use tower_http::cors::{Any, CorsLayer};
 pub fn routes(config: &Config) -> Router<AppState> {
     let mut router = Router::new()
         .nest("/api", api_routes(config))
+        // WebDAV lives outside /api — clients authenticate with HTTP Basic, not a User JWT.
+        .merge(webdav::routes())
         .route("/health", get(health));
 
     if !config.use_resolver {

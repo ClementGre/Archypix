@@ -16,6 +16,15 @@ pub struct HierarchyRow {
     pub updated_at: NaiveDateTime,
 }
 
+/// WebDAV mount settings for one hierarchy.
+#[derive(Debug, Clone)]
+pub struct WebdavRow {
+    pub name: String,
+    pub enabled: bool,
+    pub webdav_token_enc: Option<Vec<u8>>,
+    pub webdav_use_redirect: bool,
+}
+
 pub struct HierarchyRepository;
 
 impl HierarchyRepository {
@@ -113,6 +122,73 @@ impl HierarchyRepository {
         .fetch_optional(ex)
         .await
         .map_err(map_sqlx_error)
+    }
+
+    /// Load the WebDAV mount settings for one hierarchy (06_webdav.md §3).
+    pub async fn get_webdav<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<WebdavRow>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            WebdavRow,
+            r#"SELECT name, enabled, webdav_token_enc, webdav_use_redirect
+               FROM hierarchies
+               WHERE id = $1 AND owner_id = $2"#,
+            id,
+            owner_id,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Store (or rotate) the encrypted WebDAV token. Returns false if the hierarchy is
+    /// not owned by the user.
+    pub async fn set_webdav_token<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        id: Uuid,
+        token_enc: &[u8],
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            "UPDATE hierarchies SET webdav_token_enc = $3 WHERE id = $1 AND owner_id = $2",
+            id,
+            owner_id,
+            token_enc,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Toggle the WebDAV read strategy (presigned redirect vs backend proxy, §6).
+    pub async fn set_webdav_use_redirect<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        id: Uuid,
+        use_redirect: bool,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            "UPDATE hierarchies SET webdav_use_redirect = $3 WHERE id = $1 AND owner_id = $2",
+            id,
+            owner_id,
+            use_redirect,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
     }
 
     pub async fn delete<'e, E>(ex: E, owner_id: Uuid, id: Uuid) -> Result<bool, AppError>

@@ -29,6 +29,9 @@ pub enum RedisKey<'a> {
     AdminStats,
     /// Cached per-user admin analytics (short TTL).
     AdminUserStats(Uuid),
+    /// Cached WebDAV auth resolution, keyed by the SHA-256 of the presented token
+    /// (so the plaintext token is never a Redis key). See 06_webdav.md §3.3.
+    WebdavToken(&'a str),
 }
 
 impl<'a> RedisKey<'a> {
@@ -41,6 +44,7 @@ impl<'a> RedisKey<'a> {
             Self::UserByUsername(username) => format!("user:username:{username}"),
             Self::AdminStats => "admin:stats:instance".to_string(),
             Self::AdminUserStats(id) => format!("admin:stats:user:{id}"),
+            Self::WebdavToken(hash) => format!("webdav:token:{hash}"),
         }
     }
 }

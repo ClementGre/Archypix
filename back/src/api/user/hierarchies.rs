@@ -153,6 +153,72 @@ pub async fn delete(
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
+// ─── WebDAV token management (06_webdav.md §17) ────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct WebdavResponse {
+    pub url: String,
+    pub token: String,
+    pub use_redirect: bool,
+    pub enabled: bool,
+}
+
+impl From<services::hierarchy::WebdavInfo> for WebdavResponse {
+    fn from(i: services::hierarchy::WebdavInfo) -> Self {
+        Self {
+            url: i.url,
+            token: i.token,
+            use_redirect: i.use_redirect,
+            enabled: i.enabled,
+        }
+    }
+}
+
+/// `GET /{id}/webdav` — the mount URL + token (minted on first access).
+pub async fn webdav_get(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WebdavResponse>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "hierarchy_webdav_get");
+    let info =
+        services::hierarchy::get_webdav_info(&state.db, &state.config, auth.user_id()?, id).await?;
+    Ok(Json(info.into()))
+}
+
+/// `POST /{id}/webdav/regenerate` — rotate the token.
+pub async fn webdav_regenerate(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WebdavResponse>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "hierarchy_webdav_regenerate");
+    let info =
+        services::hierarchy::regenerate_webdav_token(&state.db, &state.config, auth.user_id()?, id)
+            .await?;
+    Ok(Json(info.into()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebdavPatchRequest {
+    pub use_redirect: bool,
+}
+
+/// `PATCH /{id}/webdav` — toggle the read strategy.
+pub async fn webdav_patch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<WebdavPatchRequest>,
+) -> Result<Json<WebdavResponse>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, use_redirect = payload.use_redirect, "hierarchy_webdav_patch");
+    let user_id = auth.user_id()?;
+    services::hierarchy::set_webdav_use_redirect(&state.db, user_id, id, payload.use_redirect)
+        .await?;
+    let info = services::hierarchy::get_webdav_info(&state.db, &state.config, user_id, id).await?;
+    Ok(Json(info.into()))
+}
+
 // ─── Navigation ──────────────────────────────────────────────────────────────────
 
 fn default_depth() -> u32 {

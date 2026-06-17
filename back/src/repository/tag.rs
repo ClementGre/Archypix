@@ -167,6 +167,37 @@ impl TagRepository {
         Ok(())
     }
 
+    /// Whether the picture carries a **non-manual** tag (rule/segment/share_mapping/
+    /// incoming_share) under any of `paths` (inclusive). The WebDAV write-back layer uses this
+    /// to detect that an `onRemove` cannot break membership — a live service still asserts the
+    /// tag — and return `409 Conflict` instead (06_webdav.md §7.2).
+    pub async fn has_non_manual_tag_under<'e, E>(
+        ex: E,
+        picture_id: Uuid,
+        paths: &[String],
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if paths.is_empty() {
+            return Ok(false);
+        }
+        let row = sqlx::query!(
+            r#"SELECT EXISTS(
+                 SELECT 1 FROM tags
+                 WHERE picture_id = $1
+                   AND tag_path <@ ANY($2::ltree[])
+                   AND source <> 'manual'::tag_source
+               ) AS "exists!""#,
+            picture_id,
+            paths as &[String],
+        )
+        .fetch_one(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(row.exists)
+    }
+
     /// Assign a `/SharedToMe/…` tag to a received picture, linked to the incoming share that
     /// created it. Used exclusively by the share-acceptance and picture-announcement flows.
     ///

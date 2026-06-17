@@ -172,7 +172,9 @@ The `config` is an ordered tree of **nodes**, each rendering to a directory. Thr
 
 The full data model, validation, read resolver, and write-back semantics are specified in
 `doc/features/05_hierarchies.md`. The CRUD + read resolver (navigable `tree`/`browse` endpoints) are
-implemented; the **write endpoints ship with WebDAV**.
+implemented; the **write semantics ship over WebDAV** — each hierarchy mounts at `/webdav/{slug}`
+with a per-hierarchy HTTP Basic token, and filesystem operations translate to the tag write-back
+described below. See `doc/features/06_webdav.md`.
 
 ### 4.1 Read
 

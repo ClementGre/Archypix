@@ -6,6 +6,7 @@ use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
+use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{
     BucketLifecycleConfiguration, ExpirationStatus, LifecycleExpiration, LifecycleRule,
     LifecycleRuleFilter,
@@ -33,6 +34,18 @@ pub trait Storage: Send + Sync {
         dst_key: &str,
     ) -> Result<(), AppError>;
     async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError>;
+    /// Fetch an object's bytes (server-side, internal endpoint). Used by the WebDAV
+    /// proxy-read path for local pictures (06_webdav.md §6).
+    async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError>;
+    /// Upload bytes to a key (server-side, internal endpoint). Used by WebDAV writes,
+    /// which stream the request body to staging (06_webdav.md §7).
+    async fn put_object(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError>;
 }
 
 pub fn picture_key(user_id: Uuid, picture_id: Uuid) -> String {
@@ -120,6 +133,45 @@ impl StorageClient {
             .map(|_| ())
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
+
+    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
+        let out = self
+            .client
+            .get_object()
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let data = out
+            .body
+            .collect()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        Ok(data.into_bytes().to_vec())
+    }
+
+    pub async fn put_object(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        let mut req = self
+            .client
+            .put_object()
+            .bucket(bucket)
+            .key(key)
+            .body(ByteStream::from(body));
+        if let Some(ct) = content_type {
+            req = req.content_type(ct);
+        }
+        req.send()
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::InternalServerError(e.to_string()))
+    }
 }
 
 #[async_trait]
@@ -148,6 +200,18 @@ impl Storage for StorageClient {
     }
     async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError> {
         self.delete_object(bucket, key).await
+    }
+    async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
+        self.get_object(bucket, key).await
+    }
+    async fn put_object(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        self.put_object(bucket, key, body, content_type).await
     }
 }
 

@@ -116,4 +116,12 @@ pub fn authenticated_routes() -> Router<AppState> {
         )
         .route("/hierarchies/{id}/tree", get(hierarchies::tree))
         .route("/hierarchies/{id}/browse", get(hierarchies::browse))
+        .route(
+            "/hierarchies/{id}/webdav",
+            get(hierarchies::webdav_get).patch(hierarchies::webdav_patch),
+        )
+        .route(
+            "/hierarchies/{id}/webdav/regenerate",
+            post(hierarchies::webdav_regenerate),
+        )
 }

@@ -98,6 +98,20 @@ impl Storage for MockStorage {
     async fn delete_object(&self, _bucket: &str, _key: &str) -> Result<(), AppError> {
         Ok(())
     }
+
+    async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
+        todo!()
+    }
+
+    async fn put_object(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        todo!()
+    }
 }
 
 // ── Federation helper ─────────────────────────────────────────────────────────

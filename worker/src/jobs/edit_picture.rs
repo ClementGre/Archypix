@@ -1,6 +1,6 @@
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{exif as exif_mod, hash as hash_mod, thumbnailer};
+use crate::imaging::{exif as exif_mod, thumbnailer};
 use archypix_common::job::EditPictureConfig;
 use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
 use tempfile::TempDir;
@@ -76,16 +76,13 @@ pub async fn handle(
     let file_size = std::fs::metadata(&file_path).map(|m| m.len() as i64).ok();
 
     let path_for_hash = file_path.clone();
-    let file_hash = match tokio::task::spawn_blocking(move || hash_mod::hash_file(&path_for_hash))
-        .await
-        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
-    {
-        Ok(h) => Some(h),
-        Err(e) => {
-            warn!(error = ?e, "edit_picture: file hash failed; skipping");
-            None
-        }
-    };
+    let file_hash =
+        tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path_for_hash))
+            .await
+            .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+    if file_hash.is_none() {
+        warn!(job_id = %job_id, "failed to compute file hash; skipping");
+    }
 
     // ── Upload modified original (last fallible step) ────────────────────────
     info!(job_id = %job_id, "edit_picture: uploading modified original");

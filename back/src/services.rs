@@ -8,3 +8,5 @@ pub mod tagging;
 pub mod tags;
 pub mod user_settings;
 pub mod users;
+pub mod vfs;
+pub mod webdav;

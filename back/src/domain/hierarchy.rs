@@ -175,6 +175,33 @@ impl Node {
     }
 }
 
+// ─── Slug (WebDAV mount path) ─────────────────────────────────────────────────────
+
+/// Slugify a hierarchy name into the `/webdav/{slug}` path segment (06_webdav.md §4).
+/// Lowercases, maps any run of non-`[a-z0-9]` characters to a single `-`, and trims
+/// leading/trailing `-`. Empty result (e.g. a name of only symbols) falls back to
+/// `hierarchy`. The slug is human-readable only — the token is the authority; the slug is
+/// verified against the resolved hierarchy's name.
+pub fn slugify(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "hierarchy".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 // ─── Validation ─────────────────────────────────────────────────────────────────
 
 impl HierarchyConfig {
@@ -190,13 +217,18 @@ fn validate_nodes(
     seen_ids: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     // Sibling name uniqueness over the resolved directory labels.
+    // Sibling names must be unique case-insensitively — WebDAV runs over case-insensitive
+    // filesystems (macOS/Windows), so `Fav` and `fav` would collide on a mounted drive
+    // (06_webdav.md §10a). Reject the collision at save time.
     let mut seen_names = std::collections::HashSet::new();
     for node in nodes {
         let name = node
             .effective_name()
             .ok_or_else(|| format!("node {:?} of this kind requires a `name`", node.id))?;
-        if !seen_names.insert(name.clone()) {
-            return Err(format!("duplicate sibling directory name {name:?}"));
+        if !seen_names.insert(name.to_lowercase()) {
+            return Err(format!(
+                "duplicate sibling directory name {name:?} (names must be unique ignoring case)"
+            ));
         }
         if !seen_ids.insert(node.id.clone()) {
             return Err(format!("duplicate node id {:?}", node.id));
@@ -426,6 +458,24 @@ mod tests {
             {"id": "b", "kind": "static", "name": "Dup", "children": []}
         ]});
         assert!(cfg(json).is_err());
+    }
+
+    #[test]
+    fn rejects_case_only_duplicate_sibling_names() {
+        let json = serde_json::json!({"nodes": [
+            {"id": "a", "kind": "static", "name": "Fav", "children": []},
+            {"id": "b", "kind": "static", "name": "fav", "children": []}
+        ]});
+        assert!(cfg(json).is_err());
+    }
+
+    #[test]
+    fn slugify_basics() {
+        assert_eq!(slugify("My Photos"), "my-photos");
+        assert_eq!(slugify("Photos/Travel 2024!"), "photos-travel-2024");
+        assert_eq!(slugify("  spaced  "), "spaced");
+        assert_eq!(slugify("***"), "hierarchy");
+        assert_eq!(slugify("Déjà"), "d-j"); // non-ascii dropped, runs collapsed
     }
 
     #[test]
