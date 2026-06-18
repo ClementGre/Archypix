@@ -550,6 +550,8 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
         filename: None,
         mime_type: None,
         file_size: None,
+        file_hash: None,
+        thumbnails_generated_at: None,
         width: None,
         height: None,
         captured_at: None,
@@ -591,6 +593,85 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
     assert_eq!(lng, Some(6.87));
     assert_eq!(alt, Some(1200));
     assert_eq!(orient, Some(6));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn register_received_pictures_persists_hash_and_thumbnail_ts(db: PgPool) {
+    use archypix_back::domain::tag::TagPath;
+    use archypix_back::services::shares::register_received_pictures;
+    use uuid::Uuid;
+
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let bob_id = common::seed_user(&db, "bob", "pass").await;
+    let share = alice_shares_with_bob(&db, alice_id, "vacation").await;
+    let incoming = IncomingShareRepository::find_by_outgoing_share(&db, share.id, "test.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let shared_tag = TagPath::shared_to_me("alice", "test.com", &TagPath::from_ltree("vacation"));
+
+    let thumb_ts = chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let mut pic = AnnouncedPicture {
+        picture_id: Uuid::new_v4().to_string(),
+        owner_username: "alice".to_string(),
+        owner_instance_domain: "test.com".to_string(),
+        picture_token: Uuid::new_v4(),
+        filename: None,
+        mime_type: None,
+        file_size: Some(4242),
+        file_hash: Some("deadbeef".to_string()),
+        thumbnails_generated_at: Some(thumb_ts),
+        width: None,
+        height: None,
+        captured_at: None,
+        blurhash: None,
+        gps_lat: None,
+        gps_lng: None,
+        gps_alt: None,
+        orientation: None,
+        exif_data: None,
+    };
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+
+    let (hash, ts, size): (Option<String>, Option<chrono::NaiveDateTime>, Option<i64>) =
+        sqlx::query_as(
+            "SELECT file_hash, thumbnails_generated_at, file_size FROM pictures
+             WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+        )
+        .bind(bob_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        hash.as_deref(),
+        Some("deadbeef"),
+        "file_hash propagated to recipient"
+    );
+    assert_eq!(ts, Some(thumb_ts), "thumbnails_generated_at propagated");
+    assert_eq!(size, Some(4242));
+
+    // A later announce that fills the hash (was null) must refresh it via ON CONFLICT.
+    pic.file_hash = Some("cafef00d".to_string());
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic])
+        .await
+        .unwrap();
+    let hash2: Option<String> = sqlx::query_scalar(
+        "SELECT file_hash FROM pictures WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+    )
+    .bind(bob_id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        hash2.as_deref(),
+        Some("cafef00d"),
+        "re-announce refreshes file_hash"
+    );
 }
 
 // ── cleanup_incoming_share ────────────────────────────────────────────────────

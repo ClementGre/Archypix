@@ -74,6 +74,8 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
         None,
         None,
         None,
+        None,
+        None,
     )
     .await
     .unwrap();

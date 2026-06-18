@@ -82,6 +82,12 @@ pub struct Config {
     /// Backoff (seconds) before a share whose announce/unannounce delivery failed is retried.
     /// Default: 60.
     pub pipeline_retry_backoff_secs: i64,
+    /// Debounce window (milliseconds) before an idle user's pipeline run starts. Wakes that arrive
+    /// during the window are coalesced into a single run (the window is *not* reset, so latency is
+    /// bounded to this value regardless of wake rate). This collapses a burst of per-picture
+    /// worker-completion wakes into one pass. `0` disables debouncing (run immediately) — the value
+    /// used by tests for determinism. Default: 5000.
+    pub pipeline_debounce_ms: u64,
 
     // ── S3 / Object storage ───────────────────────────────────────────────────
     pub s3_endpoint: String,
@@ -189,6 +195,7 @@ impl Config {
             pipeline_batch_sleep_ms: env_u64("PIPELINE_BATCH_SLEEP_MS", 0)?,
             pipeline_concurrency: env_usize("PIPELINE_CONCURRENCY", 4)?,
             pipeline_retry_backoff_secs: env_i64("PIPELINE_RETRY_BACKOFF_SECS", 60)?,
+            pipeline_debounce_ms: env_u64("PIPELINE_DEBOUNCE_MS", 5000)?,
 
             s3_public_endpoint: env("S3_PUBLIC_ENDPOINT", s3_endpoint.clone()),
             s3_workers_endpoint: env("S3_WORKERS_ENDPOINT", s3_endpoint.clone()),
@@ -335,6 +342,7 @@ impl Config {
             pipeline_batch_sleep_ms: 0,
             pipeline_concurrency: 4,
             pipeline_retry_backoff_secs: 60,
+            pipeline_debounce_ms: 0,
             s3_endpoint: "http://localhost:9000".to_string(),
             s3_public_endpoint: "http://localhost:9000".to_string(),
             s3_workers_endpoint: "http://localhost:9000".to_string(),

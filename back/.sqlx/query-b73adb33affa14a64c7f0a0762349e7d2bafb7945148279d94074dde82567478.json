@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH cleanup AS (\n                 DELETE FROM tags\n                 WHERE picture_id = ANY($1::uuid[])\n                   AND tag_path @> ANY($3::ltree[])\n                   AND NOT (tag_path = ANY($3::ltree[]))\n                   AND source = 'manual'::tag_source\n                   AND picture_id IN (\n                     SELECT id FROM pictures WHERE local_user_id = $2 AND deleted_at IS NULL\n                   )\n               )\n               INSERT INTO tags (picture_id, tag_path, source)\n               SELECT p.id, filtered.tag::ltree, 'manual'::tag_source\n               FROM (\n                 SELECT id FROM pictures\n                 WHERE id = ANY($1::uuid[]) AND local_user_id = $2 AND deleted_at IS NULL\n               ) AS p\n               CROSS JOIN (\n                 SELECT t AS tag FROM unnest($3::text[]) AS t\n                 WHERE NOT EXISTS (\n                   SELECT 1 FROM unnest($3::text[]) AS deeper\n                   WHERE deeper <> t AND deeper::ltree <@ t::ltree\n                 )\n               ) AS filtered\n               WHERE NOT EXISTS (\n                 SELECT 1 FROM tags existing\n                 WHERE existing.picture_id = p.id\n                   AND existing.tag_path <@ filtered.tag::ltree\n                   AND existing.tag_path <> filtered.tag::ltree\n                   AND existing.source = 'manual'::tag_source\n               )\n               ON CONFLICT (picture_id, tag_path) WHERE source = 'manual' DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b73adb33affa14a64c7f0a0762349e7d2bafb7945148279d94074dde82567478"
+}

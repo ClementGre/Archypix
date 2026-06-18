@@ -35,10 +35,10 @@ pub trait Storage: Send + Sync {
     ) -> Result<(), AppError>;
     async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError>;
     /// Fetch an object's bytes (server-side, internal endpoint). Used by the WebDAV
-    /// proxy-read path for local pictures (06_webdav.md §6).
     async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError>;
-    /// Upload bytes to a key (server-side, internal endpoint). Used by WebDAV writes,
-    /// which stream the request body to staging (06_webdav.md §7).
+    /// Return an object's size in bytes (a `HEAD`). Used to read the authoritative `file_size`
+    async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError>;
+    /// Upload bytes to a key (server-side, internal endpoint).
     async fn put_object(
         &self,
         bucket: &str,
@@ -46,9 +46,7 @@ pub trait Storage: Send + Sync {
         body: Vec<u8>,
         content_type: Option<&str>,
     ) -> Result<(), AppError>;
-    /// Stream an on-disk file to a key without buffering it in memory. The WebDAV PUT path
-    /// streams the request body to a temp file (hashing inline), then streams that file to S3
-    /// (06_webdav.md §7).
+    /// Stream an on-disk file to a key without buffering it in memory.
     async fn put_object_file(
         &self,
         bucket: &str,
@@ -161,6 +159,24 @@ impl StorageClient {
         Ok(data.into_bytes().to_vec())
     }
 
+    /// `HEAD` an object and return its size in bytes. Errors if the object is missing or the
+    /// store does not report a content length.
+    pub async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError> {
+        let out = self
+            .client
+            .head_object()
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        out.content_length().ok_or_else(|| {
+            AppError::InternalServerError(format!(
+                "S3 HEAD {bucket}/{key} returned no content length"
+            ))
+        })
+    }
+
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -234,6 +250,9 @@ impl Storage for StorageClient {
     }
     async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
         self.get_object(bucket, key).await
+    }
+    async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError> {
+        self.object_size(bucket, key).await
     }
     async fn put_object(
         &self,

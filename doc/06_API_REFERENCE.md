@@ -331,7 +331,8 @@ the file's MIME type.
 ```ts
 {
     mime_type ? : string;
-    file_size ? : number;      // bytes (i64)
+    file_size ? : number;      // bytes (i64) — advisory only; the authoritative size is read from S3
+    file_hash ? : string;      // SHA-256 lowercase hex of the file — provisional ETag/dedupe key
     width ? : number;          // pixels (i32)
     height ? : number;
     exif_data ? : object;      // arbitrary EXIF key-value pairs
@@ -343,11 +344,15 @@ the file's MIME type.
 
 All fields are optional — the backend fills in EXIF fields from worker extraction if omitted.
 `initial_tags` paths are validated and must not start with `SharedToMe` (reserved prefix); an
-invalid path returns `400`.
+invalid path returns `400`. `file_size` is **advisory**: the backend reads the real size from S3
+(`HEAD`) and stores that, so a client cannot under-report it. `file_hash` should be the SHA-256
+(lowercase hex) of the uploaded bytes — the same digest the worker computes — and is stored as a
+provisional ETag/dedupe key until `gen_thumbnail` re-confirms it.
 
-Set `defer_pipeline: true` when completing many files in a batch and then call
-`POST /pictures/pipeline/wake` **once** at the end — this collapses N per-file pipeline wakes into a
-single trigger. When omitted/false, the completion wakes the pipeline itself (single-upload default).
+The completion wakes the pipeline through the **debounced** path, so a batch upload's per-file
+completions automatically coalesce into a single pipeline run (`PIPELINE_DEBOUNCE_MS` window) — no
+need to defer and wake once at the end. `defer_pipeline: true` is an opt-out for a caller that wants
+to drive the wake itself (e.g. via `POST /pictures/pipeline/wake`).
 
 **Response `200`:**
 
@@ -362,8 +367,9 @@ thumbnail generation), and wakes the pipeline (unless `defer_pipeline` is true).
 
 #### `POST /api/authenticated/pictures/pipeline/wake`
 
-Explicitly wake the caller's tagging pipeline. Used after a batch upload that completed every file
-with `defer_pipeline: true`, so the pipeline runs once for the whole batch instead of once per file.
+Explicitly wake the caller's tagging pipeline. Used by the tagging-editor "Force run" control and by
+any caller that completed uploads with `defer_pipeline: true` (the upload path otherwise wakes the
+pipeline via the debounced window on its own).
 
 **Response `200`:** `{ woken: true }`
 

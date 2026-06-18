@@ -17,7 +17,8 @@
         - HTTP API & WebDAV: serve user requests, uploads, sync client endpoints.
         - WebFinger client: cross-instance discovery; caches backend base URLs in Redis (`WEBFINGER_USE_HTTPS` controls the scheme).
         - Postgres: authoritative metadata (users, pictures, tags, shares, jobs). Key picture columns: `file_hash` (SHA-256, WebDAV ETag),
-          `file_size`.
+          `file_size`. On a presigned upload the backend reads the authoritative `file_size` from S3 (`HEAD`) rather than trusting the client; the
+          client's SHA-256 (computed the same way as the worker) is stored as a provisional `file_hash` and re-confirmed by `gen_thumbnail`.
       - Federation endpoints: handle inbound/outbound federation messages (share announce/revoke, presign requests).
         - Job queue owner: writes `pending` jobs; exposes `/api/worker/*` for workers to claim/complete. Issues a one-time `claim_token` per claim.
         - In-process task queue (`infra/tasks.rs`): DB-only async tasks (tag-rename cascade, pipeline evaluation).
@@ -33,8 +34,9 @@
   - S3 access: exclusively via presigned URLs.
   - Auth: short-lived JWT (`WORKER_JWT_SECRET`), cached in-process.
     - Implemented job types:
-        - `gen_thumbnail` — download original, extract EXIF, compute BlurHash + SHA-256 `file_hash`, generate small/medium/large WebP thumbnails,
-          upload, report `exif`/`blurhash`/`file_size`/`file_hash` to backend.
+        - `gen_thumbnail` — download original, compute `file_size` + SHA-256 `file_hash`, extract EXIF, generate small/medium/large WebP thumbnails
+          (skipped, not failed, for non-thumbnailable formats so size/hash are still reported), upload, report
+          `exif`/`blurhash`/`file_size`/`file_hash`/`thumbnails_generated` to backend.
         - `edit_picture` — download original, apply EXIF overrides, compute `file_size`/`file_hash`, upload, optionally regenerate thumbnails.
   - Stub job types (infrastructure ready, not yet implemented): `ml_style`, `ml_people`, `ml_group_location`.
   - Completion: backend applies picture updates + marks job done in one transaction. Auto-retries up to `max_retries` (default 3) on failure.

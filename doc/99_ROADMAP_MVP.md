@@ -39,6 +39,13 @@
   (status badge, ShareBack/future flags, shared tag, last-received, ShareBack provenance), inline status
   badge removed from cards, a **Share back** action in the incoming popover, and a **Share back of** combobox
   in the create-share dialog.
+- [x] **Hash & size reliability** — authoritative `file_size` read from S3 (`HEAD`) on upload instead of trusting the client; client-computed SHA-256
+  sent on upload as a provisional `file_hash` (re-confirmed by the worker, byte-identical digest); `gen_thumbnail` reports size/hash even for
+  non-thumbnailable formats (skips thumbnails instead of failing); federation announcements carry `file_hash` + `thumbnails_generated_at` so received
+  pictures get an ETag and known thumbnail availability; WebDAV overwrite is a no-op on identical hash (no spurious version/re-upload);
+  `gen_thumbnail`
+  completion re-announces tracked pictures (with a recovery-sweep backstop); pipeline wakes are debounced (`PIPELINE_DEBOUNCE_MS`) for worker-driven
+  bursts while interactive wakes stay prompt.
 - [ ] **Trash & restore** — soft delete with `deleted_at`, recipient notification, physical copy option.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry

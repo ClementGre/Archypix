@@ -150,6 +150,15 @@ impl Storage for MockStorage {
             .ok_or(AppError::NotFound)
     }
 
+    async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError> {
+        self.objects
+            .lock()
+            .unwrap()
+            .get(&Self::obj_key(bucket, key))
+            .map(|b| b.len() as i64)
+            .ok_or(AppError::NotFound)
+    }
+
     async fn put_object(
         &self,
         bucket: &str,

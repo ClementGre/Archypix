@@ -8,6 +8,8 @@ use crate::infra::s3;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
+use crate::repository::pipeline::PipelineRepository;
+use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::user_settings::UserSettingsRepository;
 use crate::state::AppState;
 use archypix_common::transfer::ClaimQuery;
@@ -268,6 +270,22 @@ pub async fn complete_job(
         ));
     }
 
+    // Re-announce on thumbnail completion (D): a `gen_thumbnail` job is usually what first computes
+    // `file_hash`/`blurhash`/`thumbnails_generated_at`, but the picture may have already been
+    // announced (with those fields still null) before the worker finished. The `updated_at` trigger
+    // has bumped the row past its recorded `announced_updated_at`, so re-marking it dirty makes the
+    // pipeline's delta deliver the refreshed metadata. Gated on tracking-table membership: a picture
+    // that was never announced has nothing to refresh.
+    let mut reannounce_owner: Option<Uuid> = None;
+    if job.job_type == JobType::GenThumbnail {
+        if let Some(pid) = picture_id {
+            if ShareAnnouncementRepository::is_picture_tracked(&mut *tx, pid).await? {
+                PipelineRepository::invalidate(&mut *tx, &[pid]).await?;
+                reannounce_owner = Some(job.owner_id);
+            }
+        }
+    }
+
     // EXIF reconcile convergence (§5): the file now equals this job's `new` state. If the DB still
     // equals `new`, the picture is in sync; otherwise a newer edit moved it on while we processed —
     // enqueue a follow-up that brings the file from `new` to the current DB row. The just-completed
@@ -305,10 +323,18 @@ pub async fn complete_job(
 
     // A follow-up reconcile was enqueued — wake the worker fleet indirectly via the pipeline is not
     // needed (workers poll), but waking the pipeline lets dependent rules re-evaluate promptly.
+    // Debounced: worker completions arrive one-per-picture and should collapse into one run.
     if requeue {
         if let Some(job) = &completed {
-            state.pipeline_waker.wake(job.owner_id);
+            state.pipeline_waker.wake_debounced(job.owner_id);
+            return Ok(StatusCode::NO_CONTENT);
         }
+    }
+
+    // Wake (post-commit) so the pipeline re-announces the freshly-hashed/thumbnailed picture.
+    // Debounced for the same reason — a batch upload's thumbnails complete in a burst.
+    if let Some(owner_id) = reannounce_owner {
+        state.pipeline_waker.wake_debounced(owner_id);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -367,7 +393,8 @@ pub async fn fail_job(
                     .await
                     .map_err(map_sqlx_error)?;
                     // A revert is itself a metadata change — re-dirty + wake the pipeline.
-                    state.pipeline_waker.wake(job.owner_id);
+                    // Debounced: this is a worker-driven completion path.
+                    state.pipeline_waker.wake_debounced(job.owner_id);
                 }
             }
         }

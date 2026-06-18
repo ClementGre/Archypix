@@ -17,7 +17,10 @@ backend.rs           — BackendClient (one per backend): two separate HTTP clie
                        download_presigned (streaming) / upload_presigned
 
 jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
-jobs/thumbnail.rs    — gen_thumbnail: MIME preflight → download → EXIF → hash → thumbnails → complete
+jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → EXIF → thumbnails (only if the
+                       MIME is thumbnailable) → complete. A non-thumbnailable format is not an
+                       error: it still reports size/hash and completes with thumbnails skipped, so
+                       every ingested picture gets an ETag/size even without a thumbnail.
 jobs/edit_picture.rs — edit_picture: download → EXIF set/clear write → thumbnail regen (visual) →
                        hash → upload original (last fallible step) → complete. The DB is updated
                        synchronously at edit time (write-through); this job only reconciles the S3

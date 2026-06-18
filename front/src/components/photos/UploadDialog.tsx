@@ -6,7 +6,7 @@ import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {beginUploadBatch, completeUpload, wakePipeline} from '@/api/pictures'
+import {beginUploadBatch, completeUpload} from '@/api/pictures'
 import {queryKeys} from '@/lib/constants'
 import {cn, TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
@@ -37,6 +37,19 @@ function formatBytes(bytes: number): string {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+/**
+ * SHA-256 of the file as lowercase hex — byte-identical to the backend worker's
+ * `archypix-common::hash::hash_file` (plain SHA-256 over the full file). Sent on upload completion
+ * as a provisional ETag/dedupe key. Buffers the whole file in memory (fine for photos).
+ */
+async function sha256Hex(file: File): Promise<string> {
+    const buf = await file.arrayBuffer()
+    const digest = await crypto.subtle.digest('SHA-256', buf)
+    return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
 }
 
 function uploadToS3(url: string, file: File, onProgress: (pct: number) => void): Promise<void> {
@@ -186,6 +199,8 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
                 patchItem(pictureId, {status: 'uploading'})
                 try {
+                    // Hash in parallel with the S3 upload so it adds no serial latency.
+                    const hashPromise = sha256Hex(file).catch(() => undefined)
                     await uploadToS3(presignedUrl, file, (pct) =>
                         patchItem(pictureId, {progress: pct}),
                     )
@@ -195,9 +210,10 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                     await completeUpload(pictureId, {
                         mime_type: file.type || undefined,
                         file_size: file.size,
+                        file_hash: await hashPromise,
                         initial_tags: tags.length ? tags : undefined,
-                        // Defer the pipeline wake to a single trigger once all files finish
-                        defer_pipeline: true,
+                        // The backend debounces the pipeline wake, so per-file completions coalesce
+                        // into a single run on their own — no defer + manual wake needed.
                     })
 
                     patchItem(pictureId, {status: 'done', progress: 100})
@@ -216,15 +232,6 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         }
 
         await Promise.all(Array.from({length: Math.min(4, initialItems.length)}, worker))
-
-        // All files completed with defer_pipeline=true; trigger one pipeline run for the batch.
-        if (firstSuccess) {
-            try {
-                await wakePipeline()
-            } catch {
-                // Non-fatal because of the recovery sweep
-            }
-        }
 
         setPhase('complete')
         queryClient.invalidateQueries({queryKey: queryKeys.pictures()})

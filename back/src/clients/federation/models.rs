@@ -74,7 +74,7 @@ pub struct PicturesAnnouncementRequest {
 ///
 /// Carries the owner's EXIF/geo metadata so federated recipients converge on the same metadata the
 /// owner holds (and so recipient-side `gps_within_bbox`/date tagging works on shared pictures).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnouncedPicture {
     pub picture_id: String,
     pub owner_username: String,
@@ -83,6 +83,14 @@ pub struct AnnouncedPicture {
     pub filename: Option<String>,
     pub mime_type: Option<String>,
     pub file_size: Option<i64>,
+    /// SHA-256 (lowercase hex) of the owner's original file — the recipient's WebDAV ETag for the
+    /// received picture. `None` until the owner's worker has hashed it.
+    #[serde(default)]
+    pub file_hash: Option<String>,
+    /// When the owner generated thumbnails, so the recipient knows a thumbnail variant is fetchable
+    /// before requesting a presign. `None` ⇒ only the original is available.
+    #[serde(default)]
+    pub thumbnails_generated_at: Option<NaiveDateTime>,
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
@@ -162,6 +170,8 @@ impl AnnouncedPicture {
             filename: picture.filename.clone(),
             mime_type: picture.mime_type.clone(),
             file_size: picture.file_size,
+            file_hash: picture.file_hash.clone(),
+            thumbnails_generated_at: picture.thumbnails_generated_at,
             width: picture.width,
             height: picture.height,
             captured_at: picture.captured_at,

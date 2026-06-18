@@ -164,8 +164,10 @@ pub async fn edit_pictures_exif(
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
-    // A metadata change re-dirties the picture (date/GPS rules, segments, announcements).
-    waker.wake(user_id);
+    // A metadata change re-dirties the picture (date/GPS rules, segments, announcements). Debounced:
+    // an EXIF edit reconciles via a worker, and a batch edit produces a per-picture wake burst that
+    // should collapse into one pipeline run.
+    waker.wake_debounced(user_id);
     Ok(outcome)
 }
 
@@ -266,7 +268,8 @@ pub async fn resync_picture_exif(
         visual: None,
     });
     let job = JobRepository::create(db, user_id, Some(picture_id), &config, None).await?;
-    waker.wake(user_id);
+    // Debounced: EXIF resync is a worker-driven reconcile path.
+    waker.wake_debounced(user_id);
     Ok(job)
 }
 

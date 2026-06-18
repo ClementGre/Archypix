@@ -79,8 +79,10 @@ pub async fn complete_upload(
     Json(meta): Json<UploadMetadata>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "complete_upload");
-    // Whether this completion should wake the pipeline itself. Batch uploads pass
-    // `defer_pipeline = true` per file and call `POST /pictures/pipeline/wake` once at the end.
+    // Whether this completion should wake the pipeline itself. The wake is **debounced**, so a batch
+    // upload's per-file completions coalesce into a single pipeline run on their own — no need for the
+    // caller to defer and wake once at the end. `defer_pipeline = true` remains an opt-out for a
+    // caller that wants to drive the wake itself.
     let defer_pipeline = meta.defer_pipeline;
     let picture = services::pictures::complete_upload(
         &state.db,
@@ -93,8 +95,10 @@ pub async fn complete_upload(
     )
     .await?;
     if !defer_pipeline {
-        // New picture: last_pipeline_run_at = NULL by default → wake the pipeline loop
-        state.pipeline_waker.wake(auth.user_id()?);
+        // New picture: last_pipeline_run_at = NULL by default → wake the pipeline loop. Debounced so
+        // a multi-file upload collapses into one run; manual `initial_tags` are already committed in
+        // the completion tx, so only background rule evaluation waits for the window.
+        state.pipeline_waker.wake_debounced(auth.user_id()?);
     }
     Ok(Json(serde_json::json!({ "id": picture.id })))
 }

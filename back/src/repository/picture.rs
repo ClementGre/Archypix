@@ -109,6 +109,8 @@ impl PictureRepository {
         gps_alt: Option<i32>,
         orientation: Option<i16>,
         exif_data: Option<serde_json::Value>,
+        file_hash: Option<&str>,
+        thumbnails_generated_at: Option<NaiveDateTime>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -119,9 +121,9 @@ impl PictureRepository {
             r#"INSERT INTO pictures
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                     filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,
-                    blurhash, gps_lat, gps_lng, gps_alt, orientation)
+                    blurhash, gps_lat, gps_lng, gps_alt, orientation, file_hash, thumbnails_generated_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,
-                       $12, $13, $14, $15, $16)
+                       $12, $13, $14, $15, $16, $17, $18)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -136,7 +138,10 @@ impl PictureRepository {
                    gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),
                    gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),
                    orientation = COALESCE(EXCLUDED.orientation, pictures.orientation),
-                   exif_data   = EXCLUDED.exif_data
+                   exif_data   = EXCLUDED.exif_data,
+                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),
+                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,
+                                                      pictures.thumbnails_generated_at)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -159,6 +164,8 @@ impl PictureRepository {
             gps_lng,
             gps_alt,
             orientation,
+            file_hash,
+            thumbnails_generated_at,
         )
             .fetch_one(ex)
             .await

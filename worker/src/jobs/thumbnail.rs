@@ -1,10 +1,15 @@
 //! Handler for `gen_thumbnail` jobs.
 //!
-//! Sequence: MIME pre-flight → download → EXIF extraction (initial only)
-//! → file_size + file_hash → thumbnail generation → upload → complete.
+//! Sequence: download → file_size + file_hash → EXIF extraction (initial only)
+//! → thumbnail generation (only when the MIME supports it) → upload → complete.
+//!
+//! `file_size`/`file_hash` are computed **before** the thumbnail-support decision so that a
+//! format we cannot thumbnail (e.g. a RAW/heic without a codec) still reports its size and hash
+//! and completes successfully — only the thumbnails are skipped. This is what lets the backend
+//! hold a correct ETag/size for every successfully-ingested picture, not just thumbnailable ones.
 //!
 //! Error policy:
-//! - Unsupported MIME for thumbnailing  → `WorkerError::UnsupportedFormat` (permanent)
+//! - Unsupported MIME for thumbnailing  → complete without thumbnails (size/hash still reported)
 //! - Image codec failure                → `WorkerError::Imaging` (permanent)
 //! - EXIF extraction failure            → log and continue (EXIF is optional)
 //! - BlurHash failure                   → log and continue (nice-to-have)
@@ -32,13 +37,19 @@ pub async fn handle(
         key: "original".to_string(),
     })?;
 
-    // ── MIME pre-flight (before downloading) ─────────────────────────────────
+    // ── MIME pre-flight (decides what work to do, not whether to fail) ────────
+    // A non-thumbnailable format is no longer an error: we still download, size, and hash it,
+    // then complete with thumbnails skipped. Only generate thumbnails when the job asked for them
+    // *and* the codec supports it.
+    let do_thumbnails = presigned_writes.has_thumbnails()
+        && mime_type
+            .as_deref()
+            .map(archypix_common::mime::supports_thumbnail)
+            .unwrap_or(true);
+    if !do_thumbnails && presigned_writes.has_thumbnails() {
+        warn!(mime_type = ?mime_type, "gen_thumbnail: MIME not thumbnailable; reporting size/hash only");
+    }
     if let Some(ref mime) = mime_type {
-        if presigned_writes.has_thumbnails() && !archypix_common::mime::supports_thumbnail(mime) {
-            return Err(WorkerError::UnsupportedFormat(format!(
-                "MIME type '{mime}' is not supported for thumbnail generation"
-            )));
-        }
         if config.is_initial && !archypix_common::mime::supports_exif(mime) {
             warn!(mime_type = %mime, "MIME type not supported for EXIF extraction; skipping");
         }
@@ -94,8 +105,13 @@ pub async fn handle(
         warn!("gen_thumbnail: file hash failed; skipping");
     }
 
-    // ── Thumbnails + BlurHash + upload ────────────────────────────────────────
-    let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;
+    // ── Thumbnails + BlurHash + upload (skipped for non-thumbnailable formats) ─
+    let (blurhash, thumbnails_generated) = if do_thumbnails {
+        let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;
+        (thumb.blurhash, thumb.generated)
+    } else {
+        (None, false)
+    };
 
     client
         .complete_job(
@@ -103,14 +119,14 @@ pub async fn handle(
             CompleteJobRequest {
                 claim_token,
                 exif,
-                blurhash: thumb.blurhash,
-                thumbnails_generated: thumb.generated,
+                blurhash,
+                thumbnails_generated,
                 file_size,
                 file_hash,
             },
         )
         .await?;
 
-    info!(job_id = %job_id, thumbnails_generated = thumb.generated, "gen_thumbnail completed");
+    info!(job_id = %job_id, thumbnails_generated, "gen_thumbnail completed");
     Ok(())
 }

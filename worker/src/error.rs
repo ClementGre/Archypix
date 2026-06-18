@@ -11,9 +11,6 @@ pub enum WorkerError {
     BackendError { status: u16, body: String },
 
     // ── Permanent — do not retry ──────────────────────────────────────────────
-    /// File format not supported by the requested operation (EXIF or thumbnails).
-    #[error("Unsupported file format: {0}")]
-    UnsupportedFormat(String),
     /// Image processing failure (corrupt file, codec error, etc.).
     #[error("Image processing error: {0}")]
     Imaging(String),
@@ -42,8 +39,7 @@ impl WorkerError {
             Self::Io(_) => true,
             Self::BackendError { status, .. } => *status >= 500 || *status == 429,
             // Everything else is a permanent failure.
-            Self::UnsupportedFormat(_)
-            | Self::Imaging(_)
+            Self::Imaging(_)
             | Self::Exif(_)
             | Self::MissingPresignedUrl { .. }
             | Self::Jwt(_)

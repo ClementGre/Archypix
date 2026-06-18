@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,\n                    blurhash, gps_lat, gps_lng, gps_alt, orientation)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,\n                       $12, $13, $14, $15, $16)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   captured_at = COALESCE(EXCLUDED.captured_at, pictures.captured_at),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   gps_lat     = COALESCE(EXCLUDED.gps_lat,     pictures.gps_lat),\n                   gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),\n                   gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),\n                   orientation = COALESCE(EXCLUDED.orientation, pictures.orientation),\n                   exif_data   = EXCLUDED.exif_data\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\"",
+  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,\n                    blurhash, gps_lat, gps_lng, gps_alt, orientation, file_hash, thumbnails_generated_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,\n                       $12, $13, $14, $15, $16, $17, $18)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   captured_at = COALESCE(EXCLUDED.captured_at, pictures.captured_at),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   gps_lat     = COALESCE(EXCLUDED.gps_lat,     pictures.gps_lat),\n                   gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),\n                   gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),\n                   orientation = COALESCE(EXCLUDED.orientation, pictures.orientation),\n                   exif_data   = EXCLUDED.exif_data,\n                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),\n                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,\n                                                      pictures.thumbnails_generated_at)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\"",
   "describe": {
     "columns": [
       {
@@ -296,7 +296,9 @@
         "Float8",
         "Float8",
         "Int4",
-        "Int2"
+        "Int2",
+        "Text",
+        "Timestamp"
       ]
     },
     "nullable": [
@@ -326,5 +328,5 @@
       false
     ]
   },
-  "hash": "447066f93efec47ee14bb40d5840b15658cfeb909aec82a27fa40f9735a4ca02"
+  "hash": "46cd00b4aed68d55116baa6e9cd37434bc5b1d6f9d4c0f913945e58d136a92f8"
 }

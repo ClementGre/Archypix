@@ -427,6 +427,53 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn put_overwrite_identical_hash_is_noop(db: PgPool) {
+    // A dumb sync client re-PUTs byte-identical content. Even under FullVersioning (which snapshots
+    // on every real overwrite), an identical-hash PUT must short-circuit: no version, no re-upload.
+    let (state, storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(
+        &state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"identical-bytes",
+        "Photos.Travel",
+    )
+    .await;
+    UserSettingsRepository::upsert(&state.db, user, VersioningMode::FullVersioning)
+        .await
+        .unwrap();
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let created = put(
+        &vfs,
+        &["Photos", "Travel", "a.jpg"],
+        b"identical-bytes",
+        Some("image/jpeg"),
+    )
+    .await
+    .unwrap();
+    assert!(!created, "identical re-PUT returns false (no new resource)");
+
+    assert!(
+        !PictureVersionRepository::has_versions(&state.db, pic)
+            .await
+            .unwrap(),
+        "identical-hash re-PUT must not snapshot a version even under FullVersioning"
+    );
+    // Bytes untouched in place.
+    assert_eq!(
+        storage.get(
+            &state.config.s3_bucket_pictures,
+            &s3::picture_key(user, pic)
+        ),
+        Some(b"identical-bytes".to_vec())
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn put_dedupe_existing_hash_retags_without_new_picture(db: PgPool) {
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;

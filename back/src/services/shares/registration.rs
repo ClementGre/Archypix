@@ -54,6 +54,8 @@ pub async fn register_received_pictures(
             pic.gps_alt,
             pic.orientation,
             pic.exif_data.clone(),
+            pic.file_hash.as_deref(),
+            pic.thumbnails_generated_at,
         )
         .await?;
 

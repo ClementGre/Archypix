@@ -113,9 +113,19 @@ assignments.
 **Dirty picture detection** — `pictures.last_pipeline_run_at IS NULL` on new/invalidated pictures; `tagging_services.last_invalidated_at` bumps on
 config changes. Dirty = `last_pipeline_run_at IS NULL OR last_pipeline_run_at < last_invalidated_at` for any enabled service.
 
-**Wake model** — a per-user `mpsc<Uuid>` (`PipelineWaker`) for event-driven wakes, bounded concurrency (`PIPELINE_CONCURRENCY`, default 4), serial per
-user, plus a poll fallback (`PIPELINE_POLL_INTERVAL_SECS`, default 1 hour). Woken after: ingest, manual tag edit, service config change, inbound share
-announcement, `cleanup_incoming_share`.
+**Wake model** — a per-user `mpsc<(Uuid, debounce)>` (`PipelineWaker`) for event-driven wakes, bounded concurrency (`PIPELINE_CONCURRENCY`, default
+4),
+serial per user, plus a poll fallback (`PIPELINE_POLL_INTERVAL_SECS`, default 1 hour). Woken after: ingest, manual tag edit, service config change,
+inbound share announcement, `cleanup_incoming_share`. Interactive wakes (`wake`) start a run promptly; worker-driven wakes that arrive one-per-picture
+(EXIF/visual reconcile completion, thumbnail completion) use `wake_debounced`, coalescing a burst into a single run over a `PIPELINE_DEBOUNCE_MS`
+(default 5000) window. The window starts on the first debounced wake and is **not** reset (latency bounded to the window); an interactive wake
+arriving
+mid-window promotes the run to start immediately. `PIPELINE_DEBOUNCE_MS=0` disables debouncing (used by tests).
+
+**Re-announce on worker completion** — a `gen_thumbnail` completion usually first computes `file_hash`/`blurhash`/`thumbnails_generated_at`, which may
+post-date a picture's first announce. If the picture is in the `share_announcements` tracking table, completion re-marks it dirty (debounced wake) so
+the announcement delta re-delivers the refreshed metadata. The race-free backstop: the recovery sweep also re-dirties any tracking row whose
+`announced_updated_at` trails the picture's `updated_at`.
 
 **Evaluation order** — `SharedTagMapping` always first. Rule and Segmentation services in user-defined `position` order. Gating accumulates tags from
 `manual` + `incoming_share` + earlier services; pipeline tags re-derived from scratch each run.

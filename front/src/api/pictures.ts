@@ -9,6 +9,8 @@ export interface UploadSlot {
 export interface CompleteUploadBody {
     mime_type?: string
     file_size?: number
+    /** SHA-256 of the file (lowercase hex) — provisional ETag/dedupe key; the worker re-confirms it. */
+    file_hash?: string
     width?: number
     height?: number
     captured_at?: string

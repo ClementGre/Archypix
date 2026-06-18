@@ -71,14 +71,12 @@ pub type ThumbnailSize = PictureVariant;
 pub struct UploadMetadata {
     pub mime_type: Option<String>,
     pub file_size: Option<i64>,
+    pub file_hash: Option<String>,
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub exif_data: Option<serde_json::Value>,
     pub captured_at: Option<NaiveDateTime>,
-    /// Optional manual tags (ltree wire form) to assign immediately on creation.
     pub initial_tags: Option<Vec<String>>,
-    /// When `true`, the caller is responsible for waking the tagging pipeline itself (e.g. once at
-    /// the end of a batch upload) instead of this completion waking it per file. Defaults to false.
     #[serde(default)]
     pub defer_pipeline: bool,
 }
@@ -268,6 +266,18 @@ pub async fn complete_upload(
         .delete_object(&config.s3_bucket_staging, &session.s3_key_staging)
         .await?;
 
+    // Authoritative size: read it back from S3 rather than trusting the client value
+    let file_size = match storage
+        .object_size(&config.s3_bucket_pictures, &pictures_key)
+        .await
+    {
+        Ok(size) => Some(size),
+        Err(e) => {
+            tracing::warn!(picture_id = %picture_id, error = ?e, "complete_upload: S3 HEAD failed; falling back to client-reported size");
+            meta.file_size
+        }
+    };
+
     // Single DB transaction: create picture row, thumbnail job.
     let mut tx = db
         .begin()
@@ -280,7 +290,7 @@ pub async fn complete_upload(
         user_id,
         Some(session.filename.as_str()),
         meta.mime_type.as_deref(),
-        meta.file_size,
+        file_size,
         meta.width,
         meta.height,
         meta.exif_data.clone(),
@@ -288,19 +298,22 @@ pub async fn complete_upload(
     )
     .await?;
 
+    // Persist any client-computed SHA-256 as the provisional hash
+    if let Some(hash) = meta.file_hash.as_deref() {
+        PictureRepository::set_file_hash(&mut *tx, picture_id, hash, file_size).await?;
+    }
+
     // Enqueue initial thumbnail generation + EXIF extraction inside the same transaction
-    // so no job is orphaned if the picture insert rolls back.
     crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, picture_id, true).await?;
 
-    // Assign any caller-supplied initial manual tags within the same transaction so they are
-    // atomically committed with the picture row and the thumbnail job.
+    // Assign any caller-supplied initial manual tags
     if !initial_tags.is_empty() {
         TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], &initial_tags).await?;
     }
 
     tx.commit().await.map_err(map_sqlx_error)?;
 
-    // Cache cleanup is after commit — a failure here is non-fatal (session expires on its own).
+    // Cache cleanup is after commit. A failure here is non-fatal
     if let Err(e) = cache.del(RedisKey::UploadSession(picture_id)).await {
         tracing::warn!(picture_id = %picture_id, error = ?e, "failed to delete upload session from cache");
     }

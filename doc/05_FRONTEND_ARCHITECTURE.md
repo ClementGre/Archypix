@@ -298,8 +298,10 @@ mobile) and shown only when its `ui` store toggle is on:
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
   full-page drag zone both call `openDialog(files?)`. The dialog batch-presigns all files (`POST /uploads/batch`), uploads to S3 in parallel (max 4
   concurrent, via `XMLHttpRequest` for per-file progress), and calls `POST /uploads/{id}/complete` immediately per file as its S3 PUT finishes — not
-  after all files. `initial_tags` set in the dialog are passed on the complete body and assigned atomically server-side. Gallery and tags queries are
-  invalidated on the first success and again when all uploads settle.
+  after all files. Each file's SHA-256 is computed in parallel with its S3 PUT (`crypto.subtle.digest`, lowercase hex — the same digest the worker
+  produces) and sent as `file_hash`. `initial_tags` set in the dialog are passed on the complete body and assigned atomically server-side. The backend
+  wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping.
+  Gallery and tags queries are invalidated on the first success and again when all uploads settle.
 
 ---
 

@@ -175,6 +175,107 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     );
 }
 
+/// D (re-announce on completion): completing a `gen_thumbnail` job re-marks the picture dirty
+/// (`last_pipeline_run_at = NULL`) **only** when it is already in a share's tracking table, so the
+/// pipeline re-announces the freshly-hashed metadata. An untracked picture is left alone.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn complete_gen_thumbnail_redirties_only_tracked_pictures(db: PgPool) {
+    use archypix_back::repository::share::OutgoingShareRepository;
+    use archypix_back::repository::share_announcement::ShareAnnouncementRepository;
+
+    let config = Config::test_defaults();
+    let token = worker_token(&config);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let tracked = common::seed_picture(&db, alice_id).await;
+    let untracked = common::seed_picture(&db, alice_id).await;
+
+    // Both pictures start "already evaluated" so a re-dirty (NULL) is observable.
+    sqlx::query!(
+        "UPDATE pictures SET last_pipeline_run_at = now() AT TIME ZONE 'utc' WHERE id = ANY($1)",
+        &[tracked, untracked][..],
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    // `tracked` is announced under a share → has a tracking row.
+    let share = OutgoingShareRepository::create(
+        &db,
+        alice_id,
+        "Photos",
+        "S",
+        None,
+        "bob",
+        "other.com",
+        true,
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    ShareAnnouncementRepository::insert(&db, share.id, tracked)
+        .await
+        .unwrap();
+
+    let app =
+        archypix_back::api::routes(&config).with_state(common::test_app_state(db.clone(), &config));
+
+    for pic in [tracked, untracked] {
+        let job = enqueue_thumbnail_job(&db, alice_id, pic, true)
+            .await
+            .unwrap();
+        let resp = app
+            .clone()
+            .oneshot(get("/api/worker/jobs/next?types=gen_thumbnail", &token))
+            .await
+            .unwrap();
+        let claim_token: Uuid = json_body(resp).await["claim_token"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let body = serde_json::json!({
+            "claim_token": claim_token,
+            "thumbnails_generated": true,
+            "file_hash": "hash-for-pic",
+            "file_size": 1234
+        });
+        let r = app
+            .clone()
+            .oneshot(post_json(
+                &format!("/api/worker/jobs/{}/complete", job.id),
+                &token,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    }
+
+    let tracked_run: Option<chrono::NaiveDateTime> = sqlx::query_scalar!(
+        "SELECT last_pipeline_run_at FROM pictures WHERE id = $1",
+        tracked
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    let untracked_run: Option<chrono::NaiveDateTime> = sqlx::query_scalar!(
+        "SELECT last_pipeline_run_at FROM pictures WHERE id = $1",
+        untracked
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(
+        tracked_run.is_none(),
+        "tracked picture must be re-dirtied for re-announce"
+    );
+    assert!(
+        untracked_run.is_some(),
+        "untracked picture must not be re-dirtied"
+    );
+}
+
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
     let config = Config::test_defaults();

@@ -150,6 +150,46 @@ impl ShareAnnouncementRepository {
             .collect())
     }
 
+    /// Whether `picture_id` appears in any share's tracking table — i.e. it has been announced to
+    /// at least one recipient. The worker-completion re-announce path checks this before marking a
+    /// picture dirty: a not-yet-announced picture has nothing to refresh (its first announce will
+    /// carry the now-complete metadata), so only tracked pictures are worth waking the pipeline for.
+    pub async fn is_picture_tracked<'e, E>(ex: E, picture_id: Uuid) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(
+                   SELECT 1 FROM share_announcements WHERE picture_id = $1
+               ) AS "exists!""#,
+            picture_id,
+        )
+        .fetch_one(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(exists)
+    }
+
+    /// Picture ids whose last announce lags the picture (`announced_updated_at < pictures.updated_at`)
+    /// — the announce-stale set. The recovery sweep marks these dirty so the pipeline re-announces
+    /// the refreshed metadata. This is the race-free correctness backstop for the worker-completion
+    /// fast path: even if a fast-path wake lost the race against a picture's first announce, a
+    /// tracking row that trails its picture is eventually reconciled here.
+    pub async fn find_stale_announcement_pictures(
+        db: &sqlx::PgPool,
+    ) -> Result<Vec<Uuid>, AppError> {
+        sqlx::query_scalar!(
+            r#"SELECT DISTINCT sa.picture_id
+               FROM share_announcements sa
+               JOIN pictures p ON p.id = sa.picture_id
+               WHERE sa.announced_updated_at IS NOT NULL
+                 AND sa.announced_updated_at < p.updated_at"#,
+        )
+        .fetch_all(db)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
     /// Update the token of an existing tracking row (token-refresh path).
     pub async fn update_token<'e, E>(
         ex: E,
@@ -489,6 +529,94 @@ mod tests {
         assert_eq!(downstream[0].recipient_username, "carol");
         // Owned picture (no remote_picture_id) → announce id falls back to the local id text.
         assert_eq!(downstream[0].announce_id, pic.to_string());
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn is_picture_tracked_reflects_membership(db: PgPool) {
+        let owner = seed_user(&db).await;
+        let pic = seed_picture(&db, owner).await;
+        assert!(
+            !ShareAnnouncementRepository::is_picture_tracked(&db, pic)
+                .await
+                .unwrap(),
+            "untracked picture before any announce"
+        );
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        ShareAnnouncementRepository::insert(&db, share.id, pic)
+            .await
+            .unwrap();
+        assert!(
+            ShareAnnouncementRepository::is_picture_tracked(&db, pic)
+                .await
+                .unwrap(),
+            "tracked after insert"
+        );
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn find_stale_announcement_pictures_detects_lag(db: PgPool) {
+        let owner = seed_user(&db).await;
+        let pic = seed_picture(&db, owner).await;
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Announce recording the picture's *current* updated_at → not stale.
+        let now: chrono::NaiveDateTime =
+            sqlx::query_scalar!("SELECT updated_at FROM pictures WHERE id = $1", pic)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        ShareAnnouncementRepository::insert_with_token(
+            &db,
+            share.id,
+            pic,
+            Uuid::new_v4(),
+            Some(now),
+        )
+        .await
+        .unwrap();
+        assert!(
+            ShareAnnouncementRepository::find_stale_announcement_pictures(&db)
+                .await
+                .unwrap()
+                .is_empty(),
+            "freshly announced picture is not stale"
+        );
+
+        // Bump the picture (the updated_at trigger moves it past announced_updated_at) → stale.
+        sqlx::query!("UPDATE pictures SET blurhash = 'abc' WHERE id = $1", pic)
+            .execute(&db)
+            .await
+            .unwrap();
+        let stale = ShareAnnouncementRepository::find_stale_announcement_pictures(&db)
+            .await
+            .unwrap();
+        assert_eq!(stale, vec![pic], "picture updated since announce is stale");
     }
 
     #[sqlx::test(migrator = "MIGRATOR")]

@@ -270,6 +270,13 @@ impl<'a> Vfs<'a> {
                         "cannot overwrite a received (shared) picture".into(),
                     ));
                 }
+
+                // Idempotent re-PUT: a dumb sync client re-uploading identical bytes.
+                if pic.file_hash.as_deref() == Some(hash) {
+                    trace!(user_id = %self.user_id, picture_id = %pid, %hash, "vfs put: identical bytes (hash match) — no-op overwrite");
+                    return Ok(false);
+                }
+
                 trace!(user_id = %self.user_id, picture_id = %pid, name = %name, bytes = size, "vfs put: overwrite existing picture");
 
                 // Versioning on overwrite (§7.3): snapshot the current bytes per the user's

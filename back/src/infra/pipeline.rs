@@ -27,6 +27,7 @@ use crate::infra::config::Config;
 use crate::infra::error::AppError;
 use crate::infra::redis::Cache;
 use crate::repository::pipeline::PipelineRepository;
+use crate::repository::share_announcement::ShareAnnouncementRepository;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -52,16 +53,29 @@ pub struct PipelineRun<'a> {
 /// `AppState` and the task runner; call [`wake`](Self::wake) after any event that creates dirty
 /// pictures or share work for that user (ingest, tag edit, service config change, share accept,
 /// same-backend (un)announce, …).
+///
+/// Each wake carries a `debounce` flag (the `bool` in the channel item). Interactive events (tag
+/// edit, service edit, upload, share lifecycle) use [`wake`](Self::wake) and start a run promptly;
+/// worker-driven events that arrive as per-picture bursts (thumbnail/EXIF reconcile completion) use
+/// [`wake_debounced`](Self::wake_debounced) so the scheduler can collapse the burst into one run.
 #[derive(Clone)]
 pub struct PipelineWaker {
-    tx: mpsc::UnboundedSender<Uuid>,
+    tx: mpsc::UnboundedSender<(Uuid, bool)>,
 }
 
 impl PipelineWaker {
-    /// Wake the pipeline for `user_id`. Silently no-ops if the loop has shut down — a missed wake is
-    /// recovered by the poll sweep.
+    /// Wake the pipeline for `user_id` promptly (no debounce). Silently no-ops if the loop has shut
+    /// down — a missed wake is recovered by the poll sweep.
     pub fn wake(&self, user_id: Uuid) {
-        let _ = self.tx.send(user_id);
+        let _ = self.tx.send((user_id, false));
+    }
+
+    /// Wake the pipeline for `user_id` through the debounce window (`PIPELINE_DEBOUNCE_MS`). Used by
+    /// worker-completion paths whose wakes arrive one-per-picture, so a burst collapses into a single
+    /// run instead of one run per picture. An interactive `wake` arriving during the window promotes
+    /// it to run immediately.
+    pub fn wake_debounced(&self, user_id: Uuid) {
+        let _ = self.tx.send((user_id, true));
     }
 
     /// A waker not attached to any loop; its wakes are discarded. For tests and standalone calls.
@@ -74,7 +88,7 @@ impl PipelineWaker {
 /// Build the waker and the receiver consumed by [`create`]. Splitting construction lets `main` wire
 /// the waker into the `TaskQueue` (which wakes recipients after same-backend delivery) before the
 /// loop future is built, breaking the waker ↔ task_queue cycle.
-pub fn channel() -> (PipelineWaker, mpsc::UnboundedReceiver<Uuid>) {
+pub fn channel() -> (PipelineWaker, mpsc::UnboundedReceiver<(Uuid, bool)>) {
     let (tx, rx) = mpsc::unbounded_channel();
     (PipelineWaker { tx }, rx)
 }
@@ -82,11 +96,46 @@ pub fn channel() -> (PipelineWaker, mpsc::UnboundedReceiver<Uuid>) {
 // ── Loop ─────────────────────────────────────────────────────────────────────
 
 /// Per-user run state held by the scheduler.
-enum RunState {
+struct RunState {
+    phase: Phase,
+    /// A wake arrived while a run was in flight → run once more after it completes.
+    rerun: bool,
+    /// At least one wake (the triggering one or a `rerun`) was interactive (non-debounced), so the
+    /// run must not wait in the debounce window.
+    immediate: bool,
+}
+
+enum Phase {
+    /// A debounce window is open: the run has not started, wakes are being coalesced until the timer
+    /// fires. Only reachable when `pipeline_debounce_ms > 0` and every wake so far was debounced.
+    Pending,
     /// A worker is running (or queued on the semaphore) for this user.
     Running,
-    /// A worker is running and a fresh wake arrived meanwhile → run once more on completion.
-    Rerun,
+}
+
+impl RunState {
+    fn running() -> Self {
+        Self {
+            phase: Phase::Running,
+            rerun: false,
+            immediate: false,
+        }
+    }
+    fn pending() -> Self {
+        Self {
+            phase: Phase::Pending,
+            rerun: false,
+            immediate: false,
+        }
+    }
+}
+
+/// What [`Scheduler::schedule`] / the post-run settle decided to do, performed after the state lock
+/// is released (spawning under the lock would hold a std mutex across an await point).
+enum Action {
+    None,
+    Run,
+    Timer,
 }
 
 /// Shared context handed to each per-user worker. Holds owned dependencies; each run borrows them
@@ -102,24 +151,75 @@ struct Scheduler {
 }
 
 impl Scheduler {
-    /// Ensure a worker is (or will be) running for `user_id`, coalescing concurrent wakes.
-    fn schedule(self: &Arc<Self>, user_id: Uuid) {
-        {
+    /// Ensure a run is (or will be) scheduled for `user_id`, coalescing concurrent wakes.
+    ///
+    /// `debounce` requests the wait window; it is honoured only when `pipeline_debounce_ms > 0`. An
+    /// interactive (non-debounced) wake never waits: from idle it starts a run immediately, and one
+    /// arriving during an open debounce window **promotes** it to run now. Debounced wakes from idle
+    /// open the window so a per-picture worker-completion burst collapses into a single run.
+    fn schedule(self: &Arc<Self>, user_id: Uuid, debounce: bool) {
+        let immediate = !debounce || self.config.pipeline_debounce_ms == 0;
+        let action = {
             let mut map = self
                 .state
                 .lock()
                 .expect("pipeline scheduler mutex poisoned");
-            match map.get_mut(&user_id) {
-                Some(s) => {
-                    *s = RunState::Rerun; // a run is in flight — request a re-run after it
-                    return;
+            if let Some(s) = map.get_mut(&user_id) {
+                match s.phase {
+                    // Debounce window open: an interactive wake promotes it; a debounced one coalesces.
+                    Phase::Pending if immediate => {
+                        s.phase = Phase::Running;
+                        Action::Run
+                    }
+                    Phase::Pending => Action::None,
+                    // A run is in flight — request a single re-run after it, tracking its urgency.
+                    Phase::Running => {
+                        s.rerun = true;
+                        if immediate {
+                            s.immediate = true;
+                        }
+                        Action::None
+                    }
                 }
-                None => {
-                    map.insert(user_id, RunState::Running);
+            } else if immediate {
+                map.insert(user_id, RunState::running());
+                Action::Run
+            } else {
+                map.insert(user_id, RunState::pending());
+                Action::Timer
+            }
+        };
+        match action {
+            Action::Run => self.spawn_run(user_id),
+            Action::Timer => self.spawn_debounce_timer(user_id),
+            Action::None => {}
+        }
+    }
+
+    /// Sleep the debounce window, then flip `Pending → Running` and start the run. A stale timer
+    /// (the entry was already promoted to `Running` or cleared) no-ops; the active timer wins.
+    fn spawn_debounce_timer(self: &Arc<Self>, user_id: Uuid) {
+        let this = Arc::clone(self);
+        let delay = Duration::from_millis(this.config.pipeline_debounce_ms);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            {
+                let mut map = this
+                    .state
+                    .lock()
+                    .expect("pipeline scheduler mutex poisoned");
+                match map.get_mut(&user_id) {
+                    Some(s) if matches!(s.phase, Phase::Pending) => s.phase = Phase::Running,
+                    _ => return, // promoted/cleared by another path — let it own the run
                 }
             }
-        }
+            this.spawn_run(user_id);
+        });
+    }
 
+    /// Run the pipeline for `user_id`, then settle: on a pending `rerun`, loop immediately when it was
+    /// interactive (or debouncing is off), else re-open the debounce window; otherwise clear the entry.
+    fn spawn_run(self: &Arc<Self>, user_id: Uuid) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             loop {
@@ -141,18 +241,37 @@ impl Scheduler {
                 }
                 drop(permit);
 
-                let mut map = this
-                    .state
-                    .lock()
-                    .expect("pipeline scheduler mutex poisoned");
-                match map.get(&user_id) {
-                    Some(RunState::Rerun) => {
-                        map.insert(user_id, RunState::Running); // events arrived mid-run → loop
+                let action = {
+                    let mut map = this
+                        .state
+                        .lock()
+                        .expect("pipeline scheduler mutex poisoned");
+                    match map.get_mut(&user_id) {
+                        Some(s) if s.rerun => {
+                            let run_now = s.immediate || this.config.pipeline_debounce_ms == 0;
+                            s.rerun = false;
+                            s.immediate = false;
+                            if run_now {
+                                s.phase = Phase::Running; // loop again immediately
+                                Action::Run
+                            } else {
+                                s.phase = Phase::Pending;
+                                Action::Timer
+                            }
+                        }
+                        _ => {
+                            map.remove(&user_id);
+                            Action::None
+                        }
                     }
-                    _ => {
-                        map.remove(&user_id);
+                };
+                match action {
+                    Action::Run => continue,
+                    Action::Timer => {
+                        this.spawn_debounce_timer(user_id);
                         break;
                     }
+                    Action::None => break,
                 }
             }
         });
@@ -169,7 +288,7 @@ impl Scheduler {
 /// waker.
 pub fn create(
     db: PgPool,
-    rx: mpsc::UnboundedReceiver<Uuid>,
+    rx: mpsc::UnboundedReceiver<(Uuid, bool)>,
     config: Config,
     concurrency: usize,
     federation: FederationClient,
@@ -181,7 +300,7 @@ pub fn create(
 
 async fn run(
     db: PgPool,
-    mut rx: mpsc::UnboundedReceiver<Uuid>,
+    mut rx: mpsc::UnboundedReceiver<(Uuid, bool)>,
     config: Config,
     concurrency: usize,
     federation: FederationClient,
@@ -202,7 +321,7 @@ async fn run(
 
     loop {
         match rx.recv().await {
-            Some(user_id) => scheduler.schedule(user_id),
+            Some((user_id, debounce)) => scheduler.schedule(user_id, debounce),
             None => break, // all wakers dropped — process shutting down
         }
     }
@@ -244,6 +363,14 @@ impl crate::infra::scheduler::RecurringTask for PipelineRecoverySweepTask {
     }
 
     async fn tick(&self) -> anyhow::Result<()> {
+        // Announce-stale backstop (D): mark dirty any picture whose last announce trails the row
+        // (e.g. a worker-completion fast-path wake that lost the race against the first announce).
+        // Done before the dirty-user scan so these owners are then picked up by it.
+        let stale = ShareAnnouncementRepository::find_stale_announcement_pictures(&self.db).await?;
+        if !stale.is_empty() {
+            PipelineRepository::invalidate(&self.db, &stale).await?;
+        }
+
         let users = PipelineRepository::find_users_with_dirty_pictures(&self.db).await?;
         for user_id in users {
             self.waker.wake(user_id);
