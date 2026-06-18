@@ -32,6 +32,7 @@ use crate::services::shares::registration::{
 use crate::services::users::find_local_user_id;
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::{HashMap, HashSet};
+use tracing::debug;
 use uuid::Uuid;
 
 /// Which pictures a reconcile pass considers.
@@ -55,6 +56,7 @@ pub async fn reconcile_pending_and_errored(
     }
     let sender = sender_username(run, user_id).await?;
     for share in shares {
+        debug!(sender = sender, sender_id = ?user_id, share_id = ?share.id, tag = share.tag_path, recipient = share.recipient_username, recipient_global_domain = share.recipient_instance, "pipeline: reconciling share");
         reconcile_share(run, &share, CoverageScope::Full, &sender).await?;
     }
     Ok(())

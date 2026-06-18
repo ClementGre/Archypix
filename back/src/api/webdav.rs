@@ -443,8 +443,12 @@ async fn ignored(
             None => Ok(empty(StatusCode::NOT_FOUND)),
         },
         // PROPFIND uses the normal resolver — `stat` surfaces the sidecar (Depth 0 is all that's
-        // meaningful on a file).
-        "PROPFIND" => propfind(vfs, slug, segments, Depth::Zero).await,
+        // meaningful on a file). A missing sidecar (pre-PUT probe) returns 404 as an Ok response
+        // so it never reaches `AppError::into_response()` and does not produce a spurious warn.
+        "PROPFIND" => match propfind(vfs, slug, segments, Depth::Zero).await {
+            Err(AppError::NotFound) => Ok(empty(StatusCode::NOT_FOUND)),
+            other => other,
+        },
         "DELETE" => {
             vfs.delete_sidecar(segments).await?;
             Ok(empty(StatusCode::NO_CONTENT))
