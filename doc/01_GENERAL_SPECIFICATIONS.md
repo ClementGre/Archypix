@@ -88,7 +88,7 @@ Assigns tags based on predicates over EXIF fields, filename patterns, GPS boundi
 ```
 RuleTaggingService:
   rules:
-    - predicate: "exif.gps within bbox(45.8, 6.8, 46.1, 7.1)"
+    - predicate: "gps_within_bbox(45.8, 6.8, 46.1, 7.1)"
       assignTag: /Photos/Places/Chamonix
       requires: [/Photos]
 ```
@@ -118,19 +118,14 @@ SegmentationTaggingService:
 
 ### 3.5 Tag removal
 
-Pipeline-assigned tags are **live**: they are a pure function of the current services and picture state, re-derived on every run. When a picture is
-re-evaluated, each enabled service produces its current set of tags; any previously-stored `rule`/`segment`/`share_mapping` tag that is no longer
-produced is removed in the same atomic step. `manual` and `incoming_share` tags are never touched by the pipeline — the former are owned by the user,
-the latter by share accept/revoke.
+Pipeline-assigned tags are **live** — re-derived on every run. Previously-stored `rule`/`segment`/`share_mapping` tags no longer produced are removed
+atomically. `manual` and `incoming_share` tags are never touched.
 
-Because tags are stored per-source, removal needs no special ancestor handling: each source owns its own rows, so dropping one source's deep tag never
-disturbs another source's ancestor tag.
+Because tags are stored per-source, dropping one source's deep tag never disturbs another source's row for the same path.
 
-Service lifecycle interacts with removal explicitly:
-
-- **Disabling** a service removes its tags (they are no longer live); re-enabling re-adds them on the next run.
-- **Deleting** a service **promotes** its tags to `manual`, preserving the curation work as permanent user tags (a manual tag that already exists for
-  the same path wins, and the redundant pipeline row is dropped).
+- **Disabling** a service removes its tags; re-enabling re-adds them on the next run.
+- **Deleting** a service promotes its tags to `manual` (pre-existing manual tag for the same path wins, redundant row dropped), or removes them —
+  controlled by a `promote_tags` flag.
 
  --- 
 
@@ -214,15 +209,13 @@ domains via WebFinger.
 
 ### 5.1 Components
 
-- **Resolver** — WebFinger endpoint. Maps `@user:instance.com` → backend domain. Backed by Postgres with an in-process TTL cache (moka). Exposes an
-  admin API for backends to register users.
-- **Backend** — authoritative per-instance application server. Owns user metadata in Postgres. Serves HTTP API and WebDAV. Handles inbound/outbound
-  federation messages. Produces jobs to NATS JetStream; consumes results from workers. Optionally caches hot data in Redis.
-- **Workers** — central pool of Rust processes. Consume jobs from JetStream (thumbnails, ML inference, face detection, geo clustering). Publish
-  compact results back to the owning backend. Never write directly to any backend's database.
-- **S3/MinIO** — durable blob store for originals, derivatives, per-user ML snapshots, and exports. Workers access blobs via presigned URLs or scoped
-  credentials.
-- **Frontend** — static CDN. Resolves `@username:instance.com` → backend domain via WebFinger. All API and WebDAV calls go to the resolved backend.
+- **Resolver** — WebFinger endpoint mapping `@user:instance.com` → backend domain. Backed by Postgres with an in-process TTL cache.
+- **Backend** — authoritative per-instance server. Owns metadata in Postgres. Serves HTTP API and WebDAV. Handles federation messages. Enqueues jobs
+  to a Postgres-backed queue; consumes results from workers via HTTP. Caches hot data in Redis.
+- **Workers** — stateless Rust processes. Poll the backend for jobs (thumbnails, EXIF extraction) via HTTP. Publish results back. Never write to the
+  database directly; access S3 only via presigned URLs.
+- **S3/MinIO** — durable blob store for originals, derivatives, and version snapshots.
+- **Frontend** — static CDN. Resolves `@username:instance.com` → backend URL via WebFinger. All API and WebDAV calls go to the resolved backend.
 
 ### 5.2 Cross-Instance Picture Fetching
 
@@ -265,81 +258,56 @@ IncomingShare:
 
 ### 6.2 Sharing a tag
 
-Alice shares `/Photos/Travel/Alps` with Bob. Alice's backend creates an `OutgoingShare` and federates a share announcement to Bob's backend. Bob's
-backend creates an `IncomingShare` (`status = pending`).
-
-Bob then accepts the share. His backend transitions the `IncomingShare` to `active` and registers each picture under the tag:
-`/SharedToMe/alice_AT_instance_DOT_com/Photos/Travel/Alps`
-
-The picture's `owner` field remains `@alice:instance.com`. When Bob's client displays it, it fetches the blob directly from Alice's backend.   
-If `future: true`, any picture Alice subsequently adds to `/Photos/Travel/Alps` triggers a new announcement to Bob's backend (only delivered if the
-share is `active`), which assigns the same `/SharedToMe/...` tag and re-runs Bob's pipeline with label `incoming-share`.
+Alice shares `/Photos/Travel/Alps` with Bob → `OutgoingShare` created, `IncomingShare` (`pending`) on Bob's backend. Bob accepts → `IncomingShare` →
+`active`; pictures registered as `/SharedToMe/alice_AT_instance_DOT_com/Photos/Travel/Alps`. The picture's `owner` remains `@alice:instance.com`;
+Bob's client fetches blobs directly from Alice's backend. With `future: true`, new pictures Alice adds are announced automatically (if share is
+`active`), re-running Bob's pipeline with label `incoming-share`.
 
 ### 6.3 Re-tagging received pictures
 
-Bob can assign any local tags to received pictures. His `SharedTagMappingService` can map the `IncomingShare` `is-001` to `/Photos/Holidays/2024`. His
-`SegmentationTaggingService` can also fire on received pictures — `requires`/ `excludes` evaluate against Bob's local tag set, which includes the
-`/SharedToMe/...` tags assigned by the `IncomingShare`. None of this mutates Alice's tags or metadata.
+Bob can assign local tags to received pictures. `SharedTagMappingService` maps `IncomingShare` `is-001` to `/Photos/Holidays/2024`.
+`SegmentationTaggingService` can fire on received pictures — `requires`/`excludes` evaluate against Bob's local tag set (including `/SharedToMe/...`).
+None of this mutates Alice's tags or metadata.
 
 ### 6.4 Transitive sharing
 
-Bob shares tag `/Photos/Holidays/2024` to Carol. This tag contains both Bob's own pictures and Alice's pictures (mapped via
-`SharedTagMappingService`). All pictures under the tag are shared regardless of original owner.   
-Carol's backend assigns:
-
-```
-/SharedToMe/bob@other.com/Photos/Holidays/2024
-```
-
-**Announcement chain:** when Alice adds a picture to `/Photos/Travel/Alps`, her backend notifies Bob's backend. Bob's backend maps it into
-`/Photos/Holidays/2024` via `SharedTagMappingService`, and if that tag is covered by a Bob→Carol `OutgoingShare`, Bob's backend announces it to Carol'
-s backend.   
-**File fetching:** Carol's client fetches Alice's pictures directly from `@alice:instance.com`, resolved via WebFinger from the picture's `owner`.
-Bob's backend is not in the data path.
+Bob shares `/Photos/Holidays/2024` (containing both his own and Alice's pictures) to Carol. Carol's backend assigns
+`/SharedToMe/bob@other.com/Photos/Holidays/2024`. When Alice adds a picture, the announcement chain propagates: Alice → Bob → Carol. File fetching
+always goes directly to the owning backend — Bob is never in the data path.
 
 ### 6.5 ShareBack
 
-If `allowShareBack: true` on Alice's `OutgoingShare`, Bob can initiate a ShareBack. This creates a normal `OutgoingShare` from Bob to Alice, which
-Alice's backend **auto-accepts**: it creates an `IncomingShare` and automatically sets up a `SharedTagMappingService` mapping for it.   
-If `allowShareBack: false`, Bob can still initiate a share to Alice, but it is treated as a normal share request — Alice receives a notification and
-must accept manually. No automatic `SharedTagMappingService` is created.
+`allowShareBack: true` on Alice's `OutgoingShare` → Bob's ShareBack auto-accepts on Alice's backend: creates `IncomingShare` +
+`SharedTagMappingService` mapping automatically.   
+`allowShareBack: false` → normal share request requiring manual acceptance; no automatic mapping.
 
 ### 6.6 Loop prevention
 
-When Bob's backend is about to announce a picture to a recipient, it checks whether the picture's `owner` matches the recipient's identity. If so, the
-announcement is suppressed. This covers the case where Alice's pictures, relayed through Bob, would otherwise be re-announced back to Alice.   
-Deduplication of incoming pictures is also done automatically to prevent share loops within three users. If Alice shares to Bob and Bob shares
-transitively to Calol. If Alice also shares directly to Carol, Carol will deduplicate the received pictures, noticing that the pictures received by
-Alice are already shared by Bob.
+Before announcing, Bob's backend checks whether the picture's `owner` matches the recipient — if so, suppresses the announcement (prevents Alice's
+pictures relayed through Bob from being re-announced back to Alice). Duplicate detection also prevents loops when Alice shares to both Bob and Carol
+and Bob shares transitively to Carol.
 
 ### 6.7 Revocation
 
-Alice calls `POST /api/authenticated/shares/outgoing/{id}/revoke`. Alice's backend:
+Alice revokes via `POST /api/authenticated/shares/outgoing/{id}/revoke`. Her backend:
 
-1. Sets `OutgoingShare` os-001 status to `revoked`.
+1. Sets `OutgoingShare` to `revoked`.
 2. Notifies the recipient (same-backend: directly; cross-instance: `POST /api/federation/shares/revoke`).
 
-Bob's backend on receiving revocation:
-
-1. Removes all `/SharedToMe/alice@instance.com/...` tag entries assigned by this share.
-2. Deletes any received-picture rows from Alice that have no other active incoming-share tag (pictures covered by a separate active share from Alice
-   survive).
-3. Sets `IncomingShare` is-001 status to `revoked` and invalidates the cached share token so presign requests fail immediately.
-4. Propagates revocation downstream to any transitive recipients (Carol, etc.) whose `OutgoingShare`s depended on pictures sourced from is-001.
-
-Bob's own pictures in `/Photos/Holidays/2024` are unaffected. The `SharedTagMappingService` mapping for is-001 is flagged as broken in the UI. The tag
-`/Photos/Holidays/2024` remains, possibly now containing fewer pictures, until Bob cleans it up.
+Recipient backend on revocation: removes all `/SharedToMe/alice@instance.com/...` tags, deletes received-picture rows with no other active share, sets
+`IncomingShare` to
+`revoked`, invalidates Redis presign-token cache, propagates revocation downstream to transitive recipients. Bob's own pictures and the tag itself are
+unaffected; the broken
+`SharedTagMappingService` mapping is flagged in the UI.
 --- 
 
 ## 7. Important Edge Cases
 
-**Tag rename cascade cost.** Renaming `/Photos/Travel` must update every stored tag record on affected pictures, every segment definition, every
-ShareBack trigger, every `OutgoingShare` tag field, and every Hierarchy `roots`/ `disabledTags` config on the instance. This must be an async
-transactional job, not a synchronous API call. Clients treat the rename as pending until the job completes and must not allow conflicting writes
-during that window.   
-**Dumb WebDAV client behaviour.** Standard sync clients (e.g. Cyberduck, rclone) that see a picture in multiple paths (possible if the same picture
-has multiple tags under a Hierarchy's roots) may delete it from all visible locations on a local delete. `safeDeleteMode: singleBranch` mitigates this
-by removing only the accessed path's tag. This flag should be the recommended default for Hierarchies intended for use with third-party sync clients,
-and should be documented prominently.   
-**Offline sender availability.** If Alice's backend is offline, Bob and Carol cannot fetch her pictures. This is an inherent limitation of the
-decentralised model and requires no special handling in the MVP — it should be documented as expected behaviour.   
+**Tag rename cascade.** Renaming a tag must update: all stored tag records on affected pictures, segment/hierarchy/share configurations. Must be an
+async job (via `TaskQueue::TagRename`), not a synchronous API call.
+
+**Dumb WebDAV client behaviour.** Clients (e.g. Cyberduck, rclone) that see a picture in multiple paths may delete it from all locations on a local
+delete. `safeDeleteMode: singleBranch` mitigates this — recommended default for hierarchies used with third-party sync clients.
+
+**Offline sender availability.** If Alice's backend is offline, Bob and Carol cannot fetch her pictures — inherent limitation of the decentralised
+model, no special handling needed.

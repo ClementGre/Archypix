@@ -4,7 +4,8 @@
     - Purpose: map username → owning backend domain (implements WebFinger). Enables multiple backends to share one global identity domain.
   - Roles:
       - WebFinger endpoint: answer `/.well-known/webfinger` requests with the resolved backend URL.
-      - User registration routing: `POST /api/register` — picks least-loaded backend, forwards registration, stores `username → back_domain` mapping.
+    - User registration routing: `POST /api/public/register` (the same path the standalone backend serves, so the frontend uses one URL across
+      topologies) — picks least-loaded backend, forwards registration, stores `username → back_domain` mapping.
       - Backend self-registration: `POST /api/backends` — backends call this at startup; the resolver stores `back_domain`, `use_https`, and
         `internal_url`.
       - Mapping update: `POST /api/update` — called by backends when a user migrates to another instance.
@@ -14,21 +15,16 @@
     - Purpose: authoritative per-instance application server and metadata store.
     - Roles:
         - HTTP API & WebDAV: serve user requests, uploads, sync client endpoints.
-      - WebFinger client: consult resolver/WebFinger when needed for cross-instance discovery; caches backend **base URLs** (full scheme + host) in
-        Redis. The scheme for WebFinger calls is controlled by `WEBFINGER_USE_HTTPS`; all subsequent federation API calls use the scheme embedded in
-        the `backend_url` returned by WebFinger, so no separate federation-scheme config is needed.
-      - Postgres: authoritative metadata (users, pictures, tags, shares, jobs). Key picture columns include `file_hash` (SHA-256, WebDAV ETag) and
-        `file_size` (kept accurate after every worker processing run).
+        - WebFinger client: cross-instance discovery; caches backend base URLs in Redis (`WEBFINGER_USE_HTTPS` controls the scheme).
+        - Postgres: authoritative metadata (users, pictures, tags, shares, jobs). Key picture columns: `file_hash` (SHA-256, WebDAV ETag),
+          `file_size`.
       - Federation endpoints: handle inbound/outbound federation messages (share announce/revoke, presign requests).
-      - Job queue owner: writes `pending` jobs to the `jobs` table; exposes `/api/worker/*` endpoints for workers to claim and complete them. Issues a
-        one-time `claim_token` per claim to prevent stale workers from corrupting re-claimed jobs.
-      - In-process task queue: lightweight Tokio-based queue (`infra/tasks.rs`) for DB-only tasks (tag-rename cascade, tagging pipeline evaluation)
-        that do not require external compute.
-      - Recurring task scheduler: a small framework (`infra/scheduler.rs`) runs all periodic loops — the job watchdog
-        (resets jobs stuck in `processing` longer than `JOB_PROCESSING_TIMEOUT_SECS`, default 600 s, incrementing `retry_count`
-        and clearing `claim_token`), the job cleanup task (prunes terminal jobs older than `JOB_RETENTION_SECS`, default 30 days),
-        and the tagging-pipeline recovery sweep. The pipeline loop itself is event-driven (its poll fallback is now this sweep).
-      - Local caches: Redis for sessions, presigned URLs, federation tokens, and backend domain mappings.
+        - Job queue owner: writes `pending` jobs; exposes `/api/worker/*` for workers to claim/complete. Issues a one-time `claim_token` per claim.
+        - In-process task queue (`infra/tasks.rs`): DB-only async tasks (tag-rename cascade, pipeline evaluation).
+        - Recurring scheduler (`infra/scheduler.rs`): job watchdog (resets stale `processing` jobs, default 600 s timeout), job cleanup (prunes
+          terminal
+          jobs), pipeline recovery sweep.
+        - Redis: sessions, presigned URLs, federation tokens, backend domain mappings.
 
 - Workers (`archypix-worker`, one or more Rust processes)
     - Purpose: perform CPU/GPU-intensive work; never access the database or S3 directly.
@@ -48,13 +44,10 @@
   - Buckets: staging (short-lived; auto-expires via lifecycle rule), pictures (the current/latest
     file — mutable: overwritten in place on edit), versions (previous versions plus the preserved
     original), small/medium/large (thumbnails).
-    - S3 keys are derived deterministically and never stored in the database:
-        - Originals and thumbnails: `{user_id}/{picture_id}`.
-        - Version snapshots: `{user_id}/{picture_id}/{version_id}`. The `version_id` is generated before the S3 copy and used as the
-          `picture_versions.id`.
-    - Three S3 endpoint slots: `S3_ENDPOINT` for server-side operations; `S3_PUBLIC_ENDPOINT` for presigned URLs returned to browsers;
-      `S3_WORKERS_ENDPOINT` for presigned URLs returned to workers (defaults to `S3_ENDPOINT`). Allows Docker networking where internal and external
-      addresses differ.
+      - S3 keys derived deterministically (never stored): `{user_id}/{picture_id}` for originals/thumbnails; `{user_id}/{picture_id}/{version_id}` for
+        versions.
+      - Three S3 endpoint slots: `S3_ENDPOINT` (server-side), `S3_PUBLIC_ENDPOINT` (browser presigns), `S3_WORKERS_ENDPOINT` (worker presigns,
+        defaults to `S3_ENDPOINT`). Needed when internal/external Docker addresses differ.
 
 - Frontend (static CDN + clients)
     - Single static site served from CDN; no per-instance build.
@@ -65,10 +58,6 @@
 
 - Each backend is authoritative for its users (Postgres is the single source of truth per instance).
 - Workers publish results; backends persist — workers never write to backend databases or S3 directly.
-- All persistent storage (DB fields, JWT claims, federation messages) uses the **global domain**. Backend domains are resolved on demand via WebFinger
-  and cached in Redis.
-- Job queue transport is Postgres (`SELECT FOR UPDATE SKIP LOCKED`). Workers are stateless HTTP clients that need only a backend URL and
-  `WORKER_JWT_SECRET` to operate.
-- The `claim_token` protocol prevents stale workers (reset by the watchdog) from overwriting the results of a re-claimed job.
-- S3 keys for originals/thumbnails are derived as `{user_id}/{picture_id}`; version keys include the `version_id` UUID that matches the
-  `picture_versions.id` DB column.
+- All persistent storage uses the **global domain**. Backend domains are resolved on demand via WebFinger and cached in Redis.
+- Job queue transport is Postgres (`SELECT FOR UPDATE SKIP LOCKED`). Workers are stateless HTTP clients.
+- The `claim_token` protocol prevents stale workers from overwriting the results of a re-claimed job.

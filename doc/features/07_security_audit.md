@@ -127,7 +127,7 @@ per-user limiter). Consequences:
 - `POST /api/auth/login` can be brute-forced; combined with **user-enumeration timing** —
   `login` returns immediately when the username is unknown and only runs Argon2 when it exists,
   so response time distinguishes valid usernames.
-- `POST /api/public/users` (standalone mode) registration is unthrottled.
+- `POST /api/public/register` (standalone mode) registration is unthrottled.
 - Federation/WebFinger lookups and outbound handshakes can be triggered repeatedly.
 
 Recommendation: add a rate-limit middleware (e.g. `tower_governor`) on `auth/*`, `public/*`,

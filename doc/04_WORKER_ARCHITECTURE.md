@@ -75,18 +75,13 @@ if retries exhausted). It also clears `claim_token` on reset.
 
 ## EXIF edit write-through
 
-EXIF edits are write-through: the backend applies the change to the `pictures` row synchronously at
-request time (the DB is the source of truth) after a **MIME preflight** (`supports_exif()`) — a
-format that cannot embed EXIF gets a DB-only edit and `exif_sync_status = 'unsupported'` with no job.
-Otherwise the picture is marked `pending` and an `edit_picture` job reconciles the S3 original.
+The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` job reconciles the embedded EXIF in the S3 original.
 
-- **Versioning predicate** (evaluated at job claim, `api/worker/handlers.rs`): `None` → never;
-  `OriginalCopy` → snapshot only on the first edit (keep the pristine original once);
-  `FullVersioning` → first edit or any *visual* edit (exif-only edits never add a version).
-- **Convergence / revert**: on completion the backend flips the picture to `synced` if the DB still
-  equals the job's target, else enqueues a follow-up reconcile. On permanent failure it reverts the
-  DB row to the job's `previous` snapshot (value-gated) and re-syncs at the old state — correct
-  because the original upload is the last fallible step, so a failure never overwrote the file.
+- **Versioning predicate** (evaluated at job claim, `api/worker/handlers.rs`): `None` → never; `OriginalCopy` → snapshot on first edit only;
+  `FullVersioning` → first edit or any visual edit (exif-only edits never add a version).
+- **Convergence / revert**: on completion the backend flips to `synced` if the DB still matches the job's target, else enqueues a follow-up reconcile.
+  On permanent failure it reverts the DB row to the job's `previous` snapshot — safe because uploading the original is the last fallible step, so
+  failure never overwrote the file.
 
 ## Shared types (`archypix-common`)
 

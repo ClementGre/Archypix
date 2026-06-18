@@ -54,34 +54,37 @@ There is **no `VITE_API_BASE_URL`**. Flow:
    `accessToken`
    from the auth store **at request time**, so every call targets the right instance. The response interceptor does a **single-flight refresh** on 401
    (dedup'd across concurrent 401s); if refresh fails it clears the session and `ProtectedRoute` redirects to `/login`.
-4. **Registration** (`api/auth.ts` → `register`) is auto-detecting: it tries the resolver `POST {global}/api/register`; on a 404 (a standalone backend
-   has no such route) it falls back to `POST {global}/api/public/users`. `VITE_REGISTRATION_MODE` (`auto`|`resolver`|`standalone`) and
-   `VITE_REGISTRATION_URL` override this.
+4. **Registration** (`api/auth.ts` → `register(payload, domain)`) always `POST`s to `{domain}/api/public/register` — a path served by both a
+   standalone
+   backend and the resolver (which forwards to a chosen backend), so the frontend never has to know the topology. `domain` defaults to the
+   global domain but the register page lets the user target a custom instance (same handle control as login).
 
-**Env** (`.env`, all `VITE_`-prefixed, documented in `.env.example`): `VITE_GLOBAL_DOMAIN`, `VITE_USE_HTTPS`, `VITE_REGISTRATION_MODE`,
-`VITE_REGISTRATION_URL`. Resolved in `lib/constants.ts` (`GLOBAL_DOMAIN`, `USE_HTTPS`, `SCHEME`, `originFor(domain)`). Cross-instance picture fetching
-relies on dev `CORS_ORIGINS=*`.
+**Env** (`.env`, all `VITE_`-prefixed, documented in `.env.example`): `VITE_GLOBAL_DOMAIN`, `VITE_USE_HTTPS`. Resolved in
+`lib/constants.ts` (`GLOBAL_DOMAIN`, `USE_HTTPS`, `SCHEME`, `originFor(domain)`). Cross-instance picture fetching relies on dev `CORS_ORIGINS=*`.
 
-The **login page** has the handle as an editable control: `@<username>` + a click-to-edit instance field defaulting to `GLOBAL_DOMAIN`, so a user can
-authenticate against any instance.
+The **login and register pages** share the handle as an editable control: `@<username>` + a click-to-edit instance field defaulting to
+`GLOBAL_DOMAIN`,
+so a user can authenticate or register against any instance. The chosen instance is persisted (`getPreferredInstance`/`setPreferredInstance` in
+`lib/constants.ts`, `localStorage` key `archypix_instance`) so the two pages stay in sync. Both render `InstanceCorsWarning`
+(`components/common/`), which warns that a custom instance only works if this frontend's URL is in that backend's CORS allowlist.
 
 ---
 
 ## 4. Routes (`src/App.tsx`)
 
-| Path           | Page                | Auth       | Notes                                             |
-|----------------|---------------------|------------|---------------------------------------------------|
-| `/login`       | `LoginPage`         | public     | WebFinger login + instance switcher               |
-| `/register`    | `RegisterPage`      | public     | registers on the global domain, then auto-logs in |
-| `/`            | `GalleryPage`       | required   | the main three-pane workspace                     |
-| `/tags`        | `TagsPage`          | required   | placeholder (tag tree lives in the gallery panel) |
-| `/tagging`     | `TaggingPage`       | required   | tagging-pipeline editor                           |
-| `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                     |
-| `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel) |
-| `/settings`    | `SettingsPage`      | required   | profile + versioning mode (reached via user menu) |
-| `/trash`       | `TrashPage`         | required   | placeholder                                       |
-| `/admin`       | `AdminPage`         | admin only | placeholder                                       |
-| `*`            | → `/`               | —          |                                                   |
+| Path           | Page                | Auth       | Notes                                                                                                |
+|----------------|---------------------|------------|------------------------------------------------------------------------------------------------------|
+| `/login`       | `LoginPage`         | public     | WebFinger login + instance switcher                                                                  |
+| `/register`    | `RegisterPage`      | public     | instance switcher (defaults to global domain) + CORS warning on a custom instance, then auto-logs in |
+| `/`            | `GalleryPage`       | required   | the main three-pane workspace                                                                        |
+| `/tags`        | `TagsPage`          | required   | placeholder (tag tree lives in the gallery panel)                                                    |
+| `/tagging`     | `TaggingPage`       | required   | tagging-pipeline editor                                                                              |
+| `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                                                                        |
+| `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel)                                                    |
+| `/settings`    | `SettingsPage`      | required   | profile + versioning mode (reached via user menu)                                                    |
+| `/trash`       | `TrashPage`         | required   | placeholder                                                                                          |
+| `/admin`       | `AdminPage`         | admin only | placeholder                                                                                          |
+| `*`            | → `/`               | —          |                                                                                                      |
 
 `ProtectedRoute` (`components/layout/ProtectedRoute.tsx`) gates auth and (with `adminOnly`) the admin role. Authenticated routes render inside
 `AppShell` (unified `TopBar` + routed `<Outlet/>`). **There is no `/photos/:id`** — full-size viewing is the `Lightbox` carousel and details live in
@@ -188,13 +191,15 @@ wrapper
 pulled a duplicate React copy under the project's mixed npm/pnpm `node_modules` and crashed with "Invalid hook call". Vanilla Leaflet has no React
 dependency, so `GpsPickerPopover` drives the map imperatively in a `useEffect`.
 
-**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; click sets the `tag` filter; auto-expands ancestors of the active tag and scrolls it
+**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; click sets the `tag` filter and **clears any active `hierarchy`/`hpath`** so the tag
+filters the flat gallery rather than the current hierarchy directory; auto-expands ancestors of the active tag and scrolls it
 into
 view when it changes externally), `TagPicker` (autocomplete over existing tags + create-new; `allowProtected` prop — see §9; optional `trigger` prop
 to
 render a custom trigger, e.g. the small **+** button in the details-panel Tags section header).
 
-**`tagging/`** — `TaggingPage` composes `SharedMappingSection` (shared-tag-mapping services in a **collapsed-by-default accordion, always first**)
+**`tagging/`** — `TaggingPage` (header has a **Force run** button — `POST /pictures/pipeline/wake` — for debugging) composes `SharedMappingSection`
+(shared-tag-mapping services in a **collapsed-by-default accordion, always first**)
 then
 `PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s.
 `RequiresExcludesEditor`
@@ -209,8 +214,9 @@ rest
 
 **`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back header with a **WebDAV**
 (HardDrive) and edit button over the directory
-tree), `WebdavDialog` (mount-info popup: copyable mount URL + token — token hidden by default with show/copy buttons — a **Regenerate token**
-button, and a `use_redirect` toggle; the token is only minted on open via `useWebdav`, since the GET endpoint mints on first access),
+tree), `WebdavDialog` (mount-info popup: copyable mount URL, username (`@user`), and token — token hidden by default with show/copy buttons — a
+**Regenerate token** button, and a `use_redirect` toggle; the token is only minted on open via `useWebdav`, since the GET endpoint mints on first
+access),
 `HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
 center
 grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs), `CreateHierarchyDialog` (name → create empty →
@@ -261,18 +267,10 @@ mobile) and shown only when its `ui` store toggle is on:
   pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
 - **EXIF editing:** owned pictures only (`picture.owner_username == null`). `useEditExif` POSTs the diff (`set`/`clear`), then polls `getJob`
   (1/2/4/8/15 s) while `exif_sync_status === 'pending'`.
-- **Orientation rendering:** stored thumbnails/originals are raw pixels (orientation not baked in). `components/photos/OrientedImage.tsx` rotates them
-  at display time from the picture's `orientation` (list item + detail). `orientedCoverStyle` produces the absolute positioning + transform that makes
-  a
-  90°/270° image fill a parent already laid out at the **display** aspect ratio (transposed via `displayDimensions`); it sets `max-w-none` to escape
-  Tailwind preflight's `img { max-width: 100% }`, which would otherwise clamp the >100% width into a square. `OrientedImage` (used by `PhotoCard`,
-  which
-  also rotates the `Blurhash` placeholder with the same `orientedCoverStyle` so it lines up). `OrientedContainImage` measures its available box to
-  *fit* a
-  rotated image inside a variable-aspect container — `maxHeight` flows it to hug the image height (sidebar preview, so landscape pictures get no
-  letterbox), otherwise it fills its parent (`Lightbox`). The sidebar preview rotates by the live *draft* orientation so rotate clicks show instantly,
-  before the debounced commit lands; the rotation is not animated (a CSS transform transition takes the visual long way around the 8→1 orientation
-  wrap).
+- **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates at display time using
+  `orientedCoverStyle` (absolute positioning + CSS transform; sets `max-w-none` to escape Tailwind's `img { max-width: 100% }` which otherwise
+  collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container. The sidebar preview uses the live draft
+  orientation for instant feedback on rotate clicks.
 - **Single mapping per share:** `useShareMappings.addMapping` deletes any existing mapping first; the tagging `MappingEditor` hides already-mapped
   shares.
 - **Cross-links:** right-panel tag → sets the `tag` filter; a provenance source badge → `/tagging/:source_id` (or `panel=incoming` + `share` highlight
@@ -298,9 +296,5 @@ mobile) and shown only when its `ui` store toggle is on:
 - **Strict TS:** type-only imports must use `import type`; avoid `any` (prefer `unknown`/`Record<string, unknown>`). `npm run build` (= `tsc -b` +
   `vite build`) must stay green.
 - shadcn primitives are editable project files under `components/ui/`; custom domain components live in their domain folder.
-- **Number inputs:** native browser spin arrows are stripped globally in `index.css` (they ignore the theme); use `components/ui/number-input.tsx`
-  (`NumberInput`) for styled chevron steppers. It calls native `stepUp`/`stepDown` (honours `min`/`max`/`step`) and keeps the standard
-  `e.target.value`
-  `onChange` API. Steppers auto-hide when `step="any"` (free-form decimals like GPS lat/lng), leaving a plain arrow-less field. shadcn/ui ships no
-  number
-  primitive ([issue #4385](https://github.com/shadcn-ui/ui/issues/4385)).
+- **Number inputs:** use `components/ui/number-input.tsx` (`NumberInput`) — native spin arrows are stripped in `index.css`; this component adds styled
+  chevron steppers. Steppers auto-hide when `step="any"` (free-form decimals like GPS lat/lng).

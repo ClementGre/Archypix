@@ -1,18 +1,10 @@
 # API Reference
 
-Complete reference for all Archypix HTTP endpoints. Intended as the primary source of truth for frontend development — frontend agents and developers
-should read this file rather than the Rust source code.
+Primary source of truth for frontend development. See `03_BACKEND_ARCHITECTURE.md §F` for JWT and federation auth conventions.
 
 ---
 
-## 1. Overview
-
-### Base URL
-
-The backend exposes all routes from a single base URL. In local development, Vite proxies `/api/*` to `http://localhost:3000`. In production,
-`VITE_API_BASE_URL` points to the resolved backend domain.
-
-### Route groups
+## 1. Route Groups
 
 | Prefix                   | Auth type                   | Notes                                                                |
 |--------------------------|-----------------------------|----------------------------------------------------------------------|
@@ -30,9 +22,8 @@ The backend exposes all routes from a single base URL. In local development, Vit
 
 ## 2. Authentication
 
-### Token types
-
-The backend issues **user JWTs** for authenticated sessions. The frontend only ever uses user JWTs.
+Login returns `{ access_token, refresh_token }`. Attach to requests as `Authorization: Bearer <access_token>`. On 401, call `POST /api/auth/refresh`
+once; if that also fails, redirect to `/login`. Both tokens are stored in `localStorage`.
 
 ```ts
 interface JwtClaims {
@@ -49,56 +40,20 @@ interface JwtClaims {
 }
 ```
 
-### Using tokens
-
-Attach the access token to every authenticated request:
-
-```
-Authorization: Bearer <access_token>
-```
-
-### Refresh flow
-
-The backend issues both an `access_token` (short-lived) and a `refresh_token` (longer-lived) on login. The Axios interceptor in `src/api/client.ts`
-automatically:
-
-1. Attaches `Authorization` header on every request.
-2. On 401, calls `POST /api/auth/refresh` once, updates the stored token, and retries the original request.
-3. If refresh also fails, clears auth state and redirects to `/login`.
-
-Both tokens are stored in `localStorage`. Session invalidation happens on logout.
-
 ---
 
 ## 3. Wire Format Conventions
 
-### Tag paths
+**Tag paths** — dot-separated ltree form on the wire (`Photos.Travel.Alps`; display form is `/Photos/Travel/Alps`). Label chars: `[A-Za-z0-9_]`. `@`→
+`_AT_`, `.`→`_DOT_` within a label. The `TagPath` helper in `src/lib/utils.ts` converts between forms. All tag fields in requests/responses use wire
+form.
 
-Tag paths are stored and transmitted in **ltree dot-separated form** on the wire:
+**Protected prefix** — `SharedToMe` is reserved; the API rejects tags starting with it. Use `allow_protected = false` in `TagPath` for manual user
+input.
 
-| Display form                      | Wire form                               |
-|-----------------------------------|-----------------------------------------|
-| `/Photos/Travel/Alps`             | `Photos.Travel.Alps`                    |
-| `/SharedToMe/alice@ex.com/Photos` | `SharedToMe.alice_AT_ex_DOT_com.Photos` |
+**Datetimes** — ISO 8601 / RFC3339 in UTC. EXIF `captured_at` may arrive as `YYYY:MM:DD HH:MM:SS` — the backend normalizes it.
 
-The `TagPath` helper in `src/lib/utils.ts` converts between the two forms. All tag-related request fields (filters, `add_tags`, `remove_tags`,
-`assign_tag`, `requires`, `excludes`) and all response tag arrays use dot-separated ltree form.
-
-Label characters are restricted to `[A-Za-z0-9_]`. The `/` separator becomes `.` on the wire.
-
-### Protected tag prefixes
-
-The `SharedToMe` prefix is reserved by the system. User-facing tag inputs must **not** allow it (the API validates this). Use
-`allow_protected = false` in the frontend `TagPath` helper when accepting manual user input.
-
-### Datetimes
-
-All datetimes are ISO 8601 / RFC3339 strings in UTC unless noted otherwise. EXIF `captured_at` from the worker may arrive in `YYYY:MM:DD HH:MM:SS`
-format — the backend normalizes it.
-
-### UUIDs
-
-All IDs are UUID v4 strings.
+**IDs** — UUID v4 strings.
 
 ---
 
@@ -197,12 +152,13 @@ rate-limit window.
 
 ## 5. Public Endpoints
 
-### `POST /api/public/users`
+### `POST /api/public/register`
 
-Register a new user. **Only available when `USE_RESOLVER=false`** (standalone mode). Returns 400 when the resolver is active — registration goes
-through `POST /api/register` on the resolver service instead. Passwords must be at least 8
-characters and the email must be syntactically valid (`400` otherwise). Rate-limited per source IP
-(`429` past the window).
+Register a new user. This is the **single registration path the frontend uses** regardless of topology: a standalone backend (`USE_RESOLVER=false`)
+serves it directly, and the resolver exposes the same path on its registration handler (picks a backend and forwards). On a backend running behind a
+resolver (`USE_RESOLVER=true`) this route returns 400 — but the frontend targets the *global domain*, which is the resolver in that topology.
+Passwords
+must be at least 8 characters and the email must be syntactically valid (`400` otherwise). Rate-limited per source IP (`429` past the window).
 
 **Auth:** None
 
@@ -1883,70 +1839,25 @@ type ExifField =
 
 ## 11. Key Frontend Behaviours
 
-### Tag path representation
+**Tag paths** — all requests and responses use wire form (`Photos.Travel.Alps`). Display form is `/Photos/Travel/Alps`. Convert via
+`src/lib/utils.ts:TagPath`.
 
-- **Display form:** `/Photos/Travel/Alps` (slash-separated, slash prefix)
-- **Wire form:** `Photos.Travel.Alps` (dot-separated, no prefix)
-- All API requests and responses use wire form. Convert using `src/lib/utils.ts:TagPath`.
+**Picture orientation** — thumbnails/originals are raw pixels; the client rotates at display time from the `orientation` field (1–8). Rotating is a
+normal EXIF edit (`set: { orientation }`).
 
-### Picture orientation
+**Presigned URLs** — valid ~15 minutes; cache with `staleTime ≤ 10 min`. Use the `thumbnail` query param on `GET /pictures` to embed URLs in list
+items and avoid per-card round-trips.
 
-Thumbnails and originals are stored in **raw pixel orientation** — the worker does not bake the EXIF orientation into the generated files, and an
-orientation edit does not regenerate thumbnails. The list (`orientation`) and detail (`orientation`) responses carry the EXIF orientation value (1–8);
-the client rotates the image at display time to show it correctly (90°/270° orientations also transpose the displayed width/height). Rotating a
-picture
-is a normal EXIF edit (`set: { orientation }`) — the new value reconciles into the original file via the `edit_picture` job, while the displayed
-rotation updates immediately from the DB value.
+**Pipeline wakeup** — these mutations wake the tagging pipeline asynchronously: `POST /uploads/{id}/complete`, `PATCH /tags`,
+`PATCH /tagging-services/{id}`, `POST /tagging-services`, `DELETE /tagging-services/{id}`. Tags converge in the background; the frontend does not need
+to poll.
 
-### Presigned URL caching
+**EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`.
+Use exponential backoff (1s, 2s, 4s, …, stop ~30s).
 
-Presigned URLs are valid for ~15 minutes. Cache them in TanStack Query with `staleTime` set to at most 10 minutes. Do not fetch a new URL on every
-render.
+**Received pictures** — `owned = false` indicates a received picture; `owner_username`/`owner_instance` identify the true owner.
+`GET /pictures/{id}/url` handles cross-instance presigning transparently. Received pictures cannot have EXIF edited.
 
-### Optimistic picture listing with `thumbnail`
-
-Use the `thumbnail` query param on `GET /api/authenticated/pictures` to embed presigned thumbnail URLs in list items. This saves one round-trip per
-picture compared to calling `GET /api/authenticated/pictures/{id}/url` for each item.
-
-### Batch upload pattern
-
-For multi-file uploads, the recommended flow is:
-
-1. Call `POST /uploads/batch` with all filenames → receive all `(picture_id, presigned_url)` pairs.
-2. Upload all files to S3 in parallel (recommend max 4 concurrent PUTs to avoid saturating the connection).
-3. As each S3 PUT completes, immediately call `POST /uploads/{id}/complete` — do not wait for all files.
-4. Pass `initial_tags` in the complete body to assign tags to every uploaded picture without a separate `PATCH /tags` round-trip.
-
-### Pipeline wakeup side-effects
-
-Several mutations wake the tagging pipeline asynchronously:
-
-- `POST /uploads/{id}/complete` — new picture (pipeline also re-evaluates `initial_tags` against services)
-- `PATCH /tags` — manual tag change
-- `PATCH /tagging-services/{id}` — service config change
-- `POST /tagging-services` — new service created
-- `DELETE /tagging-services/{id}` — service deleted
-
-After these mutations, dirty pictures are re-evaluated in the background. The frontend does not need to poll — tags on pictures update eventually, and
-the gallery can be refetched after a short delay or on next navigation.
-
-### EXIF sync polling
-
-After `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `status = "completed"` or `"failed"` (the
-`job_id` is in the edit response). Use exponential backoff (e.g. 1s, 2s, 4s, stop at ~30s).
-
-### Received pictures (shares)
-
-- `owned = false` in list/detail responses indicates a received picture.
-- `owner_username` and `owner_instance` identify the true owner.
-- The `GET /pictures/{id}/url` endpoint transparently handles cross-instance presigning (the response URL may point to the owner's backend).
-- Received pictures can have manual tags and appear in segmentation/rule results; they cannot have EXIF edited.
-
-### Share workflow
-
-1. **Outgoing:** `POST /shares/outgoing` → share is `pending` → recipient accepts → share moves to `pending_first_announcement` → pipeline delivers
-   pictures → share becomes `active`.
-2. **Incoming:** share arrives as `pending` → user calls `POST /shares/incoming/{id}/accept` → pictures appear over time as the sender's pipeline
-   delivers them.
-3. **ShareBack:** when creating a share, pass `shareback_of = <incoming_share_id>`. If the original share had `allow_share_back = true`, the new share
-   auto-activates and a `SharedTagMappingService` rule is automatically created for it on the sender's side.
+**Share workflow** — outgoing share: `pending` → recipient accepts → `pending_first_announcement` → pipeline delivers → `active`. ShareBack: pass
+`shareback_of = <incoming_share_id>`; if `allow_share_back = true` on the original share, the new share auto-activates and a `SharedTagMappingService`
+rule is created automatically.
