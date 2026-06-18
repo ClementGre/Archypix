@@ -41,7 +41,8 @@
   in the create-share dialog.
 - [ ] **Trash & restore** — soft delete with `deleted_at`, recipient notification, physical copy option.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
-- [ ] **Federation robustness** — token refresh schedule, retry logic, presigned URL caching for remote pictures.
+- [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
+  logic, presigned URL caching for remote pictures.
 
 ## To-do for v1.0
 

@@ -121,6 +121,13 @@ impl TagRepository {
                    WHERE deeper <> t AND deeper::ltree <@ t::ltree
                  )
                ) AS filtered
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM tags existing
+                 WHERE existing.picture_id = p.id
+                   AND existing.tag_path <@ filtered.tag::ltree
+                   AND existing.tag_path <> filtered.tag::ltree
+                   AND existing.source = 'manual'::tag_source
+               )
                ON CONFLICT (picture_id, tag_path) WHERE source = 'manual' DO NOTHING"#,
             picture_ids as &[Uuid],
             local_user_id,
@@ -599,6 +606,30 @@ mod tests {
         assert!(
             !stored.iter().any(|t| t.tag_path == "Photos"),
             "ancestor pruned"
+        );
+        assert!(stored.iter().any(|t| t.tag_path == "Photos.Travel"));
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn batch_assign_prunes_ancestor_when_shallow_added(db: PgPool) {
+        let user = seed_user(&db).await;
+        let pic = seed_picture(&db, user).await;
+
+        // Add child first
+        TagRepository::batch_assign(&db, user, &[pic], &["Photos.Travel".to_string()])
+            .await
+            .unwrap();
+        // Then add a parend — parent should not be added
+        TagRepository::batch_assign(&db, user, &[pic], &["Photos".to_string()])
+            .await
+            .unwrap();
+
+        let stored = TagRepository::list_for_picture(&db, user, pic)
+            .await
+            .unwrap();
+        assert!(
+            !stored.iter().any(|t| t.tag_path == "Photos"),
+            "ancestor not added because child exists"
         );
         assert!(stored.iter().any(|t| t.tag_path == "Photos.Travel"));
     }
