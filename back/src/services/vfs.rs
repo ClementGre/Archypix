@@ -311,7 +311,7 @@ impl<'a> Vfs<'a> {
                     false,
                 )
                 .await?;
-                self.state.pipeline_waker.wake(self.user_id);
+                self.state.pipeline_waker.wake_debounced(self.user_id);
                 return Ok(false);
             }
         }
@@ -327,7 +327,7 @@ impl<'a> Vfs<'a> {
             trace!(user_id = %self.user_id, picture_id = %p.id, %hash, "vfs put: hash matched live picture — retag instead of new upload");
             self.apply_add_ops(&on_add, p.id).await?;
             self.clear_pending_dir(parent).await;
-            self.state.pipeline_waker.wake(self.user_id);
+            self.state.pipeline_waker.wake_debounced(self.user_id);
             return Ok(false);
         }
         // Un-delete a recently trashed match (naive rename under fullDelete, §8).
@@ -338,7 +338,7 @@ impl<'a> Vfs<'a> {
             PictureRepository::set_deleted(&self.state.db, self.user_id, p.id, false).await?;
             self.apply_add_ops(&on_add, p.id).await?;
             self.clear_pending_dir(parent).await;
-            self.state.pipeline_waker.wake(self.user_id);
+            self.state.pipeline_waker.wake_debounced(self.user_id);
             return Ok(true);
         }
 
@@ -383,7 +383,7 @@ impl<'a> Vfs<'a> {
         self.apply_add_ops(&on_add, new_id).await?;
         // A real file now lives here, so the directory is a live tag — drop any pending marker.
         self.clear_pending_dir(parent).await;
-        self.state.pipeline_waker.wake(self.user_id);
+        self.state.pipeline_waker.wake_debounced(self.user_id);
         Ok(true)
     }
 
@@ -472,7 +472,7 @@ impl<'a> Vfs<'a> {
                 self.apply_remove_ops(&wb.on_remove, pid).await?;
             }
         }
-        self.state.pipeline_waker.wake(self.user_id);
+        self.state.pipeline_waker.wake_debounced(self.user_id);
         Ok(())
     }
 
@@ -495,7 +495,7 @@ impl<'a> Vfs<'a> {
             // Rename — set the filename (meaningful for naming=original).
             trace!(user_id = %self.user_id, picture_id = %pid, new_name = %to_name, "vfs move: rename within directory");
             PictureRepository::set_filename(&self.state.db, self.user_id, pid, &to_name).await?;
-            self.state.pipeline_waker.wake(self.user_id);
+            self.state.pipeline_waker.wake_debounced(self.user_id);
             return Ok(());
         }
         trace!(user_id = %self.user_id, picture_id = %pid, from = %from_parent.join("/"), to = %to_parent.join("/"), "vfs move: re-file across directories");
@@ -511,7 +511,7 @@ impl<'a> Vfs<'a> {
         self.apply_remove_ops(&src_wb.on_remove, pid).await?;
         self.apply_add_ops(&dst_on_add, pid).await?;
         self.clear_pending_dir(to_parent).await;
-        self.state.pipeline_waker.wake(self.user_id);
+        self.state.pipeline_waker.wake_debounced(self.user_id);
         Ok(())
     }
 
@@ -525,7 +525,7 @@ impl<'a> Vfs<'a> {
         trace!(user_id = %self.user_id, picture_id = %pid, to = %to_parent.join("/"), "vfs copy: add destination tags");
         self.apply_add_ops(&dst_on_add, pid).await?;
         self.clear_pending_dir(to_parent).await;
-        self.state.pipeline_waker.wake(self.user_id);
+        self.state.pipeline_waker.wake_debounced(self.user_id);
         Ok(())
     }
 
