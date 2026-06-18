@@ -22,7 +22,7 @@ pub fn auth_routes() -> Router<AppState> {
 
 pub fn public_routes() -> Router<AppState> {
     Router::new()
-        .route("/users", post(users::register))
+        .route("/register", post(users::register))
         .route("/users/{username}", get(users::get_public))
 }
 

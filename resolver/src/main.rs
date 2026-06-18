@@ -80,7 +80,9 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/.well-known/webfinger", get(webfinger_handler))
         .route("/api/update", post(update_handler))
-        .route("/api/register", post(register_handler))
+        // Mirrors the standalone backend's registration route, so the frontend uses one
+        // URL regardless of whether the global domain is a resolver or a standalone backend.
+        .route("/api/public/register", post(register_handler))
         .route(
             "/api/backends",
             post(register_backend_handler).get(list_backends_handler),
