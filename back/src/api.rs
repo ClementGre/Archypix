@@ -17,14 +17,23 @@ use axum::{Json, Router};
 use tower_http::cors::{Any, CorsLayer};
 
 pub fn routes(config: &Config) -> Router<AppState> {
+    let allow_origin = build_cors_origin(&config.cors_origins);
+    let cors = CorsLayer::new()
+        .allow_methods(Any)
+        .allow_origin(allow_origin)
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE]);
+
     let mut router = Router::new()
-        .nest("/api", api_routes(config))
+        .nest("/api", api_routes(config).layer(cors.clone()))
         // WebDAV lives outside /api — clients authenticate with HTTP Basic, not a User JWT.
         .merge(webdav::routes())
         .route("/health", get(health));
 
     if !config.use_resolver {
-        router = router.route("/.well-known/webfinger", get(webfinger::handler));
+        router = router.route(
+            "/.well-known/webfinger",
+            get(webfinger::handler).layer(cors),
+        );
     }
 
     router
@@ -38,12 +47,6 @@ async fn health() -> impl IntoResponse {
 }
 
 fn api_routes(config: &Config) -> Router<AppState> {
-    let allow_origin = build_cors_origin(&config.cors_origins);
-    let cors = CorsLayer::new()
-        .allow_methods(Any)
-        .allow_origin(allow_origin)
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE]);
-
     Router::new()
         .nest("/resolver", resolver::routes())
         .nest("/admin", admin::routes())
@@ -52,7 +55,6 @@ fn api_routes(config: &Config) -> Router<AppState> {
         .nest("/authenticated", user::authenticated_routes())
         .nest("/federation", federation::routes())
         .nest("/worker", worker::routes())
-        .layer(cors)
 }
 
 fn build_cors_origin(origins: &[String]) -> tower_http::cors::AllowOrigin {
