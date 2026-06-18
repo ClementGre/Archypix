@@ -292,6 +292,64 @@ pub async fn complete_upload(
     Ok(picture)
 }
 
+/// Snapshot a picture's current original bytes as a new `picture_version` before a WebDAV
+/// overwrite, per the user's `versioning_mode` (06_webdav.md §7.3):
+///
+/// - `None` → never snapshot (overwrite in place);
+/// - `OriginalCopy` → snapshot only the first time (preserve the pristine original, once);
+/// - `FullVersioning` → snapshot before every overwrite.
+///
+/// Reuses the version-snapshot machinery of the worker edit path: S3 copy first (no DB record
+/// exists yet, so it is safe outside a transaction), then the version row in a transaction so
+/// `version_number` is computed and stored atomically. Returns whether a snapshot was taken.
+pub async fn snapshot_version_on_overwrite(
+    db: &PgPool,
+    storage: &dyn Storage,
+    config: &Config,
+    versioning_mode: crate::domain::user_settings::VersioningMode,
+    picture: &Picture,
+) -> Result<bool, AppError> {
+    use crate::domain::user_settings::VersioningMode;
+    let snapshot = match versioning_mode {
+        VersioningMode::None => false,
+        VersioningMode::OriginalCopy => {
+            !PictureVersionRepository::has_versions(db, picture.id).await?
+        }
+        VersioningMode::FullVersioning => true,
+    };
+    if !snapshot {
+        return Ok(false);
+    }
+    trace!(picture_id = %picture.id, mode = ?versioning_mode, "pictures: snapshot version before WebDAV overwrite");
+
+    let version_id = Uuid::new_v4();
+    storage
+        .copy_object(
+            &config.s3_bucket_pictures,
+            &s3::picture_key(picture.local_user_id, picture.id),
+            &config.s3_bucket_versions,
+            &s3::version_key(picture.local_user_id, picture.id, version_id),
+        )
+        .await?;
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let version_num = PictureVersionRepository::next_version_number(&mut *tx, picture.id).await?;
+    PictureVersionRepository::create(
+        &mut *tx,
+        version_id,
+        picture.id,
+        version_num,
+        picture.file_size,
+        picture.mime_type.as_deref(),
+    )
+    .await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    Ok(true)
+}
+
 pub async fn get_picture_details(
     db: &PgPool,
     user_id: Uuid,

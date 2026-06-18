@@ -32,6 +32,14 @@ pub enum RedisKey<'a> {
     /// Cached WebDAV auth resolution, keyed by the SHA-256 of the presented token
     /// (so the plaintext token is never a Redis key). See 06_webdav.md §3.3.
     WebdavToken(&'a str),
+    /// Transient brand-new mirror sub-directories created by `MKCOL` before a file lands and
+    /// mints the real tag. Keyed by `(hierarchy_id, parent_path)`; value is the set of pending
+    /// child directory names under that parent (06_webdav.md §9).
+    WebdavPendingDir(Uuid, &'a str),
+    /// OS-junk sidecar files (`.DS_Store`, `._*`, …) echoed back in listings but never ingested
+    /// as pictures. Keyed by `(hierarchy_id, parent_path)`; value is a map of name → stored bytes
+    /// (06_webdav.md §11).
+    WebdavSidecar(Uuid, &'a str),
 }
 
 impl<'a> RedisKey<'a> {
@@ -45,6 +53,8 @@ impl<'a> RedisKey<'a> {
             Self::AdminStats => "admin:stats:instance".to_string(),
             Self::AdminUserStats(id) => format!("admin:stats:user:{id}"),
             Self::WebdavToken(hash) => format!("webdav:token:{hash}"),
+            Self::WebdavPendingDir(h, parent) => format!("webdav:pendingdir:{h}:{parent}"),
+            Self::WebdavSidecar(h, parent) => format!("webdav:sidecar:{h}:{parent}"),
         }
     }
 }

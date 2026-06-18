@@ -70,7 +70,29 @@ impl Cache for InMemoryCache {
 
 // ── MockStorage ───────────────────────────────────────────────────────────────
 
-pub struct MockStorage;
+/// In-memory object store keyed by `bucket/key`. Enough to exercise the WebDAV write/read
+/// taxonomy (upload, overwrite, version snapshot copy, proxy read) without a real S3.
+#[derive(Default)]
+pub struct MockStorage {
+    objects: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+impl MockStorage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    fn obj_key(bucket: &str, key: &str) -> String {
+        format!("{bucket}/{key}")
+    }
+    /// Test helper: bytes currently stored at `bucket/key`, if any.
+    pub fn get(&self, bucket: &str, key: &str) -> Option<Vec<u8>> {
+        self.objects
+            .lock()
+            .unwrap()
+            .get(&Self::obj_key(bucket, key))
+            .cloned()
+    }
+}
 
 #[async_trait]
 impl Storage for MockStorage {
@@ -88,19 +110,32 @@ impl Storage for MockStorage {
     }
     async fn copy_object(
         &self,
-        _src_bucket: &str,
-        _src_key: &str,
-        _dst_bucket: &str,
-        _dst_key: &str,
+        src_bucket: &str,
+        src_key: &str,
+        dst_bucket: &str,
+        dst_key: &str,
     ) -> Result<(), AppError> {
+        let mut store = self.objects.lock().unwrap();
+        if let Some(bytes) = store.get(&Self::obj_key(src_bucket, src_key)).cloned() {
+            store.insert(Self::obj_key(dst_bucket, dst_key), bytes);
+        }
         Ok(())
     }
-    async fn delete_object(&self, _bucket: &str, _key: &str) -> Result<(), AppError> {
+    async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError> {
+        self.objects
+            .lock()
+            .unwrap()
+            .remove(&Self::obj_key(bucket, key));
         Ok(())
     }
 
     async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
-        todo!()
+        self.objects
+            .lock()
+            .unwrap()
+            .get(&Self::obj_key(bucket, key))
+            .cloned()
+            .ok_or(AppError::NotFound)
     }
 
     async fn put_object(
@@ -108,9 +143,29 @@ impl Storage for MockStorage {
         bucket: &str,
         key: &str,
         body: Vec<u8>,
-        content_type: Option<&str>,
+        _content_type: Option<&str>,
     ) -> Result<(), AppError> {
-        todo!()
+        self.objects
+            .lock()
+            .unwrap()
+            .insert(Self::obj_key(bucket, key), body);
+        Ok(())
+    }
+
+    async fn put_object_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &std::path::Path,
+        _content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        let body = std::fs::read(path)
+            .map_err(|e| AppError::InternalServerError(format!("read temp file: {e}")))?;
+        self.objects
+            .lock()
+            .unwrap()
+            .insert(Self::obj_key(bucket, key), body);
+        Ok(())
     }
 }
 
@@ -160,7 +215,17 @@ pub fn test_task_queue_with_federation(
 /// requests (e.g., federation contract tests where backend URLs are pre-seeded
 /// so WebFinger calls are bypassed).
 pub fn test_app_state_with_cache(db: PgPool, config: &Config, cache: Arc<dyn Cache>) -> AppState {
-    let storage: Arc<dyn Storage> = Arc::new(MockStorage);
+    test_app_state_with_storage(db, config, cache, Arc::new(MockStorage::new()))
+}
+
+/// Like [`test_app_state_with_cache`] but with a caller-supplied storage backend, so a test can
+/// hold an `Arc<MockStorage>` and inspect the bytes written (used by the WebDAV VFS tests).
+pub fn test_app_state_with_storage(
+    db: PgPool,
+    config: &Config,
+    cache: Arc<dyn Cache>,
+    storage: Arc<dyn Storage>,
+) -> AppState {
     let jwt = JwtService::new(&config.jwt_secret, &config.back_domain);
     let worker_jwt = JwtService::new(&config.worker_jwt_secret, &config.back_domain);
     let resolver_jwt = JwtService::new(&config.resolver_jwt_secret, &config.back_domain);

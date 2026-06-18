@@ -21,6 +21,8 @@ pub enum AppError {
     Conflict(String),
     #[error("Forbidden: {0}")]
     Forbidden(String),
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
 }
 
 impl IntoResponse for AppError {
@@ -33,6 +35,7 @@ impl IntoResponse for AppError {
             AppError::DatabaseError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+            AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
         };
         let body = serde_json::json!({ "error": self.to_string() });
         if status.is_server_error() {

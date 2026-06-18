@@ -104,6 +104,11 @@ pub struct Config {
     pub s3_bucket_large: String,
     pub s3_presign_ttl_secs: u64,
     pub s3_presign_cache_margin_secs: u64,
+
+    // ── WebDAV ────────────────────────────────────────────────────────────────
+    /// Upper bound on a single WebDAV `PUT` body (bytes). The body is streamed to a temp file
+    /// (never buffered in memory) and rejected with `413` past this limit. Default: 5 GiB.
+    pub webdav_max_upload_bytes: u64,
 }
 
 impl Config {
@@ -187,6 +192,8 @@ impl Config {
             s3_bucket_large: env("S3_BUCKET_LARGE", "archypix-large".to_string()),
             s3_presign_ttl_secs: env_u64("S3_PRESIGN_TTL_SECS", 3600)?,
             s3_presign_cache_margin_secs: env_u64("S3_PRESIGN_CACHE_MARGIN_SECS", 600)?,
+
+            webdav_max_upload_bytes: env_u64("WEBDAV_MAX_UPLOAD_BYTES", 5 * 1024 * 1024 * 1024)?,
         };
 
         let storage_buckets = [
@@ -323,6 +330,7 @@ impl Config {
             s3_bucket_large: "archypix-large".to_string(),
             s3_presign_ttl_secs: 3600,
             s3_presign_cache_margin_secs: 600,
+            webdav_max_upload_bytes: 5 * 1024 * 1024 * 1024,
         }
     }
 }

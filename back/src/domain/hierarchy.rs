@@ -202,6 +202,37 @@ pub fn slugify(name: &str) -> String {
     }
 }
 
+/// Fold a candidate ltree tag path onto existing tags that differ only by case (06_webdav.md
+/// §10c). A case-insensitive WebDAV client (macOS/Windows) may write `Photos/travel` against an
+/// existing `Photos.Travel` tag; without folding this would mint a distinct case-only-duplicate
+/// the client cannot tell apart. For each path component, top-down, if some existing tag shares
+/// the already-normalized ancestor prefix and a component matching case-insensitively (but not
+/// exactly), adopt the existing casing — reusing the existing tag instead of minting a sibling.
+///
+/// `existing` is the user's distinct stored tag paths (dot-separated ltree form).
+pub fn reuse_existing_case(candidate: &str, existing: &[String]) -> String {
+    let comps: Vec<&str> = candidate.split('.').collect();
+    let mut result: Vec<String> = Vec::with_capacity(comps.len());
+    for (i, comp) in comps.iter().enumerate() {
+        let mut chosen = comp.to_string();
+        for ex in existing {
+            let ex_comps: Vec<&str> = ex.split('.').collect();
+            if ex_comps.len() <= i {
+                continue;
+            }
+            // The ancestor prefix (already normalized) must match exactly, and this component
+            // must match case-insensitively but differ in casing.
+            let prefix_matches = (0..i).all(|j| ex_comps[j] == result[j]);
+            if prefix_matches && ex_comps[i] != *comp && ex_comps[i].eq_ignore_ascii_case(comp) {
+                chosen = ex_comps[i].to_string();
+                break;
+            }
+        }
+        result.push(chosen);
+    }
+    result.join(".")
+}
+
 // ─── Validation ─────────────────────────────────────────────────────────────────
 
 impl HierarchyConfig {
@@ -476,6 +507,48 @@ mod tests {
         assert_eq!(slugify("  spaced  "), "spaced");
         assert_eq!(slugify("***"), "hierarchy");
         assert_eq!(slugify("Déjà"), "d-j"); // non-ascii dropped, runs collapsed
+    }
+
+    #[test]
+    fn reuse_existing_case_folds_leaf() {
+        let existing = vec!["Photos.Travel".to_string()];
+        // A client wrote `Photos/travel`; fold onto the existing-cased `Photos.Travel`.
+        assert_eq!(
+            reuse_existing_case("Photos.travel", &existing),
+            "Photos.Travel"
+        );
+    }
+
+    #[test]
+    fn reuse_existing_case_folds_ancestor_and_leaf() {
+        let existing = vec!["Photos.Travel".to_string()];
+        // Both the ancestor (`photos`→`Photos`) and a brand-new deeper segment are handled:
+        // the ancestor reuses existing casing, the new leaf keeps its given casing.
+        assert_eq!(
+            reuse_existing_case("photos.travel.Alps", &existing),
+            "Photos.Travel.Alps"
+        );
+    }
+
+    #[test]
+    fn reuse_existing_case_no_match_is_identity() {
+        let existing = vec!["Photos.Travel".to_string()];
+        assert_eq!(
+            reuse_existing_case("Images.Icons", &existing),
+            "Images.Icons"
+        );
+        // Exact match is unchanged (no spurious rewrite).
+        assert_eq!(
+            reuse_existing_case("Photos.Travel", &existing),
+            "Photos.Travel"
+        );
+    }
+
+    #[test]
+    fn reuse_existing_case_respects_distinct_parents() {
+        // `a.X` exists but under parent `a`, not `b`; writing `b.x` must NOT borrow `a`'s casing.
+        let existing = vec!["a.X".to_string()];
+        assert_eq!(reuse_existing_case("b.x", &existing), "b.x");
     }
 
     #[test]

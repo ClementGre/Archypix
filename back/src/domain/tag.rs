@@ -68,6 +68,32 @@ impl TagPath {
         Ok(TagPath(stripped.to_string()))
     }
 
+    /// Coerce an arbitrary directory name into a valid tag label (`[A-Za-z0-9_]`). Runs of
+    /// disallowed characters collapse to a single `_`; leading/trailing `_` are trimmed; an
+    /// otherwise-empty result becomes `untitled`. Case is preserved (tags are case-sensitive).
+    ///
+    /// Used by the WebDAV write path so a filesystem folder like Finder's "dossier sans titre"
+    /// (`dossier_sans_titre`) can mint a tag when a picture is dropped into it (06_webdav.md §9).
+    pub fn slugify_label(raw: &str) -> String {
+        let mut out = String::with_capacity(raw.len());
+        let mut prev_underscore = false;
+        for ch in raw.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                out.push(ch);
+                prev_underscore = ch == '_';
+            } else if !prev_underscore {
+                out.push('_');
+                prev_underscore = true;
+            }
+        }
+        let trimmed = out.trim_matches('_');
+        if trimmed.is_empty() {
+            "untitled".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     /// Parse from the human-readable slash-separated form (`/Photos/Travel/Alps`).
     /// For internal use with trusted paths — does not validate characters.
     pub fn from_slash(raw: &str) -> Self {
@@ -277,6 +303,21 @@ mod tests {
     fn parse_accepts_underscore_and_digits() {
         let t = TagPath::parse("Photos_2024.Trip_01", true).unwrap();
         assert_eq!(t.as_ltree(), "Photos_2024.Trip_01");
+    }
+
+    #[test]
+    fn slugify_label_coerces_to_valid_tag() {
+        assert_eq!(
+            TagPath::slugify_label("dossier sans titre"),
+            "dossier_sans_titre"
+        );
+        assert_eq!(TagPath::slugify_label("My Folder!"), "My_Folder");
+        assert_eq!(TagPath::slugify_label("a   b"), "a_b"); // runs collapse
+        assert_eq!(TagPath::slugify_label("  spaced  "), "spaced"); // trimmed
+        assert_eq!(TagPath::slugify_label("Already_Good"), "Already_Good");
+        assert_eq!(TagPath::slugify_label("***"), "untitled"); // all-invalid → default
+        // The result always parses as a valid tag label.
+        assert!(TagPath::parse(&TagPath::slugify_label("dossier sans titre"), true).is_ok());
     }
     #[test]
     fn parse_rejects_protected_prefix() {

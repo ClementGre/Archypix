@@ -46,6 +46,16 @@ pub trait Storage: Send + Sync {
         body: Vec<u8>,
         content_type: Option<&str>,
     ) -> Result<(), AppError>;
+    /// Stream an on-disk file to a key without buffering it in memory. The WebDAV PUT path
+    /// streams the request body to a temp file (hashing inline), then streams that file to S3
+    /// (06_webdav.md §7).
+    async fn put_object_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &std::path::Path,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError>;
 }
 
 pub fn picture_key(user_id: Uuid, picture_id: Uuid) -> String {
@@ -172,6 +182,27 @@ impl StorageClient {
             .map(|_| ())
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
+
+    pub async fn put_object_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &std::path::Path,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        // `ByteStream::from_path` reads the file in chunks rather than loading it into memory.
+        let body = ByteStream::from_path(path)
+            .await
+            .map_err(|e| AppError::InternalServerError(format!("open upload temp file: {e}")))?;
+        let mut req = self.client.put_object().bucket(bucket).key(key).body(body);
+        if let Some(ct) = content_type {
+            req = req.content_type(ct);
+        }
+        req.send()
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::InternalServerError(e.to_string()))
+    }
 }
 
 #[async_trait]
@@ -212,6 +243,15 @@ impl Storage for StorageClient {
         content_type: Option<&str>,
     ) -> Result<(), AppError> {
         self.put_object(bucket, key, body, content_type).await
+    }
+    async fn put_object_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &std::path::Path,
+        content_type: Option<&str>,
+    ) -> Result<(), AppError> {
+        self.put_object_file(bucket, key, path, content_type).await
     }
 }
 

@@ -49,6 +49,10 @@ pub struct ResolvedDir {
     /// `mirror` dirs synthesize assign/remove of their own tag; writable `query` dirs carry the
     /// authored op-list. Consumed by the WebDAV write layer.
     pub write_back: Option<WriteBack>,
+    /// For `mirror` directories: the ltree tag path this directory maps to (its own tag). `None`
+    /// for `query`/`static`/root. The WebDAV write layer uses this to extend the mirror with a
+    /// brand-new sub-path — appending the new segments as deeper tag labels (06_webdav.md §9).
+    pub mirror_tag: Option<String>,
     pub children: Vec<ResolvedDir>,
 }
 
@@ -85,6 +89,7 @@ pub fn resolve(config: &HierarchyConfig, distinct_paths: &[String]) -> ResolvedD
         subtree: None,
         own_for_parent: None,
         write_back: None,
+        mirror_tag: None,
         children: roots,
     }
 }
@@ -163,6 +168,7 @@ fn build_nodes(
                     subtree: Some(membership),
                     own_for_parent: Some(own_base),
                     write_back: if writable { write_back.clone() } else { None },
+                    mirror_tag: None,
                     children: child_dirs,
                 });
             }
@@ -184,6 +190,7 @@ fn build_nodes(
                     subtree: None,
                     own_for_parent: None,
                     write_back: None,
+                    mirror_tag: None,
                     children: child_dirs,
                 });
             }
@@ -369,6 +376,7 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
             ..TagPredicate::all()
         }),
         write_back,
+        mirror_tag: Some(path.to_string()),
         children,
     }
 }

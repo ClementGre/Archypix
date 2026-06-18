@@ -410,6 +410,34 @@ impl PictureRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// Set a picture's `file_hash` (and optionally `file_size`) inline after a WebDAV upload,
+    /// before the thumbnail worker runs. This makes the ETag (`file_hash`) and dedupe
+    /// (`find_owned_by_hash`) correct immediately, so a quick re-upload of the same bytes is
+    /// recognised as a relocate rather than a fresh picture (06_webdav.md §8).
+    pub async fn set_file_hash<'e, E>(
+        ex: E,
+        id: Uuid,
+        file_hash: &str,
+        file_size: Option<i64>,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"UPDATE pictures
+               SET file_hash = $2,
+                   file_size = COALESCE($3, file_size)
+               WHERE id = $1"#,
+            id,
+            file_hash,
+            file_size,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
     /// Rename an owned picture (WebDAV MOVE within a directory, §7.1). Returns false if the
     /// picture is not owned by the user.
     pub async fn set_filename<'e, E>(

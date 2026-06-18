@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET file_hash = $2,\n                   file_size = COALESCE($3, file_size)\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b714df6b4ba7d6b2abbeaa7e093af00fd8e840a92ebbd3a1624fa504f786cc77"
+}

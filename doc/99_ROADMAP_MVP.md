@@ -46,17 +46,21 @@
   identity and `pictures.file_hash` as ETag, frontend token dialog, and OS-junk filtering
   (AppleDouble `._*`, `.DS_Store`, …). See `doc/features/06_webdav.md`.
   Remaining WebDAV work (see `06_webdav.md` §21):
-    - [ ] **Versioning on overwrite** — consult the user's `versioning_mode` on WebDAV PUT and
-      snapshot a `picture_version` before overwriting (currently in-place overwrite + re-extract).
-    - [ ] **Streamed uploads** — stream the PUT body to S3 (multipart) with inline hashing instead
-      of buffering the whole file in memory; wire `WEBDAV_MAX_UPLOAD_BYTES` as a real env config
-      (currently a constant).
-    - [ ] **Brand-new mirror subdir auto-tag (§9)** — a PUT/COPY/MOVE into a not-yet-existing path
-      whose nearest ancestor is a `mirror` node should mint the deepest tag from the path segments
-      (incl. MKCOL pending-dir tracking). Today MKCOL is accepted transiently but not persisted, so
-      uploads only land in directories the tags already produce.
-    - [ ] **Case-insensitive write-side tag reuse (§10c)** — on write, reuse an existing
-      case-variant sibling tag and reject minting a case-colliding new one (`409`).
+    - [x] **Versioning on overwrite** — an overwrite-PUT consults the user's `versioning_mode` and
+      snapshots a `picture_version` before replacing the bytes (`none`/`original_copy`/
+      `full_versioning`), reusing the worker edit path's snapshot machinery.
+    - [x] **Streamed uploads** — the PUT body streams to a temp file (never buffered in memory), is
+      hashed inline with the common crate's chunked `hash_file`, then streams to S3 via
+      `Storage::put_object_file`; `WEBDAV_MAX_UPLOAD_BYTES` is now a real env config and a zero-byte
+      PUT ingests nothing. A true multipart-to-S3 stream remains a later optimization.
+    - [x] **Brand-new mirror subdir auto-tag (§9)** — a PUT/COPY/MOVE into a not-yet-existing path
+      whose nearest ancestor is a `mirror` node mints the deepest tag from the path segments
+      (validated as tag labels). MKCOL under a mirror records a transient Redis pending-dir marker
+      so the empty directory shows in PROPFIND until a file lands and mints the real tag; OS-junk
+      dotfiles are likewise stored as transient Redis sidecars that round-trip in listings (§11).
+    - [x] **Case-insensitive write-side tag reuse (§10c)** — on write each assigned tag path is
+      folded onto an existing case-variant tag (`reuse_existing_case`), so a case-insensitive client
+      never mints a case-only-duplicate sibling.
     - [ ] **Directory-level operations** — DELETE/MOVE/COPY on a collection (whole directory) are
       not supported (only files); decide semantics (bulk re-tag vs reject) and implement.
     - [ ] **Conditional & range requests** — honor `If-Match`/`If-None-Match` (ETag) and the
@@ -64,10 +68,15 @@
     - [ ] **Real locking** — replace the fake advisory LOCK/UNLOCK with an enforced lock store
       (in-memory or Redis) if multi-writer correctness becomes a concern.
     - [ ] **Quota properties** — expose `quota-used-bytes`/`quota-available-bytes` in PROPFIND.
-    - [ ] **End-to-end VFS tests** — integration tests against a seeded DB for list/stat/read and
-      the full write taxonomy (PUT new/overwrite/dedupe/un-delete, MOVE/COPY/DELETE, 409 path).
-- [ ] **Better workers** – allow a worker to ping multiple backends. Use multi-threaded workers that scale the frequency of number of job claim
-  requests automatically (when a claim is successful, start a new thread and try to claim a new job immediately, in the limit of max_threads.)
+    - [x] **End-to-end VFS tests** — `back/tests/vfs.rs` drives the VFS against a seeded DB and an
+      in-memory storage mock: list/stat/proxy+redirect reads, the full write taxonomy (PUT new/
+      overwrite/dedupe/un-delete/empty, MOVE/COPY/DELETE in both delete modes, the 409 path),
+      versioning-on-overwrite, and the §10c case-fold.
+- [x] **Better workers** — `BACK_DOMAIN`/`BACK_URL` accept comma-separated lists; one poller loop per
+  backend, all sharing a single global semaphore (`MAX_CONCURRENT_JOBS`, default `6`).
+  Burst-friendly: a successful claim immediately re-polls without sleeping, so a batch upload saturates
+  all slots as fast as the backend issues claims. Fair multi-backend allocation emerges naturally from
+  semaphore competition — no explicit scheduler needed.
 - [ ] **Security audit** — audit the code for security holes.
 - [ ] **Trash & restore** — pictures deletion, announcement to sharing recipients setting their `deleted_at` too. Adding an endpoint allowing to copy
   the picture physically to keep it even if the owner trashed it.

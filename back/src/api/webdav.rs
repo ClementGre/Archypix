@@ -16,16 +16,17 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use base64::Engine as _;
+use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 use tracing::debug;
 use uuid::Uuid;
 
-/// Upper bound on a single PUT body buffered in memory (guard; real photos are far smaller).
-const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024 * 1024;
-
 pub fn routes() -> Router<AppState> {
     Router::new()
+        // The PUT body is streamed to a temp file and bounded by `WEBDAV_MAX_UPLOAD_BYTES`
+        // inline (§7); disable axum's default body limit so it does not cap streaming.
         .route("/webdav/{*rest}", any(handler))
-        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(DefaultBodyLimit::disable())
 }
 
 async fn handler(State(state): State<AppState>, req: Request<Body>) -> Response {
@@ -52,14 +53,6 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
     let (username, token) = basic_auth(&headers)?;
     let session = webdav::authenticate(&state, &username, &token, &slug).await?;
 
-    // macOS AppleDouble (`._*`) and other OS sidecar/junk files are not in the tag-derived
-    // tree. Short-circuit them so they neither 404-spam the logs nor get ingested as pictures
-    // on PUT (06_webdav.md §11): quiet 404 on read, accept-and-discard on write.
-    if is_ignored(&segments) {
-        tracing::trace!(user = %username, path = %segments.join("/"), method = %method, "webdav ignored OS sidecar file");
-        return Ok(ignored_response(&method, &slug, &segments));
-    }
-
     let vfs = Vfs::load(
         &state,
         session.user_id,
@@ -67,6 +60,14 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
         session.use_redirect,
     )
     .await?;
+
+    // macOS AppleDouble (`._*`) and other OS sidecar/junk files are not in the tag-derived tree.
+    // They are stored as transient Redis sidecars so they round-trip in listings, but never get
+    // ingested as pictures (06_webdav.md §11).
+    if is_ignored(&segments) {
+        tracing::trace!(user = %username, path = %segments.join("/"), method = %method, "webdav OS sidecar file");
+        return ignored(&state, &vfs, &method, &slug, &segments, &headers, req).await;
+    }
 
     // Common fields for the per-endpoint debug records (tracing policy: one debug per handler).
     let hierarchy = session.hierarchy_id;
@@ -96,7 +97,7 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
         }
         "MKCOL" => {
             debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav MKCOL");
-            vfs.mkcol(&segments)?;
+            vfs.mkcol(&segments).await?;
             Ok(empty(StatusCode::CREATED))
         }
         "MOVE" => {
@@ -171,22 +172,75 @@ async fn put(
     headers: &HeaderMap,
     req: Request<Body>,
 ) -> Result<Response, AppError> {
-    let _ = state;
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let bytes = axum::body::to_bytes(req.into_body(), MAX_UPLOAD_BYTES)
-        .await
-        .map_err(|e| AppError::BadRequest(format!("failed to read body: {e}")))?;
+
+    // Stream the body to a temp file (never buffered in memory), then hash it with the common
+    // crate's chunked hasher — we need the SHA-256 before deciding whether to upload to S3 or
+    // just retag an existing picture (06_webdav.md §7–8).
+    let (tmp, hash, size) =
+        stream_to_temp(req.into_body(), state.config.webdav_max_upload_bytes).await?;
+
     let created = vfs
-        .put_file(segments, bytes.to_vec(), content_type.as_deref())
+        .put_file(
+            segments,
+            tmp.path(),
+            &hash,
+            size as i64,
+            content_type.as_deref(),
+        )
         .await?;
+    // `tmp` is dropped here, removing the temp file.
     Ok(empty(if created {
         StatusCode::CREATED
     } else {
         StatusCode::NO_CONTENT
     }))
+}
+
+/// Stream a request body to a temporary file, enforcing `max_bytes`, and return the file handle
+/// (keep it alive to retain the file), its SHA-256 hex digest, and its byte length. Hashing reads
+/// the finished file in `spawn_blocking` so the async runtime is never blocked (06_webdav.md §7).
+async fn stream_to_temp(
+    body: Body,
+    max_bytes: u64,
+) -> Result<(tempfile::NamedTempFile, String, u64), AppError> {
+    let tmp = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::InternalServerError(format!("temp file task: {e}")))?
+        .map_err(|e| AppError::InternalServerError(format!("create temp file: {e}")))?;
+    let path = tmp.path().to_path_buf();
+
+    let mut file = tokio::fs::File::create(&path)
+        .await
+        .map_err(|e| AppError::InternalServerError(format!("open temp file: {e}")))?;
+    let mut stream = body.into_data_stream();
+    let mut size: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::BadRequest(format!("failed to read body: {e}")))?;
+        size += chunk.len() as u64;
+        if size > max_bytes {
+            return Err(AppError::PayloadTooLarge(format!(
+                "upload exceeds WEBDAV_MAX_UPLOAD_BYTES ({max_bytes} bytes)"
+            )));
+        }
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| AppError::InternalServerError(format!("write temp file: {e}")))?;
+    }
+    file.flush()
+        .await
+        .map_err(|e| AppError::InternalServerError(format!("flush temp file: {e}")))?;
+    drop(file);
+
+    let hash = tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path))
+        .await
+        .map_err(|e| AppError::InternalServerError(format!("hash task: {e}")))?
+        .ok_or_else(|| AppError::InternalServerError("failed to hash uploaded file".into()))?;
+
+    Ok((tmp, hash, size))
 }
 
 // ── PROPFIND ──────────────────────────────────────────────────────────────────────
@@ -342,16 +396,65 @@ fn is_ignored_name(name: &str) -> bool {
         )
 }
 
-/// Benign response for an ignore-listed path: quiet `404` on read so the client learns the
-/// sidecar doesn't exist; accept-and-discard on write so the client doesn't hang or error.
-fn ignored_response(method: &Method, slug: &str, segments: &[String]) -> Response {
+/// Handle a request for an OS-junk sidecar path (06_webdav.md §11): store/serve/list it from the
+/// transient Redis sidecar cache so clients see it round-trip, but never ingest it as a picture.
+async fn ignored(
+    state: &AppState,
+    vfs: &Vfs<'_>,
+    method: &Method,
+    slug: &str,
+    segments: &[String],
+    headers: &HeaderMap,
+    req: Request<Body>,
+) -> Result<Response, AppError> {
     match method.as_str() {
-        "PUT" | "MKCOL" => empty(StatusCode::CREATED),
-        "DELETE" | "MOVE" | "COPY" | "UNLOCK" => empty(StatusCode::NO_CONTENT),
-        "LOCK" => lock_response(),
-        "PROPPATCH" => proppatch_response(slug, segments),
-        // PROPFIND / GET / HEAD and anything else: the sidecar does not exist.
-        _ => empty(StatusCode::NOT_FOUND),
+        "PUT" => {
+            let content_type = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            // Sidecars are tiny; buffer with a small cap (oversized bodies are accepted but not stored).
+            let bytes = axum::body::to_bytes(
+                req.into_body(),
+                state.config.webdav_max_upload_bytes as usize,
+            )
+            .await
+            .map_err(|e| AppError::BadRequest(format!("failed to read body: {e}")))?;
+            vfs.put_sidecar(segments, &bytes, content_type.as_deref())
+                .await?;
+            Ok(empty(StatusCode::CREATED))
+        }
+        "GET" | "HEAD" => match vfs.read_sidecar(segments).await? {
+            Some((data, mime)) => {
+                let ct = mime.unwrap_or_else(|| "application/octet-stream".to_string());
+                let len = data.len();
+                let body = if method == Method::GET {
+                    Body::from(data)
+                } else {
+                    Body::empty()
+                };
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, ct)
+                    .header(header::CONTENT_LENGTH, len)
+                    .body(body)
+                    .unwrap())
+            }
+            None => Ok(empty(StatusCode::NOT_FOUND)),
+        },
+        // PROPFIND uses the normal resolver — `stat` surfaces the sidecar (Depth 0 is all that's
+        // meaningful on a file).
+        "PROPFIND" => propfind(vfs, slug, segments, Depth::Zero).await,
+        "DELETE" => {
+            vfs.delete_sidecar(segments).await?;
+            Ok(empty(StatusCode::NO_CONTENT))
+        }
+        // Structure-only operations stay benign so the client doesn't hang or error.
+        "MKCOL" => Ok(empty(StatusCode::CREATED)),
+        "MOVE" | "COPY" | "UNLOCK" => Ok(empty(StatusCode::NO_CONTENT)),
+        "LOCK" => Ok(lock_response()),
+        "PROPPATCH" => Ok(proppatch_response(slug, segments)),
+        _ => Ok(empty(StatusCode::NOT_FOUND)),
     }
 }
 

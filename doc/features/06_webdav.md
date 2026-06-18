@@ -283,9 +283,11 @@ sub-paths) translate to tag assignment:
   → assign `Photos.Travel.NewPlace`; inclusive matching surfaces it under the intermediate
   dirs automatically, so no intermediate tags are stored). This is mirror write-back
   generalised to depth.
-- **Segment validation:** every new segment must be a valid tag label `[A-Za-z0-9_]`. A
-  segment with spaces/invalid chars (or a case collision, §10c) **rejects** the write
-  (`409`/`403`) — it can't become a tag.
+- **Segment slugification:** a new segment that isn't a valid tag label `[A-Za-z0-9_]` is
+  **slugified** (runs of disallowed chars → `_`, trimmed; empty → `untitled`) rather than
+  rejected, since a sync client (Finder) often writes into a folder it created with a default
+  name like `dossier sans titre` before it can be renamed. Only a reserved (`SharedToMe`) prefix
+  still rejects (`409`). Case collisions are folded per §10c.
 - **`MKCOL`:** static/query → `405 Method Not Allowed` (structure is fixed). Under a mirror
   (or where the nearest existing ancestor is a mirror) → **sidecar**: record a transient
   `webdav:pendingdir:{hierarchy}:{path}` in Redis (short TTL) so PROPFIND shows the empty
@@ -361,7 +363,7 @@ Following [03_BACKEND_ARCHITECTURE.md](../03_BACKEND_ARCHITECTURE.md):
 ```
 domain/hierarchy.rs       # + slugify(name); case-insensitive sibling validation (§10a)
 infra/crypto.rs           # + HKDF webdav key, AES-256-GCM encrypt/decrypt token
-infra/s3.rs               # + Storage::put_object_stream / get_object_stream (streaming)
+infra/s3.rs               # + Storage::put_object_file (stream temp file → S3) / get_object (proxy read)
 repository/hierarchy.rs    # + token get/set, find_by_owner_and_slug (token validation)
 services/hierarchy.rs      # resolver already here; + name↔picture resolution, write-back apply
 services/vfs.rs            # VirtualFs trait + impl over the resolver (read/write/move/copy/delete/mkdir)
@@ -437,21 +439,46 @@ support). It deviates from the design above in a few deliberate MVP simplificati
   dependency); functionally equivalent for a high-entropy secret.
 - **Locking** is advisory/fake (LOCK returns a token, nothing is enforced) — enough for
   Finder's class-2 requirement.
-- **PUT buffers the body in memory** (bounded by `MAX_UPLOAD_BYTES`, 5 GiB) rather than a
-  streamed multipart upload. Adequate for photos; streaming is a later optimization.
-- **Versioning-on-overwrite (§7.3) is deferred** — overwrite is in-place + `gen_thumbnail`
-  re-extract; `versioning_mode` is not yet consulted on the WebDAV path.
-- **OS-junk filtering is implemented (§11)** — AppleDouble (`._*`, incl. `._.`), `.DS_Store`,
-  `.localized`, `Thumbs.db`, `desktop.ini`, and similar are short-circuited in `api/webdav.rs`:
-  quiet `404` on read (no WARN spam) and accept-and-discard on `PUT`/`MKCOL` (so a `.DS_Store`
-  is never ingested as a picture). The Redis *sidecar* (echoing these back in PROPFIND) is not
-  implemented and not needed — filtering them is cleaner.
-- **MKCOL (§9)** returns `201` under a writable parent but does not persist (dirs are
-  tag-derived); the brand-new-subdir auto-tag-on-write path and the Redis pending-dir marker
-  are **not** implemented. The common mirror upload (into an existing tag dir) and the
-  mirror's own-tag write-back do work.
-- **Case-insensitive write-side tag reuse (§10c)** is not yet wired; authored sibling
-  case-insensitivity (§10a) and the mirror collision tolerance (§10b) are in place.
+- **PUT streams to a temp file** (06_webdav.md §7): the request body is streamed to a temporary
+  file — never buffered in memory — while its size is enforced against `WEBDAV_MAX_UPLOAD_BYTES`
+  (a real env config, default 5 GiB); the finished file is hashed with the common crate's chunked
+  `hash_file` (the hash is needed before deciding whether to upload or just retag), then streamed
+  to S3 via `Storage::put_object_file` (`ByteStream::from_path`, no in-memory copy). The inline
+  hash is persisted immediately (`PictureRepository::set_file_hash`) so the ETag is correct and a
+  quick re-upload dedupes before the worker runs. A zero-byte PUT is accepted but ingests nothing
+  (Finder/Explorer issue an empty placeholder PUT before the real bytes), so empty objects never
+  reach S3 or the picture table.
+- **Versioning-on-overwrite (§7.3) is implemented** — an overwrite-PUT consults the user's
+  `versioning_mode` and snapshots the current bytes as a `picture_version` before replacing them
+  (`none` → never; `original_copy` → first overwrite only; `full_versioning` → every overwrite),
+  reusing the worker edit path's snapshot machinery (`pictures::snapshot_version_on_overwrite`).
+- **OS-junk sidecars are implemented (§11)** — AppleDouble (`._*`, incl. `._.`), `.DS_Store`,
+  `.localized`, `Thumbs.db`, `desktop.ini`, and similar are never ingested as pictures. Instead
+  they are stored as transient **Redis sidecars** (`webdav:sidecar:{hierarchy}:{parent}` → a
+  name→bytes map, day TTL): a `PUT` stores the bytes, `GET` serves them back, `PROPFIND`/listings
+  echo them (via `Vfs::stat`/`list_dir`), and `DELETE` removes them. Oversized bodies (>1 MiB) are
+  accepted but not stored. This keeps sync clients happy without polluting the tag/picture model.
+- **Brand-new mirror subdir auto-tag is implemented (§9)** — a `PUT`/`COPY`/`MOVE` into a path
+  whose nearest existing ancestor is a writable `mirror` node mints the **deepest** tag
+  (`tagRoot + new segments`). New segments are **slugified** to valid tag labels via
+  `TagPath::slugify_label` (Finder's `dossier sans titre` → `dossier_sans_titre`) rather than
+  rejected — a sync client can't always rename a folder before its first write. Only a reserved
+  (`SharedToMe`) prefix still `409`s. `MKCOL` under a mirror records a transient **Redis
+  pending-dir** marker (`webdav:pendingdir:{hierarchy}:{parent}`, day TTL) under the folder's
+  *original* name so PROPFIND shows the empty directory until a file lands and mints the slugified
+  tag (the marker is then cleared / GC'd by TTL). The empty-folder lifecycle is fully wired: a
+  pending dir can be renamed (`MOVE`) or removed (`DELETE`) by moving/dropping its marker, so
+  Finder's create→rename→drop flow works. `MKCOL` outside a mirror or on an existing path is
+  rejected (`403`/`409`). `ResolvedDir` carries the new `mirror_tag` to drive this.
+- **Case-insensitive write-side tag reuse (§10c) is implemented** — on write, each assigned tag
+  path is folded onto an existing case-variant tag (`domain::hierarchy::reuse_existing_case`), so a
+  case-insensitive client never mints a case-only-duplicate sibling. Authored sibling
+  case-insensitivity (§10a) and the mirror collision tolerance (§10b) are also in place.
 - **Frontend** token UI is not yet built (part of the broader "Full frontend" roadmap item).
 - **Integration tests** cover the pure helpers (auth parsing, naming/collision, slug, crypto,
-  PROPFIND href/XML); end-to-end VFS read/write tests against a seeded DB are a follow-up.
+  PROPFIND href/XML) and the end-to-end VFS read/write taxonomy against a seeded DB
+  (`back/tests/vfs.rs`): list/stat/proxy-and-redirect reads; PUT new/overwrite/dedupe/un-delete/
+  empty; MOVE/COPY/DELETE (singleBranch + fullDelete); the `409` non-manual-tag-survival path;
+  versioning-on-overwrite; the §10c case-fold; the §9 brand-new mirror subdir auto-tag
+  (PUT/COPY/multi-level/MKCOL-then-PUT, label slugification incl. the Finder untitled-folder
+  create→rename→PUT flow, outside-mirror rejection); and the §11 sidecar round-trip.
