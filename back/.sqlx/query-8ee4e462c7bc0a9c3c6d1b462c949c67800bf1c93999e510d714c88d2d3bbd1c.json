@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE incoming_shares\n               SET last_announcement_received_at = now() AT TIME ZONE 'utc',\n                   shared_tag_path = $2::text::ltree\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8ee4e462c7bc0a9c3c6d1b462c949c67800bf1c93999e510d714c88d2d3bbd1c"
+}

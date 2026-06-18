@@ -1,0 +1,205 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      name, message,\n                      recipient_username, recipient_instance,\n                      allow_share_back, future, shareback_of,\n                      status as \"status: ShareStatus\",\n                      last_error_at, next_retry_at,\n                      created_at, revoked_at\n               FROM outgoing_shares WHERE owner_id = $1 ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "owner_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tag_path!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "recipient_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "recipient_username"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "recipient_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "recipient_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "allow_share_back",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "allow_share_back"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "future",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "future"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "shareback_of",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "shareback_of"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "status: ShareStatus",
+        "type_info": {
+          "Custom": {
+            "name": "share_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "pending_first_announcement",
+                "active",
+                "errored",
+                "revoked",
+                "tombstoned"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "last_error_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "last_error_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "next_retry_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "next_retry_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "revoked_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "revoked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "92079d6c86f65f8a5e03369ff475e408f10404cd62a28251d110797a9dd892ac"
+}

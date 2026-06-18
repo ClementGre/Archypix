@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE incoming_shares\n               SET status = $2,\n                   revoked_at = CASE WHEN $2 IN ('revoked'::share_status, 'tombstoned'::share_status)\n                                          AND revoked_at IS NULL\n                                     THEN now() AT TIME ZONE 'utc'\n                                     ELSE revoked_at\n                                END\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "share_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "pending_first_announcement",
+                "active",
+                "errored",
+                "revoked",
+                "tombstoned"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "22af7991bb1222680968c7972b41cf635de100a3a19bfb8c31e32096e2f06b43"
+}
