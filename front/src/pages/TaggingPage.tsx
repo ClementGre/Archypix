@@ -1,15 +1,25 @@
+import {useMutation} from '@tanstack/react-query'
+import {Play} from 'lucide-react'
 import {toast} from 'sonner'
+import {Button} from '@/components/ui/button'
 import {Skeleton} from '@/components/ui/skeleton'
 import {NewServiceMenu} from '@/components/tagging/NewServiceMenu'
 import {SharedMappingSection} from '@/components/tagging/SharedMappingSection'
 import {PipelineList} from '@/components/tagging/PipelineList'
 import {useTaggingMutations, useTaggingServices} from '@/hooks/useTaggingServices'
+import {wakePipeline} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import type {RuleServiceDetail, SegmentationServiceDetail, ServiceType, SharedTagMappingServiceDetail} from '@/lib/types'
 
 export default function TaggingPage() {
     const {data: services, isLoading, error} = useTaggingServices()
     const {create} = useTaggingMutations()
+
+    const forceRun = useMutation({
+        mutationFn: wakePipeline,
+        onSuccess: () => toast.success('Pipeline run triggered'),
+        onError: (err) => toast.error(apiErrorMessage(err)),
+    })
 
     const handleCreate = (service_type: ServiceType) => {
         create.mutate(
@@ -42,7 +52,19 @@ export default function TaggingPage() {
                             Ordered pipeline of services that auto-assign tags to pictures. Drag to reorder.
                         </p>
                     </div>
-                    <NewServiceMenu onCreate={handleCreate} isPending={create.isPending}/>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => forceRun.mutate()}
+                            disabled={forceRun.isPending}
+                            title="Re-run the tagging pipeline now (useful for debugging)"
+                        >
+                            <Play className="mr-1.5 h-3.5 w-3.5"/>
+                            Force run
+                        </Button>
+                        <NewServiceMenu onCreate={handleCreate} isPending={create.isPending}/>
+                    </div>
                 </div>
 
                 {/* Loading */}

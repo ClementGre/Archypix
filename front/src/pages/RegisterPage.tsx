@@ -1,13 +1,16 @@
+import {useEffect, useState} from 'react'
 import {useForm} from 'react-hook-form'
 import {zodResolver} from '@hookform/resolvers/zod'
 import {Link, useNavigate} from 'react-router-dom'
-import {Loader2} from 'lucide-react'
+import {Loader2, Pencil} from 'lucide-react'
 import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
-import {GLOBAL_DOMAIN} from '@/lib/constants'
+import {InstanceCorsWarning} from '@/components/common/InstanceCorsWarning'
+import {cn} from '@/lib/utils'
+import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type RegisterForm, registerFormSchema} from '@/lib/schemas'
 import {login, register as registerUser} from '@/api/auth'
 import {apiErrorMessage} from '@/api/client'
@@ -15,19 +18,28 @@ import {apiErrorMessage} from '@/api/client'
 export default function RegisterPage() {
     const navigate = useNavigate()
 
+    const [editingInstance, setEditingInstance] = useState(false)
+
     const {
         register,
         handleSubmit,
+        watch,
         formState: {errors, isSubmitting},
     } = useForm<RegisterForm>({
         resolver: zodResolver(registerFormSchema),
-        defaultValues: {username: '', display_name: '', email: '', password: ''},
+        defaultValues: {username: '', instance: getPreferredInstance(), display_name: '', email: '', password: ''},
     })
+
+    const instance = watch('instance')
+
+    // Persist the chosen instance so login and register stay in sync.
+    useEffect(() => setPreferredInstance(instance), [instance])
 
     const onSubmit = async (values: RegisterForm) => {
         try {
-            await registerUser(values)
-            await login(values.username, values.password, GLOBAL_DOMAIN)
+            const {instance: domain, ...payload} = values
+            await registerUser(payload, domain)
+            await login(values.username, values.password, domain)
             toast.success('Account created')
             navigate('/', {replace: true})
         } catch (error) {
@@ -41,23 +53,60 @@ export default function RegisterPage() {
                 <CardHeader className="space-y-1">
                     <CardTitle className="text-2xl">Create account</CardTitle>
                     <CardDescription>
-                        Registering on <span className="font-medium text-foreground">{GLOBAL_DOMAIN}</span>.
+                        Registering on <span className="font-medium text-foreground">{instance || GLOBAL_DOMAIN}</span>.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+                        {/* Handle field: @username:instance, instance editable on click */}
                         <div className="space-y-1.5">
-                            <Label htmlFor="username">Username</Label>
-                            <Input
-                                id="username"
-                                placeholder="jane_doe"
-                                autoCapitalize="none"
-                                autoCorrect="off"
-                                spellCheck={false}
-                                {...register('username')}
-                            />
-                            {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
+                            <Label>Account</Label>
+                            <div
+                                className={cn(
+                                    'flex h-10 items-center gap-1 rounded-md border border-input bg-transparent px-3 text-sm',
+                                    'focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0',
+                                )}
+                            >
+                                <span className="select-none text-muted-foreground">@</span>
+                                <input
+                                    {...register('username')}
+                                    placeholder="username"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck={false}
+                                    className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+                                />
+                                <span className="select-none text-muted-foreground">:</span>
+                                {editingInstance ? (
+                                    <input
+                                        {...register('instance')}
+                                        autoFocus
+                                        onBlur={() => setEditingInstance(false)}
+                                        spellCheck={false}
+                                        autoCapitalize="none"
+                                        autoCorrect="off"
+                                        className="w-44 bg-transparent text-right text-muted-foreground outline-none"
+                                    />
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditingInstance(true)}
+                                        className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                                        title="Change instance"
+                                    >
+                                        {instance || GLOBAL_DOMAIN}
+                                        <Pencil className="h-3 w-3"/>
+                                    </button>
+                                )}
+                            </div>
+                            {(errors.username || errors.instance) && (
+                                <p className="text-xs text-destructive">
+                                    {errors.username?.message ?? errors.instance?.message}
+                                </p>
+                            )}
                         </div>
+
+                        <InstanceCorsWarning instance={instance}/>
 
                         <div className="space-y-1.5">
                             <Label htmlFor="display_name">Display name</Label>

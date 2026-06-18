@@ -144,12 +144,14 @@ export function TagTree() {
         if (params.tag) activeRowRef.current?.scrollIntoView({block: 'nearest'})
     }, [params.tag, expanded])
 
-    const pick = (path: string) => update({tag: path})
+    // Picking a tag exits any active hierarchy view — filtering by a tag inside a
+    // hierarchy directory is confusing, so clear the hierarchy params.
+    const pick = (path: string) => update({tag: path, hierarchy: null, hpath: ''})
 
     return (
         <div className="flex h-full flex-col">
             <button
-                onClick={() => update({tag: null})}
+                onClick={() => update({tag: null, hierarchy: null, hpath: ''})}
                 className={cn(
                     'mx-2 mt-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
                     !params.tag ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',

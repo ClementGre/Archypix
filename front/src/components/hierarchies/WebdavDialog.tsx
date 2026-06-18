@@ -8,6 +8,7 @@ import {Label} from '@/components/ui/label'
 import {Switch} from '@/components/ui/switch'
 import {useWebdav, useWebdavMutations} from '@/hooks/useHierarchies'
 import {apiErrorMessage} from '@/api/client'
+import {useAuthStore} from '@/stores/auth'
 
 /** Mount-info popup: the WebDAV URL + token (hidden by default), a regenerate button and a use_redirect toggle. */
 export function WebdavDialog({hierarchyId, trigger}: { hierarchyId: string; trigger: ReactNode }) {
@@ -19,8 +20,8 @@ export function WebdavDialog({hierarchyId, trigger}: { hierarchyId: string; trig
                 <DialogHeader>
                     <DialogTitle>WebDAV mount</DialogTitle>
                     <DialogDescription>
-                        Mount this hierarchy as a network drive. Authenticate with HTTP Basic — your{' '}
-                        <code className="text-xs">@user</code> as the username and the token below as the password.
+                        Connect this hierarchy as a network drive in your file manager. Use the URL, username
+                        and password below to set up the connection.
                     </DialogDescription>
                 </DialogHeader>
                 {/* Mounts the body only when open, so the token isn't minted until the dialog is shown. */}
@@ -33,8 +34,9 @@ export function WebdavDialog({hierarchyId, trigger}: { hierarchyId: string; trig
 function WebdavBody({hierarchyId}: { hierarchyId: string }) {
     const {data, isPending, isError, error} = useWebdav(hierarchyId)
     const {regenerate, setUseRedirect} = useWebdavMutations(hierarchyId)
+    const username = useAuthStore((s) => s.user?.username)
     const [showToken, setShowToken] = useState(false)
-    const [copied, setCopied] = useState<'url' | 'token' | null>(null)
+    const [copied, setCopied] = useState<'url' | 'username' | 'token' | null>(null)
 
     if (isPending) {
         return (
@@ -47,7 +49,9 @@ function WebdavBody({hierarchyId}: { hierarchyId: string }) {
         return <p className="py-4 text-sm text-muted-foreground">{apiErrorMessage(error)}</p>
     }
 
-    const copy = (what: 'url' | 'token', value: string) => {
+    const webdavUsername = username ? `@${username}` : ''
+
+    const copy = (what: 'url' | 'username' | 'token', value: string) => {
         void navigator.clipboard.writeText(value).then(
             () => {
                 setCopied(what)
@@ -83,9 +87,27 @@ function WebdavBody({hierarchyId}: { hierarchyId: string }) {
                 </div>
             </div>
 
+            {/* Username */}
+            <div className="space-y-1.5">
+                <Label htmlFor="webdav-username">Username</Label>
+                <div className="flex gap-2">
+                    <Input id="webdav-username" readOnly value={webdavUsername} className="font-mono text-xs"/>
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0"
+                        onClick={() => copy('username', webdavUsername)}
+                        aria-label="Copy username"
+                        title="Copy username"
+                    >
+                        {copied === 'username' ? <Check className="h-4 w-4"/> : <Copy className="h-4 w-4"/>}
+                    </Button>
+                </div>
+            </div>
+
             {/* Token */}
             <div className="space-y-1.5">
-                <Label htmlFor="webdav-token">Token (password)</Label>
+                <Label htmlFor="webdav-token">Password (token)</Label>
                 <div className="flex gap-2">
                     <Input
                         id="webdav-token"

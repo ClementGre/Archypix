@@ -1,7 +1,7 @@
 import axios from 'axios'
 import {apiClient} from './client'
 import {resolveBackendUrl} from './webfinger'
-import {GLOBAL_DOMAIN, originFor, REGISTRATION_MODE, REGISTRATION_URL} from '@/lib/constants'
+import {GLOBAL_DOMAIN, originFor} from '@/lib/constants'
 import {type AuthUser, useAuthStore} from '@/stores/auth'
 
 export interface RegisterPayload {
@@ -45,46 +45,13 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * Register a new user on the configured global domain.
+ * Register a new user. Defaults to the configured global domain, but a custom
+ * `domain` (e.g. a self-hosted instance) can be targeted the same way login can.
  *
- * - explicit URL override (VITE_REGISTRATION_URL) → POST there verbatim.
- * - `resolver`   → POST {global}/api/register (resolver assigns a backend).
- * - `standalone` → POST {global}/api/public/users (the global domain IS a backend).
- * - `auto`       → try the resolver endpoint; if it 404s (no resolver here),
- *                  fall back to the standalone endpoint on the same domain.
+ * Always POSTs to `{domain}/api/public/register`: both a standalone backend and the
+ * resolver expose this path (the resolver mirrors it onto its registration
+ * handler), so the frontend doesn't need to know which topology it's talking to.
  */
-export async function register(payload: RegisterPayload): Promise<void> {
-    if (REGISTRATION_URL) {
-        await axios.post(REGISTRATION_URL, payload)
-        return
-    }
-    switch (REGISTRATION_MODE) {
-        case 'resolver':
-            await resolverRegister(payload)
-            return
-        case 'standalone':
-            await standaloneRegister(payload)
-            return
-        default: {
-            try {
-                await resolverRegister(payload)
-            } catch (error) {
-                // A standalone backend has no /api/register route → 404. Anything else
-                // (e.g. 400 validation, 409 taken) is a real error and is surfaced.
-                if (axios.isAxiosError(error) && error.response?.status === 404) {
-                    await standaloneRegister(payload)
-                    return
-                }
-                throw error
-            }
-        }
-    }
-}
-
-function resolverRegister(payload: RegisterPayload) {
-    return axios.post(`${originFor(GLOBAL_DOMAIN)}/api/register`, payload)
-}
-
-function standaloneRegister(payload: RegisterPayload) {
-    return axios.post(`${originFor(GLOBAL_DOMAIN)}/api/public/users`, payload)
+export async function register(payload: RegisterPayload, domain: string = GLOBAL_DOMAIN): Promise<void> {
+    await axios.post(`${originFor(domain)}/api/public/register`, payload)
 }

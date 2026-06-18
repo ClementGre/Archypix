@@ -53,12 +53,12 @@ Dev values are read from `front/.env` (see [.env.example](.env.example)). All va
 
 The repo ships a federation stack in [`docker/docker-compose.dev.yml`](../docker/docker-compose.dev.yml), fronted by Traefik on port 80:
 
-| Host                 | Service                                                  |
-|----------------------|----------------------------------------------------------|
-| `archypix.test`      | Resolver (WebFinger + `/api/register`)                   |
-| `b1.archypix.test`   | Backend 1 (resolver-backed)                              |
-| `b2.archypix.test`   | Backend 2 (resolver-backed)                              |
-| `solo.archypix.test` | Standalone backend (own WebFinger + `/api/public/users`) |
+| Host                 | Service                                                     |
+|----------------------|-------------------------------------------------------------|
+| `archypix.test`      | Resolver (WebFinger + `/api/public/register`)               |
+| `b1.archypix.test`   | Backend 1 (resolver-backed)                                 |
+| `b2.archypix.test`   | Backend 2 (resolver-backed)                                 |
+| `solo.archypix.test` | Standalone backend (own WebFinger + `/api/public/register`) |
 
 Add the fake hostnames to `/etc/hosts`, then start the stack:
 

@@ -10,17 +10,30 @@ export const USE_HTTPS = (import.meta.env.VITE_USE_HTTPS || 'false') === 'true'
 
 export const SCHEME = USE_HTTPS ? 'https' : 'http'
 
-export type RegistrationMode = 'auto' | 'resolver' | 'standalone'
-
-/** Strategy for resolving the registration endpoint (see register() in api/auth.ts). */
-export const REGISTRATION_MODE = (import.meta.env.VITE_REGISTRATION_MODE || 'auto') as RegistrationMode
-
-/** Explicit registration endpoint override; when set, used verbatim. */
-export const REGISTRATION_URL = import.meta.env.VITE_REGISTRATION_URL || ''
-
 /** Build a scheme://host origin for a bare domain using the configured scheme. */
 export function originFor(domain: string): string {
     return `${SCHEME}://${domain}`
+}
+
+/** Last instance the user typed on login/register, persisted so both pages stay in sync. */
+const INSTANCE_LS_KEY = 'archypix_instance'
+
+export function getPreferredInstance(): string {
+    try {
+        return localStorage.getItem(INSTANCE_LS_KEY) || GLOBAL_DOMAIN
+    } catch {
+        return GLOBAL_DOMAIN
+    }
+}
+
+export function setPreferredInstance(domain: string): void {
+    try {
+        // Only persist a real override; the default global domain needs no storage.
+        if (domain && domain !== GLOBAL_DOMAIN) localStorage.setItem(INSTANCE_LS_KEY, domain)
+        else localStorage.removeItem(INSTANCE_LS_KEY)
+    } catch {
+        // localStorage may be unavailable (private mode); ignore.
+    }
 }
 
 /** Centralised TanStack Query keys, following the ['domain','list'|'detail',...] pattern. */

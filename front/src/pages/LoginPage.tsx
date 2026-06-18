@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useEffect, useState} from 'react'
 import {useForm} from 'react-hook-form'
 import {zodResolver} from '@hookform/resolvers/zod'
 import {Link, useLocation, useNavigate} from 'react-router-dom'
@@ -8,8 +8,9 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
+import {InstanceCorsWarning} from '@/components/common/InstanceCorsWarning'
 import {cn} from '@/lib/utils'
-import {GLOBAL_DOMAIN} from '@/lib/constants'
+import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type LoginForm, loginFormSchema} from '@/lib/schemas'
 import {login} from '@/api/auth'
 import {apiErrorMessage} from '@/api/client'
@@ -28,10 +29,13 @@ export default function LoginPage() {
         formState: {errors, isSubmitting},
     } = useForm<LoginForm>({
         resolver: zodResolver(loginFormSchema),
-        defaultValues: {username: '', instance: GLOBAL_DOMAIN, password: ''},
+        defaultValues: {username: '', instance: getPreferredInstance(), password: ''},
     })
 
     const instance = watch('instance')
+
+    // Persist the chosen instance so login and register stay in sync.
+    useEffect(() => setPreferredInstance(instance), [instance])
 
     const onSubmit = async (values: LoginForm) => {
         try {
@@ -100,6 +104,8 @@ export default function LoginPage() {
                                 </p>
                             )}
                         </div>
+
+                        <InstanceCorsWarning instance={instance}/>
 
                         <div className="space-y-1.5">
                             <Label htmlFor="password">Password</Label>
