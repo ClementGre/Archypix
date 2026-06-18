@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, recipient_id, sender_username, sender_instance, outgoing_share_id,\n                      local_mapping_service_id,\n                      status as \"status: ShareStatus\",\n                      allow_share_back, created_at, revoked_at\n               FROM incoming_shares\n               WHERE outgoing_share_id = $1 AND sender_instance = $2",
+  "query": "INSERT INTO incoming_shares\n                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id, allow_share_back)\n               VALUES ($1, $2, $3, $4, $5, $6, $7)\n               ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)\n               DO UPDATE SET status = incoming_shares.status,\n                             allow_share_back = EXCLUDED.allow_share_back,\n                             name = EXCLUDED.name,\n                             message = EXCLUDED.message\n               RETURNING id, recipient_id, sender_username, sender_instance,\n                         name, message, outgoing_share_id,\n                         local_mapping_service_id,\n                         status as \"status: ShareStatus\",\n                         allow_share_back, created_at, revoked_at",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,28 @@
       },
       {
         "ordinal": 4,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "outgoing_share_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,7 +81,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "local_mapping_service_id",
         "type_info": "Uuid",
         "origin": {
@@ -70,7 +92,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "status: ShareStatus",
         "type_info": {
           "Custom": {
@@ -95,7 +117,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "allow_share_back",
         "type_info": "Bool",
         "origin": {
@@ -106,7 +128,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -117,7 +139,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -131,7 +153,12 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Text"
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Uuid",
+        "Bool"
       ]
     },
     "nullable": [
@@ -142,10 +169,12 @@
       false,
       true,
       false,
+      true,
+      false,
       false,
       false,
       true
     ]
   },
-  "hash": "cdd975e044c76aa74aa1253c69a0950d92ec2249610ba417ba3b036ee4c9a59d"
+  "hash": "b9e8831e3b12cba3b179a2107dd30c2f936ad4dfae93bc14bf389e2b9b477d83"
 }

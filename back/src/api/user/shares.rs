@@ -13,6 +13,8 @@ use tracing::debug;
 #[derive(Debug, Deserialize)]
 pub struct CreateOutgoingRequest {
     pub tag_path: String,
+    pub name: String,
+    pub message: Option<String>,
     pub recipient_username: String,
     pub recipient_instance: String,
     pub allow_share_back: Option<bool>,
@@ -24,6 +26,8 @@ pub struct CreateOutgoingRequest {
 pub struct ShareResponse {
     pub id: uuid::Uuid,
     pub tag_path: String,
+    pub name: String,
+    pub message: Option<String>,
     pub recipient_username: String,
     pub recipient_instance: String,
     pub status: ShareStatus,
@@ -36,6 +40,8 @@ pub struct IncomingShareResponse {
     pub id: uuid::Uuid,
     pub sender_username: String,
     pub sender_instance: String,
+    pub name: String,
+    pub message: Option<String>,
     pub outgoing_share_id: uuid::Uuid,
     pub status: ShareStatus,
     pub allow_share_back: bool,
@@ -64,6 +70,8 @@ pub async fn create_outgoing(
         auth.user_id()?,
         &auth.claims.sub,
         tag_path.as_ltree(),
+        &payload.name,
+        payload.message.as_deref(),
         &payload.recipient_username,
         &payload.recipient_instance,
         payload.allow_share_back.unwrap_or(true),
@@ -74,6 +82,8 @@ pub async fn create_outgoing(
     Ok(Json(ShareResponse {
         id: share.id,
         tag_path: share.tag_path,
+        name: share.name,
+        message: share.message,
         recipient_username: share.recipient_username,
         recipient_instance: share.recipient_instance,
         status: share.status,
@@ -94,6 +104,8 @@ pub async fn list_outgoing(
             .map(|s| ShareResponse {
                 id: s.id,
                 tag_path: s.tag_path,
+                name: s.name,
+                message: s.message,
                 recipient_username: s.recipient_username,
                 recipient_instance: s.recipient_instance,
                 status: s.status,
@@ -117,6 +129,8 @@ pub async fn list_incoming(
                 id: s.id,
                 sender_username: s.sender_username,
                 sender_instance: s.sender_instance,
+                name: s.name,
+                message: s.message,
                 outgoing_share_id: s.outgoing_share_id,
                 status: s.status,
                 allow_share_back: s.allow_share_back,

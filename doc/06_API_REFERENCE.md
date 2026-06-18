@@ -1045,6 +1045,8 @@ Create an outgoing share.
 ```ts
 {
     tag_path: string;                // ltree path — all pictures under this tag are shared
+  name: string;                    // required, ≤ 64 chars — short human-readable name shown to both parties
+  message ? : string;                // optional, ≤ 1000 chars — free-text note for the recipient
     recipient_username: string;
     recipient_instance: string;      // global domain (e.g. "other.example.com")
     allow_share_back ? : boolean;      // default true — if true, auto-accepts a ShareBack from the recipient
@@ -1059,6 +1061,8 @@ Create an outgoing share.
 interface ShareResponse {
     id: string;
     tag_path: string;
+  name: string;
+  message: string | null;
     recipient_username: string;
     recipient_instance: string;
     status: ShareStatus;
@@ -1079,8 +1083,9 @@ interface ShareResponse {
 **Side-effects:** The federation handshake and share announcement run synchronously. If federation delivery fails, the share creation is rolled back.
 
 **Errors:** `400` if `recipient_instance` is not a valid bare domain (schemes, ports, paths, IP
-literals, and local domains are rejected — this guards the outbound federation call). `429` when the
-sender already holds the maximum number of `pending` outgoing shares.
+literals, and local domains are rejected — this guards the outbound federation call), or if `name` is
+blank / exceeds 64 chars or `message` exceeds 1000 chars. `429` when the sender already holds the
+maximum number of `pending` outgoing shares.
 
 ---
 
@@ -1119,6 +1124,8 @@ interface IncomingShareResponse {
     id: string;
     sender_username: string;
     sender_instance: string;
+  name: string;                    // propagated from the sender's share
+  message: string | null;          // propagated from the sender's share
     outgoing_share_id: string;
     status: ShareStatus;
     allow_share_back: boolean;       // whether the sender allows a ShareBack

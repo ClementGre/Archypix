@@ -23,10 +23,19 @@ async fn presign_valid_token_returns_mock_urls(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
 
-    let share =
-        OutgoingShareRepository::create(&db, alice_id, "vacation", "bob", "b.test", true, false)
-            .await
-            .unwrap();
+    let share = OutgoingShareRepository::create(
+        &db,
+        alice_id,
+        "vacation",
+        "Test share",
+        None,
+        "bob",
+        "b.test",
+        true,
+        false,
+    )
+    .await
+    .unwrap();
     // The per-picture token is the only credential.
     let token = ShareAnnouncementRepository::insert(&db, share.id, pic_id)
         .await
@@ -88,10 +97,19 @@ async fn presign_revoked_share_token_is_dead(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
 
-    let share =
-        OutgoingShareRepository::create(&db, alice_id, "vacation", "bob", "b.test", true, false)
-            .await
-            .unwrap();
+    let share = OutgoingShareRepository::create(
+        &db,
+        alice_id,
+        "vacation",
+        "Test share",
+        None,
+        "bob",
+        "b.test",
+        true,
+        false,
+    )
+    .await
+    .unwrap();
     let token = ShareAnnouncementRepository::insert(&db, share.id, pic_id)
         .await
         .unwrap();

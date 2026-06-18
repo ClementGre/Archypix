@@ -40,6 +40,7 @@ async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
                 "sender_username": "alice",   "sender_instance":    "a.test",
                 "recipient_username": "bob",  "recipient_instance": "wrong.com",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
             }),
@@ -66,6 +67,7 @@ async fn announce_share_rejects_sender_instance_mismatch(db: PgPool) {
                 "sender_username": "alice",  "sender_instance":    "a.test",
                 "recipient_username": "bob", "recipient_instance": "b.test",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
             }),
@@ -90,6 +92,7 @@ async fn announce_share_rejects_unknown_recipient(db: PgPool) {
                 "sender_username": "alice",    "sender_instance":    "a.test",
                 "recipient_username": "nobody", "recipient_instance": "b.test",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
             }),
@@ -126,10 +129,19 @@ async fn revoke_share_not_found_for_unknown_id(db: PgPool) {
 async fn reject_share_rejects_instance_mismatch(db: PgPool) {
     let cfg = cfg_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
-    let share =
-        OutgoingShareRepository::create(&db, alice_id, "vacation", "bob", "b.test", true, false)
-            .await
-            .unwrap();
+    let share = OutgoingShareRepository::create(
+        &db,
+        alice_id,
+        "vacation",
+        "Test share",
+        None,
+        "bob",
+        "b.test",
+        true,
+        false,
+    )
+    .await
+    .unwrap();
 
     // JWT sub "c.test" ≠ share.recipient_instance "b.test".
     let token = common::federation::federation_jwt(&cfg, "c.test");
@@ -153,10 +165,19 @@ async fn reject_share_rejects_instance_mismatch(db: PgPool) {
 async fn accept_share_rejects_instance_mismatch(db: PgPool) {
     let cfg = cfg_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
-    let share =
-        OutgoingShareRepository::create(&db, alice_id, "vacation", "bob", "b.test", true, false)
-            .await
-            .unwrap();
+    let share = OutgoingShareRepository::create(
+        &db,
+        alice_id,
+        "vacation",
+        "Test share",
+        None,
+        "bob",
+        "b.test",
+        true,
+        false,
+    )
+    .await
+    .unwrap();
 
     // JWT sub "c.test" ≠ share.recipient_instance "b.test".
     let token = common::federation::federation_jwt(&cfg, "c.test");
@@ -183,9 +204,18 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
     let outgoing_id = Uuid::new_v4();
 
     // Share is still Pending — pictures must be refused until Bob accepts.
-    IncomingShareRepository::create(&db, bob_id, "alice", "a.test", outgoing_id, false)
-        .await
-        .unwrap();
+    IncomingShareRepository::create(
+        &db,
+        bob_id,
+        "alice",
+        "a.test",
+        "Test share",
+        None,
+        outgoing_id,
+        false,
+    )
+    .await
+    .unwrap();
 
     let token = common::federation::federation_jwt(&cfg, "a.test");
     let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));

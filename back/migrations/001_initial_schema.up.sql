@@ -204,6 +204,9 @@ CREATE TABLE outgoing_shares
     -- What is shared
     tag_path           LTREE        NOT NULL,              -- Tag being shared
 
+    name    VARCHAR(64) NOT NULL,
+    message TEXT,
+
     -- Who receives it
     recipient_username VARCHAR(255) NOT NULL,
     recipient_instance VARCHAR(255) NOT NULL,
@@ -272,6 +275,9 @@ CREATE TABLE incoming_shares
     -- Who sent it
     sender_username          VARCHAR(255) NOT NULL,
     sender_instance          VARCHAR(255) NOT NULL,
+
+    name    VARCHAR(64) NOT NULL,
+    message TEXT,
 
     -- Reference to sender's OutgoingShare
     outgoing_share_id        UUID         NOT NULL, -- No FK (cross-instance)

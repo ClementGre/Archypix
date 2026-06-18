@@ -11,9 +11,11 @@ import {TagPath} from '@/lib/utils'
 import type {ShareResponse} from '@/lib/types'
 import {ShareStatusBadge} from './ShareStatusBadge'
 import {CreateShareDialog} from './CreateShareDialog'
+import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
 
 const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
 const PENDING = new Set(['pending', 'pending_first_announcement'])
+const CLOSED = new Set(['revoked', 'tombstoned'])
 
 function RevokeButton({share, disabled, onRevoke}: { share: ShareResponse; disabled: boolean; onRevoke: () => void }) {
     if (!REVOCABLE.has(share.status)) return null
@@ -39,26 +41,89 @@ function RevokeButton({share, disabled, onRevoke}: { share: ShareResponse; disab
     )
 }
 
+/** A tag and the shares (recipients) that target it, rendered as one card.
+ *  Reused across the active / pending / closed sections. */
+function GroupedShareRow({
+                             tag,
+                             shares,
+                             revoking,
+                             onFilterTag,
+                             onRevoke,
+                         }: {
+    tag: string
+    shares: ShareResponse[]
+    revoking: boolean
+    onFilterTag: (tag: string) => void
+    onRevoke: (id: string) => void
+}) {
+    const nameLabel = summarizeNames(shares.map((s) => s.name))
+    const entries: ShareInfoEntry[] = shares.map((s) => ({
+        label: `→ @${s.recipient_username}:${s.recipient_instance}`,
+        name: s.name,
+        message: s.message,
+    }))
+
+    return (
+        <div className="rounded-md border border-border px-2 py-1.5">
+            <div className="flex items-center gap-1">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium" title={nameLabel}>
+                    {nameLabel}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted-foreground">{shares.length}</span>
+                <ShareInfoPopover entries={entries}/>
+            </div>
+
+            <button
+                onClick={() => onFilterTag(tag)}
+                className="block max-w-full truncate text-left text-[11px] text-muted-foreground hover:text-primary"
+                title="Filter to this tag"
+            >
+                {TagPath.toDisplay(tag)}
+            </button>
+
+            <div className="mt-1.5 space-y-1">
+                {shares.map((share) => (
+                    <div key={share.id} className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                            → @{share.recipient_username}:{share.recipient_instance}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1">
+                            <ShareStatusBadge status={share.status}/>
+                            <RevokeButton share={share} disabled={revoking} onRevoke={() => onRevoke(share.id)}/>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
+/** Group a flat list of shares by tag path, sorted by tag. */
+function groupByTag(shares: ShareResponse[]): Array<[string, ShareResponse[]]> {
+    const map = new Map<string, ShareResponse[]>()
+    for (const s of shares) {
+        const list = map.get(s.tag_path) ?? []
+        list.push(s)
+        map.set(s.tag_path, list)
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+}
+
 export function OutgoingSharesList() {
     const {data: shares, isPending, isError, error} = useOutgoingShares()
     const {revoke} = useShareMutations()
     const {update} = useGalleryParams()
 
     const onRevoke = (id: string) => revoke.mutate(id, {onError: (e) => toast.error(apiErrorMessage(e))})
+    const onFilterTag = (tag: string) => update({tag})
 
-    const pending = useMemo(() => (shares ?? []).filter((s) => PENDING.has(s.status)), [shares])
-
-    // Group the settled (non-pending) shares by tag so one tag shared to many
-    // recipients is shown together.
-    const groups = useMemo(() => {
-        const map = new Map<string, ShareResponse[]>()
-        for (const s of shares ?? []) {
-            if (PENDING.has(s.status)) continue
-            const list = map.get(s.tag_path) ?? []
-            list.push(s)
-            map.set(s.tag_path, list)
+    const {closed, pending, active} = useMemo(() => {
+        const all = shares ?? []
+        return {
+            closed: groupByTag(all.filter((s) => CLOSED.has(s.status))),
+            pending: groupByTag(all.filter((s) => PENDING.has(s.status))),
+            active: groupByTag(all.filter((s) => !PENDING.has(s.status) && !CLOSED.has(s.status))),
         }
-        return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     }, [shares])
 
     const header = (
@@ -98,64 +163,43 @@ export function OutgoingSharesList() {
         )
     }
 
+    const renderGroups = (groups: Array<[string, ShareResponse[]]>) =>
+        groups.map(([tag, group]) => (
+            <GroupedShareRow
+                key={tag}
+                tag={tag}
+                shares={group}
+                revoking={revoke.isPending}
+                onFilterTag={onFilterTag}
+                onRevoke={onRevoke}
+            />
+        ))
+
+    const closedCount = closed.reduce((n, [, g]) => n + g.length, 0)
+    const pendingCount = pending.reduce((n, [, g]) => n + g.length, 0)
+    const activeCount = active.reduce((n, [, g]) => n + g.length, 0)
+
     return (
         <>
             {header}
             <div className="p-2">
-                {pending.length > 0 && (
-                    <Section id="outgoing-pending" title="Pending" count={pending.length}>
-                        <div className="space-y-1.5">
-                            {pending.map((share) => (
-                                <div key={share.id} className="rounded-md border border-border px-2 py-1.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="min-w-0 truncate text-xs">
-                                            → @{share.recipient_username}:{share.recipient_instance}
-                                        </span>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                            <ShareStatusBadge status={share.status}/>
-                                            <RevokeButton share={share} disabled={revoke.isPending} onRevoke={() => onRevoke(share.id)}/>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => update({tag: share.tag_path})}
-                                        className="mt-0.5 block truncate text-left text-[11px] text-muted-foreground hover:text-primary"
-                                    >
-                                        {TagPath.toDisplay(share.tag_path)}
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
+                {closed.length > 0 && (
+                    <Section id="outgoing-closed" title="Closed" count={closedCount} defaultOpen={false}>
+                        <div className="space-y-1.5">{renderGroups(closed)}</div>
                     </Section>
                 )}
 
-                <div className="space-y-1.5 pt-2">
-                    {groups.map(([tag, recipients]) => (
-                        <div key={tag} className="rounded-md border border-border px-2 py-1.5">
-                            <button
-                                onClick={() => update({tag})}
-                                className="flex w-full items-center justify-between gap-2 text-left"
-                                title="Filter to this tag"
-                            >
-                                <span className="truncate text-xs font-medium hover:text-primary">{TagPath.toDisplay(tag)}</span>
-                                <span className="shrink-0 text-[11px] text-muted-foreground">{recipients.length}</span>
-                            </button>
+                {pending.length > 0 && (
+                    <Section id="outgoing-pending" title="Pending" count={pendingCount}>
+                        <div className="space-y-1.5">{renderGroups(pending)}</div>
+                    </Section>
+                )}
 
-                            <div className="mt-1.5 space-y-1">
-                                {recipients.map((share) => (
-                                    <div key={share.id} className="flex items-center justify-between gap-2">
-                                        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                                            → @{share.recipient_username}:{share.recipient_instance}
-                                        </span>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                            <ShareStatusBadge status={share.status}/>
-                                            <RevokeButton share={share} disabled={revoke.isPending} onRevoke={() => onRevoke(share.id)}/>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
+                {active.length > 0 && (
+                    <Section id="outgoing-active" title="Active" count={activeCount}>
+                        <div className="space-y-1.5">{renderGroups(active)}</div>
+                    </Section>
+                )}
             </div>
         </>
     )

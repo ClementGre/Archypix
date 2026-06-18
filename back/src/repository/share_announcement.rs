@@ -334,10 +334,19 @@ mod tests {
     async fn insert_then_resolve_token(db: PgPool) {
         let owner = seed_user(&db).await;
         let pic = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let token = ShareAnnouncementRepository::insert(&db, share.id, pic)
             .await
@@ -352,10 +361,19 @@ mod tests {
     async fn insert_is_idempotent_keeps_token(db: PgPool) {
         let owner = seed_user(&db).await;
         let pic = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let t1 = ShareAnnouncementRepository::insert(&db, share.id, pic)
             .await
@@ -370,10 +388,19 @@ mod tests {
     async fn delete_invalidates_token(db: PgPool) {
         let owner = seed_user(&db).await;
         let pic = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let token = ShareAnnouncementRepository::insert(&db, share.id, pic)
             .await
@@ -392,10 +419,19 @@ mod tests {
         let owner = seed_user(&db).await;
         let p1 = seed_picture(&db, owner).await;
         let p2 = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let t1 = ShareAnnouncementRepository::insert(&db, share.id, p1)
             .await
@@ -424,10 +460,19 @@ mod tests {
     async fn find_downstream_for_pictures_returns_recipients(db: PgPool) {
         let owner = seed_user(&db).await;
         let pic = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "carol", "carol.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "carol",
+            "carol.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
         ShareAnnouncementRepository::insert(&db, share.id, pic)
             .await
             .unwrap();
@@ -445,10 +490,19 @@ mod tests {
     async fn update_token_changes_resolution(db: PgPool) {
         let owner = seed_user(&db).await;
         let pic = seed_picture(&db, owner).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let old = ShareAnnouncementRepository::insert(&db, share.id, pic)
             .await

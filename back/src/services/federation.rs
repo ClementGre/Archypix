@@ -35,6 +35,8 @@ pub async fn receive_share_announcement(
     recipient_username: &str,
     recipient_instance: &str,
     outgoing_share_id: Uuid,
+    name: &str,
+    message: Option<&str>,
     allow_share_back: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<(Uuid, bool), AppError> {
@@ -56,6 +58,10 @@ pub async fn receive_share_announcement(
             "Sender instance does not match authenticated instance".to_string(),
         ));
     }
+    // Name/message come from a remote instance: validate before persisting.
+    crate::domain::validation::validate_share_name(name).map_err(AppError::BadRequest)?;
+    crate::domain::validation::validate_share_message(message).map_err(AppError::BadRequest)?;
+
     let recipient = UserRepository::find_by_username(db, recipient_username)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -82,6 +88,8 @@ pub async fn receive_share_announcement(
         recipient.id,
         sender_username,
         sender_instance,
+        name,
+        message,
         outgoing_share_id,
         allow_share_back,
     )

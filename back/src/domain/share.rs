@@ -30,6 +30,8 @@ pub struct OutgoingShare {
     pub owner_id: Uuid,
     /// ltree stored as text.
     pub tag_path: String,
+    pub name: String,
+    pub message: Option<String>,
     pub recipient_username: String,
     pub recipient_instance: String,
     pub allow_share_back: bool,
@@ -45,6 +47,8 @@ pub struct IncomingShare {
     pub recipient_id: Uuid,
     pub sender_username: String,
     pub sender_instance: String,
+    pub name: String,
+    pub message: Option<String>,
     pub outgoing_share_id: Uuid,
     pub local_mapping_service_id: Option<Uuid>,
     pub status: ShareStatus,

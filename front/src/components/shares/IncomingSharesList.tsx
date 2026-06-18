@@ -13,6 +13,10 @@ import {TagPicker} from '@/components/tags/TagPicker'
 import {cn, TagPath} from '@/lib/utils'
 import type {IncomingShareResponse} from '@/lib/types'
 import {ShareStatusBadge} from './ShareStatusBadge'
+import {ShareInfoPopover} from './ShareInfoPopover'
+
+const PENDING = new Set(['pending'])
+const CLOSED = new Set(['revoked', 'tombstoned'])
 
 function sharedToMeTag(share: IncomingShareResponse): string {
   const label = `${share.sender_username}@${share.sender_instance}`.replace(/@/g, '_AT_').replace(/\./g, '_DOT_')
@@ -98,6 +102,7 @@ function ShareRow({
           </span>
                 <div className="flex shrink-0 items-center gap-1">
                     <ShareStatusBadge status={share.status}/>
+                    <ShareInfoPopover entries={[{name: share.name, message: share.message}]}/>
                     {share.status === 'active' && (
                         <Button
                             size="icon"
@@ -131,6 +136,10 @@ function ShareRow({
                     )}
                 </div>
             </div>
+
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={share.name}>
+                {share.name}
+            </p>
 
             {share.status === 'pending' && (
                 <div className="mt-1.5">
@@ -177,8 +186,9 @@ export function IncomingSharesList() {
     )
   }
 
-    const pending = shares.filter((s) => s.status === 'pending')
-    const rest = shares.filter((s) => s.status !== 'pending')
+    const closed = shares.filter((s) => CLOSED.has(s.status))
+    const pending = shares.filter((s) => PENDING.has(s.status))
+    const active = shares.filter((s) => !PENDING.has(s.status) && !CLOSED.has(s.status))
 
     const renderRow = (share: IncomingShareResponse) => (
         <ShareRow
@@ -204,12 +214,21 @@ export function IncomingSharesList() {
 
     return (
         <div className="p-2">
+            {closed.length > 0 && (
+                <Section id="incoming-closed" title="Canceled" count={closed.length} defaultOpen={false}>
+                    <div className="space-y-1.5">{closed.map(renderRow)}</div>
+                </Section>
+            )}
             {pending.length > 0 && (
                 <Section id="incoming-pending" title="Pending" count={pending.length}>
                     <div className="space-y-1.5">{pending.map(renderRow)}</div>
                 </Section>
             )}
-            <div className="space-y-1.5 pt-2">{rest.map(renderRow)}</div>
+            {active.length > 0 && (
+                <Section id="incoming-active" title="Active" count={active.length}>
+                    <div className="space-y-1.5">{active.map(renderRow)}</div>
+                </Section>
+            )}
       </div>
   )
 }

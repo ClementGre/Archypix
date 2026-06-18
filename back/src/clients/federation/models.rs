@@ -31,6 +31,8 @@ pub struct ShareAnnouncementRequest {
     pub recipient_instance: String,
     pub outgoing_share_id: Uuid,
     pub tag_path: String,
+    pub name: String,
+    pub message: Option<String>,
     pub allow_share_back: bool,
     pub future: bool,
     pub shareback_of: Option<Uuid>,

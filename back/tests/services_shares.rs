@@ -66,6 +66,8 @@ async fn alice_shares_with_bob(
         alice_id,
         "alice",
         tag_path,
+        "Test share",
+        None,
         "bob",
         "test.com", // same as global_domain → same-backend path
         false,
@@ -102,6 +104,82 @@ async fn create_outgoing_share_same_backend_creates_incoming_share(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn create_outgoing_share_propagates_name_and_message_same_backend(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    common::seed_user(&db, "bob", "pass").await;
+    let config = config();
+    let (fed, cache) = common::make_federation(&config);
+    let notify = pipeline::PipelineWaker::disconnected();
+
+    let share = shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &config,
+        &notify,
+        alice_id,
+        "alice",
+        "vacation",
+        "Alps 2024",
+        Some("Hope you enjoy these!"),
+        "bob",
+        "test.com",
+        false,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // The outgoing share carries the name/message…
+    assert_eq!(share.name, "Alps 2024");
+    assert_eq!(share.message.as_deref(), Some("Hope you enjoy these!"));
+
+    // …and they are propagated to the recipient's IncomingShare.
+    let incoming = IncomingShareRepository::find_by_outgoing_share(&db, share.id, "test.com")
+        .await
+        .unwrap()
+        .expect("incoming share must exist");
+    assert_eq!(incoming.name, "Alps 2024");
+    assert_eq!(incoming.message.as_deref(), Some("Hope you enjoy these!"));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    common::seed_user(&db, "bob", "pass").await;
+    let config = config();
+    let (fed, cache) = common::make_federation(&config);
+    let notify = pipeline::PipelineWaker::disconnected();
+
+    let result = shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &config,
+        &notify,
+        alice_id,
+        "alice",
+        "vacation",
+        "   ",
+        None,
+        "bob",
+        "test.com",
+        false,
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(archypix_back::infra::error::AppError::BadRequest(_))
+        ),
+        "blank share name must be rejected, got {result:?}"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let config = config();
@@ -118,6 +196,8 @@ async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
         alice_id,
         "alice",
         "vacation",
+        "Test share",
+        None,
         "bob",
         "localhost",
         false,
@@ -154,6 +234,8 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
         alice_id,
         "alice",
         "vacation",
+        "Test share",
+        None,
         "bob",
         "test.com",
         false,
@@ -173,6 +255,8 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
         alice_id,
         "alice",
         "trips",
+        "Test share",
+        None,
         "bob",
         "test.com",
         false,
@@ -553,6 +637,8 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
         alice_id,
         "alice",
         "trip",
+        "Test share",
+        None,
         "bob",
         "test.com",
         false,

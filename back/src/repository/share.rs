@@ -7,10 +7,13 @@ use uuid::Uuid;
 pub struct OutgoingShareRepository;
 
 impl OutgoingShareRepository {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
         tag_path: &str,
+        name: &str,
+        message: Option<&str>,
         recipient_username: &str,
         recipient_instance: &str,
         allow_share_back: bool,
@@ -22,15 +25,18 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"INSERT INTO outgoing_shares
-                   (owner_id, tag_path, recipient_username, recipient_instance, allow_share_back, future)
-               VALUES ($1, $2::text::ltree, $3, $4, $5, $6)
+                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, future)
+               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8)
                RETURNING id, owner_id, tag_path::text as "tag_path!",
+                         name, message,
                          recipient_username, recipient_instance,
                          allow_share_back, future,
                          status as "status: ShareStatus",
                          created_at, revoked_at"#,
             owner_id,
             tag_path,
+            name,
+            message,
             recipient_username,
             recipient_instance,
             allow_share_back,
@@ -48,6 +54,7 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
                       recipient_username, recipient_instance,
                       allow_share_back, future,
                       status as "status: ShareStatus",
@@ -72,6 +79,7 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
                       recipient_username, recipient_instance,
                       allow_share_back, future,
                       status as "status: ShareStatus",
@@ -100,6 +108,7 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
                       recipient_username, recipient_instance,
                       allow_share_back, future,
                       status as "status: ShareStatus",
@@ -130,6 +139,7 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
                       recipient_username, recipient_instance,
                       allow_share_back, future,
                       status as "status: ShareStatus",
@@ -223,6 +233,7 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
                       recipient_username, recipient_instance,
                       allow_share_back, future,
                       status as "status: ShareStatus",
@@ -239,11 +250,14 @@ impl OutgoingShareRepository {
 pub struct IncomingShareRepository;
 
 impl IncomingShareRepository {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create<'e, E>(
         ex: E,
         recipient_id: Uuid,
         sender_username: &str,
         sender_instance: &str,
+        name: &str,
+        message: Option<&str>,
         outgoing_share_id: Uuid,
         allow_share_back: bool,
     ) -> Result<IncomingShare, AppError>
@@ -253,18 +267,23 @@ impl IncomingShareRepository {
         sqlx::query_as!(
             IncomingShare,
             r#"INSERT INTO incoming_shares
-                   (recipient_id, sender_username, sender_instance, outgoing_share_id, allow_share_back)
-               VALUES ($1, $2, $3, $4, $5)
+                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id, allow_share_back)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)
                DO UPDATE SET status = incoming_shares.status,
-                             allow_share_back = EXCLUDED.allow_share_back
-               RETURNING id, recipient_id, sender_username, sender_instance, outgoing_share_id,
+                             allow_share_back = EXCLUDED.allow_share_back,
+                             name = EXCLUDED.name,
+                             message = EXCLUDED.message
+               RETURNING id, recipient_id, sender_username, sender_instance,
+                         name, message, outgoing_share_id,
                          local_mapping_service_id,
                          status as "status: ShareStatus",
                          allow_share_back, created_at, revoked_at"#,
             recipient_id,
             sender_username,
             sender_instance,
+            name,
+            message,
             outgoing_share_id,
             allow_share_back,
         )
@@ -282,7 +301,8 @@ impl IncomingShareRepository {
     {
         sqlx::query_as!(
             IncomingShare,
-            r#"SELECT id, recipient_id, sender_username, sender_instance, outgoing_share_id,
+            r#"SELECT id, recipient_id, sender_username, sender_instance,
+                      name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
                       allow_share_back, created_at, revoked_at
@@ -325,7 +345,8 @@ impl IncomingShareRepository {
     {
         sqlx::query_as!(
             IncomingShare,
-            r#"SELECT id, recipient_id, sender_username, sender_instance, outgoing_share_id,
+            r#"SELECT id, recipient_id, sender_username, sender_instance,
+                      name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
                       allow_share_back, created_at, revoked_at
@@ -349,7 +370,8 @@ impl IncomingShareRepository {
     {
         sqlx::query_as!(
             IncomingShare,
-            r#"SELECT id, recipient_id, sender_username, sender_instance, outgoing_share_id,
+            r#"SELECT id, recipient_id, sender_username, sender_instance,
+                      name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
                       allow_share_back, created_at, revoked_at
@@ -418,6 +440,8 @@ mod tests {
             &db,
             owner,
             "Photos.Travel",
+            "Test share",
+            None,
             "bob",
             "other.com",
             true,
@@ -434,10 +458,19 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn set_status_outgoing_transitions_correctly(db: PgPool) {
         let owner = seed_user(&db).await;
-        let share =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         OutgoingShareRepository::set_status(&db, share.id, ShareStatus::Active)
             .await
@@ -460,6 +493,8 @@ mod tests {
             &db,
             sender,
             "Photos",
+            "Test share",
+            None,
             "recipient",
             "this.com",
             true,
@@ -473,6 +508,8 @@ mod tests {
             recipient,
             "sender",
             "other.com",
+            "Test share",
+            None,
             outgoing.id,
             true,
         )
@@ -492,6 +529,8 @@ mod tests {
             &db,
             sender,
             "Photos",
+            "Test share",
+            None,
             "recipient",
             "this.com",
             true,
@@ -500,9 +539,18 @@ mod tests {
         .await
         .unwrap();
 
-        IncomingShareRepository::create(&db, recipient, "sender", "other.com", outgoing.id, false)
-            .await
-            .unwrap();
+        IncomingShareRepository::create(
+            &db,
+            recipient,
+            "sender",
+            "other.com",
+            "Test share",
+            None,
+            outgoing.id,
+            false,
+        )
+        .await
+        .unwrap();
 
         let found = IncomingShareRepository::find_by_outgoing_share(&db, outgoing.id, "other.com")
             .await
@@ -515,25 +563,53 @@ mod tests {
     async fn list_active_future_by_owner_filters_correctly(db: PgPool) {
         let owner = seed_user(&db).await;
         // active + future → included
-        let s1 =
-            OutgoingShareRepository::create(&db, owner, "Photos", "bob", "other.com", true, true)
-                .await
-                .unwrap();
+        let s1 = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
         OutgoingShareRepository::set_status(&db, s1.id, ShareStatus::Active)
             .await
             .unwrap();
         // active but future=false → excluded
-        let s2 =
-            OutgoingShareRepository::create(&db, owner, "Images", "bob", "other.com", true, false)
-                .await
-                .unwrap();
+        let s2 = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Images",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            false,
+        )
+        .await
+        .unwrap();
         OutgoingShareRepository::set_status(&db, s2.id, ShareStatus::Active)
             .await
             .unwrap();
         // pending → excluded
-        OutgoingShareRepository::create(&db, owner, "Docs", "bob", "other.com", true, true)
-            .await
-            .unwrap();
+        OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Docs",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+        )
+        .await
+        .unwrap();
 
         let found = OutgoingShareRepository::list_active_future_by_owner(&db, owner)
             .await
@@ -549,6 +625,8 @@ mod tests {
             &db,
             owner,
             "SharedToMe.alice_AT_x.Travel",
+            "Test share",
+            None,
             "carol",
             "carol.com",
             true,
@@ -563,6 +641,8 @@ mod tests {
             &db,
             owner,
             "SharedToMe.alice_AT_x.Travel.France",
+            "Test share",
+            None,
             "carol",
             "carol.com",
             true,
@@ -578,6 +658,8 @@ mod tests {
             &db,
             owner,
             "Photos.Holidays",
+            "Test share",
+            None,
             "carol",
             "carol.com",
             true,

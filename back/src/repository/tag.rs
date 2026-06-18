@@ -512,8 +512,8 @@ mod tests {
         let id = Uuid::new_v4();
         sqlx::query!(
             "INSERT INTO incoming_shares
-                 (id, recipient_id, sender_username, sender_instance, outgoing_share_id, status)
-             VALUES ($1, $2, 'alice', 'ex.com', $3, 'active'::share_status)",
+                 (id, recipient_id, sender_username, sender_instance, name, outgoing_share_id, status)
+             VALUES ($1, $2, 'alice', 'ex.com', 'Test share', $3, 'active'::share_status)",
             id,
             recipient,
             Uuid::new_v4(),

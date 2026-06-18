@@ -29,7 +29,9 @@
   auto-tag on new path, case-insensitive write-side tag reuse. See `doc/features/06_webdav.md`.
 - [x] **Better workers** — multi-backend support (comma-separated), global semaphore, burst-friendly polling.
 - [x] **Security audit** — audit and fix: security, privacy, reliability (rate limiting and throttling).
-- [ ] **Shares name and message** — add an name and message to shares so users know what they're sharing/receiving and why.
+- [x] **Shares name and message** — required `name` and optional `message` on shares, propagated from the
+  `OutgoingShare` to the recipient's `IncomingShare` (same-backend and over federation), so users know what
+  they're sharing/receiving and why. Set at creation. *(Frontend UI pending.)*
 - [ ] **Trash & restore** — soft delete with `deleted_at`, recipient notification, physical copy option.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — token refresh schedule, retry logic, presigned URL caching for remote pictures.

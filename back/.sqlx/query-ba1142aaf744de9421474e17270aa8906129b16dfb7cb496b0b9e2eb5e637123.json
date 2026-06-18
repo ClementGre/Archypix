@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, recipient_id, sender_username, sender_instance, outgoing_share_id,\n                      local_mapping_service_id,\n                      status as \"status: ShareStatus\",\n                      allow_share_back, created_at, revoked_at\n               FROM incoming_shares WHERE id = $1",
+  "query": "SELECT id, recipient_id, sender_username, sender_instance,\n                      name, message, outgoing_share_id,\n                      local_mapping_service_id,\n                      status as \"status: ShareStatus\",\n                      allow_share_back, created_at, revoked_at\n               FROM incoming_shares\n               WHERE outgoing_share_id = $1 AND sender_instance = $2",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,28 @@
       },
       {
         "ordinal": 4,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "outgoing_share_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,7 +81,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "local_mapping_service_id",
         "type_info": "Uuid",
         "origin": {
@@ -70,7 +92,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "status: ShareStatus",
         "type_info": {
           "Custom": {
@@ -95,7 +117,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "allow_share_back",
         "type_info": "Bool",
         "origin": {
@@ -106,7 +128,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -117,7 +139,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -130,7 +152,8 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Uuid",
+        "Text"
       ]
     },
     "nullable": [
@@ -141,10 +164,12 @@
       false,
       true,
       false,
+      true,
+      false,
       false,
       false,
       true
     ]
   },
-  "hash": "112d1ca5119c2042e30e1b61241659e683a022a5b83c36693bc6a0f1214074e4"
+  "hash": "ba1142aaf744de9421474e17270aa8906129b16dfb7cb496b0b9e2eb5e637123"
 }

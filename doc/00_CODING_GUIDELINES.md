@@ -2,9 +2,24 @@
 
 ## Database migrations
 
-**There is one migration file: `001_initial_schema.up.sql`. All schema changes are made directly in that file. Do not add more migration files.**
+All schema changes go directly into the single file `back/migrations/001_initial_schema.up.sql` (+ its
+`.down.sql`); never add more migration files. After editing it:
 
-When editing the database schema, migrate the database with `cd back && cargo sqlx migrate revert && cargo sqlx migrate run && cargo sqlx prepare`
+1. **Rebuild the dev DB** (from `back/`, `DATABASE_URL=…/archypix_back`):
+   `cargo sqlx migrate revert && cargo sqlx migrate run && cargo sqlx prepare -- --tests`
+   (`-- --tests` captures test query macros in `.sqlx`; verify with
+   `env -u DATABASE_URL SQLX_OFFLINE=true cargo check --tests -p archypix-back`).
+2. **Migrate the seeded test DBs** `archypix_back1/2/3` (don't reset them): write/extend an idempotent
+   script in `docker/migrations/` (add columns nullable → backfill → `SET NOT NULL`, using
+   `ADD COLUMN IF NOT EXISTS` etc. so it re-runs safely).
+3. **Fix the sqlx checksum** on those test DBs, else they refuse to start (*"migration 1 … has been
+   modified"*): run `docker/migrations/fix_migration_checksum.sh` (recomputes the `up.sql` SHA-384 into
+   `_sqlx_migrations.checksum`).
+
+Postgres runs in the `archypix-postgres` container (`archypix` superuser, port 5432); `psql` is not on
+the host, so use `docker exec -i archypix-postgres psql -U archypix -d archypix_back{n} …`. The four DBs
+(`archypix_back`, `archypix_back1/2/3`) are created by `docker/postgres-init.sql`. See the two scripts in
+`docker/migrations/` as working examples.
 
 ## Rust guidelines
 

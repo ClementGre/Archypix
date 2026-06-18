@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT last_pipeline_run_at FROM pictures WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_pipeline_run_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "last_pipeline_run_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "113cd28834049afe022c1aef02f481d78f66423f6b22174dc35538de82961184"
+}

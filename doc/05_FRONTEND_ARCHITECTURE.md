@@ -206,11 +206,16 @@ then
 (gates as a **local draft committed on Save**), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
 `NewServiceMenu`.
 
-**`shares/`** — `IncomingSharesList` (compact rows; **pending shares in a foldable `Pending` section at the top**; accept / reject(confirm) /
-view-photos;
-single local-tag mapping per share via `useShareMappings`), `OutgoingSharesList` (**pending shares in a foldable `Pending` section at the top**, the
-rest
-**grouped by tag**, per-recipient status + confirm-revoke), `CreateShareDialog`, `ShareStatusBadge`.
+**`shares/`** — both lists split shares into **Closed (revoked + tombstoned, collapsed by default) / Pending / Active** foldable `Section`s and
+surface
+each share's `name` + `message` through `ShareInfoPopover` (an `Info` trigger button — hover on desktop, tap on touch — anchored to the **right**,
+towards the pictures pane; renders "No message" when `message` is null). `IncomingSharesList` keeps flat rows (accept / reject(confirm) / view-photos;
+single local-tag mapping per share via `useShareMappings`); `OutgoingSharesList` groups by tag via a factorized `GroupedShareRow` reused across all
+three sections — the group header shows the most common `name` with a "(and N others)" suffix when names differ (`summarizeNames`), the per-share
+names/messages living in the popover, plus per-recipient status + confirm-revoke. `CreateShareDialog` creates **one share per recipient**: common
+`name` (≤ 64) / `message` (≤ 1000) / tag / ShareBack / future inputs and a recipient list of grouped `@username:instance` fields (typing `:` advances
+focus to the instance sub-field, a button adds rows); on submit it fires one request per recipient sequentially with per-recipient progress icons
+(mirrors `UploadDialog`). `ShareStatusBadge` maps status → coloured pill.
 
 **`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back header with a **WebDAV**
 (HardDrive) and edit button over the directory

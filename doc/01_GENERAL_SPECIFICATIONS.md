@@ -239,6 +239,8 @@ OutgoingShare:
   id: os-001
   owner: "@alice:instance.com"
   tag: /Photos/Travel/Alps
+  name: "Alps 2024"          # required short label shown to both parties
+  message: "Hope you enjoy"  # optional free-text note (nullable)
   recipient: "@bob:other.com"
   allowShareBack: true         # if false, ShareBack creates a normal share request (no auto-accept)
   future: true                 # new pictures added to the tag are announced automatically
@@ -251,6 +253,8 @@ OutgoingShare:
 IncomingShare:
   id: is-001
   sender: "@alice:instance.com"
+  name: "Alps 2024"            # propagated from the sender's OutgoingShare
+  message: "Hope you enjoy"    # propagated (nullable)
   outgoingShareId: os-001      # reference to the sender's OutgoingShare
   localMappingServiceId: stms-007   # optional: linked SharedTagMappingService entry
   status: pending              # pending | active | revoked | tombstoned

@@ -25,6 +25,8 @@ export async function revokeOutgoingShare(id: string): Promise<void> {
 
 export interface CreateOutgoingShareBody {
     tag_path: string
+    name: string
+    message?: string
     recipient_username: string
     recipient_instance: string
     allow_share_back?: boolean

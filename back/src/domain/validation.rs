@@ -81,6 +81,39 @@ pub fn validate_federation_domain(domain: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Maximum length of a share name (matches the `outgoing_shares.name` / `incoming_shares.name`
+/// VARCHAR(64) column).
+pub const MAX_SHARE_NAME_LEN: usize = 64;
+/// Maximum length of a share message.
+pub const MAX_SHARE_MESSAGE_LEN: usize = 1000;
+
+/// Validate a share `name`: required, non-blank, and within the column length. Returns the
+/// human-readable reason on failure.
+pub fn validate_share_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Share name must not be empty".to_string());
+    }
+    if name.chars().count() > MAX_SHARE_NAME_LEN {
+        return Err(format!(
+            "Share name must be at most {MAX_SHARE_NAME_LEN} characters long"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate an optional share `message`: only the length is constrained (an empty message is fine —
+/// callers should normalise it to `None`).
+pub fn validate_share_message(message: Option<&str>) -> Result<(), String> {
+    if let Some(message) = message {
+        if message.chars().count() > MAX_SHARE_MESSAGE_LEN {
+            return Err(format!(
+                "Share message must be at most {MAX_SHARE_MESSAGE_LEN} characters long"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +132,23 @@ mod tests {
         assert!(validate_email("a@b").is_err());
         assert!(validate_email("a@@b.com").is_err());
         assert!(validate_email("a b@example.com").is_err());
+    }
+
+    #[test]
+    fn share_names() {
+        assert!(validate_share_name("Alps trip").is_ok());
+        assert!(validate_share_name("  ").is_err());
+        assert!(validate_share_name("").is_err());
+        assert!(validate_share_name(&"a".repeat(MAX_SHARE_NAME_LEN)).is_ok());
+        assert!(validate_share_name(&"a".repeat(MAX_SHARE_NAME_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn share_messages() {
+        assert!(validate_share_message(None).is_ok());
+        assert!(validate_share_message(Some("Here are the photos")).is_ok());
+        assert!(validate_share_message(Some(&"a".repeat(MAX_SHARE_MESSAGE_LEN))).is_ok());
+        assert!(validate_share_message(Some(&"a".repeat(MAX_SHARE_MESSAGE_LEN + 1))).is_err());
     }
 
     #[test]

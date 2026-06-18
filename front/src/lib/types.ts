@@ -90,6 +90,8 @@ export interface PictureTagsWithSources {
 export interface ShareResponse {
     id: string
     tag_path: string
+    name: string
+    message: string | null
     recipient_username: string
     recipient_instance: string
     status: ShareStatus
@@ -101,6 +103,8 @@ export interface IncomingShareResponse {
     id: string
     sender_username: string
     sender_instance: string
+    name: string
+    message: string | null
     outgoing_share_id: string
     status: ShareStatus
     allow_share_back: boolean

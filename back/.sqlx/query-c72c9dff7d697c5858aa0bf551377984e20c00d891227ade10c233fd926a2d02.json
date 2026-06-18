@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      recipient_username, recipient_instance,\n                      allow_share_back, future,\n                      status as \"status: ShareStatus\",\n                      created_at, revoked_at\n               FROM outgoing_shares WHERE owner_id = $1 ORDER BY created_at DESC",
+  "query": "INSERT INTO outgoing_shares\n                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, future)\n               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8)\n               RETURNING id, owner_id, tag_path::text as \"tag_path!\",\n                         name, message,\n                         recipient_username, recipient_instance,\n                         allow_share_back, future,\n                         status as \"status: ShareStatus\",\n                         created_at, revoked_at",
   "describe": {
     "columns": [
       {
@@ -33,6 +33,28 @@
       },
       {
         "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "recipient_username",
         "type_info": "Varchar",
         "origin": {
@@ -43,7 +65,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "recipient_instance",
         "type_info": "Varchar",
         "origin": {
@@ -54,7 +76,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "allow_share_back",
         "type_info": "Bool",
         "origin": {
@@ -65,7 +87,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "future",
         "type_info": "Bool",
         "origin": {
@@ -76,7 +98,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "status: ShareStatus",
         "type_info": {
           "Custom": {
@@ -101,7 +123,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -112,7 +134,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -125,13 +147,22 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Uuid",
+        "Text",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Bool"
       ]
     },
     "nullable": [
       false,
       false,
       null,
+      false,
+      true,
       false,
       false,
       false,
@@ -141,5 +172,5 @@
       true
     ]
   },
-  "hash": "9b92dcdc102f7fac98565d71913fd3c7935b666520a2b22c060f25512d06050f"
+  "hash": "c72c9dff7d697c5858aa0bf551377984e20c00d891227ade10c233fd926a2d02"
 }

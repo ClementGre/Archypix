@@ -233,6 +233,8 @@ pub async fn create_outgoing_share(
     owner_id: Uuid,
     sender_username: &str,
     tag_path: &str,
+    name: &str,
+    message: Option<&str>,
     recipient_username: &str,
     recipient_instance: &str,
     allow_share_back: bool,
@@ -252,6 +254,8 @@ pub async fn create_outgoing_share(
     // HTTP call — blocks the blind-SSRF / request-amplification vector (07_security_audit.md §2.4).
     crate::domain::validation::validate_federation_domain(recipient_instance)
         .map_err(AppError::BadRequest)?;
+    crate::domain::validation::validate_share_name(name).map_err(AppError::BadRequest)?;
+    crate::domain::validation::validate_share_message(message).map_err(AppError::BadRequest)?;
 
     // Cap the number of outstanding `pending` outgoing shares per user to curb share spam
     let pending_outgoing = OutgoingShareRepository::list_by_owner(db, owner_id)
@@ -278,6 +282,8 @@ pub async fn create_outgoing_share(
         &mut *tx,
         owner_id,
         tag_path,
+        name,
+        message,
         recipient_username,
         recipient_instance,
         allow_share_back,
@@ -294,6 +300,8 @@ pub async fn create_outgoing_share(
             recipient_id,
             sender_username,
             &config.global_domain,
+            name,
+            message,
             share.id,
             allow_share_back,
         )
@@ -317,6 +325,8 @@ pub async fn create_outgoing_share(
                     recipient_instance: recipient_instance.to_string(),
                     outgoing_share_id: share.id,
                     tag_path: tag_path.to_string(),
+                    name: name.to_string(),
+                    message: message.map(str::to_string),
                     allow_share_back,
                     future,
                     shareback_of,
