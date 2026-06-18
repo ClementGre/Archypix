@@ -106,12 +106,21 @@ pub async fn handle(
     }
 
     // ── Thumbnails + BlurHash + upload (skipped for non-thumbnailable formats) ─
-    let (blurhash, thumbnails_generated) = if do_thumbnails {
+    let (blurhash, thumbnails_generated, decoded_dims) = if do_thumbnails {
         let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;
-        (thumb.blurhash, thumb.generated)
+        (thumb.blurhash, thumb.generated, (thumb.width, thumb.height))
     } else {
-        (None, false)
+        (None, false, (None, None))
     };
+
+    // Dimensions: prefer the decoded image (authoritative, orientation-consistent with the raw
+    // thumbnails); fall back to EXIF only when the image was not decoded (non-thumbnailable format).
+    let exif_dims = exif
+        .as_ref()
+        .map(|e| (e.width, e.height))
+        .unwrap_or((None, None));
+    let width = decoded_dims.0.or(exif_dims.0);
+    let height = decoded_dims.1.or(exif_dims.1);
 
     client
         .complete_job(
@@ -123,6 +132,8 @@ pub async fn handle(
                 thumbnails_generated,
                 file_size,
                 file_hash,
+                width,
+                height,
             },
         )
         .await?;

@@ -17,6 +17,28 @@ fn init_magick() {
 pub const THUMBNAIL_VARIANTS: &[(&str, usize)] =
     &[("small", 100), ("medium", 500), ("large", 1000)];
 
+/// Read the raw decoded pixel dimensions `(width, height)` of the image at `src`.
+///
+/// These are the stored-raster dimensions (EXIF orientation applied at display time), so they match
+/// the raw-pixel thumbnails/blurhash. Authoritative source of `pictures.width/height`. Must run
+/// inside `tokio::task::spawn_blocking`.
+pub fn image_dimensions(src: &Path) -> Result<(i32, i32)> {
+    init_magick();
+
+    let wand = MagickWand::new();
+    wand.read_image(src.to_str().unwrap())
+        .map_err(|e| WorkerError::Imaging(format!("read image: {e}")))?;
+
+    let w = wand.get_image_width();
+    let h = wand.get_image_height();
+    if w == 0 || h == 0 {
+        return Err(WorkerError::Imaging(
+            "image has zero dimensions".to_string(),
+        ));
+    }
+    Ok((w as i32, h as i32))
+}
+
 /// Generate a WebP thumbnail at the specified height (maintaining aspect ratio).
 ///
 /// Writes the result to `dest_path`. Must run inside `tokio::task::spawn_blocking`.

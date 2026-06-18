@@ -32,7 +32,9 @@ imaging/exif.rs      — extract_exif() / write_exif_overrides(set, clear) (rexi
                        Full editable-field coverage on write (date, GPS, orientation, make, model,
                        focal length, f-number, ISO, exposure time) plus per-field clear (tag delete).
 imaging/hash.rs      — hash_file(): SHA-256 hex digest in 64 KiB chunks (blocking)
-imaging/resize.rs    — generate_thumbnail() (ImageMagick/WebP), generate_blurhash();
+imaging/resize.rs    — generate_thumbnail() (ImageMagick/WebP), generate_blurhash(),
+                       image_dimensions() (decoded raw pixel w/h — authoritative source of
+                       pictures.width/height, EXIF only a fallback);
                        THUMBNAIL_VARIANTS const: single source of truth for sizes
 imaging/thumbnailer.rs — run(): spawn_blocking for CPU work, async upload per variant
 ```
@@ -90,9 +92,9 @@ The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` 
 
 Library crate shared between `back/` and `worker/` so wire shapes never drift:
 
-| Module           | Key types                                                                                                                                                                   |
-|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`), `ExifField`, `ExifSnapshot`, `ExtractedExif`, `ExifOverrides`     |
-| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`), `FailJobRequest` (+ `claim_token`) |
-| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_THUMBNAIL`, `supports_exif()`, `supports_thumbnail()`                                                                                        |
-| `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                |
+| Module           | Key types                                                                                                                                                                                             |
+|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`), `ExifField`, `ExifSnapshot`, `ExtractedExif`, `ExifOverrides`                               |
+| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`) |
+| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_THUMBNAIL`, `supports_exif()`, `supports_thumbnail()`                                                                                                                  |
+| `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                          |

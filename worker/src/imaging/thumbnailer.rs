@@ -16,6 +16,9 @@ pub struct ThumbnailOutput {
     pub blurhash: Option<String>,
     /// `true` when all three variants were generated and uploaded.
     pub generated: bool,
+    /// Raw decoded pixel dimensions of the source image (authoritative for `pictures.width/height`).
+    pub width: Option<i32>,
+    pub height: Option<i32>,
 }
 
 /// Generate WebP thumbnails and a BlurHash from the image at `src`, then
@@ -37,6 +40,8 @@ pub async fn run(
         return Ok(ThumbnailOutput {
             blurhash: None,
             generated: false,
+            width: None,
+            height: None,
         });
     }
 
@@ -44,7 +49,10 @@ pub async fn run(
     let dir_c = tmp_dir.to_path_buf();
 
     // All image work is CPU-bound — must run on a blocking thread.
-    let (paths, blurhash) = tokio::task::spawn_blocking(move || -> Result<_> {
+    let (paths, blurhash, dimensions) = tokio::task::spawn_blocking(move || -> Result<_> {
+        // Decoded dimensions first — the authoritative source for pictures.width/height.
+        let dimensions = resize::image_dimensions(&src_c)?;
+
         let mut paths: Vec<(String, std::path::PathBuf)> = Vec::new();
         for &(name, height) in resize::THUMBNAIL_VARIANTS {
             let dest = dir_c.join(format!("{name}.webp"));
@@ -61,7 +69,7 @@ pub async fn run(
             }
         };
 
-        Ok((paths, blurhash))
+        Ok((paths, blurhash, dimensions))
     })
     .await
     .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??;
@@ -79,5 +87,7 @@ pub async fn run(
     Ok(ThumbnailOutput {
         blurhash,
         generated: true,
+        width: Some(dimensions.0),
+        height: Some(dimensions.1),
     })
 }

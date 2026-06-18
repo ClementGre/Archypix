@@ -98,6 +98,8 @@ pub async fn handle(
                 thumbnails_generated: thumb.generated,
                 file_size,
                 file_hash,
+                width: thumb.width,
+                height: thumb.height,
             },
         )
         .await?;

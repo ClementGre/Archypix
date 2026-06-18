@@ -156,6 +156,11 @@ pub struct CompleteJobRequest {
     /// ETag and for content-addressed deduplication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_hash: Option<String>,
+    /// Authoritative pixel dimensions, read from the **decoded image** (not EXIF).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
 }
 
 /// Request body for `POST /api/worker/jobs/{id}/fail`.
