@@ -221,14 +221,14 @@ pub async fn complete_job(
         .await
         .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
 
-    // Update picture columns from worker output.
+    // Update picture columns from worker output. Width/height come from the top-level fields
     if let (Some(exif), Some(pid)) = (&body.exif, picture_id) {
         let captured_at = exif.captured_at.as_deref().and_then(parse_exif_datetime);
         PictureRepository::update_from_worker(
             &mut *tx,
             pid,
-            exif.width,
-            exif.height,
+            body.width,
+            body.height,
             captured_at,
             exif.gps_lat,
             exif.gps_lng,
@@ -242,7 +242,7 @@ pub async fn complete_job(
         .await?;
     } else if let Some(pid) = picture_id {
         // No EXIF (edit_picture or non-initial gen_thumbnail): still update
-        // thumbnails_generated_at, blurhash, file_size, file_hash as available.
+        // thumbnails_generated_at, blurhash, file_size, file_hash, and decoded dimensions.
         PictureRepository::update_after_processing(
             &mut *tx,
             pid,
@@ -250,6 +250,8 @@ pub async fn complete_job(
             body.blurhash.as_deref(),
             body.file_size,
             body.file_hash.as_deref(),
+            body.width,
+            body.height,
         )
         .await?;
     }

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET thumbnails_generated_at = CASE WHEN $2\n                                                  THEN COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')\n                                                  ELSE thumbnails_generated_at\n                                             END,\n                   blurhash  = COALESCE($3, blurhash),\n                   file_size = COALESCE($4, file_size),\n                   file_hash = COALESCE($5, file_hash),\n                   width     = COALESCE($6, width),\n                   height    = COALESCE($7, height)\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Text",
+        "Int8",
+        "Text",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "638d4ad89b6d79cdb3d6aeef277fa9a01e8c435d97de8150ad515bba304a341a"
+}

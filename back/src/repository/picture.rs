@@ -760,6 +760,8 @@ impl PictureRepository {
         blurhash: Option<&str>,
         file_size: Option<i64>,
         file_hash: Option<&str>,
+        width: Option<i32>,
+        height: Option<i32>,
     ) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -772,13 +774,17 @@ impl PictureRepository {
                                              END,
                    blurhash  = COALESCE($3, blurhash),
                    file_size = COALESCE($4, file_size),
-                   file_hash = COALESCE($5, file_hash)
+                   file_hash = COALESCE($5, file_hash),
+                   width     = COALESCE($6, width),
+                   height    = COALESCE($7, height)
                WHERE id = $1"#,
             id,
             set_thumbnails,
             blurhash,
             file_size,
             file_hash,
+            width,
+            height,
         )
             .execute(ex)
             .await

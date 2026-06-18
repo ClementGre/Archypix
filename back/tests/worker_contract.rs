@@ -130,11 +130,14 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     );
 
     // ── 3. Complete with correct claim_token → 204 ────────────────────────────
+    // No `exif` in the body (e.g. a GIF) — decoded width/height must still be applied.
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
         "thumbnails_generated": true,
         "file_hash": "abc123deadbeef",
-        "file_size": 204800
+        "file_size": 204800,
+        "width": 800,
+        "height": 600
     });
     let resp3 = app
         .clone()
@@ -157,6 +160,19 @@ async fn worker_claim_complete_cycle(db: PgPool) {
         .unwrap()
         .unwrap();
     assert_eq!(completed.status, JobStatus::Completed);
+
+    // DB: decoded dimensions applied even without an `exif` payload.
+    let (w, h): (Option<i32>, Option<i32>) =
+        sqlx::query_as("SELECT width, height FROM pictures WHERE id = $1")
+            .bind(pic_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        (w, h),
+        (Some(800), Some(600)),
+        "width/height set from decoded dims (no EXIF)"
+    );
 
     // ── 4. Replay completion → 409 (claim_token already consumed) ────────────
     let resp4 = app
