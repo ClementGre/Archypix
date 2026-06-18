@@ -2,9 +2,11 @@ use crate::domain::auth::TokenType;
 use crate::domain::user::User;
 use crate::infra::config::Config;
 use crate::infra::crypto::{
-    JwtService, generate_refresh_token, hash_refresh_token, verify_password,
+    JwtService, generate_refresh_token, hash_refresh_token, verify_password, verify_password_dummy,
 };
 use crate::infra::error::AppError;
+use crate::infra::ratelimit;
+use crate::infra::redis::Cache;
 use crate::repository::auth::{CredentialRepository, RefreshTokenRepository};
 use crate::repository::user::UserRepository;
 use chrono::{Duration, Utc};
@@ -19,25 +21,42 @@ pub struct AuthTokens {
 
 pub async fn login(
     db: &PgPool,
+    cache: &dyn Cache,
     jwt: &JwtService,
     config: &Config,
     username: &str,
     password: &str,
 ) -> Result<AuthTokens, AppError> {
     trace!(username, "auth: login");
-    let user = UserRepository::find_by_username(db, username)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
 
-    let hash = CredentialRepository::get_password_hash(db, user.id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
+    // Throttle credential-stuffing / brute-force per username
+    ratelimit::check(
+        cache,
+        &format!("login:{username}"),
+        config.rate_limit_login_max,
+        config.rate_limit_login_window_secs,
+    )
+    .await?;
 
-    if !verify_password(password, &hash)? {
-        return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+    let user = UserRepository::find_by_username(db, username).await?;
+    let hash = match &user {
+        Some(u) => CredentialRepository::get_password_hash(db, u.id).await?,
+        None => None,
+    };
+
+    // Always run exactly one Argon2 verification: the response time does not reveal whether the username exists.
+    let valid = match &hash {
+        Some(h) => verify_password(password, h)?,
+        None => {
+            verify_password_dummy(password);
+            false
+        }
+    };
+
+    match (user, valid) {
+        (Some(user), true) => issue_tokens(db, jwt, config, &user).await,
+        _ => Err(AppError::Unauthorized("Invalid credentials".to_string())),
     }
-
-    issue_tokens(db, jwt, config, &user).await
 }
 
 pub async fn refresh(

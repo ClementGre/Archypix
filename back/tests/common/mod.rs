@@ -3,6 +3,7 @@ pub mod federation;
 use archypix_back::clients::federation::FederationClient;
 use archypix_back::clients::resolver::ResolverClient;
 use archypix_back::domain::tag::encode_sender_label;
+use archypix_back::domain::validation::MIN_PASSWORD_LEN;
 use archypix_back::infra::config::Config;
 use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::error::AppError;
@@ -16,7 +17,6 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-
 // ── InMemoryCache ─────────────────────────────────────────────────────────────
 
 pub struct InMemoryCache {
@@ -65,6 +65,18 @@ impl Cache for InMemoryCache {
             .cloned()
             .collect::<Vec<_>>()
             .into())
+    }
+
+    async fn incr_ex(&self, key: RedisKey<'_>, _ttl_secs: u64) -> Result<u64, AppError> {
+        let mut store = self.store.lock().unwrap();
+        let k = key.build();
+        let next = store
+            .get(&k)
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+            + 1;
+        store.insert(k, next.to_string());
+        Ok(next)
     }
 }
 
@@ -275,12 +287,19 @@ pub fn test_app_state(db: PgPool, config: &Config) -> AppState {
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 pub async fn seed_user(db: &PgPool, username: &str, password: &str) -> Uuid {
+    // Pad short fixture passwords so they satisfy the production password policy. Login tests use
+    // their own (already-compliant) passwords, so this only affects users that are never logged in.
+    let password = if password.chars().count() < MIN_PASSWORD_LEN {
+        format!("{password}_seedpw01")
+    } else {
+        password.to_string()
+    };
     archypix_back::services::users::create_user(
         db,
         username,
         &format!("{username}@test.com"),
         username,
-        password,
+        &password,
         false,
     )
     .await

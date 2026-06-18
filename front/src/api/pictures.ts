@@ -13,6 +13,7 @@ export interface CompleteUploadBody {
     height?: number
     captured_at?: string
     initial_tags?: string[]
+    defer_pipeline?: boolean
 }
 
 export interface ListPicturesParams {
@@ -84,4 +85,11 @@ export async function completeUpload(pictureId: string, body: CompleteUploadBody
         body,
     )
     return data
+}
+
+/**
+ * Explicitly wake the tagging pipeline for the current user. Call once after a batch of uploads
+ */
+export async function wakePipeline(): Promise<void> {
+    await apiClient.post('/api/authenticated/pictures/pipeline/wake')
 }

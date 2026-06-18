@@ -4,6 +4,7 @@ pub mod db;
 pub mod error;
 pub mod job_watchdog;
 pub mod pipeline;
+pub mod ratelimit;
 pub mod redis;
 pub mod s3;
 pub mod scheduler;

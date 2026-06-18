@@ -37,6 +37,7 @@ pub async fn login(
     debug!(user = %payload.username, token_type = "-", "login");
     let tokens = services::auth::login(
         &state.db,
+        state.cache.as_ref(),
         &state.jwt,
         &state.config,
         &payload.username,

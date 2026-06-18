@@ -38,6 +38,7 @@ pub fn authenticated_routes() -> Router<AppState> {
             "/pictures/uploads/{id}/complete",
             post(pictures::complete_upload),
         )
+        .route("/pictures/pipeline/wake", post(pictures::wake_pipeline))
         .route("/pictures", get(pictures::list))
         .route("/pictures/{id}", get(pictures::details))
         .route("/pictures/{id}/url", get(pictures::picture_url))

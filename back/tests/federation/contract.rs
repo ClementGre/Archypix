@@ -94,6 +94,33 @@ async fn auth_handshake_grants_token_to_requester(db: PgPool) {
     );
 }
 
+/// An `auth/grant` with no matching pending request nonce is rejected (token-cache poisoning
+/// guard, 07_security_audit.md §2.1); a grant that echoes the stored nonce is accepted.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn auth_grant_rejects_unsolicited_nonce(db: PgPool) {
+    let (cache_a, cfg_a, _, _, _, _) = spawn_pair(db).await;
+    let fed_a = common::federation::make_client(&cfg_a, &cache_a);
+
+    // No pending nonce stored for "b.test" → unsolicited grant rejected.
+    let unsolicited = fed_a
+        .store_federation_token("b.test", "attacker-token", 60, "bogus-nonce")
+        .await;
+    assert!(
+        matches!(
+            unsolicited,
+            Err(archypix_back::infra::error::AppError::Unauthorized(_))
+        ),
+        "unsolicited grant must be rejected, got {unsolicited:?}"
+    );
+
+    // With a matching pending nonce, the grant is accepted.
+    common::federation::seed_auth_nonce(&cache_a, "b.test", "the-nonce").await;
+    fed_a
+        .store_federation_token("b.test", "legit-token", 60, "the-nonce")
+        .await
+        .expect("grant matching the pending nonce must be accepted");
+}
+
 /// Alice creates a share → Bob gets a Pending IncomingShare → Bob accepts →
 /// A marks the OutgoingShare Active and announces pictures → Bob has the picture.
 #[sqlx::test(migrator = "MIGRATOR")]

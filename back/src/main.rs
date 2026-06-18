@@ -35,6 +35,14 @@ async fn main() -> anyhow::Result<()> {
     info!("Database:      {}", config.database_url_masked());
     info!("Redis:         {}", config.redis_url_masked());
 
+    // Surface an over-permissive CORS configuration at startup (07_security_audit.md §2.10).
+    if config.cors_origins.iter().any(|o| o == "*") {
+        tracing::warn!(
+            "CORS is configured to allow ANY origin (CORS_ORIGINS contains '*'). This is intended \
+             for development only. Pin CORS_ORIGINS to your frontend origin(s) in production."
+        );
+    }
+
     let db = infra::db::connect(&config).await?;
     infra::db::run_migrations(&db).await?;
 
@@ -130,6 +138,12 @@ async fn main() -> anyhow::Result<()> {
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 
-    axum::serve(listener, app).await?;
+    // `into_make_service_with_connect_info` exposes the peer `SocketAddr` to handlers via
+    // `ConnectInfo`, used by the per-IP registration rate limiter.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

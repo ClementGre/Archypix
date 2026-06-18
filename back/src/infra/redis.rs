@@ -21,6 +21,13 @@ pub enum RedisKey<'a> {
     PictureUrl(Uuid, &'a str),
     /// Cached federation JWT for communicating with `global_domain`.
     FederationToken(&'a str),
+    /// Pending federation-handshake nonce for an in-flight outbound auth request to
+    /// `global_domain`. The grant callback must echo this nonce, otherwise it is rejected
+    /// (prevents unsolicited grant injection / token-cache poisoning).
+    FederationAuthNonce(&'a str),
+    /// Fixed-window rate-limit counter. The string is an opaque `category:id` bucket
+    /// (e.g. `login:alice`, `register:1.2.3.4`).
+    RateLimit(&'a str),
     /// Cached backend domain for `username@global_domain`.
     FederationBackend(&'a str, &'a str),
     /// Cached local user UUID for a given username.
@@ -48,6 +55,8 @@ impl<'a> RedisKey<'a> {
             Self::UploadSession(id) => format!("upload:{id}"),
             Self::PictureUrl(id, variant) => format!("presign:{id}:{variant}"),
             Self::FederationToken(domain) => format!("federation:token:{domain}"),
+            Self::FederationAuthNonce(domain) => format!("federation:authnonce:{domain}"),
+            Self::RateLimit(bucket) => format!("ratelimit:{bucket}"),
             Self::FederationBackend(u, d) => format!("federation:backend:{u}@{d}"),
             Self::UserByUsername(username) => format!("user:username:{username}"),
             Self::AdminStats => "admin:stats:instance".to_string(),
@@ -85,6 +94,11 @@ pub trait Cache: Send + Sync {
     async fn del(&self, key: RedisKey<'_>) -> Result<(), AppError>;
     /// Return all keys matching a glob-style pattern. Admin/diagnostic use only.
     async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>, AppError>;
+    /// Atomically increment a counter key and return the new value. On the first increment
+    /// (the value becomes 1) the key is given `ttl_secs` to live — implementing a fixed-window
+    /// counter that resets after the window. The expiry is set only on creation, so a sustained
+    /// burst cannot keep extending the window. Used by the rate limiter (`infra::ratelimit`).
+    async fn incr_ex(&self, key: RedisKey<'_>, ttl_secs: u64) -> Result<u64, AppError>;
 }
 
 // ── JSON helpers (free functions to preserve dyn-compatibility) ───────────────
@@ -176,6 +190,27 @@ impl Cache for RedisClient {
         conn.keys::<_, Vec<String>>(pattern)
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))
+    }
+
+    async fn incr_ex(&self, key: RedisKey<'_>, ttl_secs: u64) -> Result<u64, AppError> {
+        let k = key.build();
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let count: i64 = conn
+            .incr(&k, 1)
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        // Set the TTL only when the key was just created, so the window does not slide.
+        if count == 1 {
+            let _: bool = conn
+                .expire(&k, ttl_secs as i64)
+                .await
+                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        }
+        Ok(count.max(0) as u64)
     }
 }
 

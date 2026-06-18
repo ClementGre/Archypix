@@ -69,9 +69,8 @@ pub async fn create_user(
             "Username must be non-empty and match [a-z0-9_]".to_string(),
         ));
     }
-    if password.trim().is_empty() {
-        return Err(AppError::BadRequest("Password cannot be empty".to_string()));
-    }
+    crate::domain::validation::validate_password(password).map_err(AppError::BadRequest)?;
+    crate::domain::validation::validate_email(email).map_err(AppError::BadRequest)?;
 
     let password_hash = hash_password(password)?;
 

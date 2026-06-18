@@ -120,6 +120,15 @@ pub async fn seed_backend_url(
         .unwrap();
 }
 
+/// Seed a pending federation-handshake nonce for `domain`, simulating an outbound `auth/request`
+/// this backend sent. Lets a test exercise the `auth/grant` nonce-acceptance path directly.
+pub async fn seed_auth_nonce(cache: &InMemoryCache, domain: &str, nonce: &str) {
+    cache
+        .set_str_ex(RedisKey::FederationAuthNonce(domain), nonce, 60)
+        .await
+        .unwrap();
+}
+
 // ── JWT helpers ───────────────────────────────────────────────────────────────
 
 /// Issue a federation JWT that `server_config`'s auth middleware would accept.

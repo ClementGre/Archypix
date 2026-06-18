@@ -77,6 +77,10 @@ pub struct UploadMetadata {
     pub captured_at: Option<NaiveDateTime>,
     /// Optional manual tags (ltree wire form) to assign immediately on creation.
     pub initial_tags: Option<Vec<String>>,
+    /// When `true`, the caller is responsible for waking the tagging pipeline itself (e.g. once at
+    /// the end of a batch upload) instead of this completion waking it per file. Defaults to false.
+    #[serde(default)]
+    pub defer_pipeline: bool,
 }
 
 fn default_page() -> u32 {
@@ -236,6 +240,20 @@ pub async fn complete_upload(
         ));
     }
 
+    // Validate any initial tags up front (before touching S3) — reject malformed paths and the
+    // reserved `SharedToMe` prefix, matching the `PATCH /tags` contract (07_security_audit.md §2.5).
+    let initial_tags: Vec<String> = match meta.initial_tags.as_ref() {
+        Some(tags) => tags
+            .iter()
+            .map(|t| {
+                TagPath::parse(t, false)
+                    .map(|p| p.as_ltree().to_string())
+                    .map_err(AppError::BadRequest)
+            })
+            .collect::<Result<_, _>>()?,
+        None => Vec::new(),
+    };
+
     // S3: copy staging → pictures, then delete staging (S3 ops can't be in a DB tx)
     let pictures_key = s3::picture_key(user_id, picture_id);
     storage
@@ -276,10 +294,8 @@ pub async fn complete_upload(
 
     // Assign any caller-supplied initial manual tags within the same transaction so they are
     // atomically committed with the picture row and the thumbnail job.
-    if let Some(ref tags) = meta.initial_tags {
-        if !tags.is_empty() {
-            TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], tags).await?;
-        }
+    if !initial_tags.is_empty() {
+        TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], &initial_tags).await?;
     }
 
     tx.commit().await.map_err(map_sqlx_error)?;

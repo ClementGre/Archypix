@@ -36,6 +36,18 @@ impl FederationClient {
             .resolve_backend_url(recipient_username, recipient_global_domain)
             .await?;
 
+        // Mint a nonce and persist it *before* sending the request. The grant callback must echo
+        // this nonce, so an unsolicited POST to `/auth/grant` cannot poison the token cache.
+        let nonce = Uuid::new_v4().to_string();
+        let _ = self
+            .cache
+            .set_str_ex(
+                RedisKey::FederationAuthNonce(recipient_global_domain),
+                &nonce,
+                60,
+            )
+            .await;
+
         debug!(
             sender = sender_username,
             recipient_global_domain, backend_base_url, "federation: requesting auth token"
@@ -47,7 +59,7 @@ impl FederationClient {
                 requester_instance: self.config.global_domain.clone(),
                 username: sender_username.to_string(),
                 scope: "federation".to_string(),
-                nonce: Uuid::new_v4().to_string(),
+                nonce,
             })
             .timeout(Duration::from_millis(
                 self.config.federation_request_timeout_ms,
@@ -111,15 +123,43 @@ impl FederationClient {
     }
 
     /// Store a federation token received via the `/api/federation/auth/grant` callback.
+    /// Verifies the grant's `nonce` against the one persisted.
     pub async fn store_federation_token(
         &self,
         issuer_global_domain: &str,
         token: &str,
         ttl_secs: i64,
+        nonce: &str,
     ) -> Result<(), AppError> {
         let ttl = ttl_secs
             .try_into()
             .map_err(|_| AppError::BadRequest("Invalid token TTL".to_string()))?;
+
+        let expected = self
+            .cache
+            .get_str(RedisKey::FederationAuthNonce(issuer_global_domain))
+            .await
+            .ok()
+            .flatten();
+        match expected {
+            Some(n) if n == nonce && !nonce.is_empty() => {
+                // One-time use: consume the nonce so a replayed grant is rejected.
+                let _ = self
+                    .cache
+                    .del(RedisKey::FederationAuthNonce(issuer_global_domain))
+                    .await;
+            }
+            _ => {
+                warn!(
+                    issuer_global_domain,
+                    "federation: rejected auth grant — no matching pending request (possible poisoning attempt)"
+                );
+                return Err(AppError::Unauthorized(
+                    "Unsolicited or stale federation grant".to_string(),
+                ));
+            }
+        }
+
         trace!(
             issuer_global_domain,
             ttl_secs, "federation: storing auth token"

@@ -109,6 +109,18 @@ pub struct Config {
     /// Upper bound on a single WebDAV `PUT` body (bytes). The body is streamed to a temp file
     /// (never buffered in memory) and rejected with `413` past this limit. Default: 5 GiB.
     pub webdav_max_upload_bytes: u64,
+
+    // ── Rate limiting / abuse caps ————————————————————————————————–───────────
+    /// Max failed-or-attempted logins per username per window before `429`. Default 10.
+    pub rate_limit_login_max: u64,
+    pub rate_limit_login_window_secs: u64,
+    /// Max registrations per client IP per window before `429`. Default 5.
+    pub rate_limit_register_max: u64,
+    pub rate_limit_register_window_secs: u64,
+    /// Max `pending` outgoing shares a single user may hold at once. Default 100.
+    pub max_pending_outgoing_shares: usize,
+    /// Max `pending` incoming shares a single recipient may hold at once. Default 200.
+    pub max_pending_incoming_shares: usize,
 }
 
 impl Config {
@@ -194,6 +206,13 @@ impl Config {
             s3_presign_cache_margin_secs: env_u64("S3_PRESIGN_CACHE_MARGIN_SECS", 600)?,
 
             webdav_max_upload_bytes: env_u64("WEBDAV_MAX_UPLOAD_BYTES", 5 * 1024 * 1024 * 1024)?,
+
+            rate_limit_login_max: env_u64("RATE_LIMIT_LOGIN_MAX", 10)?,
+            rate_limit_login_window_secs: env_u64("RATE_LIMIT_LOGIN_WINDOW_SECS", 300)?,
+            rate_limit_register_max: env_u64("RATE_LIMIT_REGISTER_MAX", 5)?,
+            rate_limit_register_window_secs: env_u64("RATE_LIMIT_REGISTER_WINDOW_SECS", 3600)?,
+            max_pending_outgoing_shares: env_usize("MAX_PENDING_OUTGOING_SHARES", 100)?,
+            max_pending_incoming_shares: env_usize("MAX_PENDING_INCOMING_SHARES", 200)?,
         };
 
         let storage_buckets = [
@@ -331,6 +350,12 @@ impl Config {
             s3_presign_ttl_secs: 3600,
             s3_presign_cache_margin_secs: 600,
             webdav_max_upload_bytes: 5 * 1024 * 1024 * 1024,
+            rate_limit_login_max: 10,
+            rate_limit_login_window_secs: 300,
+            rate_limit_register_max: 5,
+            rate_limit_register_window_secs: 3600,
+            max_pending_outgoing_shares: 100,
+            max_pending_incoming_shares: 200,
         }
     }
 }

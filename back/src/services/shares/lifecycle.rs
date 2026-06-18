@@ -248,6 +248,24 @@ pub async fn create_outgoing_share(
         "shares: create_outgoing_share"
     );
 
+    // Validate the user-supplied recipient instance before it drives any WebFinger / federation
+    // HTTP call — blocks the blind-SSRF / request-amplification vector (07_security_audit.md §2.4).
+    crate::domain::validation::validate_federation_domain(recipient_instance)
+        .map_err(AppError::BadRequest)?;
+
+    // Cap the number of outstanding `pending` outgoing shares per user to curb share spam
+    let pending_outgoing = OutgoingShareRepository::list_by_owner(db, owner_id)
+        .await?
+        .into_iter()
+        .filter(|s| s.status == ShareStatus::Pending)
+        .count();
+    if pending_outgoing >= config.max_pending_outgoing_shares {
+        return Err(AppError::TooManyRequests(format!(
+            "You have too many pending shares ({} max). Wait for some to be accepted or revoke them.",
+            config.max_pending_outgoing_shares
+        )));
+    }
+
     let recipient_local_id =
         find_local_user_id(cache, db, config, recipient_username, recipient_instance).await?;
 

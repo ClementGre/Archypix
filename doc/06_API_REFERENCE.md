@@ -126,6 +126,10 @@ All IDs are UUID v4 strings.
 }
 ```
 
+**Errors:** `401` on invalid credentials (timing-equalized — the response does not reveal whether
+the username exists). `429` when too many attempts are made for the same username within the
+rate-limit window.
+
 ---
 
 ### `POST /api/auth/refresh`
@@ -196,7 +200,9 @@ All IDs are UUID v4 strings.
 ### `POST /api/public/users`
 
 Register a new user. **Only available when `USE_RESOLVER=false`** (standalone mode). Returns 400 when the resolver is active — registration goes
-through `POST /api/register` on the resolver service instead.
+through `POST /api/register` on the resolver service instead. Passwords must be at least 8
+characters and the email must be syntactically valid (`400` otherwise). Rate-limited per source IP
+(`429` past the window).
 
 **Auth:** None
 
@@ -375,10 +381,17 @@ the file's MIME type.
     exif_data ? : object;      // arbitrary EXIF key-value pairs
     captured_at ? : string;    // ISO 8601 datetime
     initial_tags ? : string[]; // ltree wire-form paths — assigned as manual tags atomically with picture creation
+  defer_pipeline ? : boolean; // default false — when true, this completion does NOT wake the pipeline
 }
 ```
 
-All fields are optional — the backend fills in EXIF fields from worker extraction if omitted. `initial_tags` paths must not start with `SharedToMe`.
+All fields are optional — the backend fills in EXIF fields from worker extraction if omitted.
+`initial_tags` paths are validated and must not start with `SharedToMe` (reserved prefix); an
+invalid path returns `400`.
+
+Set `defer_pipeline: true` when completing many files in a batch and then call
+`POST /pictures/pipeline/wake` **once** at the end — this collapses N per-file pipeline wakes into a
+single trigger. When omitted/false, the completion wakes the pipeline itself (single-upload default).
 
 **Response `200`:**
 
@@ -389,7 +402,14 @@ All fields are optional — the backend fills in EXIF fields from worker extract
 ```
 
 **Side-effects:** creates the picture row, assigns any `initial_tags` as `manual` source tags, enqueues a `gen_thumbnail` job (EXIF extraction +
-thumbnail generation), and wakes the pipeline. All of these happen atomically in a single DB transaction.
+thumbnail generation), and wakes the pipeline (unless `defer_pipeline` is true). All of these happen atomically in a single DB transaction.
+
+#### `POST /api/authenticated/pictures/pipeline/wake`
+
+Explicitly wake the caller's tagging pipeline. Used after a batch upload that completed every file
+with `defer_pipeline: true`, so the pipeline runs once for the whole batch instead of once per file.
+
+**Response `200`:** `{ woken: true }`
 
 ---
 
@@ -1101,6 +1121,10 @@ interface ShareResponse {
 - `"tombstoned"` — recipient rejected the share
 
 **Side-effects:** The federation handshake and share announcement run synchronously. If federation delivery fails, the share creation is rolled back.
+
+**Errors:** `400` if `recipient_instance` is not a valid bare domain (schemes, ports, paths, IP
+literals, and local domains are rejected — this guards the outbound federation call). `429` when the
+sender already holds the maximum number of `pending` outgoing shares.
 
 ---
 

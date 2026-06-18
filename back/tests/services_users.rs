@@ -22,11 +22,18 @@ async fn create_user_rejects_empty_password(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn create_user_fails_on_duplicate_username(db: PgPool) {
-    users::create_user(&db, "alice", "alice@test.com", "Alice", "pass1", false)
+    users::create_user(&db, "alice", "alice@test.com", "Alice", "password1", false)
         .await
         .unwrap();
-    let result =
-        users::create_user(&db, "alice", "alice2@test.com", "Alice2", "pass2", false).await;
+    let result = users::create_user(
+        &db,
+        "alice",
+        "alice2@test.com",
+        "Alice2",
+        "password2",
+        false,
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Conflict(_))),
         "duplicate username must return Conflict"

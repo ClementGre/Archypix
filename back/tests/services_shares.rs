@@ -101,6 +101,94 @@ async fn create_outgoing_share_same_backend_creates_incoming_share(db: PgPool) {
     assert_eq!(incoming.sender_username, "alice");
 }
 
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let config = config();
+    let (fed, cache) = common::make_federation(&config);
+    let notify = pipeline::PipelineWaker::disconnected();
+
+    // `localhost` is a forbidden federation target (SSRF guard, 07_security_audit.md §2.4).
+    let result = shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &config,
+        &notify,
+        alice_id,
+        "alice",
+        "vacation",
+        "bob",
+        "localhost",
+        false,
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(archypix_back::infra::error::AppError::BadRequest(_))
+        ),
+        "localhost recipient must be rejected, got {result:?}"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    common::seed_user(&db, "bob", "pass").await;
+
+    let mut config = config();
+    config.max_pending_outgoing_shares = 1;
+    let (fed, cache) = common::make_federation(&config);
+    let notify = pipeline::PipelineWaker::disconnected();
+
+    // First pending share is accepted.
+    shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &config,
+        &notify,
+        alice_id,
+        "alice",
+        "vacation",
+        "bob",
+        "test.com",
+        false,
+        false,
+        None,
+    )
+    .await
+    .expect("first share within cap");
+
+    // Second one exceeds the cap → 429.
+    let result = shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &config,
+        &notify,
+        alice_id,
+        "alice",
+        "trips",
+        "bob",
+        "test.com",
+        false,
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(archypix_back::infra::error::AppError::TooManyRequests(_))
+        ),
+        "second pending share must hit the cap, got {result:?}"
+    );
+}
+
 // ── accept_incoming_share ─────────────────────────────────────────────────────
 
 #[sqlx::test(migrator = "MIGRATOR")]

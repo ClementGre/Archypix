@@ -6,7 +6,7 @@ import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {beginUploadBatch, completeUpload} from '@/api/pictures'
+import {beginUploadBatch, completeUpload, wakePipeline} from '@/api/pictures'
 import {queryKeys} from '@/lib/constants'
 import {cn, TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
@@ -196,6 +196,8 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         mime_type: file.type || undefined,
                         file_size: file.size,
                         initial_tags: tags.length ? tags : undefined,
+                        // Defer the pipeline wake to a single trigger once all files finish
+                        defer_pipeline: true,
                     })
 
                     patchItem(pictureId, {status: 'done', progress: 100})
@@ -214,6 +216,15 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         }
 
         await Promise.all(Array.from({length: Math.min(4, initialItems.length)}, worker))
+
+        // All files completed with defer_pipeline=true; trigger one pipeline run for the batch.
+        if (firstSuccess) {
+            try {
+                await wakePipeline()
+            } catch {
+                // Non-fatal because of the recovery sweep
+            }
+        }
 
         setPhase('complete')
         queryClient.invalidateQueries({queryKey: queryKeys.pictures()})

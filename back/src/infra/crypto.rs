@@ -86,6 +86,23 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, AppError> {
         .is_ok())
 }
 
+/// Perform an Argon2 verification against a fixed dummy hash and discard the result.
+///
+/// Called on the login path when the username does not exist (or has no stored credential) so the
+/// response latency matches the credential-present path — closing the user-enumeration timing
+/// side-channel. The dummy hash is computed once on first use.
+pub fn verify_password_dummy(password: &str) {
+    use std::sync::OnceLock;
+    static DUMMY_HASH: OnceLock<String> = OnceLock::new();
+    let hash = DUMMY_HASH.get_or_init(|| {
+        hash_password("archypix-dummy-password-for-timing-equalization")
+            .unwrap_or_else(|_| String::new())
+    });
+    if !hash.is_empty() {
+        let _ = verify_password(password, hash);
+    }
+}
+
 pub fn generate_refresh_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);

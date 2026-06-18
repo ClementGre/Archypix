@@ -61,7 +61,12 @@ pub async fn auth_grant(
     }
     state
         .federation
-        .store_federation_token(&payload.issuer_instance, &payload.token, ttl)
+        .store_federation_token(
+            &payload.issuer_instance,
+            &payload.token,
+            ttl,
+            &payload.nonce,
+        )
         .await?;
     Ok(Json(serde_json::json!({ "stored": true })))
 }

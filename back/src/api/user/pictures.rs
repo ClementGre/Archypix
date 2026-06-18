@@ -79,6 +79,9 @@ pub async fn complete_upload(
     Json(meta): Json<UploadMetadata>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "complete_upload");
+    // Whether this completion should wake the pipeline itself. Batch uploads pass
+    // `defer_pipeline = true` per file and call `POST /pictures/pipeline/wake` once at the end.
+    let defer_pipeline = meta.defer_pipeline;
     let picture = services::pictures::complete_upload(
         &state.db,
         state.cache.as_ref(),
@@ -89,9 +92,21 @@ pub async fn complete_upload(
         meta,
     )
     .await?;
-    // New picture: last_pipeline_run_at = NULL by default → wake the pipeline loop.
-    state.pipeline_waker.wake(auth.user_id()?);
+    if !defer_pipeline {
+        // New picture: last_pipeline_run_at = NULL by default → wake the pipeline loop
+        state.pipeline_waker.wake(auth.user_id()?);
+    }
     Ok(Json(serde_json::json!({ "id": picture.id })))
+}
+
+/// Explicitly wake the caller's tagging pipeline.
+pub async fn wake_pipeline(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "wake_pipeline");
+    state.pipeline_waker.wake(auth.user_id()?);
+    Ok(Json(serde_json::json!({ "woken": true })))
 }
 
 pub async fn list(

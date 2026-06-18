@@ -59,6 +59,24 @@ pub async fn receive_share_announcement(
     let recipient = UserRepository::find_by_username(db, recipient_username)
         .await?
         .ok_or(AppError::NotFound)?;
+
+    // Cap the number of outstanding `pending` incoming shares per recipient
+    let pending_incoming = IncomingShareRepository::list_by_recipient(db, recipient.id)
+        .await?
+        .into_iter()
+        .filter(|s| s.status == ShareStatus::Pending)
+        .count();
+    if pending_incoming >= config.max_pending_incoming_shares {
+        warn!(
+            recipient = recipient_username,
+            pending_incoming,
+            "federation: announce_share rejected: recipient pending-share cap reached"
+        );
+        return Err(AppError::TooManyRequests(
+            "Recipient has too many pending shares".to_string(),
+        ));
+    }
+
     let incoming = IncomingShareRepository::create(
         db,
         recipient.id,
@@ -237,6 +255,20 @@ pub async fn receive_pictures_announcement(
         IncomingShareRepository::find_by_outgoing_share(db, outgoing_share_id, sender_instance)
             .await?
             .ok_or(AppError::NotFound)?;
+
+    // Bind the announced sender to the share that created it: the `/SharedToMe/<sender>/…` tag is
+    // built from `sender_username`, so a peer instance must not relabel pictures under a different
+    // sender than the one recorded on the incoming share.
+    if incoming.sender_username != sender_username {
+        warn!(
+            announced_sender = sender_username,
+            recorded_sender = %incoming.sender_username,
+            "federation: announce_pictures rejected: sender username mismatch"
+        );
+        return Err(AppError::Unauthorized(
+            "Sender username does not match the incoming share".to_string(),
+        ));
+    }
 
     if incoming.status != ShareStatus::Active {
         return Err(AppError::NotFound);
