@@ -206,16 +206,28 @@ then
 (gates as a **local draft committed on Save**), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
 `NewServiceMenu`.
 
-**`shares/`** — both lists split shares into **Closed (revoked + tombstoned, collapsed by default) / Pending / Active** foldable `Section`s and
-surface
-each share's `name` + `message` through `ShareInfoPopover` (an `Info` trigger button — hover on desktop, tap on touch — anchored to the **right**,
-towards the pictures pane; renders "No message" when `message` is null). `IncomingSharesList` keeps flat rows (accept / reject(confirm) / view-photos;
-single local-tag mapping per share via `useShareMappings`); `OutgoingSharesList` groups by tag via a factorized `GroupedShareRow` reused across all
-three sections — the group header shows the most common `name` with a "(and N others)" suffix when names differ (`summarizeNames`), the per-share
-names/messages living in the popover, plus per-recipient status + confirm-revoke. `CreateShareDialog` creates **one share per recipient**: common
-`name` (≤ 64) / `message` (≤ 1000) / tag / ShareBack / future inputs and a recipient list of grouped `@username:instance` fields (typing `:` advances
-focus to the instance sub-field, a button adds rows); on submit it fires one request per recipient sequentially with per-recipient progress icons
-(mirrors `UploadDialog`). `ShareStatusBadge` maps status → coloured pill.
+**`shares/`** — both lists split shares into **Closed (revoked + tombstoned, collapsed by default) / Pending / Active** foldable `Section`s (so the
+section already conveys status — there is **no** inline status badge on a card) and surface each share's details through `ShareInfoPopover` (an `Info`
+trigger button — hover on desktop, tap on touch — anchored to the **right**, towards the pictures pane). The popover is detail-rich: `name`, the
+`ShareStatusBadge`, ShareBack-allowed / future-additions rendered as compact on/off **`FlagChip`s** (consistent emerald-on / muted-off styling, not a
+right-aligned Yes/No), the shared tag, created date, ShareBack provenance ("which share this answers"), and — by side — the last-announcement
+timestamp
+(incoming), `last_error_at` / `next_retry_at` (outgoing, while errored/recovering), and the close date for revoked/rejected shares, then the `message`
+("No message" when null), plus an optional `footer` slot. `IncomingSharesList` keeps flat rows (accept / reject(confirm) / view-photos; single
+local-tag
+mapping per share via `useShareMappings`) and, when the sender allows it, a **Share back** button in the popover footer that opens a controlled
+`CreateShareDialog` pre-targeted at the sender and pre-filled with that share's mapped local tag (if a `SharedTagMappingService` mapping exists; still
+editable). `OutgoingSharesList` groups by tag via a factorized
+`GroupedShareRow` reused across all three sections — the group header shows the most common `name` with a "(and N others)" suffix when names differ
+(`summarizeNames`), the per-recipient details living in the popover, plus confirm-revoke. Both lists cross-reference the other direction (incoming ↔
+outgoing) to resolve the ShareBack provenance label. `CreateShareDialog` creates **one share per recipient**: an optional **Share back of** combobox
+(lists the user's live incoming shares; selecting one marks the share a ShareBack — sends `shareback_of` = that incoming share's `outgoing_share_id`
+and
+locks the recipient to its sender), common `name` (≤ 64) / `message` (≤ 1000) / tag / ShareBack / future inputs and a recipient list of grouped
+`@username:instance` fields (typing `:` advances focus to the instance sub-field, a button adds rows); on submit it fires one request per recipient
+sequentially with per-recipient progress icons (mirrors `UploadDialog`). It supports a controlled `open`/`onOpenChange` (with `showTrigger=false`) and
+an
+`initialTag` prop so the ShareBack button can drive it pre-filled. `ShareStatusBadge` maps status → coloured pill (used inside the popover).
 
 **`hierarchies/`** — `HierarchyPanel` (Hierarchies left tab: list of hierarchies + **New**, or, when one is active, a back header with a **WebDAV**
 (HardDrive) and edit button over the directory

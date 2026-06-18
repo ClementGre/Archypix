@@ -1,26 +1,28 @@
-import type {ReactNode} from 'react'
-import {Check, Images, Inbox, Loader2, X} from 'lucide-react'
+import {type ReactNode, useMemo, useState} from 'react'
+import {Check, Images, Inbox, Loader2, Share2, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Section} from '@/components/photos/detail/Section'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
-import {useIncomingShares, useShareMutations} from '@/hooks/useShares'
+import {useIncomingShares, useOutgoingShares, useShareMutations} from '@/hooks/useShares'
 import {type ShareMapping, useShareMappings} from '@/hooks/useShareMappings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {cn, TagPath} from '@/lib/utils'
-import type {IncomingShareResponse} from '@/lib/types'
-import {ShareStatusBadge} from './ShareStatusBadge'
+import type {IncomingShareResponse, ShareResponse} from '@/lib/types'
 import {ShareInfoPopover} from './ShareInfoPopover'
+import {CreateShareDialog} from './CreateShareDialog'
 
 const PENDING = new Set(['pending'])
 const CLOSED = new Set(['revoked', 'tombstoned'])
 
 function sharedToMeTag(share: IncomingShareResponse): string {
-  const label = `${share.sender_username}@${share.sender_instance}`.replace(/@/g, '_AT_').replace(/\./g, '_DOT_')
-  return `SharedToMe.${label}`
+    return (
+        share.shared_tag_path ??
+        `SharedToMe.${`${share.sender_username}@${share.sender_instance}`.replace(/@/g, '_AT_').replace(/\./g, '_DOT_')}`
+    )
 }
 
 /** A share carries a single local-tag mapping: show it inline, or offer to add one. */
@@ -78,18 +80,22 @@ function ShareRow({
                       highlighted,
                       accepting,
                       rejecting,
+                      sharebackOfLabel,
                       onAccept,
                       onReject,
                       onView,
+                      onShareBack,
                       mapping,
                   }: {
     share: IncomingShareResponse
     highlighted: boolean
     accepting: boolean
     rejecting: boolean
+    sharebackOfLabel: string | null
     onAccept: () => void
     onReject: () => void
     onView: () => void
+    onShareBack: () => void
     mapping?: ReactNode
 }) {
     const rejectable = share.status === 'pending' || share.status === 'active'
@@ -101,8 +107,32 @@ function ShareRow({
               <span className="text-muted-foreground">:{share.sender_instance}</span>
           </span>
                 <div className="flex shrink-0 items-center gap-1">
-                    <ShareStatusBadge status={share.status}/>
-                    <ShareInfoPopover entries={[{name: share.name, message: share.message}]}/>
+                    <ShareInfoPopover
+                        entries={[{
+                            name: share.name,
+                            message: share.message,
+                            status: share.status,
+                            allowShareBack: share.allow_share_back,
+                            future: share.future,
+                            sharedTag: share.shared_tag_path,
+                            createdAt: share.created_at,
+                            lastReceivedAt: share.last_announcement_received_at,
+                            closedAt: share.revoked_at,
+                            sharebackOf: sharebackOfLabel,
+                        }]}
+                        footer={
+                            share.allow_share_back && share.status === 'active' ? (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 w-full gap-1.5 text-xs"
+                                    onClick={onShareBack}
+                                >
+                                    <Share2 className="h-3.5 w-3.5"/> Share back
+                                </Button>
+                            ) : undefined
+                        }
+                    />
                     {share.status === 'active' && (
                         <Button
                             size="icon"
@@ -156,9 +186,23 @@ function ShareRow({
 
 export function IncomingSharesList() {
   const {data: shares, isPending, isError, error} = useIncomingShares()
+    const {data: outgoing} = useOutgoingShares()
   const {accept, reject} = useShareMutations()
   const {update, params} = useGalleryParams()
   const {forShare, addMapping, removeMapping, isBusy} = useShareMappings()
+    const [sharebackTarget, setSharebackTarget] = useState<IncomingShareResponse | null>(null)
+
+    // incoming.shareback_of references one of the user's own outgoing shares.
+    const outgoingById = useMemo(() => {
+        const m = new Map<string, ShareResponse>()
+        for (const o of outgoing ?? []) m.set(o.id, o)
+        return m
+    }, [outgoing])
+    const sharebackLabel = (share: IncomingShareResponse): string | null => {
+        if (!share.shareback_of) return null
+        const o = outgoingById.get(share.shareback_of)
+        return o ? `${o.name} → @${o.recipient_username}:${o.recipient_instance}` : 'your share'
+    }
 
   const onAddMapping = (shareId: string, wire: string) => {
     addMapping(shareId, wire).catch((e) => toast.error('Could not map tag', {description: apiErrorMessage(e)}))
@@ -197,9 +241,11 @@ export function IncomingSharesList() {
             highlighted={params.share === share.id}
             accepting={accept.isPending}
             rejecting={reject.isPending}
+            sharebackOfLabel={sharebackLabel(share)}
             onAccept={() => accept.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
             onReject={() => reject.mutate(share.id, {onError: (e) => toast.error(apiErrorMessage(e))})}
             onView={() => update({tag: sharedToMeTag(share), scope: 'all'})}
+            onShareBack={() => setSharebackTarget(share)}
             mapping={
                 <MappingControl
                     shareId={share.id}
@@ -229,6 +275,16 @@ export function IncomingSharesList() {
                     <div className="space-y-1.5">{active.map(renderRow)}</div>
                 </Section>
             )}
+
+            <CreateShareDialog
+                open={!!sharebackTarget}
+                onOpenChange={(o) => {
+                    if (!o) setSharebackTarget(null)
+                }}
+                showTrigger={false}
+                initialShareback={sharebackTarget}
+                initialTag={sharebackTarget ? forShare(sharebackTarget.id)[0]?.assign_tag : undefined}
+            />
       </div>
   )
 }

@@ -31,7 +31,14 @@
 - [x] **Security audit** — audit and fix: security, privacy, reliability (rate limiting and throttling).
 - [x] **Shares name and message** — required `name` and optional `message` on shares, propagated from the
   `OutgoingShare` to the recipient's `IncomingShare` (same-backend and over federation), so users know what
-  they're sharing/receiving and why. Set at creation. *(Frontend UI pending.)*
+  they're sharing/receiving and why. Set at creation.
+- [x] **Incoming-share detail enrichment** — the recipient's `IncomingShare` now also stores `future`, the
+  advisory `shared_tag_path` (the local `/SharedToMe/…` tag, set at creation and refreshed on each
+  announcement so a sender-side rename is reflected), `last_announcement_received_at`, and `shareback_of`
+  provenance; `shareback_of` is persisted on the `OutgoingShare` too. Frontend: richer share popovers
+  (status badge, ShareBack/future flags, shared tag, last-received, ShareBack provenance), inline status
+  badge removed from cards, a **Share back** action in the incoming popover, and a **Share back of** combobox
+  in the create-share dialog.
 - [ ] **Trash & restore** — soft delete with `deleted_at`, recipient notification, physical copy option.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — token refresh schedule, retry logic, presigned URL caching for remote pictures.

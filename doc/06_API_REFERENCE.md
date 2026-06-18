@@ -1051,7 +1051,9 @@ Create an outgoing share.
     recipient_instance: string;      // global domain (e.g. "other.example.com")
     allow_share_back ? : boolean;      // default true — if true, auto-accepts a ShareBack from the recipient
     future ? : boolean;                // default true — automatically share pictures added to the tag later
-    shareback_of ? : string;           // UUID of an IncomingShare — marks this as a ShareBack
+  shareback_of ? : string;           // marks this as a ShareBack — the `outgoing_share_id` of the
+                                     // incoming share being shared back (i.e. the original sender's
+                                     // OutgoingShare id)
 }
 ```
 
@@ -1068,6 +1070,11 @@ interface ShareResponse {
     status: ShareStatus;
     allow_share_back: boolean;
     future: boolean;
+    shareback_of: string | null;     // provenance: the original OutgoingShare this share answers
+    last_error_at: string | null;    // ISO — last failed announcement (while errored/recovering)
+    next_retry_at: string | null;    // ISO — next scheduled retry (while errored/recovering)
+    created_at: string;              // ISO
+    revoked_at: string | null;       // ISO — when closed (revoked or rejected); null while live
 }
 ```
 
@@ -1129,7 +1136,14 @@ interface IncomingShareResponse {
     outgoing_share_id: string;
     status: ShareStatus;
     allow_share_back: boolean;       // whether the sender allows a ShareBack
+  future: boolean;                 // propagated — whether the sender auto-announces new pictures
+  shared_tag_path: string | null;  // local /SharedToMe/<sender>/… tag (wire form) these land under;
+                                   // set at creation, refreshed on each announcement
+  last_announcement_received_at: string | null;  // ISO — last picture announcement from the sender
+  shareback_of: string | null;     // provenance: the recipient's own OutgoingShare this answers
     local_mapping_service_id: string | null;  // linked SharedTagMappingService (if set up)
+  created_at: string;              // ISO — when the incoming share was received
+  revoked_at: string | null;       // ISO — when closed (revoked by sender or rejected); null while live
 }
 ```
 

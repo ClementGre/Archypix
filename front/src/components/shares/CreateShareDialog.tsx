@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react'
+import {useEffect, useMemo, useRef, useState} from 'react'
 import {AlertCircle, Check, Loader2, Plus, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {useQueryClient} from '@tanstack/react-query'
@@ -8,14 +8,18 @@ import {Input} from '@/components/ui/input'
 import {Textarea} from '@/components/ui/textarea'
 import {Label} from '@/components/ui/label'
 import {Switch} from '@/components/ui/switch'
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {createOutgoingShare} from '@/api/shares'
 import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
+import {useIncomingShares} from '@/hooks/useShares'
+import type {IncomingShareResponse} from '@/lib/types'
 
 const NAME_MAX = 64
 const MESSAGE_MAX = 1000
+const NONE = '__none__'
 
 type RowStatus = 'pending' | 'creating' | 'done' | 'error'
 
@@ -88,32 +92,97 @@ function StatusIcon({status}: { status: RowStatus }) {
     return <div className="h-4 w-4 shrink-0"/>
 }
 
-export function CreateShareDialog() {
-    const [open, setOpen] = useState(false)
+const recipientFor = (share: IncomingShareResponse): Recipient => ({
+    key: `r${recipientSeq++}`,
+    username: share.sender_username,
+    instance: share.sender_instance,
+})
+
+export interface CreateShareDialogProps {
+    /** Controlled open state. When omitted, the dialog manages its own state via the default trigger. */
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+    /** Render the default "New share" trigger button (default true). */
+    showTrigger?: boolean
+    /** Open pre-configured as a ShareBack of this incoming share. */
+    initialShareback?: IncomingShareResponse | null
+    /** Pre-fill the tag (wire form) — e.g. the local tag the ShareBack source is mapped to. Stays editable. */
+    initialTag?: string
+}
+
+export function CreateShareDialog({
+                                      open: controlledOpen,
+                                      onOpenChange,
+                                      showTrigger = true,
+                                      initialShareback,
+                                      initialTag
+                                  }: CreateShareDialogProps = {}) {
+    const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+    const open = controlledOpen ?? uncontrolledOpen
+    const setOpen = (o: boolean) => {
+        onOpenChange?.(o)
+        if (controlledOpen === undefined) setUncontrolledOpen(o)
+    }
+
     const [name, setName] = useState('')
     const [message, setMessage] = useState('')
     const [tag, setTag] = useState('')
     const [allowShareBack, setAllowShareBack] = useState(true)
     const [future, setFuture] = useState(true)
+    const [sharebackOfId, setSharebackOfId] = useState('') // selected incoming share id, '' = none
     const [recipients, setRecipients] = useState<Recipient[]>(() => [newRecipient()])
     const [submitting, setSubmitting] = useState(false)
     const [progress, setProgress] = useState<Record<string, RowProgress>>({})
 
     const queryClient = useQueryClient()
+    const {data: incomingShares} = useIncomingShares()
 
-    // Reset everything when closed.
+    // Incoming shares eligible as a ShareBack target (still live).
+    const sharebackOptions = useMemo(
+        () => (incomingShares ?? []).filter((s) => s.status === 'active' || s.status === 'pending'),
+        [incomingShares],
+    )
+    const selectedIncoming = useMemo(
+        () => (incomingShares ?? []).find((s) => s.id === sharebackOfId) ?? null,
+        [incomingShares, sharebackOfId],
+    )
+    const isShareBack = !!selectedIncoming
+
+    // (Re)initialise on open; reset everything on close. When opened as a ShareBack, lock the
+    // recipient to the original sender.
     useEffect(() => {
-        if (!open) {
+        if (open) {
+            const seed = initialShareback ?? null
+            setSharebackOfId(seed?.id ?? '')
+            setRecipients(seed ? [recipientFor(seed)] : [newRecipient()])
+            setTag(initialTag ?? '')
+            // Reuse the original share's name so the owner recognises the ShareBack (still editable).
+            setName(seed?.name ?? '')
+        } else {
             setName('')
             setMessage('')
             setTag('')
             setAllowShareBack(true)
             setFuture(true)
+            setSharebackOfId('')
             setRecipients([newRecipient()])
             setSubmitting(false)
             setProgress({})
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open])
+
+    const onSelectShareback = (value: string) => {
+        if (value === NONE) {
+            setSharebackOfId('')
+            setRecipients([newRecipient()])
+            return
+        }
+        const share = (incomingShares ?? []).find((s) => s.id === value)
+        if (!share) return
+        setSharebackOfId(value)
+        setRecipients([recipientFor(share)])
+    }
 
     const patchRecipient = (key: string, patch: Partial<Recipient>) =>
         setRecipients((prev) => prev.map((r) => (r.key === key ? {...r, ...patch} : r)))
@@ -131,6 +200,9 @@ export function CreateShareDialog() {
         setSubmitting(true)
         setProgress(Object.fromEntries(validRecipients.map((r) => [r.key, {status: 'pending' as RowStatus}])))
 
+        // A ShareBack references the original outgoing share (the incoming share's outgoing_share_id).
+        const sharebackOf = selectedIncoming?.outgoing_share_id
+
         let succeeded = 0
         let failed = 0
         for (const r of validRecipients) {
@@ -144,6 +216,7 @@ export function CreateShareDialog() {
                     recipient_instance: r.instance.trim(),
                     allow_share_back: allowShareBack,
                     future,
+                    shareback_of: sharebackOf,
                 })
                 succeeded++
                 setProgress((prev) => ({...prev, [r.key]: {status: 'done'}}))
@@ -171,12 +244,14 @@ export function CreateShareDialog() {
                 setOpen(o)
             }}
         >
-            <DialogTrigger asChild>
-                <Button size="sm" className="gap-1.5">
-                    <Plus className="h-3.5 w-3.5"/>
-                    New share
-                </Button>
-            </DialogTrigger>
+            {showTrigger && (
+                <DialogTrigger asChild>
+                    <Button size="sm" className="gap-1.5">
+                        <Plus className="h-3.5 w-3.5"/>
+                        New share
+                    </Button>
+                </DialogTrigger>
+            )}
             <DialogContent
                 className="max-w-md"
                 onInteractOutside={(e) => {
@@ -184,9 +259,39 @@ export function CreateShareDialog() {
                 }}
             >
                 <DialogHeader>
-                    <DialogTitle>Create outgoing share</DialogTitle>
+                    <DialogTitle>{isShareBack ? 'Create ShareBack' : 'Create outgoing share'}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="min-w-0 space-y-4">
+                    {/* Share back of */}
+                    <div className="space-y-1.5">
+                        <Label>Share back of <span className="text-muted-foreground">(optional)</span></Label>
+                        <Select
+                            value={sharebackOfId || NONE}
+                            onValueChange={onSelectShareback}
+                            disabled={submitting || complete}
+                        >
+                            <SelectTrigger>
+                                <SelectValue placeholder="Not a ShareBack"/>
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={NONE}>Not a ShareBack</SelectItem>
+                                {sharebackOptions.map((s) => (
+                                    <SelectItem key={s.id} value={s.id}>
+                                        {s.name} — @{s.sender_username}:{s.sender_instance}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {isShareBack && (
+                            <p className="text-[11px] text-muted-foreground">
+                                Shared back to @{selectedIncoming!.sender_username}:{selectedIncoming!.sender_instance}.
+                                {selectedIncoming!.allow_share_back
+                                    ? ' Auto-accepted (the sender allows ShareBack).'
+                                    : ' The sender must accept it manually.'}
+                            </p>
+                        )}
+                    </div>
+
                     {/* Name */}
                     <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
@@ -242,7 +347,7 @@ export function CreateShareDialog() {
 
                     {/* Recipients */}
                     <div className="space-y-1.5">
-                        <Label>Recipients</Label>
+                        <Label>{isShareBack ? 'Recipient' : 'Recipients'}</Label>
                         <div className="space-y-1.5">
                             {recipients.map((r) => {
                                 const rowProgress = progress[r.key]
@@ -250,23 +355,25 @@ export function CreateShareDialog() {
                                     <div key={r.key} className="flex items-center gap-1.5">
                                         <RecipientField
                                             recipient={r}
-                                            disabled={submitting || complete}
+                                            disabled={submitting || complete || isShareBack}
                                             onChange={(patch) => patchRecipient(r.key, patch)}
                                         />
                                         {rowProgress ? (
                                             <StatusIcon status={rowProgress.status}/>
                                         ) : (
-                                            <Button
-                                                type="button"
-                                                size="icon"
-                                                variant="ghost"
-                                                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-30"
-                                                title="Remove recipient"
-                                                disabled={recipients.length === 1}
-                                                onClick={() => setRecipients((prev) => prev.filter((x) => x.key !== r.key))}
-                                            >
-                                                <X className="h-3.5 w-3.5"/>
-                                            </Button>
+                                            !isShareBack && (
+                                                <Button
+                                                    type="button"
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-30"
+                                                    title="Remove recipient"
+                                                    disabled={recipients.length === 1}
+                                                    onClick={() => setRecipients((prev) => prev.filter((x) => x.key !== r.key))}
+                                                >
+                                                    <X className="h-3.5 w-3.5"/>
+                                                </Button>
+                                            )
                                         )}
                                     </div>
                                 )
@@ -283,7 +390,7 @@ export function CreateShareDialog() {
                                     </p>
                                 )
                             })}
-                        {!complete && (
+                        {!complete && !isShareBack && (
                             <button
                                 type="button"
                                 className="text-xs text-primary hover:underline disabled:opacity-50"
@@ -327,7 +434,9 @@ export function CreateShareDialog() {
                                     ? 'Creating…'
                                     : validRecipients.length > 1
                                         ? `Create ${validRecipients.length} shares`
-                                        : 'Create share'}
+                                        : isShareBack
+                                            ? 'Create ShareBack'
+                                            : 'Create share'}
                             </Button>
                         )}
                     </DialogFooter>

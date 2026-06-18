@@ -215,6 +215,11 @@ CREATE TABLE outgoing_shares
     allow_share_back   BOOLEAN      NOT NULL DEFAULT TRUE,
     future             BOOLEAN      NOT NULL DEFAULT TRUE, -- Auto-announce new pictures
 
+    -- ShareBack provenance: the original OutgoingShare this share was created in response to
+    -- (i.e. the recipient's incoming share's outgoing_share_id). NULL for normal shares. Kept for
+    -- end-user display only; no FK (the referenced row is local but may be deleted independently).
+    shareback_of UUID,
+
     -- Status: starts as pending until the recipient accepts, then active. A delivery failure on
     -- an active future share demotes it to 'errored'; the pipeline retries it with a full reconcile.
     status share_status NOT NULL DEFAULT 'pending',
@@ -291,6 +296,23 @@ CREATE TABLE incoming_shares
     -- Propagated from the sender's ShareAnnouncement: whether the recipient may share
     -- these pictures back to the sender with auto-accept. Drives the "Share back" UI.
     allow_share_back BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Propagated from the sender's OutgoingShare: whether new pictures under the tag are
+    -- auto-announced. Display only (the sender owns the actual auto-announce behaviour).
+    future                        BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- The local `/SharedToMe/<sender>/…` tag these pictures land under, derived from the sender's
+    -- shared tag_path. Set on share creation and refreshed on each picture announcement (so a
+    -- sender-side tag rename / re-target is reflected). Advisory/display only — the authoritative
+    -- per-picture tag is the announcement-driven `incoming_share` tag row.
+    shared_tag_path               LTREE,
+
+    -- When the sender last announced pictures for this share (NULL until the first announcement).
+    last_announcement_received_at TIMESTAMP,
+
+    -- ShareBack provenance: the recipient's own OutgoingShare this incoming share is a share-back
+    -- of. NULL for normal shares. Kept for end-user display only; no FK.
+    shareback_of                  UUID,
 
     -- Timestamps
     created_at               TIMESTAMP    NOT NULL DEFAULT (now() at time zone 'utc'),

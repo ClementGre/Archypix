@@ -8,6 +8,7 @@ use crate::domain::tag::TagPath;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
+use crate::repository::share::IncomingShareRepository;
 use crate::repository::tag::TagRepository;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -65,6 +66,15 @@ pub async fn register_received_pictures(
         )
         .await?;
     }
+
+    // Stamp the announcement and refresh the advisory shared-tag path (reflects a sender-side
+    // tag rename / re-target on the next announcement).
+    IncomingShareRepository::record_announcement(
+        &mut *tx,
+        incoming_share_id,
+        shared_tag.as_ltree(),
+    )
+    .await?;
 
     tx.commit().await.map_err(map_sqlx_error)?;
 

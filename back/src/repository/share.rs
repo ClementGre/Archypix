@@ -18,6 +18,7 @@ impl OutgoingShareRepository {
         recipient_instance: &str,
         allow_share_back: bool,
         future: bool,
+        shareback_of: Option<Uuid>,
     ) -> Result<OutgoingShare, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -25,13 +26,14 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"INSERT INTO outgoing_shares
-                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, future)
-               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8)
+                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, future, shareback_of)
+               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id, owner_id, tag_path::text as "tag_path!",
                          name, message,
                          recipient_username, recipient_instance,
-                         allow_share_back, future,
+                         allow_share_back, future, shareback_of,
                          status as "status: ShareStatus",
+                         last_error_at, next_retry_at,
                          created_at, revoked_at"#,
             owner_id,
             tag_path,
@@ -41,6 +43,7 @@ impl OutgoingShareRepository {
             recipient_instance,
             allow_share_back,
             future,
+            shareback_of,
         )
             .fetch_one(ex)
             .await
@@ -56,8 +59,9 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future,
+                      allow_share_back, future, shareback_of,
                       status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares WHERE id = $1"#,
             share_id,
@@ -81,8 +85,9 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future,
+                      allow_share_back, future, shareback_of,
                       status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares
                WHERE owner_id = $1 AND status = 'active'::share_status AND future = true"#,
@@ -110,8 +115,9 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future,
+                      allow_share_back, future, shareback_of,
                       status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares
                WHERE owner_id = $1
@@ -141,8 +147,9 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future,
+                      allow_share_back, future, shareback_of,
                       status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares
                WHERE owner_id = $1
@@ -167,7 +174,8 @@ impl OutgoingShareRepository {
         sqlx::query!(
             r#"UPDATE outgoing_shares
                SET status = $2,
-                   revoked_at = CASE WHEN $2 = 'revoked'::share_status
+                   revoked_at = CASE WHEN $2 IN ('revoked'::share_status, 'tombstoned'::share_status)
+                                          AND revoked_at IS NULL
                                      THEN now() AT TIME ZONE 'utc'
                                      ELSE revoked_at
                                 END
@@ -235,8 +243,9 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future,
+                      allow_share_back, future, shareback_of,
                       status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares WHERE owner_id = $1 ORDER BY created_at DESC"#,
             owner_id,
@@ -260,6 +269,9 @@ impl IncomingShareRepository {
         message: Option<&str>,
         outgoing_share_id: Uuid,
         allow_share_back: bool,
+        future: bool,
+        shared_tag_path: Option<&str>,
+        shareback_of: Option<Uuid>,
     ) -> Result<IncomingShare, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -267,18 +279,25 @@ impl IncomingShareRepository {
         sqlx::query_as!(
             IncomingShare,
             r#"INSERT INTO incoming_shares
-                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id, allow_share_back)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id,
+                    allow_share_back, future, shared_tag_path, shareback_of)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::ltree, $10)
                ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)
                DO UPDATE SET status = incoming_shares.status,
                              allow_share_back = EXCLUDED.allow_share_back,
+                             future = EXCLUDED.future,
                              name = EXCLUDED.name,
-                             message = EXCLUDED.message
+                             message = EXCLUDED.message,
+                             shared_tag_path = COALESCE(EXCLUDED.shared_tag_path, incoming_shares.shared_tag_path),
+                             shareback_of = COALESCE(EXCLUDED.shareback_of, incoming_shares.shareback_of)
                RETURNING id, recipient_id, sender_username, sender_instance,
                          name, message, outgoing_share_id,
                          local_mapping_service_id,
                          status as "status: ShareStatus",
-                         allow_share_back, created_at, revoked_at"#,
+                         allow_share_back, future,
+                         shared_tag_path::text as shared_tag_path,
+                         last_announcement_received_at, shareback_of,
+                         created_at, revoked_at"#,
             recipient_id,
             sender_username,
             sender_instance,
@@ -286,6 +305,9 @@ impl IncomingShareRepository {
             message,
             outgoing_share_id,
             allow_share_back,
+            future,
+            shared_tag_path,
+            shareback_of,
         )
             .fetch_one(ex)
             .await
@@ -305,7 +327,10 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, created_at, revoked_at
+                      allow_share_back, future,
+                      shared_tag_path::text as shared_tag_path,
+                      last_announcement_received_at, shareback_of,
+                      created_at, revoked_at
                FROM incoming_shares WHERE recipient_id = $1 ORDER BY created_at DESC"#,
             recipient_id,
         )
@@ -325,7 +350,8 @@ impl IncomingShareRepository {
         sqlx::query!(
             r#"UPDATE incoming_shares
                SET status = $2,
-                   revoked_at = CASE WHEN $2 = 'revoked'::share_status
+                   revoked_at = CASE WHEN $2 IN ('revoked'::share_status, 'tombstoned'::share_status)
+                                          AND revoked_at IS NULL
                                      THEN now() AT TIME ZONE 'utc'
                                      ELSE revoked_at
                                 END
@@ -349,7 +375,10 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, created_at, revoked_at
+                      allow_share_back, future,
+                      shared_tag_path::text as shared_tag_path,
+                      last_announcement_received_at, shareback_of,
+                      created_at, revoked_at
                FROM incoming_shares WHERE id = $1"#,
             share_id,
         )
@@ -374,7 +403,10 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, created_at, revoked_at
+                      allow_share_back, future,
+                      shared_tag_path::text as shared_tag_path,
+                      last_announcement_received_at, shareback_of,
+                      created_at, revoked_at
                FROM incoming_shares
                WHERE outgoing_share_id = $1 AND sender_instance = $2"#,
             outgoing_share_id,
@@ -399,6 +431,31 @@ impl IncomingShareRepository {
             r#"UPDATE incoming_shares SET local_mapping_service_id = $2 WHERE id = $1"#,
             share_id,
             service_id,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Record that the sender just announced pictures for this share: stamp
+    /// `last_announcement_received_at` and refresh the advisory `shared_tag_path` to the tag the
+    /// pictures landed under (so a sender-side tag rename / re-target is reflected).
+    pub async fn record_announcement<'e, E>(
+        ex: E,
+        share_id: Uuid,
+        shared_tag_path: &str,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"UPDATE incoming_shares
+               SET last_announcement_received_at = now() AT TIME ZONE 'utc',
+                   shared_tag_path = $2::text::ltree
+               WHERE id = $1"#,
+            share_id,
+            shared_tag_path,
         )
         .execute(ex)
         .await
@@ -446,6 +503,7 @@ mod tests {
             "other.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -468,6 +526,7 @@ mod tests {
             "other.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -481,6 +540,40 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(updated.status, ShareStatus::Active);
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn set_status_stamps_closed_at_on_terminal(db: PgPool) {
+        let owner = seed_user(&db).await;
+        // Tombstoned (rejected) must record a close timestamp, just like revoked.
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(share.revoked_at.is_none());
+
+        OutgoingShareRepository::set_status(&db, share.id, ShareStatus::Tombstoned)
+            .await
+            .unwrap();
+        let closed = OutgoingShareRepository::get_by_id(&db, share.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.status, ShareStatus::Tombstoned);
+        assert!(
+            closed.revoked_at.is_some(),
+            "tombstoned share must carry a close timestamp"
+        );
     }
 
     // ── IncomingShare ─────────────────────────────────────────────────────────
@@ -499,6 +592,7 @@ mod tests {
             "this.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -512,6 +606,9 @@ mod tests {
             None,
             outgoing.id,
             true,
+            true,
+            Some("SharedToMe.sender_AT_other_DOT_com.Photos"),
+            None,
         )
         .await
         .unwrap();
@@ -519,6 +616,11 @@ mod tests {
         assert_eq!(incoming.status, ShareStatus::Pending);
         assert_eq!(incoming.outgoing_share_id, outgoing.id);
         assert!(incoming.allow_share_back);
+        assert!(incoming.future);
+        assert_eq!(
+            incoming.shared_tag_path.as_deref(),
+            Some("SharedToMe.sender_AT_other_DOT_com.Photos")
+        );
     }
 
     #[sqlx::test(migrator = "MIGRATOR")]
@@ -535,6 +637,7 @@ mod tests {
             "this.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -548,6 +651,9 @@ mod tests {
             None,
             outgoing.id,
             false,
+            false,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -573,6 +679,7 @@ mod tests {
             "other.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -590,6 +697,7 @@ mod tests {
             "other.com",
             true,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -607,6 +715,7 @@ mod tests {
             "other.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -631,6 +740,7 @@ mod tests {
             "carol.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -647,6 +757,7 @@ mod tests {
             "carol.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();
@@ -664,6 +775,7 @@ mod tests {
             "carol.com",
             true,
             true,
+            None,
         )
         .await
         .unwrap();

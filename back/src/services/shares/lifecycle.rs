@@ -6,6 +6,7 @@
 use crate::clients::federation::FederationClient;
 use crate::clients::federation::models::ShareAnnouncementRequest;
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
+use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::pipeline::PipelineWaker;
@@ -288,13 +289,20 @@ pub async fn create_outgoing_share(
         recipient_instance,
         allow_share_back,
         future,
+        shareback_of,
     )
     .await?;
 
     let mut same_backend_incoming: Option<(Uuid, IncomingShare)> = None;
     let mut cross_instance_auto_accepted = false;
     if let Some(recipient_id) = recipient_local_id {
-        // Same-backend: create IncomingShare in the same transaction.
+        // Same-backend: create IncomingShare in the same transaction. Stamp the advisory shared-tag
+        // path so the recipient sees the target tag even before the first announcement.
+        let shared_tag = TagPath::shared_to_me(
+            sender_username,
+            &config.global_domain,
+            &TagPath::from_ltree(tag_path),
+        );
         let incoming = IncomingShareRepository::create(
             &mut *tx,
             recipient_id,
@@ -304,6 +312,9 @@ pub async fn create_outgoing_share(
             message,
             share.id,
             allow_share_back,
+            future,
+            Some(shared_tag.as_ltree()),
+            shareback_of,
         )
         .await?;
         same_backend_incoming = Some((recipient_id, incoming));

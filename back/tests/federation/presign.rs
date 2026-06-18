@@ -33,6 +33,7 @@ async fn presign_valid_token_returns_mock_urls(db: PgPool) {
         "b.test",
         true,
         false,
+        None,
     )
     .await
     .unwrap();
@@ -107,6 +108,7 @@ async fn presign_revoked_share_token_is_dead(db: PgPool) {
         "b.test",
         true,
         false,
+        None,
     )
     .await
     .unwrap();

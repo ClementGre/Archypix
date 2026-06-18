@@ -192,6 +192,24 @@ async fn future_picture_added_after_accept_is_announced(db: PgPool) {
             .await
             .contains(&expected)
     );
+
+    // The announcement stamps the incoming share with its timestamp and the (advisory) local
+    // SharedToMe tag the pictures landed under.
+    let bob_incoming = IncomingShareRepository::list_by_recipient(&db, bob)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.sender_username == "alice")
+        .expect("Bob must have an incoming share from Alice");
+    assert!(
+        bob_incoming.last_announcement_received_at.is_some(),
+        "announcement must stamp last_announcement_received_at"
+    );
+    assert_eq!(
+        bob_incoming.shared_tag_path.as_deref(),
+        Some(expected.as_str()),
+        "announcement must refresh the advisory shared_tag_path"
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -359,6 +377,24 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
     assert!(
         from_bob.local_mapping_service_id.is_some(),
         "a SharedTagMappingService mapping rule must be linked"
+    );
+    assert_eq!(
+        from_bob.shareback_of,
+        Some(alice_share.id),
+        "incoming ShareBack must record the original outgoing share it answers"
+    );
+
+    // Bob's outgoing ShareBack must record the same provenance for his own UI.
+    let bob_shareback = OutgoingShareRepository::list_by_owner(&db, bob)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.recipient_username == "alice")
+        .expect("Bob must have an outgoing share to Alice");
+    assert_eq!(
+        bob_shareback.shareback_of,
+        Some(alice_share.id),
+        "outgoing ShareBack must record the original outgoing share it answers"
     );
 
     // The auto-mapping reintegrates the shared-back pictures into Alice's *original* shared tag

@@ -35,9 +35,11 @@ pub async fn receive_share_announcement(
     recipient_username: &str,
     recipient_instance: &str,
     outgoing_share_id: Uuid,
+    tag_path: &str,
     name: &str,
     message: Option<&str>,
     allow_share_back: bool,
+    future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<(Uuid, bool), AppError> {
     if recipient_instance != config.global_domain {
@@ -83,6 +85,13 @@ pub async fn receive_share_announcement(
         ));
     }
 
+    // Advisory local tag these pictures will land under, for the recipient's UI even before the
+    // first picture announcement arrives.
+    let shared_tag = TagPath::shared_to_me(
+        sender_username,
+        sender_instance,
+        &TagPath::from_ltree(tag_path),
+    );
     let incoming = IncomingShareRepository::create(
         db,
         recipient.id,
@@ -92,6 +101,9 @@ pub async fn receive_share_announcement(
         message,
         outgoing_share_id,
         allow_share_back,
+        future,
+        Some(shared_tag.as_ltree()),
+        shareback_of,
     )
     .await?;
 

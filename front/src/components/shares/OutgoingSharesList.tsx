@@ -4,12 +4,11 @@ import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
 import {Section} from '@/components/photos/detail/Section'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
-import {useOutgoingShares, useShareMutations} from '@/hooks/useShares'
+import {useIncomingShares, useOutgoingShares, useShareMutations} from '@/hooks/useShares'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
-import type {ShareResponse} from '@/lib/types'
-import {ShareStatusBadge} from './ShareStatusBadge'
+import type {IncomingShareResponse, ShareResponse} from '@/lib/types'
 import {CreateShareDialog} from './CreateShareDialog'
 import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
 
@@ -47,12 +46,14 @@ function GroupedShareRow({
                              tag,
                              shares,
                              revoking,
+                             sharebackLabel,
                              onFilterTag,
                              onRevoke,
                          }: {
     tag: string
     shares: ShareResponse[]
     revoking: boolean
+    sharebackLabel: (share: ShareResponse) => string | null
     onFilterTag: (tag: string) => void
     onRevoke: (id: string) => void
 }) {
@@ -61,6 +62,15 @@ function GroupedShareRow({
         label: `→ @${s.recipient_username}:${s.recipient_instance}`,
         name: s.name,
         message: s.message,
+        status: s.status,
+        allowShareBack: s.allow_share_back,
+        future: s.future,
+        sharedTag: s.tag_path,
+        createdAt: s.created_at,
+        lastErrorAt: s.last_error_at,
+        nextRetryAt: s.next_retry_at,
+        closedAt: s.revoked_at,
+        sharebackOf: sharebackLabel(s),
     }))
 
     return (
@@ -88,7 +98,6 @@ function GroupedShareRow({
                             → @{share.recipient_username}:{share.recipient_instance}
                         </span>
                         <div className="flex shrink-0 items-center gap-1">
-                            <ShareStatusBadge status={share.status}/>
                             <RevokeButton share={share} disabled={revoking} onRevoke={() => onRevoke(share.id)}/>
                         </div>
                     </div>
@@ -111,11 +120,25 @@ function groupByTag(shares: ShareResponse[]): Array<[string, ShareResponse[]]> {
 
 export function OutgoingSharesList() {
     const {data: shares, isPending, isError, error} = useOutgoingShares()
+    const {data: incoming} = useIncomingShares()
     const {revoke} = useShareMutations()
     const {update} = useGalleryParams()
 
     const onRevoke = (id: string) => revoke.mutate(id, {onError: (e) => toast.error(apiErrorMessage(e))})
     const onFilterTag = (tag: string) => update({tag})
+
+    // outgoing.shareback_of references the original outgoing share, which is the user's incoming
+    // share's `outgoing_share_id`. Resolve it to that incoming share for a human label.
+    const incomingByOutgoingId = useMemo(() => {
+        const m = new Map<string, IncomingShareResponse>()
+        for (const i of incoming ?? []) m.set(i.outgoing_share_id, i)
+        return m
+    }, [incoming])
+    const sharebackLabel = (share: ShareResponse): string | null => {
+        if (!share.shareback_of) return null
+        const i = incomingByOutgoingId.get(share.shareback_of)
+        return i ? `${i.name} ← @${i.sender_username}:${i.sender_instance}` : 'a received share'
+    }
 
     const {closed, pending, active} = useMemo(() => {
         const all = shares ?? []
@@ -170,6 +193,7 @@ export function OutgoingSharesList() {
                 tag={tag}
                 shares={group}
                 revoking={revoke.isPending}
+                sharebackLabel={sharebackLabel}
                 onFilterTag={onFilterTag}
                 onRevoke={onRevoke}
             />

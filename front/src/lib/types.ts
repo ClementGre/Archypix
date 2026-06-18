@@ -97,6 +97,14 @@ export interface ShareResponse {
     status: ShareStatus
     allow_share_back: boolean
     future: boolean
+    /** ShareBack provenance: the incoming share (by its `outgoing_share_id`) this share answers. */
+    shareback_of: string | null
+    /** Announcement retry/backoff (set while errored/recovering). */
+    last_error_at: string | null
+    next_retry_at: string | null
+    created_at: string
+    /** When the share was closed (revoked or rejected); null while live. */
+    revoked_at: string | null
 }
 
 export interface IncomingShareResponse {
@@ -108,7 +116,19 @@ export interface IncomingShareResponse {
     outgoing_share_id: string
     status: ShareStatus
     allow_share_back: boolean
+    /** Whether the sender auto-announces new pictures under the shared tag. */
+    future: boolean
+    /** Local `/SharedToMe/<sender>/…` tag (wire form) the received pictures land under. */
+    shared_tag_path: string | null
+    /** ISO timestamp of the sender's last picture announcement, or null if none yet. */
+    last_announcement_received_at: string | null
+    /** ShareBack provenance: the recipient's own outgoing share this is a share-back of. */
+    shareback_of: string | null
     local_mapping_service_id: string | null
+    /** When the incoming share was received. */
+    created_at: string
+    /** When the share was closed (revoked by sender or rejected here); null while live. */
+    revoked_at: string | null
 }
 
 // ---------- Gallery filter object (camelCase; hooks map to query params) ----------

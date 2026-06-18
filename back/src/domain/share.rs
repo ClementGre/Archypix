@@ -36,7 +36,11 @@ pub struct OutgoingShare {
     pub recipient_instance: String,
     pub allow_share_back: bool,
     pub future: bool,
+    pub shareback_of: Option<Uuid>,
     pub status: ShareStatus,
+    /// Announcement retry/backoff: stamped on a failed delivery, cleared on success.
+    pub last_error_at: Option<NaiveDateTime>,
+    pub next_retry_at: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
     pub revoked_at: Option<NaiveDateTime>,
 }
@@ -54,6 +58,16 @@ pub struct IncomingShare {
     pub status: ShareStatus,
     /// Whether the sender allows sharing these pictures back with auto-accept.
     pub allow_share_back: bool,
+    /// Propagated from the sender's OutgoingShare: whether new pictures are auto-announced.
+    pub future: bool,
+    /// Local `/SharedToMe/<sender>/…` tag these pictures land under. Set at creation, refreshed on
+    /// each announcement. Advisory/display only. `None` until known.
+    pub shared_tag_path: Option<String>,
+    /// When the sender last announced pictures for this share. `None` until the first announcement.
+    pub last_announcement_received_at: Option<NaiveDateTime>,
+    /// ShareBack provenance: the recipient's own OutgoingShare this is a share-back of. `None` for
+    /// a normal incoming share.
+    pub shareback_of: Option<Uuid>,
     pub created_at: NaiveDateTime,
     pub revoked_at: Option<NaiveDateTime>,
 }

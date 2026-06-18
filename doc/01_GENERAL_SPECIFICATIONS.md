@@ -244,6 +244,7 @@ OutgoingShare:
   recipient: "@bob:other.com"
   allowShareBack: true         # if false, ShareBack creates a normal share request (no auto-accept)
   future: true                 # new pictures added to the tag are announced automatically
+  sharebackOf: null            # if set, the original OutgoingShare this share answers (ShareBack provenance)
   status: pending              # pending | pending_first_announcement | active | errored | revoked
                                # pending_first_announcement: accepted; the pipeline announces the
                                # current pictures (ignoring `future`) then flips it to active.
@@ -256,7 +257,13 @@ IncomingShare:
   name: "Alps 2024"            # propagated from the sender's OutgoingShare
   message: "Hope you enjoy"    # propagated (nullable)
   outgoingShareId: os-001      # reference to the sender's OutgoingShare
+  future: true                 # propagated: whether the sender auto-announces new pictures
+  sharedTagPath: /SharedToMe/alice_AT_instance_DOT_com/Photos/Travel/Alps
+                               # advisory local tag the pictures land under; set at creation,
+                               # refreshed on each announcement (reflects a sender-side tag rename)
+  lastAnnouncementReceivedAt: null  # timestamp of the sender's last picture announcement
   localMappingServiceId: stms-007   # optional: linked SharedTagMappingService entry
+  sharebackOf: null            # if set, the recipient's own OutgoingShare this is a share-back of
   status: pending              # pending | active | revoked | tombstoned
 ```
 

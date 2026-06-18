@@ -7,6 +7,7 @@ use crate::services;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -33,6 +34,15 @@ pub struct ShareResponse {
     pub status: ShareStatus,
     pub allow_share_back: bool,
     pub future: bool,
+    /// ShareBack provenance: the recipient's incoming share (by its `outgoing_share_id`) this
+    /// share answers. `None` for a normal share.
+    pub shareback_of: Option<uuid::Uuid>,
+    /// Announcement retry/backoff (set while `errored`/recovering).
+    pub last_error_at: Option<NaiveDateTime>,
+    pub next_retry_at: Option<NaiveDateTime>,
+    pub created_at: NaiveDateTime,
+    /// When the share was closed (revoked or rejected); `None` while live.
+    pub revoked_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,7 +55,15 @@ pub struct IncomingShareResponse {
     pub outgoing_share_id: uuid::Uuid,
     pub status: ShareStatus,
     pub allow_share_back: bool,
+    pub future: bool,
+    /// Local `/SharedToMe/<sender>/…` tag (ltree wire form) the received pictures land under.
+    pub shared_tag_path: Option<String>,
+    pub last_announcement_received_at: Option<NaiveDateTime>,
+    pub shareback_of: Option<uuid::Uuid>,
     pub local_mapping_service_id: Option<uuid::Uuid>,
+    pub created_at: NaiveDateTime,
+    /// When the share was closed (revoked by the sender or rejected here); `None` while live.
+    pub revoked_at: Option<NaiveDateTime>,
 }
 
 pub async fn create_outgoing(
@@ -89,6 +107,11 @@ pub async fn create_outgoing(
         status: share.status,
         allow_share_back: share.allow_share_back,
         future: share.future,
+        shareback_of: share.shareback_of,
+        last_error_at: share.last_error_at,
+        next_retry_at: share.next_retry_at,
+        created_at: share.created_at,
+        revoked_at: share.revoked_at,
     }))
 }
 
@@ -111,6 +134,11 @@ pub async fn list_outgoing(
                 status: s.status,
                 allow_share_back: s.allow_share_back,
                 future: s.future,
+                shareback_of: s.shareback_of,
+                last_error_at: s.last_error_at,
+                next_retry_at: s.next_retry_at,
+                created_at: s.created_at,
+                revoked_at: s.revoked_at,
             })
             .collect(),
     ))
@@ -134,7 +162,13 @@ pub async fn list_incoming(
                 outgoing_share_id: s.outgoing_share_id,
                 status: s.status,
                 allow_share_back: s.allow_share_back,
+                future: s.future,
+                shared_tag_path: s.shared_tag_path,
+                last_announcement_received_at: s.last_announcement_received_at,
+                shareback_of: s.shareback_of,
                 local_mapping_service_id: s.local_mapping_service_id,
+                created_at: s.created_at,
+                revoked_at: s.revoked_at,
             })
             .collect(),
     ))

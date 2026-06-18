@@ -95,9 +95,11 @@ pub async fn announce_share(
         &payload.recipient_username,
         &payload.recipient_instance,
         payload.outgoing_share_id,
+        &payload.tag_path,
         &payload.name,
         payload.message.as_deref(),
         payload.allow_share_back,
+        payload.future,
         payload.shareback_of,
     )
     .await?;
