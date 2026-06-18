@@ -76,7 +76,7 @@ Key variables:
 - **`WORKER_JWT_SECRET`** — Shared HMAC secret for signing worker JWTs. Must be identical to the backend's `WORKER_JWT_SECRET`.
 - **`WORKER_ID`** — Unique name for this instance (defaults to a random short ID).
 - **`POLL_INTERVAL_MS`** — How often to poll for new jobs when idle (default: `1000`).
-- **`MAX_CONCURRENT_JOBS`** — Maximum jobs processed simultaneously (default: `2`).
+- **`MAX_CONCURRENT_JOBS`** — Maximum jobs processed simultaneously (default: `6`).
 - **`JOB_TYPES`** — Comma-separated list of accepted job types; empty means all (e.g. `gen_thumbnail,edit_picture`).
 
 Log level:

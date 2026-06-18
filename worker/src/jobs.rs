@@ -11,10 +11,15 @@ use tokio::sync::Semaphore;
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
-pub async fn run_job_loop(config: Arc<Config>, client: Arc<BackendClient>) {
-    let sem = Arc::new(Semaphore::new(config.max_concurrent_jobs));
+/// Poll one backend for jobs, competing with other backend loops for slots on the shared semaphore.
+///
+/// When a job is claimed the loop immediately tries for another (no sleep), so burst workloads
+/// fill the slot pool as fast as the backend can issue claims.  When idle the loop backs off to
+/// `poll_interval_ms`.  On error it backs off to `5 × poll_interval_ms`.
+pub async fn run_job_loop(config: Arc<Config>, client: Arc<BackendClient>, sem: Arc<Semaphore>) {
     info!(
         worker_id = %config.worker_id,
+        backend = %client.back_domain(),
         poll_interval_ms = config.poll_interval_ms,
         max_concurrent_jobs = config.max_concurrent_jobs,
         job_types = ?config.job_types,
@@ -40,9 +45,11 @@ pub async fn run_job_loop(config: Arc<Config>, client: Arc<BackendClient>) {
                     dispatch(client_clone.as_ref(), job).await;
                     drop(permit);
                 });
+                // No sleep — immediately compete for the next slot so burst workloads
+                // keep all concurrent slots saturated.
             }
             Err(e) => {
-                warn!(error = ?e, "error polling for jobs");
+                warn!(error = ?e, backend = %client.back_domain(), "error polling for jobs");
                 drop(permit);
                 sleep(Duration::from_millis(config.poll_interval_ms * 5)).await;
             }

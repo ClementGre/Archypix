@@ -1,6 +1,7 @@
 use crate::auth::generate_token;
-use crate::config::Config;
+use crate::config::{BackendConfig, Config};
 use crate::error::{Result, WorkerError};
+use archypix_common::job::JobType;
 use archypix_common::transfer::{ClaimJobResponse, ClaimQuery, CompleteJobRequest, FailJobRequest};
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -15,7 +16,7 @@ struct CachedToken {
     valid_until: i64,
 }
 
-/// HTTP client for communicating with the Archypix backend.
+/// HTTP client for communicating with one Archypix backend.
 #[derive(Clone)]
 pub struct BackendClient {
     /// Short-lived client for backend API calls (claim, complete, fail).
@@ -25,13 +26,18 @@ pub struct BackendClient {
     /// No total-request timeout — large files take as long as they take.
     /// A connect timeout prevents hanging on unreachable endpoints.
     presign_http: Client,
-    config: Config,
-    /// Cached worker JWT shared across Arc-clones of this client.
+    back_url: String,
+    back_domain: String,
+    global_domain: String,
+    worker_jwt_secret: String,
+    worker_id: String,
+    job_types: Vec<JobType>,
+    /// Cached worker JWT — isolated per BackendClient (each has a distinct `aud`).
     token_cache: Arc<Mutex<Option<CachedToken>>>,
 }
 
 impl BackendClient {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: &Config, backend: &BackendConfig) -> Self {
         let api_http = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -46,9 +52,18 @@ impl BackendClient {
         Self {
             api_http,
             presign_http,
-            config,
+            back_url: backend.back_url.clone(),
+            back_domain: backend.back_domain.clone(),
+            global_domain: config.global_domain.clone(),
+            worker_jwt_secret: config.worker_jwt_secret.clone(),
+            worker_id: config.worker_id.clone(),
+            job_types: config.job_types.clone(),
             token_cache: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn back_domain(&self) -> &str {
+        &self.back_domain
     }
 
     /// Return the cached worker JWT if still valid, otherwise generate and cache a fresh one.
@@ -63,7 +78,12 @@ impl BackendClient {
                 return Ok(cached.token.clone());
             }
         }
-        let token = generate_token(&self.config)?;
+        let token = generate_token(
+            &self.worker_id,
+            &self.global_domain,
+            &self.back_domain,
+            &self.worker_jwt_secret,
+        )?;
         *guard = Some(CachedToken {
             token: token.clone(),
             valid_until: now + 300 - 30,
@@ -76,10 +96,10 @@ impl BackendClient {
         let token = self.get_or_refresh_token()?;
         let url = format!(
             "{}/api/worker/jobs/next",
-            self.config.back_url.trim_end_matches('/')
+            self.back_url.trim_end_matches('/')
         );
         let query = ClaimQuery {
-            types: self.config.job_types.clone(),
+            types: self.job_types.clone(),
         };
         let resp = self
             .api_http
@@ -100,7 +120,7 @@ impl BackendClient {
             return Ok(None);
         }
         let job = serde_json::from_slice::<ClaimJobResponse>(&body)?;
-        debug!(job_id = %job.job_id, job_type = %job.job_type, "claimed job");
+        debug!(job_id = %job.job_id, job_type = %job.job_type, backend = %self.back_domain, "claimed job");
         Ok(Some(job))
     }
 
@@ -109,7 +129,7 @@ impl BackendClient {
         let token = self.get_or_refresh_token()?;
         let url = format!(
             "{}/api/worker/jobs/{job_id}/complete",
-            self.config.back_url.trim_end_matches('/')
+            self.back_url.trim_end_matches('/')
         );
         let resp = self
             .api_http
@@ -141,7 +161,7 @@ impl BackendClient {
         let token = self.get_or_refresh_token()?;
         let url = format!(
             "{}/api/worker/jobs/{job_id}/fail",
-            self.config.back_url.trim_end_matches('/')
+            self.back_url.trim_end_matches('/')
         );
         let body = FailJobRequest {
             claim_token,

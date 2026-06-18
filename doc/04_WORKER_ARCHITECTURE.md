@@ -6,17 +6,17 @@ Workers are standalone Rust processes (`archypix-worker`) that poll the backend 
 ## Module layout (`worker/src/`)
 
 ```
-main.rs              — tokio entry-point; starts health server + job loop
-config.rs            — Config::from_env(); all settings with documented defaults
-auth.rs              — generate_token(): HS256 JWT generation; cached via BackendClient
+main.rs              — tokio entry-point; starts health server + one job-loop task per backend
+config.rs            — Config::from_env(); BackendConfig (per-backend URL/domain); shared settings
+auth.rs              — generate_token(): HS256 JWT generation (per-backend aud); cached via BackendClient
 error.rs             — WorkerError; is_retriable() classifies transient vs permanent failures
-backend.rs           — BackendClient: two separate HTTP clients (api_http 10 s timeout,
+backend.rs           — BackendClient (one per backend): two separate HTTP clients (api_http 10 s timeout,
                        presign_http connect-only timeout for large-file transfers);
-                       JWT token cache (refreshed 30 s before expiry);
+                       per-instance JWT token cache (refreshed 30 s before expiry);
                        claim_next_job / complete_job / fail_job /
                        download_presigned (streaming) / upload_presigned
 
-jobs.rs              — run_job_loop(): acquire semaphore → poll → spawn; dispatch()
+jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
 jobs/thumbnail.rs    — gen_thumbnail: MIME preflight → download → EXIF → hash → thumbnails → complete
 jobs/edit_picture.rs — edit_picture: download → EXIF set/clear write → thumbnail regen (visual) →
                        hash → upload original (last fallible step) → complete. The DB is updated
@@ -45,18 +45,26 @@ prevents stale workers from corrupting re-claimed jobs.
 
 ## Job loop
 
+One loop task runs per backend; all loops share a single `Arc<Semaphore>` bounded by
+`MAX_CONCURRENT_JOBS`. When multiple backends are configured the loops compete fairly for slots:
+a backend with many pending jobs saturates its share; a quiet backend yields without any explicit
+scheduler.
+
 ```
+// per-backend loop
 loop {
-  sem.acquire_owned().await           ← blocks until a slot is free; no sleep-poll
+  sem.acquire_owned().await           ← blocks until a global slot is free
   claim_next_job():
     None  → drop permit, sleep poll_interval_ms
     Some  → tokio::spawn dispatch(job) (permit dropped when task exits)
+            // no sleep — immediately compete for the next slot (burst-friendly)
     Err   → drop permit, sleep 5 × poll_interval_ms
 }
 ```
 
-The semaphore is acquired before polling, so when a running job finishes and drops its permit, the next claim happens immediately without waiting for
-a poll interval.
+When a job is claimed the loop immediately re-enters (no sleep), so a burst of pending jobs
+saturates all `MAX_CONCURRENT_JOBS` slots as fast as the backend can issue claims. When idle the
+loop backs off to `poll_interval_ms` to avoid hammering the backend.
 
 ## Error policy
 

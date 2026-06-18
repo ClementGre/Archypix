@@ -5,7 +5,8 @@
 #   backend1:   uses resolver, archypix.test     → b1.archypix.test
 #   backend2:   uses resolver, archypix.test     → b2.archypix.test
 #   backend3:   standalone (own resolver)        → solo.archypix.test
-#   worker1-3:  one worker per backend
+#   worker12:   worker for backend 1 and 2
+#   worker3:    worker for backend 3
 #
 # All inter-service traffic uses HTTP (BACK_USE_HTTPS=false, WEBFINGER_USE_HTTPS=false).
 #
@@ -17,12 +18,6 @@
 #   solo.archypix.test → backend3:80
 # Before starting the stack, add docker/hosts entries to /etc/hosts on your machine:
 #   sudo tee -a /etc/hosts < docker/hosts
-#
-# Source code is mounted directly — restart a container to recompile:
-#   docker compose -f docker/docker-compose.dev.yml restart backend1 worker1
-#
-# If you change Cargo.toml/Cargo.lock, rebuild the image:
-#   docker compose -f docker/docker-compose.dev.yml build backend1 worker1
 #
 # Usage:
 #   docker compose -f docker/docker-compose.dev.yml up --build
@@ -245,7 +240,7 @@ services:
       minio:
         condition: service_healthy
 
-  worker1:
+  worker12:
     build:
       context: ..
       dockerfile: worker/Dockerfile
@@ -256,8 +251,8 @@ services:
       - .env.worker.common
     environment:
       WORKER_ID: worker1
-      BACK_URL: http://backend1
-      BACK_DOMAIN: b1.archypix.test
+      BACK_URL: http://backend1,http://backend2
+      BACK_DOMAIN: b1.archypix.test,b2.archypix.test
       GLOBAL_DOMAIN: archypix.test
     volumes: *workspace-volumes
     extra_hosts: *backend-extra-hosts
@@ -265,24 +260,6 @@ services:
       - archypix
     depends_on:
       backend1:
-        condition: service_healthy
-
-  worker2:
-    image: archypix-worker:dev
-    container_name: archypix-worker2
-    env_file:
-      - .env.worker.common
-    environment:
-      WORKER_ID: worker2
-      BACK_URL: http://backend2
-      BACK_DOMAIN: b2.archypix.test
-      GLOBAL_DOMAIN: archypix.test
-    volumes: *workspace-volumes
-    extra_hosts: *backend-extra-hosts
-    networks:
-      - archypix
-    depends_on:
-      backend2:
         condition: service_healthy
 
   worker3:

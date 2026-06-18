@@ -1,15 +1,21 @@
 use anyhow::Context;
 use archypix_common::job::JobType;
 
+/// Per-backend connectivity settings.
 #[derive(Debug, Clone)]
-pub struct Config {
-    // Backend connectivity
+pub struct BackendConfig {
     pub back_url: String,
     pub back_domain: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    // Backends (one or more)
+    pub backends: Vec<BackendConfig>,
+
+    // Shared worker identity and credentials
     pub global_domain: String,
     pub worker_jwt_secret: String,
-
-    // Worker identity
     pub worker_id: String,
 
     // Job polling
@@ -26,8 +32,33 @@ impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         dotenvy::dotenv().ok();
 
-        let back_url = require_env("BACK_URL")?;
-        let back_domain = require_env("BACK_DOMAIN")?;
+        let back_url_raw = require_env("BACK_URL")?;
+        let back_domain_raw = require_env("BACK_DOMAIN")?;
+
+        let back_urls: Vec<&str> = back_url_raw.split(',').map(str::trim).collect();
+        let back_domains: Vec<&str> = back_domain_raw.split(',').map(str::trim).collect();
+
+        anyhow::ensure!(
+            back_urls.len() == back_domains.len(),
+            "BACK_URL and BACK_DOMAIN must have the same number of comma-separated entries \
+             (got {} URLs and {} domains)",
+            back_urls.len(),
+            back_domains.len()
+        );
+
+        let backends: Vec<BackendConfig> = back_urls
+            .into_iter()
+            .zip(back_domains.into_iter())
+            .map(|(url, domain)| {
+                anyhow::ensure!(!url.is_empty(), "BACK_URL contains an empty entry");
+                anyhow::ensure!(!domain.is_empty(), "BACK_DOMAIN contains an empty entry");
+                Ok(BackendConfig {
+                    back_url: url.to_string(),
+                    back_domain: domain.to_string(),
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+
         let global_domain = require_env("GLOBAL_DOMAIN")?;
         let worker_jwt_secret = require_env("WORKER_JWT_SECRET")?;
 
@@ -43,7 +74,7 @@ impl Config {
         });
 
         let poll_interval_ms = env_u64("POLL_INTERVAL_MS", 1000)?;
-        let max_concurrent_jobs = env_usize("MAX_CONCURRENT_JOBS", 2)?;
+        let max_concurrent_jobs = env_usize("MAX_CONCURRENT_JOBS", 6)?;
 
         let job_types = std::env::var("JOB_TYPES")
             .unwrap_or_default()
@@ -62,8 +93,7 @@ impl Config {
         let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:80".to_string());
 
         Ok(Config {
-            back_url,
-            back_domain,
+            backends,
             global_domain,
             worker_jwt_secret,
             worker_id,

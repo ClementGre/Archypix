@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::error::{Result, WorkerError};
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -21,21 +20,28 @@ struct WorkerClaims {
 }
 
 /// Generate a fresh worker JWT valid for 300 seconds.
-pub fn generate_token(config: &Config) -> Result<String> {
+///
+/// `aud` must be the backend domain this token is intended for.
+pub fn generate_token(
+    worker_id: &str,
+    global_domain: &str,
+    back_domain: &str,
+    worker_jwt_secret: &str,
+) -> Result<String> {
     let now = Utc::now().timestamp();
     let claims = WorkerClaims {
-        sub: config.worker_id.clone(),
+        sub: worker_id.to_string(),
         uid: None,
         is_admin: false,
-        instance: config.global_domain.clone(),
+        instance: global_domain.to_string(),
         token_type: "worker".to_string(),
-        aud: config.back_domain.clone(),
-        iss: config.worker_id.clone(),
+        aud: back_domain.to_string(),
+        iss: worker_id.to_string(),
         exp: now + 300,
         iat: now,
         jti: Uuid::new_v4().to_string(),
     };
-    let key = EncodingKey::from_secret(config.worker_jwt_secret.as_bytes());
+    let key = EncodingKey::from_secret(worker_jwt_secret.as_bytes());
     encode(&Header::new(Algorithm::HS256), &claims, &key)
         .map_err(|e| WorkerError::Jwt(e.to_string()))
 }
