@@ -142,6 +142,12 @@ pub struct PictureListItem {
     pub owner_instance: Option<String>,
     /// Convergence of the file's embedded EXIF vs the DB row.
     pub exif_sync_status: crate::domain::picture::ExifSyncStatus,
+    /// The recipient's own local soft-delete timestamp (trash view); `None` when not trashed.
+    pub deleted_at: Option<NaiveDateTime>,
+    /// Owner-deletion lifecycle for received pictures (09 §5.3): the owner's soft-delete timestamp
+    /// and announced purge deadline. Drive the red "owner will delete this on X" badge.
+    pub owner_deleted_at: Option<NaiveDateTime>,
+    pub owner_purge_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -379,6 +385,127 @@ pub async fn snapshot_version_on_overwrite(
     Ok(true)
 }
 
+/// Soft-delete a picture the user holds (owned or received), setting `deleted_reason = 'manual'`
+/// (09 §5). The row is re-dirtied and the pipeline woken: for an **owned** picture this re-announces
+/// it to recipients carrying the owner-deletion lifecycle flag (it stays in share coverage until the
+/// purge sweep removes it); for a **received** picture the delete is purely local (never announced,
+/// never affects downstream relay). Returns the updated picture.
+pub async fn trash_picture(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<Picture, AppError> {
+    set_trashed(db, waker, user_id, picture_id, true).await
+}
+
+/// Restore a soft-deleted picture (clear `deleted_at`/`deleted_reason`). For an owned picture this
+/// re-announces with the lifecycle flag cleared (09 §5.1). Returns the updated picture.
+pub async fn restore_picture(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<Picture, AppError> {
+    set_trashed(db, waker, user_id, picture_id, false).await
+}
+
+async fn set_trashed(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    picture_id: Uuid,
+    deleted: bool,
+) -> Result<Picture, AppError> {
+    use crate::repository::pipeline::PipelineRepository;
+    trace!(user_id = %user_id, picture_id = %picture_id, deleted, "pictures: set_trashed");
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let ok = PictureRepository::set_deleted(&mut *tx, user_id, picture_id, deleted).await?;
+    if !ok {
+        return Err(AppError::NotFound);
+    }
+    // Re-dirty so the announcement reconcile re-delivers the lifecycle change (owned) and tagging
+    // re-evaluates; harmless for received rows.
+    PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    waker.wake(user_id);
+    PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// Apply a recipient's local EXIF override to a **received** picture (09 §6.2): write the sparse
+/// per-field key set into `local_exif_overrides`, re-materialise `exif_data` + promoted columns from
+/// `merge(remote_exif_data, overrides)`, and fire the local `metadata` event (re-dirty + wake). DB
+/// only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
+/// fields claim the override; `clear` fields drop the override (the owner's value flows through
+/// again). Returns the updated picture.
+pub async fn override_received_exif(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    picture_id: Uuid,
+    set: crate::domain::job::FullExif,
+    clear: Vec<crate::domain::job::ExifField>,
+) -> Result<Picture, AppError> {
+    use crate::repository::pipeline::PipelineRepository;
+    trace!(user_id = %user_id, picture_id = %picture_id, "pictures: override_received_exif");
+
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+    if picture.is_owned() {
+        return Err(AppError::BadRequest(
+            "Local EXIF overrides apply to received pictures only; use /edit for owned pictures"
+                .to_string(),
+        ));
+    }
+
+    // Start from the current sticky override set; `set` claims a field (its value wins), `clear`
+    // drops the claim (the owner's value flows through again).
+    let mut overrides = picture
+        .local_exif_overrides
+        .as_ref()
+        .map(|j| j.0.clone())
+        .unwrap_or_default();
+    overrides.apply_set(&set);
+    overrides.clear_fields(&clear);
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let remote =
+        PictureRepository::set_local_exif_overrides(&mut *tx, user_id, picture_id, &overrides)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    let merged = remote.merged_with(&overrides);
+    PictureRepository::apply_received_materialization(
+        &mut *tx,
+        picture_id,
+        &merged.camera,
+        merged.captured_at,
+        merged.gps_lat,
+        merged.gps_lng,
+        merged.gps_alt,
+        merged.orientation,
+    )
+    .await?;
+    PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+
+    waker.wake(user_id);
+    PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 pub async fn get_picture_details(
     db: &PgPool,
     user_id: Uuid,
@@ -535,6 +662,9 @@ pub async fn list_with_filter(
                 .cloned(),
             owned: pic.remote_picture_id.is_none(),
             exif_sync_status: pic.exif_sync_status,
+            deleted_at: pic.deleted_at,
+            owner_deleted_at: pic.owner_deleted_at,
+            owner_purge_at: pic.owner_purge_at,
             owner_username: pic.owner_username,
             owner_instance: pic.owner_instance_domain,
         })

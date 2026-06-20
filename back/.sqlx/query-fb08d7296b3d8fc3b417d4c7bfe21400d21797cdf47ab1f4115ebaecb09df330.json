@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.local_user_id\n               FROM pictures p\n               LEFT JOIN user_settings us ON us.user_id = p.local_user_id\n               WHERE p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NOT NULL\n                 AND p.deleted_at + make_interval(days => COALESCE(us.trash_retention_days, 30))\n                     < (now() at time zone 'utc')\n               ORDER BY p.deleted_at\n               LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "local_user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "fb08d7296b3d8fc3b417d4c7bfe21400d21797cdf47ab1f4115ebaecb09df330"
+}

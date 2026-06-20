@@ -25,16 +25,31 @@ Tags are hierarchical paths. A picture can carry any number of tags.
 
 ## 2. Deletion and Trash
 
-Deletion is never immediate for received pictures, and is deferred for owned pictures.
+Deletion is never immediate for received pictures, and is deferred for owned pictures. Owned and
+received "trash" are **separate rows** (`pictures.local_user_id`): the owner's `deleted_at` lives on
+the owner's row, the recipient's on the recipient's row. Every delete records a `deleted_reason`
+(currently always `manual`).
 
-| Picture type      | On delete                                  | Physical removal                                                                 |
-|:------------------|:-------------------------------------------|:---------------------------------------------------------------------------------|
-| Owned             | Marked `deleted\_at = <timestamp>`         | After user-configured retention (e.g. 30 days), permanently deleted from storage |
-| Received (shared) | Marked `deleted\_at = <timestamp>` locally | Never physically deleted — the file lives on the sender's storage                |
+| Picture type      | On delete                                  | Physical removal                                                                                                                  |
+|:------------------|:-------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------|
+| Owned             | Marked `deleted\_at = <timestamp>`         | After user-configured retention (`trash_retention_days`, default 30), a recurring purge sweep permanently deletes it from storage |
+| Received (shared) | Marked `deleted\_at = <timestamp>` locally | Never physically deleted — the file lives on the sender's storage                                                                 |
 
-A deleted picture retains all its tag records internally but is excluded from all views and WebDAV listings. The trash is a separate UI view.
-Restoring a picture from trash clears
-`deleted\_at`.
+A deleted picture retains all its tag records internally but is excluded from all views and WebDAV
+listings. The trash is a separate UI view. Restoring a picture from trash clears `deleted\_at`.
+
+**Owner-deletion propagation.** An owner's trash does **not** make the picture vanish from recipients:
+it stays in share coverage and is re-announced carrying the owner's `owner_deleted_at` and a derived
+`owner_purge_at` (`deleted_at + trash_retention_days`), so recipients show a red "owner will delete
+this on *X*" grace-window badge. Only **physical purge** unannounces it (the row is removed →
+recipients lose it). To remove a shared picture from recipients *immediately*, the owner **revokes**
+the share (the hard-remove). An owner *restore* before purge re-announces with the flags cleared.
+
+**Coverage is decoupled from local trash.** A relayer's local `deleted_at` on a *received* picture
+never unannounces it downstream (coverage is by tag membership); a relayer always forwards the
+**owner's** authoritative lifecycle, never its own local trash. Retention is finite (no
+infinite/archive option); the purge deadline is derived at sweep/announce time, so a retention change
+takes effect with no backfill.
 --- 
 
 ## 3. TaggingServices

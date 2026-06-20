@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub struct UserSettings {
     pub user_id: Uuid,
     pub versioning_mode: VersioningMode,
+    pub trash_retention_days: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }

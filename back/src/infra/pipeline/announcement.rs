@@ -149,6 +149,13 @@ async fn reconcile_share(
         .collect();
     let upstream = TagRepository::active_picture_tokens_for(db, &involved_ids).await?;
 
+    let owner_retention_days =
+        crate::repository::user_settings::UserSettingsRepository::trash_retention_days(
+            db,
+            share.owner_id,
+        )
+        .await?;
+
     // ── Compute the announce set (with the token + updated_at to record on success) ────────
     let mut announce_items: Vec<AnnouncedPicture> = Vec::new();
     let mut announce_tokens: Vec<(Uuid, Uuid, chrono::NaiveDateTime)> = Vec::new();
@@ -176,11 +183,19 @@ async fn reconcile_share(
                 }
             }
         };
+        // Owner-purge deadline: owned + trashed → derived `deleted_at + retention`; received → sender-supplied
+        let owner_purge_at = if meta.is_owned() {
+            meta.deleted_at
+                .map(|d| d + ChronoDuration::days(owner_retention_days as i64))
+        } else {
+            meta.owner_purge_at
+        };
         announce_items.push(AnnouncedPicture::from_picture(
             meta,
             token,
             sender_username,
             &run.config.global_domain,
+            owner_purge_at,
         ));
         announce_tokens.push((*pic, token, meta.updated_at));
     }

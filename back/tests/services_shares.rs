@@ -554,13 +554,20 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
         thumbnails_generated_at: None,
         width: None,
         height: None,
-        captured_at: None,
         blurhash: None,
-        gps_lat: Some(45.92),
-        gps_lng: Some(6.87),
-        gps_alt: Some(1200),
-        orientation: Some(6),
-        exif_data: Some(serde_json::json!({ "camera_brand": "Canon" })),
+        exif: archypix_back::domain::job::FullExif {
+            gps_lat: Some(45.92),
+            gps_lng: Some(6.87),
+            gps_alt: Some(1200),
+            orientation: Some(6),
+            camera: archypix_back::domain::job::CameraExif {
+                camera_brand: Some("Canon".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        owner_deleted_at: None,
+        owner_purge_at: None,
     }];
 
     // Register twice — second call must be a no-op (ON CONFLICT DO UPDATE / DO NOTHING)
@@ -626,13 +633,10 @@ async fn register_received_pictures_persists_hash_and_thumbnail_ts(db: PgPool) {
         thumbnails_generated_at: Some(thumb_ts),
         width: None,
         height: None,
-        captured_at: None,
         blurhash: None,
-        gps_lat: None,
-        gps_lng: None,
-        gps_alt: None,
-        orientation: None,
-        exif_data: None,
+        exif: Default::default(),
+        owner_deleted_at: None,
+        owner_purge_at: None,
     };
     register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
         .await

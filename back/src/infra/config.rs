@@ -69,6 +69,11 @@ pub struct Config {
     pub job_retention_secs: i64,
     /// How often (seconds) the terminal-job cleanup task runs. Default: 86400 (24 h).
     pub job_cleanup_interval_secs: u64,
+    /// How often (seconds) the trash purge sweep runs (physically deletes owned pictures past their
+    /// retention window). Default: 3600 (1 h).
+    pub purge_sweep_interval_secs: u64,
+    /// Maximum pictures physically purged per sweep tick. Default: 200.
+    pub purge_sweep_batch: i64,
     /// How often (seconds) the tagging pipeline loop runs a recovery sweep,
     /// catching pictures missed due to restarts. Event-driven wakes happen immediately.
     /// Default: 3600 (1 hour).
@@ -191,6 +196,8 @@ impl Config {
             job_watchdog_interval_secs: env_u64("JOB_WATCHDOG_INTERVAL_SECS", 60)?,
             job_retention_secs: env_i64("JOB_RETENTION_SECS", 2_592_000)?,
             job_cleanup_interval_secs: env_u64("JOB_CLEANUP_INTERVAL_SECS", 86_400)?,
+            purge_sweep_interval_secs: env_u64("PURGE_SWEEP_INTERVAL_SECS", 3600)?,
+            purge_sweep_batch: env_i64("PURGE_SWEEP_BATCH", 200)?,
             pipeline_poll_interval_secs: env_u64("PIPELINE_POLL_INTERVAL_SECS", 3600)?,
             pipeline_batch_sleep_ms: env_u64("PIPELINE_BATCH_SLEEP_MS", 0)?,
             pipeline_concurrency: env_usize("PIPELINE_CONCURRENCY", 4)?,
@@ -338,6 +345,8 @@ impl Config {
             job_watchdog_interval_secs: 60,
             job_retention_secs: 2_592_000,
             job_cleanup_interval_secs: 86_400,
+            purge_sweep_interval_secs: 3600,
+            purge_sweep_batch: 200,
             pipeline_poll_interval_secs: 3600,
             pipeline_batch_sleep_ms: 0,
             pipeline_concurrency: 4,

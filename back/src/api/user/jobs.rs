@@ -1,5 +1,5 @@
 use crate::api::middleware::auth_user::AuthUser;
-use crate::domain::job::{ExifField, ExifOverrides, Job};
+use crate::domain::job::{ExifField, FullExif, Job};
 use crate::infra::error::AppError;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct ExifEditBody {
     #[serde(default)]
-    pub set: ExifOverrides,
+    pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<ExifField>,
 }
@@ -112,7 +112,7 @@ pub async fn batch_edit_exif(
 pub struct BatchExifEditBody {
     pub picture_ids: Vec<Uuid>,
     #[serde(default)]
-    pub set: ExifOverrides,
+    pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<ExifField>,
 }

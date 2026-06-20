@@ -17,7 +17,6 @@ use archypix_common::transfer::PresignedWrites;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use chrono::NaiveDateTime;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -222,20 +221,21 @@ pub async fn complete_job(
         .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
 
     // Update picture columns from worker output. Width/height come from the top-level fields
-    if let (Some(exif), Some(pid)) = (&body.exif, picture_id) {
-        let captured_at = exif.captured_at.as_deref().and_then(parse_exif_datetime);
+    if let (Some(extracted), Some(pid)) = (&body.exif, picture_id) {
+        let e = &extracted.exif;
+        let camera_patch = serde_json::to_value(&e.camera).ok();
         PictureRepository::update_from_worker(
             &mut *tx,
             pid,
             body.width,
             body.height,
-            captured_at,
-            exif.gps_lat,
-            exif.gps_lng,
-            exif.gps_alt,
-            exif.orientation,
+            e.captured_at,
+            e.gps_lat,
+            e.gps_lng,
+            e.gps_alt,
+            e.orientation,
             body.blurhash.as_deref(),
-            exif.exif_data.clone(),
+            camera_patch,
             body.file_size,
             body.file_hash.as_deref(),
         )
@@ -299,7 +299,7 @@ pub async fn complete_job(
                 .await?
                 .ok_or(AppError::NotFound)?;
             let new_state = edit.new_state();
-            let current = picture.exif_snapshot();
+            let current = picture.full_exif();
             if current == new_state {
                 PictureRepository::set_exif_sync_status(&mut *tx, pid, ExifSyncStatus::Synced)
                     .await?;
@@ -378,7 +378,7 @@ pub async fn fail_job(
                 let picture = PictureRepository::find_by_id(&state.db, pid)
                     .await?
                     .ok_or(AppError::NotFound)?;
-                if picture.exif_snapshot() == edit.new_state() {
+                if picture.full_exif() == edit.new_state() {
                     PictureRepository::write_exif_snapshot(
                         &state.db,
                         pid,
@@ -402,10 +402,4 @@ pub async fn fail_job(
         }
     }
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn parse_exif_datetime(s: &str) -> Option<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
-        .ok()
 }

@@ -1,3 +1,4 @@
+use crate::domain::job::FullExif;
 use crate::domain::picture::Picture;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -93,18 +94,15 @@ pub struct AnnouncedPicture {
     pub thumbnails_generated_at: Option<NaiveDateTime>,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub captured_at: Option<NaiveDateTime>,
     pub blurhash: Option<String>,
+    /// The owner's authoritative editable EXIF
+    #[serde(default, flatten)]
+    pub exif: FullExif,
+    /// Owner-deletion lifecycle
     #[serde(default)]
-    pub gps_lat: Option<f64>,
+    pub owner_deleted_at: Option<NaiveDateTime>,
     #[serde(default)]
-    pub gps_lng: Option<f64>,
-    #[serde(default)]
-    pub gps_alt: Option<i32>,
-    #[serde(default)]
-    pub orientation: Option<i16>,
-    #[serde(default)]
-    pub exif_data: Option<serde_json::Value>,
+    pub owner_purge_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,11 +143,18 @@ impl AnnouncedPicture {
     /// The `picture_id` and `(owner_username, owner_instance)` are derived
     /// the same way everywhere — a relayed (received) picture forwards its original owner's id and
     /// identity; an owned picture uses its local id and the sender's identity.
+    ///
+    /// The announced **EXIF and lifecycle are owner-authoritative** (09 §7/§8): for an owned row they
+    /// come from the picture's own columns and `deleted_at`; for a relayed (received) row they come
+    /// from the stored owner snapshot (`remote_exif_data`) and `owner_deleted_at`/`owner_purge_at` —
+    /// never the relayer's merged `exif_data` or its local `deleted_at`. `owner_purge_at` for an owned
+    /// trashed row is the caller-derived `deleted_at + retention`.
     pub fn from_picture(
         picture: &Picture,
         picture_token: Uuid,
         sender_username: &str,
         global_domain: &str,
+        owner_purge_at: Option<NaiveDateTime>,
     ) -> Self {
         let (owner_username, owner_instance) = if picture.is_owned() {
             (sender_username.to_string(), global_domain.to_string())
@@ -157,6 +162,20 @@ impl AnnouncedPicture {
             (
                 picture.owner_username.clone().unwrap_or_default(),
                 picture.owner_instance_domain.clone().unwrap_or_default(),
+            )
+        };
+        // Owner-authoritative EXIF + deletion: owned → the row's own columns / `deleted_at`; received
+        // (relay) → the stored owner snapshot / propagated `owner_deleted_at`.
+        let (exif, owner_deleted_at) = if picture.is_owned() {
+            (picture.full_exif(), picture.deleted_at)
+        } else {
+            (
+                picture
+                    .remote_exif_data
+                    .as_ref()
+                    .map(|j| j.0.clone())
+                    .unwrap_or_default(),
+                picture.owner_deleted_at,
             )
         };
         Self {
@@ -174,13 +193,10 @@ impl AnnouncedPicture {
             thumbnails_generated_at: picture.thumbnails_generated_at,
             width: picture.width,
             height: picture.height,
-            captured_at: picture.captured_at,
             blurhash: picture.blurhash.clone(),
-            gps_lat: picture.gps_lat,
-            gps_lng: picture.gps_lng,
-            gps_alt: picture.gps_alt,
-            orientation: picture.orientation,
-            exif_data: Some(picture.exif_data.0.clone()),
+            exif,
+            owner_deleted_at,
+            owner_purge_at,
         }
     }
 }

@@ -92,9 +92,9 @@ The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` 
 
 Library crate shared between `back/` and `worker/` so wire shapes never drift:
 
-| Module           | Key types                                                                                                                                                                                             |
-|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`), `ExifField`, `ExifSnapshot`, `ExtractedExif`, `ExifOverrides`                               |
-| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`) |
-| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_THUMBNAIL`, `supports_exif()`, `supports_thumbnail()`                                                                                                                  |
-| `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                          |
+| Module           | Key types                                                                                                                                                                                                                                        |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`, all `FullExif`), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
+| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`)                                            |
+| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_THUMBNAIL`, `supports_exif()`, `supports_thumbnail()`                                                                                                                                                             |
+| `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                                                                     |

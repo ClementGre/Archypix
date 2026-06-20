@@ -329,7 +329,7 @@ async fn put_overwrite_replaces_bytes_no_version_when_none(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, VersioningMode::None)
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None)
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -383,7 +383,7 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, VersioningMode::FullVersioning)
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -441,7 +441,7 @@ async fn put_overwrite_identical_hash_is_noop(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, VersioningMode::FullVersioning)
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;

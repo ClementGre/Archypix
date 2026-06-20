@@ -46,7 +46,19 @@
   `gen_thumbnail`
   completion re-announces tracked pictures (with a recovery-sweep backstop); pipeline wakes are debounced (`PIPELINE_DEBOUNCE_MS`) for worker-driven
   bursts while interactive wakes stay prompt.
-- [ ] **Trash & restore** — soft delete with `deleted_at`, recipient notification, physical copy option.
+- [x] **Trash & restore** — soft delete with `deleted_at`/`deleted_reason`; owner-deletion propagation
+  (announced `owner_deleted_at`/`owner_purge_at` grace window + warning badge, kept in share coverage
+  until the `purge_sweep` recurring task physically deletes owned pictures past their retention); and
+  recipient EXIF overrides (owner-authoritative `remote_exif_data` snapshot + sticky per-field
+  `local_exif_overrides`, materialised into `exif_data`; DB-only, no `edit_picture` job). Trash/restore
+  + local-override endpoints, `trash_retention_days` setting. Ships the single consolidated schema
+    migration that also covers the two items below. **Frontend:** dedicated Trash page, trash/restore
+    actions (selection panel, lightbox, batch), owner-deletion warning badge (red owner chip + grace
+    banner), recipient EXIF overrides editable inline with an "overwritten" tag (+ WebDAV-caveat
+    tooltip), retention setting. See `doc/features/09_trash_and_exif_overrides.md`.
+- [ ] **Recipient EXIF editing** — per-share `allow_exif_edit` grant; authorised recipients propose
+  edits that the owner auto-applies and re-announces (local override is the unauthorised fallback).
+  Schema already in 001 (via the trash migration). See `doc/features/10_recipient_exif_editing.md`.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
   logic, presigned URL caching for remote pictures.
@@ -55,6 +67,10 @@
 
 - [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
+- [ ] **Physical copy & content dedup** — "rescue" copy of a received picture into your own library
+  (new distinct identity); `content_hash`-based dedup of identical copies (one live survivor,
+  reversible `content_dedupe` hiding, rescue-on-purge), and the deleted-content `boomerang` guard.
+  Schema already in 001 (via the trash migration). See `doc/features/11_physical_copy_and_dedup.md`.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
   features).
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).

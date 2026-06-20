@@ -42,6 +42,12 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/pictures", get(pictures::list))
         .route("/pictures/{id}", get(pictures::details))
         .route("/pictures/{id}/url", get(pictures::picture_url))
+        .route("/pictures/{id}/trash", post(pictures::trash))
+        .route("/pictures/{id}/restore", post(pictures::restore))
+        .route(
+            "/pictures/{id}/exif/override",
+            post(pictures::override_exif),
+        )
         .route("/settings", get(settings::get_settings))
         .route("/settings", patch(settings::update_settings))
         .route("/tags", get(tags::list).patch(tags::edit))

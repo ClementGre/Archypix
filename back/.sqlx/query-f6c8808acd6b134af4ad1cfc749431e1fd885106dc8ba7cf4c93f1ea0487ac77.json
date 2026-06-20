@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET exif_data   = $2,\n                   captured_at = $3,\n                   gps_lat     = $4,\n                   gps_lng     = $5,\n                   gps_alt     = $6,\n                   orientation = $7,\n                   last_pipeline_run_at = NULL\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Timestamp",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f6c8808acd6b134af4ad1cfc749431e1fd885106dc8ba7cf4c93f1ea0487ac77"
+}

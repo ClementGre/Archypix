@@ -253,6 +253,7 @@ Get the current user's settings.
 {
     user_id: string;
     versioning_mode: VersioningMode;
+  trash_retention_days: number;   // days a trashed owned picture is kept before physical purge (default 30)
     created_at: string;
     updated_at: string;
 }
@@ -262,13 +263,14 @@ Get the current user's settings.
 
 #### `PATCH /api/authenticated/settings`
 
-Update settings.
+Update settings. Both fields are optional; an omitted field keeps its current value.
 
 **Request:**
 
 ```ts
 {
-    versioning_mode: VersioningMode;
+  versioning_mode ? : VersioningMode;
+  trash_retention_days ? : number;  // 1–3650; 400 if out of range
 }
 ```
 
@@ -424,6 +426,9 @@ interface PictureListItem {
     owner_username: string | null; // set when owned=false
     owner_instance: string | null; // global domain of the owning instance
     exif_sync_status: ExifSyncStatus;
+  deleted_at: string | null;        // the holder's own local soft-delete (trash); null when not trashed
+  owner_deleted_at: string | null;  // received only: the owner's soft-delete (grace-window badge)
+  owner_purge_at: string | null;    // received only: the owner's announced purge deadline
 }
 ```
 
@@ -456,6 +461,10 @@ Full picture details including version history.
     exif_sync_status: ExifSyncStatus;
     owner_username: string | null;
     owner_instance_domain: string | null;
+  deleted_at: string | null;          // the holder's own local soft-delete (trash); null when not trashed
+  owner_deleted_at: string | null;    // received only: the owner's soft-delete (grace-window badge)
+  owner_purge_at: string | null;      // received only: the owner's announced purge deadline
+  local_exif_overrides: object | null;// received only: the recipient's sticky per-field EXIF overrides
     versions: PictureVersion[];
 }
 
@@ -604,7 +613,63 @@ Re-enqueue a stuck EXIF sync (picture stuck in `exif_sync_status = "pending"` wi
 
 ---
 
-### 6.5 Pictures — Jobs
+#### `POST /api/authenticated/pictures/{id}/exif/override`
+
+Apply a **recipient-local** EXIF override to a received picture (`set`/`clear`, same shape as an owned
+edit). DB-only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
+fields claim a sticky per-field override; `clear` fields drop the override so the owner's value flows
+through again. The effective `exif_data` (+ promoted columns) is `merge(owner snapshot, overrides)`.
+See `doc/features/09_trash_and_exif_overrides.md §6`.
+
+**Path params:** `id: string` — must be a received (`owned = false`) picture.
+
+**Request:** `{ set?: Partial<ExifOverrides>; clear?: ExifField[] }`
+
+**Response `200`:**
+
+```ts
+{
+    id: string;
+    captured_at: string | null;
+    gps_lat: number | null;
+    gps_lng: number | null;
+    gps_alt: number | null;
+    orientation: number | null;
+    exif_data: object;                  // the materialised merge
+    local_exif_overrides: object | null;
+    updated_at: string;
+}
+```
+
+**Errors:** `400` if the picture is owned (use `/edit` instead); `404` if not found.
+
+---
+
+### 6.5 Pictures — Trash
+
+Soft-delete is deferred for owned pictures (purged after `trash_retention_days`) and local-only for
+received pictures (never physically deleted). Trashing an **owned** shared picture keeps it in share
+coverage and re-announces it carrying the owner-deletion lifecycle (recipients show a grace-window
+badge) until the purge sweep removes it. See `doc/features/09_trash_and_exif_overrides.md §5`.
+
+#### `POST /api/authenticated/pictures/{id}/trash`
+
+Soft-delete a picture the user holds (owned or received).
+
+**Response `200`:** `{ id: string; deleted_at: string }`
+
+#### `POST /api/authenticated/pictures/{id}/restore`
+
+Restore a soft-deleted picture (clears `deleted_at`). For an owned picture this re-announces with the
+lifecycle flag cleared.
+
+**Response `200`:** `{ id: string; deleted_at: null }`
+
+**Errors (both):** `404` if the user holds no such picture.
+
+---
+
+### 6.6 Pictures — Jobs
 
 #### `GET /api/authenticated/pictures/{id}/jobs`
 
@@ -649,7 +714,7 @@ interface Job {
 
 ---
 
-### 6.6 Tags
+### 6.7 Tags
 
 #### `GET /api/authenticated/tags`
 
@@ -729,7 +794,7 @@ Tag paths must not start with `SharedToMe` (protected prefix).
 
 ---
 
-### 6.7 Tagging Services
+### 6.8 Tagging Services
 
 The tagging pipeline is an ordered list of services that automatically assign tags to pictures based on rules. Services run in order; each has
 optional `requires`/`excludes` gates. See `doc/01_GENERAL_SPECIFICATIONS.md §3` for full semantics.
@@ -1035,7 +1100,7 @@ Remove a segment (cascades to all child segments).
 
 ---
 
-### 6.8 Sharing
+### 6.9 Sharing
 
 Shares allow one user to give another access to all pictures under a tag path. The sharing model is federated — the recipient may be on a different
 instance.
@@ -1187,7 +1252,7 @@ Reject an incoming share. Moves it to `tombstoned` status.
 
 ---
 
-### 6.9 Hierarchies
+### 6.10 Hierarchies
 
 A hierarchy maps a filtered view of the tag graph to a navigable directory tree. It stores **no
 pictures** — every directory resolves to a tag-set predicate and its picture list is derived live.

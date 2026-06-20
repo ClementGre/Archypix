@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     infra::db::run_migrations(&db).await?;
 
     let redis = infra::redis::connect(&config).await?;
-    let storage = infra::s3::connect(&config).await?;
+    let storage: Arc<dyn infra::s3::Storage> = Arc::new(infra::s3::connect(&config).await?);
     let http = HttpClient::new();
 
     let jwt = JwtService::new(&config.jwt_secret, &config.back_domain);
@@ -103,6 +103,15 @@ async fn main() -> anyhow::Result<()> {
             db.clone(),
             pipeline_waker.clone(),
             Duration::from_secs(config.pipeline_poll_interval_secs),
+        )))
+        .register(Arc::new(infra::purge_sweep::PurgeSweepTask::new(
+            db.clone(),
+            storage.clone(),
+            cache.clone(),
+            config.clone(),
+            task_queue.clone(),
+            Duration::from_secs(config.purge_sweep_interval_secs),
+            config.purge_sweep_batch,
         )));
     tokio::spawn(scheduler.run(shutdown_rx));
 
@@ -124,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         cache,
         jwt,
         worker_jwt,
-        Arc::new(storage),
+        storage,
         federation,
         resolver,
         task_queue,

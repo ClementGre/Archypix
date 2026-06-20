@@ -304,11 +304,12 @@ impl<'a> Vfs<'a> {
                     .await?;
                 // Set the new hash/size inline so the ETag is correct before gen_thumbnail re-extracts.
                 PictureRepository::set_file_hash(&self.state.db, pid, hash, Some(size)).await?;
+                // is_initial = true so the exif is extracted from the picture in case it has changed.
                 crate::services::jobs::enqueue_thumbnail_job(
                     &self.state.db,
                     self.user_id,
                     pid,
-                    false,
+                    true,
                 )
                 .await?;
                 self.state.pipeline_waker.wake_debounced(self.user_id);

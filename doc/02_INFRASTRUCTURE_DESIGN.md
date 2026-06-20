@@ -24,7 +24,7 @@
         - In-process task queue (`infra/tasks.rs`): DB-only async tasks (tag-rename cascade, pipeline evaluation).
         - Recurring scheduler (`infra/scheduler.rs`): job watchdog (resets stale `processing` jobs, default 600 s timeout), job cleanup (prunes
           terminal
-          jobs), pipeline recovery sweep.
+          jobs), pipeline recovery sweep, trash purge sweep (physically deletes owned pictures past their `trash_retention_days`).
         - Redis: sessions, presigned URLs, federation tokens, backend domain mappings.
 
 - Workers (`archypix-worker`, one or more Rust processes)

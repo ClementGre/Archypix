@@ -15,6 +15,9 @@ CREATE TYPE federation_status AS ENUM ('pending', 'sent', 'delivered', 'failed')
 CREATE TYPE safe_delete_mode AS ENUM ('singleBranch', 'fullDelete');
 CREATE TYPE service_type AS ENUM ('shared_tag_mapping', 'rule', 'segmentation');
 CREATE TYPE picture_exif_sync_status AS ENUM ('synced', 'pending', 'unsupported');
+-- Why a picture was soft-deleted (set alongside deleted_at). [09] only produces 'manual';
+-- 'boomerang'/'content_dedupe' exist now so the [11] physical-copy/dedup work needs no migration.
+CREATE TYPE picture_deleted_reason AS ENUM ('manual', 'boomerang', 'content_dedupe');
 
 
 -- ============================================================================
@@ -132,7 +135,28 @@ CREATE TABLE pictures
     -- Convergence of the S3 original's embedded EXIF versus this row (the source of truth).
     -- 'pending' while an edit_picture job rewrites the file; 'unsupported' when the format
     -- cannot embed EXIF (DB-only edit, no job); 'synced' otherwise.
-    exif_sync_status     picture_exif_sync_status NOT NULL DEFAULT 'synced'
+    exif_sync_status           picture_exif_sync_status NOT NULL DEFAULT 'synced',
+
+    -- ─ Trash, owner-deletion propagation & recipient EXIF overrides (09_trash_and_exif_overrides) ─
+    -- Received-only columns are NULL for owned rows.
+    -- [09] received: the owner's soft-delete timestamp (announced; the grace-window badge driver).
+    owner_deleted_at           TIMESTAMP,
+    -- [09] received: the announced purge deadline (owner's deleted_at + retention, derived sender-side).
+    owner_purge_at             TIMESTAMP,
+    -- [09] received: the owner's authoritative EXIF snapshot (canonical full editable-EXIF JSON),
+    -- refreshed on every announcement. Includes the owner’s exif_data + promoted columns.
+    remote_exif_data           JSONB,
+    -- [09] received: the recipient's sticky per-field overrides (sparse key set). exif_data (+ the
+    -- promoted columns) for received rows is the materialised merge(remote_exif_data, this).
+    local_exif_overrides       JSONB,
+    -- [09/11] set together with deleted_at; NULL when the picture is not deleted.
+    deleted_reason             picture_deleted_reason,
+    -- [11] metadata-stripped content hash used to group identical physical copies for dedup.
+    content_hash               TEXT,
+    -- [11] physical-copy provenance: the original owner identity + picture id (NULL unless a copy).
+    copy_source_owner_username VARCHAR(255),
+    copy_source_owner_instance VARCHAR(255),
+    copy_source_picture_id     VARCHAR(255)
 );
 
 CREATE INDEX idx_pictures_local_user ON pictures (local_user_id);
@@ -145,6 +169,12 @@ CREATE INDEX idx_pictures_exif ON pictures USING GIN (exif_data);
 CREATE INDEX idx_pictures_metadata ON pictures USING GIN (metadata);
 CREATE INDEX idx_pictures_remote_owner ON pictures (owner_username, owner_instance_domain)
     WHERE owner_username IS NOT NULL;
+-- [09] purge sweep: owned (remote_picture_id IS NULL) soft-deleted pictures awaiting physical purge.
+CREATE INDEX idx_pictures_owned_trashed ON pictures (deleted_at)
+    WHERE deleted_at IS NOT NULL AND remote_picture_id IS NULL;
+-- [11] dedup grouping by content hash within a user's library.
+CREATE INDEX idx_pictures_content_hash ON pictures (local_user_id, content_hash)
+    WHERE content_hash IS NOT NULL;
 
 -- ============================================================================
 -- TAGS
@@ -214,6 +244,10 @@ CREATE TABLE outgoing_shares
     -- Share configuration
     allow_share_back   BOOLEAN      NOT NULL DEFAULT TRUE,
     future             BOOLEAN      NOT NULL DEFAULT TRUE, -- Auto-announce new pictures
+
+    -- [10] owner grants the recipient permission to propose EXIF edits the owner auto-applies and
+    -- re-announces. Propagated to the recipient's incoming_shares copy. Unused until feature 10 ships.
+    allow_exif_edit BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- ShareBack provenance: the original OutgoingShare this share was created in response to
     -- (i.e. the recipient's incoming share's outgoing_share_id). NULL for normal shares. Kept for
@@ -300,6 +334,10 @@ CREATE TABLE incoming_shares
     -- Propagated from the sender's OutgoingShare: whether new pictures under the tag are
     -- auto-announced. Display only (the sender owns the actual auto-announce behaviour).
     future                        BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- [10] propagated from the sender's OutgoingShare.allow_exif_edit: whether the recipient may
+    -- propose owner-applied EXIF edits. Display/gate only. Unused until feature 10 ships.
+    allow_exif_edit BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- The local `/SharedToMe/<sender>/…` tag these pictures land under, derived from the sender's
     -- shared tag_path. Set on share creation and refreshed on each picture announcement (so a
@@ -748,6 +786,8 @@ CREATE TABLE user_settings
 (
     user_id         UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
     versioning_mode versioning_mode NOT NULL DEFAULT 'none',
+    -- [09] retention window (days) before a soft-deleted owned picture is physically purged.
+    trash_retention_days INT NOT NULL DEFAULT 30,
     created_at      TIMESTAMP       NOT NULL DEFAULT (now() at time zone 'utc'),
     updated_at      TIMESTAMP       NOT NULL DEFAULT (now() at time zone 'utc')
 );

@@ -1,4 +1,5 @@
 use crate::api::middleware::auth_user::AuthUser;
+use crate::domain::job::{ExifField, FullExif};
 use crate::infra::error::AppError;
 use crate::services;
 use crate::services::pictures::{
@@ -185,6 +186,92 @@ pub async fn details(
         "exif_sync_status": d.picture.exif_sync_status,
         "owner_username": d.picture.owner_username,
         "owner_instance_domain": d.picture.owner_instance_domain,
+        // Trash & owner-deletion lifecycle (09 §5.3).
+        "deleted_at": d.picture.deleted_at,
+        "owner_deleted_at": d.picture.owner_deleted_at,
+        "owner_purge_at": d.picture.owner_purge_at,
+        // Recipient EXIF overrides (received pictures only).
+        "local_exif_overrides": d.picture.local_exif_overrides,
         "versions": d.versions,
+    })))
+}
+
+/// `POST /api/authenticated/pictures/{id}/trash` — soft-delete (owned or received) the picture.
+pub async fn trash(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "trash_picture");
+    let picture = services::pictures::trash_picture(
+        &state.db,
+        &state.pipeline_waker,
+        auth.user_id()?,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "id": picture.id,
+        "deleted_at": picture.deleted_at,
+    })))
+}
+
+/// `POST /api/authenticated/pictures/{id}/restore` — restore a soft-deleted picture.
+pub async fn restore(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "restore_picture");
+    let picture = services::pictures::restore_picture(
+        &state.db,
+        &state.pipeline_waker,
+        auth.user_id()?,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "id": picture.id,
+        "deleted_at": picture.deleted_at,
+    })))
+}
+
+/// Body for a received-picture local EXIF override (`set`/`clear`, same shape as an owned edit).
+#[derive(Debug, Deserialize)]
+pub struct ExifOverrideBody {
+    #[serde(default)]
+    pub set: FullExif,
+    #[serde(default)]
+    pub clear: Vec<ExifField>,
+}
+
+/// `POST /api/authenticated/pictures/{id}/exif/override` — apply a recipient-local EXIF override to
+/// a received picture (DB-only; 09 §6.2).
+pub async fn override_exif(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+    Json(body): Json<ExifOverrideBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "override_exif");
+    let picture = services::pictures::override_received_exif(
+        &state.db,
+        &state.pipeline_waker,
+        auth.user_id()?,
+        picture_id,
+        body.set,
+        body.clear,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "id": picture.id,
+        "captured_at": picture.captured_at,
+        "gps_lat": picture.gps_lat,
+        "gps_lng": picture.gps_lng,
+        "gps_alt": picture.gps_alt,
+        "orientation": picture.orientation,
+        "exif_data": picture.exif_data,
+        "local_exif_overrides": picture.local_exif_overrides,
+        "updated_at": picture.updated_at,
     })))
 }

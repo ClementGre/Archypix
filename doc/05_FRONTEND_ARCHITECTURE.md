@@ -81,8 +81,8 @@ so a user can authenticate or register against any instance. The chosen instance
 | `/tagging`     | `TaggingPage`       | required   | tagging-pipeline editor                                                                              |
 | `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                                                                        |
 | `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel)                                                    |
-| `/settings`    | `SettingsPage`      | required   | profile + versioning mode (reached via user menu)                                                    |
-| `/trash`       | `TrashPage`         | required   | placeholder                                                                                          |
+| `/settings`    | `SettingsPage`      | required   | profile + versioning mode + trash retention (reached via user menu)                                  |
+| `/trash`       | `TrashPage`         | required   | soft-deleted photos grid with per-item / restore + purge countdown                                   |
 | `/admin`       | `AdminPage`         | admin only | placeholder                                                                                          |
 | `*`            | → `/`               | —          |                                                                                                      |
 
@@ -135,15 +135,15 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 One file per domain under `src/api/` (typed axios wrappers using `apiClient`), with matching hooks under `src/hooks/` (TanStack Query). Types live in
 `src/lib/types.ts`; query keys are centralized in `src/lib/constants.ts` (`queryKeys`).
 
-| Domain      | `api/*`                                                                                                                     | `hooks/*`                                                                                                                                     |
-|-------------|-----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                              | (imperative; not query-backed)                                                                                                                |
-| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, getJob, beginUploadBatch, completeUpload`            | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.useEditExif`                                                         |
-| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                                       | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                                                    |
-| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                                    | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                                                   |
-| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                       | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                           |
-| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect` | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations` |
-| settings    | `settings.ts` — `getSettings, updateSettings, updateProfile`                                                                | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                            |
+| Domain      | `api/*`                                                                                                                                                      | `hooks/*`                                                                                                                                     |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                                                               | (imperative; not query-backed)                                                                                                                |
+| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, overrideExif, trashPicture, restorePicture, getJob, beginUploadBatch, completeUpload` | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.{useEditExif, useOverrideExif, useTrashMutations}`                   |
+| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                                                                        | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                                                    |
+| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                                                                     | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                                                   |
+| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                                                        | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                           |
+| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect`                                  | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations` |
+| settings    | `settings.ts` — `getSettings, updateSettings` (versioning + `trash_retention_days`)`, updateProfile`                                                         | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                            |
 
 `apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` backs the search box.
 
@@ -169,19 +169,28 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 **`photos/`** — `PhotoGrid` (justified flex grid + infinite scroll + selection + renders the Lightbox), `PhotoCard` (`flex-basis`/`flex-grow` from the
 picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop), `OrientedImage`/`OrientedContainImage` (render raw
 thumbnails at their correct EXIF orientation — see §9), `Blurhash`, `FilterControls` (search + sort + filters dropdown — scope folded into Filters —
-rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param; ←/→/Esc; `large` variant), `SelectionPanel`
-(right panel; see §8), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial tag assignment — see §9).
+rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param; ←/→/Esc; `large` variant; header carries a trash/restore
+action), `SelectionPanel`
+(right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
+an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
+tag assignment — see §9).
 **`photos/detail/`** — `Section` (compact foldable section, collapse persisted per id), `ExifInlineEditor` (presentational inline per-field EXIF
 editor:
 blue-dot dirty indicator, per-field reset on hover, save button in section header, exif_sync_status badge, unit-prefixed/suffixed inputs; every
 editable
 row — including the exposure num/den pair on one line — is **click-to-edit** (shows formatted text, swaps to inputs on click); orientation is **not**
 a row —
-it is driven by the preview's rotate overlays), `DateTimePickerPopover` (shadcn Calendar + time input, auto-applies on change → `NaiveDateTime` string
+it is driven by the preview's rotate overlays. **Received pictures are editable too** — each edit becomes a recipient-local override; an overridden
+field shows an `OverwrittenBadge`), `OverwrittenBadge` (amber "overwritten" chip + tooltip explaining that the override is private and **not** visible
+in WebDAV, which serves the owner's file directly; the ✕ drops the override so the owner's value flows back), `DateTimePickerPopover` (shadcn Calendar
+
++ time input, auto-applies on change → `NaiveDateTime` string
 `YYYY-MM-DDTHH:MM:SS`, **no timezone**; Clear resets and closes the popover), `GpsPickerPopover` (interactive map + manual lat/lng/alt inputs +
 "current location" + Clear). The draft state is owned by `hooks/useExifDraft.ts` (shared between the editor and the preview's rotate buttons; re-seeds
 from server
-state on the picture's `id`+`updated_at` signature, exposes `set/setGps/reset/resetGps/rotate/save`). **Orientation is excluded from the manual
+  state on the picture's `id`+`updated_at` signature, exposes `set/setGps/reset/resetGps/rotate/save`, and — for received pictures — `owned`,
+  `overriddenKeys`, and `removeOverride(...fields)`; it routes saves through `useEditExif` for owned pictures and `useOverrideExif` (DB-only, no job
+  poll) for received ones). **Orientation is excluded from the manual
 dirty/save flow** — `rotate` updates the draft for instant feedback and auto-commits the new orientation after a 700 ms debounce (
 `set: { orientation }`),
 so the rotate buttons never leave the EXIF section "dirty".
@@ -261,13 +270,19 @@ mobile) and shown only when its `ui` store toggle is on:
   the `HierarchyEditor` takes over the center (the right selection panel is suppressed while editing).
 - **Right** (`SelectionPanel`): only mounted when a selection exists (returns `null` otherwise — its `SidePanel` wrapper additionally honours the
   `rightSidebarOpen` toggle). For a single selection: borderless thumbnail (click opens lightbox; received pictures get an `@owner:instance` label
-  overlaid on the preview), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via
-  `formatDateTime`),
+  overlaid on the preview — **red with a tooltip when the owner has trashed the picture**; rotate overlays now also apply to received pictures, as an
+  orientation override), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via `formatDateTime`),
+  an **owner-deletion grace banner** (received, when `owner_deleted_at` is set — "disappears on *X*"), a **local-trash banner** (when the picture is
+  in
+  the holder's trash, with the owned purge date), and a **Move to trash** (ConfirmDialog) / **Restore** action,
   then foldable sections — **Tags** (chips; **+** add button and provenance toggle in the section header; provenance mode renders each path as a chip
   with colour-coded per-source mini-tags), **Shared with you** (sender handle + shared subpath, not the raw `SharedToMe.*` path), **Shared by you**,
-  **EXIF** (inline-editable for owned pictures; the status badge flips to a green **modified** when there are unsaved changes), **Versions**. Clicking
+  **EXIF** (inline-editable — owned pictures write through to the file, received pictures get recipient-local overrides; the badge flips to **modified
+  **
+  on unsaved changes, or **overridden** when a received picture has sticky overrides), **Versions**. Clicking
   a
-  tag filters by it and reveals it in the Tags tree (opens the left panel + Tags tab + expands/scrolls the tree). For multi-selection: batch tag-add.
+  tag filters by it and reveals it in the Tags tree (opens the left panel + Tags tab + expands/scrolls the tree). For multi-selection: batch tag-add +
+  batch trash/restore (one request per picture — there is no batch trash endpoint).
 
 ---
 
@@ -282,8 +297,16 @@ mobile) and shown only when its `ui` store toggle is on:
 - **Pipeline is async:** tagging-service mutations invalidate `['tagging']`/`['tags']`/`['pictures']`, but the backend re-evaluates tags in the
   background — assignments converge after a short delay, not synchronously. Service *state* (enabled/gates) does update immediately on refetch; the
   pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
-- **EXIF editing:** owned pictures only (`picture.owner_username == null`). `useEditExif` POSTs the diff (`set`/`clear`), then polls `getJob`
-  (1/2/4/8/15 s) while `exif_sync_status === 'pending'`.
+- **EXIF editing:** owned pictures (`picture.owner_username == null`) edit through `useEditExif`, which POSTs the diff (`set`/`clear`) then polls
+  `getJob` (1/2/4/8/15 s) while `exif_sync_status === 'pending'`. **Received pictures** edit through `useOverrideExif` →
+  `POST /pictures/{id}/exif/override`
+  (DB-only, no job poll): `set` claims a sticky per-field override, `clear` (via `removeOverride`) drops it so the owner's value flows through again.
+  Overridden fields are derived from `picture.local_exif_overrides` (a sparse `FullExif`, snake-case keys) and tagged with `OverwrittenBadge`. The
+  override never touches the owner's file, so it is invisible over WebDAV — that caveat is the badge's tooltip.
+- **Trash & restore:** `useTrashMutations` (`trash`/`restore`) POSTs `/pictures/{id}/trash` | `/restore` and invalidates `['pictures']` + the detail.
+  Owned trash is purged after `trash_retention_days` (the `/trash` page derives the purge date as `deleted_at + retention` since the list item carries
+  no `owner_purge_at` for owned rows); received trash is local-only. The gallery shows trashed items only with Filters → **Include trashed**; the
+  `/trash` page fetches `include_deleted` and client-filters to `deleted_at != null`.
 - **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates at display time using
   `orientedCoverStyle` (absolute positioning + CSS transform; sets `max-w-none` to escape Tailwind's `img { max-width: 100% }` which otherwise
   collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container. The sidebar preview uses the live draft

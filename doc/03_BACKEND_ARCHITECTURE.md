@@ -33,7 +33,7 @@ main.rs / state.rs
 domain/
   auth.rs           # TokenType, JwtClaims
   user.rs / user_settings.rs
-  picture.rs        # Picture (includes file_hash, file_size), PictureVersion, UploadSession
+  picture.rs        # Picture (exif_data is CameraExif; Picture::full_exif() → FullExif), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
   hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static), validation, TagPredicate
   share.rs          # OutgoingShare, IncomingShare
@@ -86,6 +86,8 @@ infra/
     evaluation.rs    # per-user tag service evaluation + reconciliation, then announcement
     announcement.rs  # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
   job_watchdog.rs    # JobWatchdogTask (reset stale jobs) + JobCleanupTask (prune terminal jobs)
+  purge_sweep.rs     # PurgeSweepTask (RecurringTask): physically purge owned, retention-expired
+                     # trashed pictures — unannounce + delete tracking, S3 cleanup, hard-delete
 ```
 
 ## D) AppState
@@ -143,6 +145,18 @@ the announcement delta re-delivers the refreshed metadata. The race-free backsto
 `pending_first_announcement` (full-coverage initial pass), `active` dirty-delta reconciliation, and failure recovery (`errored` → full reconcile after
 `PIPELINE_RETRY_BACKOFF_SECS` backoff). Same-backend vs cross-instance decided by `find_local_user_id`. See
 `doc/features/02_pipeline_announcement_robustness.md`.
+
+**Owner-authoritative lifecycle + EXIF (09)** — share coverage **includes** owner-trashed-pending owned
+pictures (the coverage query never excluded `deleted_at`) and is decoupled from a relayer's local
+`deleted_at`. `AnnouncedPicture` carries `owner_deleted_at`/`owner_purge_at` (owned: `deleted_at` and
+the derived `deleted_at + trash_retention_days`; received: the stored values) and the **owner** EXIF
+snapshot (owned: the row's columns; received: `remote_exif_data`, never the relayer's merged
+`exif_data`). On the recipient side, `create_received` writes `remote_exif_data` + lifecycle and
+preserves `local_exif_overrides`; `exif_data` (+ the promoted `captured_at`/`gps_*`/`orientation`
+columns) is re-materialised as `merge(remote_exif_data, local_exif_overrides)` (override wins
+per-field). A local override is DB-only (a `metadata` event, no `edit_picture` job). The purge sweep
+physically deletes owned pictures past their (derived) retention, unannouncing them. See
+`doc/features/09_trash_and_exif_overrides.md`.
 
 **Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
 removes them, controlled by the `promote_tags` flag.

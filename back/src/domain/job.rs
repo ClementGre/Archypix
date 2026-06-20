@@ -3,13 +3,13 @@
 #[allow(unused_imports)]
 pub use archypix_common::job::{
     // Core types used throughout back/.
+    CameraExif,
     CropTransform,
     EditPictureConfig,
     ExifEdit,
     ExifField,
-    ExifOverrides,
-    ExifSnapshot,
     ExtractedExif,
+    FullExif,
     GenThumbnailConfig,
     // Auxiliary types re-exported here so callers can import from one place.
     JobConfig,

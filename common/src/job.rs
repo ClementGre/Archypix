@@ -143,16 +143,16 @@ impl EditPictureConfig {
 ///   revert (§4.3) and completion-time convergence (§5). The worker only reads `set`/`clear`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExifEdit {
-    pub set: ExifOverrides,
+    pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<ExifField>,
-    pub previous: ExifSnapshot,
+    pub previous: FullExif,
 }
 
 impl ExifEdit {
     /// The full snapshot the file/DB reaches once this edit's `set`/`clear` is applied to
     /// `previous`. This is the file's content after a successful reconcile.
-    pub fn new_state(&self) -> ExifSnapshot {
+    pub fn new_state(&self) -> FullExif {
         self.previous.applied(&self.set, &self.clear)
     }
 }
@@ -175,131 +175,189 @@ pub enum ExifField {
     ExposureTimeDen,
 }
 
-/// Partial EXIF/metadata override. Only provided (`Some`) fields are written.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ExifOverrides {
-    pub captured_at: Option<NaiveDateTime>,
-    pub gps_lat: Option<f64>,
-    pub gps_lng: Option<f64>,
-    pub gps_alt: Option<i32>,
-    pub orientation: Option<i16>,
+/// Camera/lens EXIF — the non-promoted editable fields. This is exactly what the `exif_data` JSONB
+/// column stores (owned and received rows alike); the five promoted fields live in their own
+/// `pictures` columns and in [`FullExif`]. Serialized sparsely (only `Some` keys appear).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CameraExif {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub camera_brand: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub camera_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub focal_length_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub f_number: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub iso_speed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub exposure_time_num: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub exposure_time_den: Option<i32>,
 }
 
-/// A full snapshot of every editable EXIF field. `None` means the field is absent/NULL — unlike
-/// [`ExifOverrides`], where `None` means "leave unchanged". Used as the revert baseline and for
-/// completion-time convergence diffs.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ExifSnapshot {
+/// The full editable EXIF: the five promoted fields (their own `pictures` columns) plus the
+/// [`CameraExif`] camera/lens fields. One canonical typed shape for every EXIF carrier — an owner's
+/// authoritative snapshot (`remote_exif_data`), a recipient's sticky overrides
+/// (`local_exif_overrides`), the announce payload, an edit `set`, and a revert baseline. `Some` =
+/// present/written/claimed; `None` = absent/unchanged (context-dependent; explicit removal in an
+/// edit is expressed by the paired `clear` list in [`ExifEdit`]). Flattens to one JSON object whose
+/// keys are the snake-case [`ExifField`] names.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FullExif {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub captured_at: Option<NaiveDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gps_lat: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gps_lng: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gps_alt: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub orientation: Option<i16>,
-    pub camera_brand: Option<String>,
-    pub camera_model: Option<String>,
-    pub focal_length_mm: Option<f64>,
-    pub f_number: Option<f64>,
-    pub iso_speed: Option<i32>,
-    pub exposure_time_num: Option<i32>,
-    pub exposure_time_den: Option<i32>,
+    #[serde(flatten)]
+    pub camera: CameraExif,
 }
 
-impl ExifSnapshot {
-    /// This snapshot with `set` applied (only `Some` fields overwrite) and `clear` nulled.
-    pub fn applied(&self, set: &ExifOverrides, clear: &[ExifField]) -> ExifSnapshot {
-        let mut s = self.clone();
+impl FullExif {
+    /// Overwrite each field that is `Some` in `set`; leave the rest unchanged. Used for an edit
+    /// `set` (`Some` = write) and, via [`Self::merged_with`], for the received-row merge.
+    pub fn apply_set(&mut self, set: &FullExif) {
         if set.captured_at.is_some() {
-            s.captured_at = set.captured_at;
+            self.captured_at = set.captured_at;
         }
         if set.gps_lat.is_some() {
-            s.gps_lat = set.gps_lat;
+            self.gps_lat = set.gps_lat;
         }
         if set.gps_lng.is_some() {
-            s.gps_lng = set.gps_lng;
+            self.gps_lng = set.gps_lng;
         }
         if set.gps_alt.is_some() {
-            s.gps_alt = set.gps_alt;
+            self.gps_alt = set.gps_alt;
         }
         if set.orientation.is_some() {
-            s.orientation = set.orientation;
+            self.orientation = set.orientation;
         }
-        if set.camera_brand.is_some() {
-            s.camera_brand = set.camera_brand.clone();
+        let (c, s) = (&mut self.camera, &set.camera);
+        if s.camera_brand.is_some() {
+            c.camera_brand = s.camera_brand.clone();
         }
-        if set.camera_model.is_some() {
-            s.camera_model = set.camera_model.clone();
+        if s.camera_model.is_some() {
+            c.camera_model = s.camera_model.clone();
         }
-        if set.focal_length_mm.is_some() {
-            s.focal_length_mm = set.focal_length_mm;
+        if s.focal_length_mm.is_some() {
+            c.focal_length_mm = s.focal_length_mm;
         }
-        if set.f_number.is_some() {
-            s.f_number = set.f_number;
+        if s.f_number.is_some() {
+            c.f_number = s.f_number;
         }
-        if set.iso_speed.is_some() {
-            s.iso_speed = set.iso_speed;
+        if s.iso_speed.is_some() {
+            c.iso_speed = s.iso_speed;
         }
-        if set.exposure_time_num.is_some() {
-            s.exposure_time_num = set.exposure_time_num;
+        if s.exposure_time_num.is_some() {
+            c.exposure_time_num = s.exposure_time_num;
         }
-        if set.exposure_time_den.is_some() {
-            s.exposure_time_den = set.exposure_time_den;
+        if s.exposure_time_den.is_some() {
+            c.exposure_time_den = s.exposure_time_den;
         }
-        for f in clear {
-            s.clear_field(*f);
-        }
-        s
     }
 
-    fn clear_field(&mut self, f: ExifField) {
+    /// Null a single field.
+    pub fn clear_field(&mut self, f: ExifField) {
         match f {
             ExifField::CapturedAt => self.captured_at = None,
             ExifField::GpsLat => self.gps_lat = None,
             ExifField::GpsLng => self.gps_lng = None,
             ExifField::GpsAlt => self.gps_alt = None,
             ExifField::Orientation => self.orientation = None,
-            ExifField::CameraBrand => self.camera_brand = None,
-            ExifField::CameraModel => self.camera_model = None,
-            ExifField::FocalLengthMm => self.focal_length_mm = None,
-            ExifField::FNumber => self.f_number = None,
-            ExifField::IsoSpeed => self.iso_speed = None,
-            ExifField::ExposureTimeNum => self.exposure_time_num = None,
-            ExifField::ExposureTimeDen => self.exposure_time_den = None,
+            ExifField::CameraBrand => self.camera.camera_brand = None,
+            ExifField::CameraModel => self.camera.camera_model = None,
+            ExifField::FocalLengthMm => self.camera.focal_length_mm = None,
+            ExifField::FNumber => self.camera.f_number = None,
+            ExifField::IsoSpeed => self.camera.iso_speed = None,
+            ExifField::ExposureTimeNum => self.camera.exposure_time_num = None,
+            ExifField::ExposureTimeDen => self.camera.exposure_time_den = None,
         }
     }
 
-    /// The `set`/`clear` delta that turns `self` into `target`. Empty when they are already equal.
-    pub fn diff_to(&self, target: &ExifSnapshot) -> (ExifOverrides, Vec<ExifField>) {
-        let mut set = ExifOverrides::default();
+    /// Null every field in `fields`.
+    pub fn clear_fields(&mut self, fields: &[ExifField]) {
+        for f in fields {
+            self.clear_field(*f);
+        }
+    }
+
+    /// `self` with `set` applied (`Some` overwrites) then `clear` nulled — the state the file/DB
+    /// reaches after an edit. Used as the revert baseline / convergence comparison.
+    pub fn applied(&self, set: &FullExif, clear: &[ExifField]) -> FullExif {
+        let mut s = self.clone();
+        s.apply_set(set);
+        s.clear_fields(clear);
+        s
+    }
+
+    /// An owner snapshot merged with the recipient's sticky overrides: an overridden (`Some`) field
+    /// wins, an un-overridden field flows through from the owner. The materialised effective EXIF.
+    pub fn merged_with(&self, overrides: &FullExif) -> FullExif {
+        let mut s = self.clone();
+        s.apply_set(overrides);
+        s
+    }
+
+    /// Whether `f` is set (`Some`) here — for MIME preflight / field-presence checks.
+    pub fn has(&self, f: ExifField) -> bool {
+        match f {
+            ExifField::CapturedAt => self.captured_at.is_some(),
+            ExifField::GpsLat => self.gps_lat.is_some(),
+            ExifField::GpsLng => self.gps_lng.is_some(),
+            ExifField::GpsAlt => self.gps_alt.is_some(),
+            ExifField::Orientation => self.orientation.is_some(),
+            ExifField::CameraBrand => self.camera.camera_brand.is_some(),
+            ExifField::CameraModel => self.camera.camera_model.is_some(),
+            ExifField::FocalLengthMm => self.camera.focal_length_mm.is_some(),
+            ExifField::FNumber => self.camera.f_number.is_some(),
+            ExifField::IsoSpeed => self.camera.iso_speed.is_some(),
+            ExifField::ExposureTimeNum => self.camera.exposure_time_num.is_some(),
+            ExifField::ExposureTimeDen => self.camera.exposure_time_den.is_some(),
+        }
+    }
+
+    /// The (`set`, `clear`) delta turning `self` into `target`. Empty when already equal.
+    pub fn diff_to(&self, target: &FullExif) -> (FullExif, Vec<ExifField>) {
+        let mut set = FullExif::default();
         let mut clear = Vec::new();
-        macro_rules! diff {
+        macro_rules! diff_p {
             ($field:ident, $variant:ident) => {
                 if self.$field != target.$field {
-                    match &target.$field {
-                        Some(v) => set.$field = Some(v.clone()),
+                    match target.$field.clone() {
+                        Some(v) => set.$field = Some(v),
                         None => clear.push(ExifField::$variant),
                     }
                 }
             };
         }
-        diff!(captured_at, CapturedAt);
-        diff!(gps_lat, GpsLat);
-        diff!(gps_lng, GpsLng);
-        diff!(gps_alt, GpsAlt);
-        diff!(orientation, Orientation);
-        diff!(camera_brand, CameraBrand);
-        diff!(camera_model, CameraModel);
-        diff!(focal_length_mm, FocalLengthMm);
-        diff!(f_number, FNumber);
-        diff!(iso_speed, IsoSpeed);
-        diff!(exposure_time_num, ExposureTimeNum);
-        diff!(exposure_time_den, ExposureTimeDen);
+        macro_rules! diff_c {
+            ($field:ident, $variant:ident) => {
+                if self.camera.$field != target.camera.$field {
+                    match target.camera.$field.clone() {
+                        Some(v) => set.camera.$field = Some(v),
+                        None => clear.push(ExifField::$variant),
+                    }
+                }
+            };
+        }
+        diff_p!(captured_at, CapturedAt);
+        diff_p!(gps_lat, GpsLat);
+        diff_p!(gps_lng, GpsLng);
+        diff_p!(gps_alt, GpsAlt);
+        diff_p!(orientation, Orientation);
+        diff_c!(camera_brand, CameraBrand);
+        diff_c!(camera_model, CameraModel);
+        diff_c!(focal_length_mm, FocalLengthMm);
+        diff_c!(f_number, FNumber);
+        diff_c!(iso_speed, IsoSpeed);
+        diff_c!(exposure_time_num, ExposureTimeNum);
+        diff_c!(exposure_time_den, ExposureTimeDen);
         (set, clear)
     }
 }
@@ -364,13 +422,13 @@ mod tests {
         let cfg = JobConfig::EditPicture(EditPictureConfig {
             picture_id: Uuid::new_v4(),
             exif: Some(ExifEdit {
-                set: ExifOverrides {
+                set: FullExif {
                     gps_lat: Some(48.8566),
                     gps_lng: Some(2.3522),
                     ..Default::default()
                 },
                 clear: vec![ExifField::GpsAlt, ExifField::Orientation],
-                previous: ExifSnapshot {
+                previous: FullExif {
                     gps_alt: Some(120),
                     orientation: Some(1),
                     ..Default::default()
@@ -383,13 +441,13 @@ mod tests {
 
     #[test]
     fn exif_snapshot_applied_and_diff_round_trip() {
-        let previous = ExifSnapshot {
+        let previous = FullExif {
             gps_lat: Some(1.0),
             gps_alt: Some(50),
             orientation: Some(1),
             ..Default::default()
         };
-        let set = ExifOverrides {
+        let set = FullExif {
             gps_lat: Some(2.0),
             ..Default::default()
         };
@@ -461,15 +519,9 @@ mod tests {
 pub struct ExtractedExif {
     pub width: Option<i32>,
     pub height: Option<i32>,
-    /// EXIF capture timestamp in `"YYYY:MM:DD HH:MM:SS"` format (or RFC3339).
-    pub captured_at: Option<String>,
-    pub gps_lat: Option<f64>,
-    pub gps_lng: Option<f64>,
-    pub gps_alt: Option<i32>,
-    /// EXIF orientation tag (1–8). `None` means absent or unknown.
-    pub orientation: Option<i16>,
-    /// Remaining camera/lens metadata stored as a JSON object:
-    /// `camera_brand`, `camera_model`, `focal_length_mm`, `f_number`,
-    /// `iso_speed`, `exposure_time_num`, `exposure_time_den`.
-    pub exif_data: Option<serde_json::Value>,
+    /// The editable EXIF read from the file (promoted fields + camera/lens). The worker parses the
+    /// raw EXIF capture timestamp into `exif.captured_at` at extraction time. Flattened, so the wire
+    /// form is `{width, height, captured_at, gps_lat, …, camera_brand, …}`.
+    #[serde(flatten)]
+    pub exif: FullExif,
 }

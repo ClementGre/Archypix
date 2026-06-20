@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO user_settings (user_id, versioning_mode)\n               VALUES ($1, $2)\n               ON CONFLICT (user_id) DO UPDATE SET versioning_mode = EXCLUDED.versioning_mode\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\", created_at, updated_at",
+  "query": "INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days)\n               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30))\n               ON CONFLICT (user_id) DO UPDATE SET\n                   versioning_mode = COALESCE($2, user_settings.versioning_mode),\n                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days)\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                         trash_retention_days, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 2,
+        "name": "trash_retention_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "trash_retention_days"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -73,15 +84,17 @@
               ]
             }
           }
-        }
+        },
+        "Int4"
       ]
     },
     "nullable": [
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "4766b67d95858f66186abc63901e90f6d0771abc43906b4c24673d7e37f010b3"
+  "hash": "d8beb905bcc633a3a7f12db7c39c4152cf6e49eb9abd9ec79277d393b2ccbf53"
 }

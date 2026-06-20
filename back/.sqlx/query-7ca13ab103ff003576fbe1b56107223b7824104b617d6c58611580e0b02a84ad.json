@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,\n                    blurhash, gps_lat, gps_lng, gps_alt, orientation, file_hash, thumbnails_generated_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,\n                       $12, $13, $14, $15, $16, $17, $18)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   captured_at = COALESCE(EXCLUDED.captured_at, pictures.captured_at),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   gps_lat     = COALESCE(EXCLUDED.gps_lat,     pictures.gps_lat),\n                   gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),\n                   gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),\n                   orientation = COALESCE(EXCLUDED.orientation, pictures.orientation),\n                   exif_data   = EXCLUDED.exif_data,\n                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),\n                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,\n                                                      pictures.thumbnails_generated_at)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\"",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\"\n               FROM pictures WHERE id = ANY($1::uuid[])",
   "describe": {
     "columns": [
       {
@@ -148,6 +148,72 @@
       },
       {
         "ordinal": 13,
+        "name": "deleted_reason: _",
+        "type_info": {
+          "Custom": {
+            "name": "picture_deleted_reason",
+            "kind": {
+              "Enum": [
+                "manual",
+                "boomerang",
+                "content_dedupe"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "deleted_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "owner_deleted_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "owner_purge_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_purge_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "remote_exif_data: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "remote_exif_data"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "local_exif_overrides: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_exif_overrides"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
         "name": "captured_at",
         "type_info": "Timestamp",
         "origin": {
@@ -158,7 +224,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 19,
         "name": "ingested_at",
         "type_info": "Timestamp",
         "origin": {
@@ -169,7 +235,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 20,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -180,7 +246,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 21,
         "name": "blurhash",
         "type_info": "Text",
         "origin": {
@@ -191,7 +257,7 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 22,
         "name": "gps_lat",
         "type_info": "Float8",
         "origin": {
@@ -202,7 +268,7 @@
         }
       },
       {
-        "ordinal": 18,
+        "ordinal": 23,
         "name": "gps_lng",
         "type_info": "Float8",
         "origin": {
@@ -213,7 +279,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 24,
         "name": "gps_alt",
         "type_info": "Int4",
         "origin": {
@@ -224,7 +290,7 @@
         }
       },
       {
-        "ordinal": 20,
+        "ordinal": 25,
         "name": "orientation",
         "type_info": "Int2",
         "origin": {
@@ -235,7 +301,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 26,
         "name": "thumbnails_generated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -246,7 +312,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 27,
         "name": "file_hash",
         "type_info": "Text",
         "origin": {
@@ -257,7 +323,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 28,
         "name": "exif_sync_status: _",
         "type_info": {
           "Custom": {
@@ -281,24 +347,7 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Varchar",
-        "Varchar",
-        "Varchar",
-        "Varchar",
-        "Varchar",
-        "Int8",
-        "Int4",
-        "Int4",
-        "Timestamp",
-        "Jsonb",
-        "Text",
-        "Float8",
-        "Float8",
-        "Int4",
-        "Int2",
-        "Text",
-        "Timestamp"
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -316,6 +365,11 @@
       false,
       true,
       true,
+      true,
+      true,
+      true,
+      true,
+      true,
       false,
       false,
       true,
@@ -328,5 +382,5 @@
       false
     ]
   },
-  "hash": "46cd00b4aed68d55116baa6e9cd37434bc5b1d6f9d4c0f913945e58d136a92f8"
+  "hash": "7ca13ab103ff003576fbe1b56107223b7824104b617d6c58611580e0b02a84ad"
 }

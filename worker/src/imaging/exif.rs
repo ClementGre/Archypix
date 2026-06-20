@@ -1,5 +1,6 @@
 use crate::error::{Result, WorkerError};
-use archypix_common::job::{ExifField, ExifOverrides, ExtractedExif};
+use archypix_common::job::{CameraExif, ExifField, ExtractedExif, FullExif};
+use chrono::NaiveDateTime;
 use num_rational::Ratio;
 use rexiv2::{GpsInfo, Metadata};
 use std::path::Path;
@@ -74,11 +75,14 @@ pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
         );
     }
 
-    let exif_data = if exif_map.is_empty() {
-        None
+    // The camera/lens map deserializes straight into the typed CameraExif (unknown keys ignored).
+    let camera: CameraExif = if exif_map.is_empty() {
+        CameraExif::default()
     } else {
-        Some(serde_json::Value::Object(exif_map))
+        serde_json::from_value(serde_json::Value::Object(exif_map)).unwrap_or_default()
     };
+
+    let captured_at = captured_at.as_deref().and_then(parse_exif_datetime);
 
     debug!(
         captured_at = ?captured_at,
@@ -93,13 +97,22 @@ pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
         } else {
             None
         },
-        captured_at,
-        gps_lat,
-        gps_lng,
-        gps_alt,
-        orientation,
-        exif_data,
+        exif: FullExif {
+            captured_at,
+            gps_lat,
+            gps_lng,
+            gps_alt,
+            orientation,
+            camera,
+        },
     })
+}
+
+/// Parse a raw EXIF capture timestamp (`"YYYY:MM:DD HH:MM:SS"`, or RFC3339) into a `NaiveDateTime`.
+fn parse_exif_datetime(s: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+        .ok()
 }
 
 /// Apply an EXIF edit (`set` writes, `clear` deletes) into the file at `path` (in-place via rexiv2).
@@ -108,7 +121,7 @@ pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
 /// promoted columns (date, GPS, orientation) and the camera/lens fields (make, model, focal length,
 /// f-number, ISO, exposure time). Fields not named in either `set` or `clear` are left untouched.
 /// Must run inside `tokio::task::spawn_blocking`.
-pub fn write_exif_overrides(path: &Path, set: &ExifOverrides, clear: &[ExifField]) -> Result<()> {
+pub fn write_exif_overrides(path: &Path, set: &FullExif, clear: &[ExifField]) -> Result<()> {
     let metadata = Metadata::new_from_path(path)
         .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF write: {e}")))?;
 
@@ -136,30 +149,30 @@ pub fn write_exif_overrides(path: &Path, set: &ExifOverrides, clear: &[ExifField
         };
         let _ = metadata.set_gps_info(&gps);
     }
-    if let Some(ref brand) = set.camera_brand {
+    if let Some(ref brand) = set.camera.camera_brand {
         let _ = metadata.set_tag_string("Exif.Image.Make", brand);
     }
-    if let Some(ref model) = set.camera_model {
+    if let Some(ref model) = set.camera.camera_model {
         let _ = metadata.set_tag_string("Exif.Image.Model", model);
     }
-    if let Some(iso) = set.iso_speed {
+    if let Some(iso) = set.camera.iso_speed {
         let _ = metadata.set_tag_numeric("Exif.Photo.ISOSpeedRatings", iso);
     }
-    if let Some(focal) = set.focal_length_mm {
+    if let Some(focal) = set.camera.focal_length_mm {
         let _ = metadata.set_tag_rational(
             "Exif.Photo.FocalLengthIn35mmFilm",
             &Ratio::new((focal * 100.0).round() as i32, 100),
         );
     }
-    if let Some(fnum) = set.f_number {
+    if let Some(fnum) = set.camera.f_number {
         let _ = metadata.set_tag_rational(
             "Exif.Photo.FNumber",
             &Ratio::new((fnum * 10.0).round() as i32, 10),
         );
     }
-    if set.exposure_time_num.is_some() || set.exposure_time_den.is_some() {
-        let num = set.exposure_time_num.unwrap_or(0);
-        let den = set.exposure_time_den.unwrap_or(1).max(1);
+    if set.camera.exposure_time_num.is_some() || set.camera.exposure_time_den.is_some() {
+        let num = set.camera.exposure_time_num.unwrap_or(0);
+        let den = set.camera.exposure_time_den.unwrap_or(1).max(1);
         let _ = metadata.set_tag_rational("Exif.Photo.ExposureTime", &Ratio::new(num, den));
     }
 

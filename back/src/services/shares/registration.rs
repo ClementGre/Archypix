@@ -36,6 +36,9 @@ pub async fn register_received_pictures(
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     for pic in pictures {
+        // The announced owner snapshot (typed FullExif) is stored verbatim in remote_exif_data; the
+        // merged exif_data + promoted columns are re-materialised below, preserving any existing
+        // local overrides (09 §6/§8).
         let received = PictureRepository::create_received(
             &mut *tx,
             recipient_id,
@@ -47,15 +50,31 @@ pub async fn register_received_pictures(
             pic.file_size,
             pic.width,
             pic.height,
-            pic.captured_at,
             pic.blurhash.as_ref(),
-            pic.gps_lat,
-            pic.gps_lng,
-            pic.gps_alt,
-            pic.orientation,
-            pic.exif_data.clone(),
             pic.file_hash.as_deref(),
             pic.thumbnails_generated_at,
+            &pic.exif,
+            pic.owner_deleted_at,
+            pic.owner_purge_at,
+        )
+        .await?;
+
+        // Effective EXIF = owner snapshot merged with the recipient's preserved sticky overrides.
+        let overrides = received
+            .local_exif_overrides
+            .as_ref()
+            .map(|j| j.0.clone())
+            .unwrap_or_default();
+        let merged = pic.exif.merged_with(&overrides);
+        PictureRepository::apply_received_materialization(
+            &mut *tx,
+            received.id,
+            &merged.camera,
+            merged.captured_at,
+            merged.gps_lat,
+            merged.gps_lng,
+            merged.gps_alt,
+            merged.orientation,
         )
         .await?;
 

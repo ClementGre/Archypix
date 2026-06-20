@@ -1,5 +1,5 @@
 use crate::domain::hierarchy::TagPredicate;
-use crate::domain::job::ExifSnapshot;
+use crate::domain::job::{CameraExif, FullExif};
 use crate::domain::picture::{ExifSyncStatus, Picture};
 use crate::infra::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
@@ -67,7 +67,11 @@ impl PictureRepository {
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
-                         deleted_at, captured_at, ingested_at, updated_at,
+                         deleted_at, deleted_reason as "deleted_reason: _",
+                         owner_deleted_at, owner_purge_at,
+                         remote_exif_data as "remote_exif_data: _",
+                         local_exif_overrides as "local_exif_overrides: _",
+                         captured_at, ingested_at, updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _""#,
             id,
@@ -85,11 +89,14 @@ impl PictureRepository {
             .map_err(map_sqlx_error)
     }
 
-    /// Create a received (non-owned) picture row on behalf of a recipient user.
+    /// Create or refresh a received (non-owned) picture row on behalf of a recipient user.
     ///
     /// `remote_picture_id` is the sender's picture UUID (stored as string for cross-instance compat).
-    /// Deduplication is handled by the `uq_received_picture` unique index: on conflict the existing
-    /// row is returned unchanged.
+    /// Deduplication is handled by the `uq_received_picture` unique index. On conflict the row's
+    /// owner-authoritative state — `remote_exif_data`, `owner_deleted_at`, `owner_purge_at` — is
+    /// refreshed while the recipient's `local_exif_overrides` are **preserved** (09 §8). The caller
+    /// then re-materialises `exif_data` + the promoted columns from the merge via
+    /// [`apply_received_materialization`]; this method does not touch them.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_received<'e, E>(
         ex: E,
@@ -102,28 +109,28 @@ impl PictureRepository {
         file_size: Option<i64>,
         width: Option<i32>,
         height: Option<i32>,
-        captured_at: Option<NaiveDateTime>,
         blurhash: Option<&String>,
-        gps_lat: Option<f64>,
-        gps_lng: Option<f64>,
-        gps_alt: Option<i32>,
-        orientation: Option<i16>,
-        exif_data: Option<serde_json::Value>,
         file_hash: Option<&str>,
         thumbnails_generated_at: Option<NaiveDateTime>,
+        remote_exif_data: &FullExif,
+        owner_deleted_at: Option<NaiveDateTime>,
+        owner_purge_at: Option<NaiveDateTime>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let exif_json = exif_data.unwrap_or_else(|| serde_json::json!({}));
+        // The owner snapshot is stored as a JSONB object (camera/lens keys + promoted keys flattened).
+        let remote_exif_json = serde_json::to_value(remote_exif_data)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         sqlx::query_as!(
             Picture,
             r#"INSERT INTO pictures
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
-                    filename, mime_type, file_size, width, height, exif_data, metadata, captured_at,
-                    blurhash, gps_lat, gps_lng, gps_alt, orientation, file_hash, thumbnails_generated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, '{}'::jsonb, $10,
-                       $12, $13, $14, $15, $16, $17, $18)
+                    filename, mime_type, file_size, width, height, metadata,
+                    blurhash, file_hash, thumbnails_generated_at,
+                    remote_exif_data, owner_deleted_at, owner_purge_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,
+                       $10, $11, $12, $13, $14, $15)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -132,20 +139,22 @@ impl PictureRepository {
                    file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),
                    width     = COALESCE(EXCLUDED.width,     pictures.width),
                    height    = COALESCE(EXCLUDED.height,    pictures.height),
-                   captured_at = COALESCE(EXCLUDED.captured_at, pictures.captured_at),
                    blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),
-                   gps_lat     = COALESCE(EXCLUDED.gps_lat,     pictures.gps_lat),
-                   gps_lng     = COALESCE(EXCLUDED.gps_lng,     pictures.gps_lng),
-                   gps_alt     = COALESCE(EXCLUDED.gps_alt,     pictures.gps_alt),
-                   orientation = COALESCE(EXCLUDED.orientation, pictures.orientation),
-                   exif_data   = EXCLUDED.exif_data,
                    file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),
                    thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,
-                                                      pictures.thumbnails_generated_at)
+                                                      pictures.thumbnails_generated_at),
+                   -- Owner-authoritative state is refreshed; local_exif_overrides is preserved.
+                   remote_exif_data = EXCLUDED.remote_exif_data,
+                   owner_deleted_at = EXCLUDED.owner_deleted_at,
+                   owner_purge_at   = EXCLUDED.owner_purge_at
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
-                         deleted_at, captured_at, ingested_at, updated_at,
+                         deleted_at, deleted_reason as "deleted_reason: _",
+                         owner_deleted_at, owner_purge_at,
+                         remote_exif_data as "remote_exif_data: _",
+                         local_exif_overrides as "local_exif_overrides: _",
+                         captured_at, ingested_at, updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _""#,
             recipient_id,
@@ -157,19 +166,94 @@ impl PictureRepository {
             file_size,
             width,
             height,
-            captured_at,
-            exif_json as serde_json::Value,
             blurhash,
-            gps_lat,
-            gps_lng,
-            gps_alt,
-            orientation,
             file_hash,
             thumbnails_generated_at,
+            remote_exif_json,
+            owner_deleted_at,
+            owner_purge_at,
         )
             .fetch_one(ex)
             .await
             .map_err(map_sqlx_error)
+    }
+
+    /// Re-materialise a received row's `exif_data` + promoted columns from the
+    /// `merge(remote_exif_data, local_exif_overrides)` the caller computed (09 §6/§8). Bumps
+    /// `updated_at` (announcement re-delivery gate) and re-dirties the row for the local `metadata`
+    /// event (date/GPS rules re-evaluate on the merged EXIF).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply_received_materialization<'e, E>(
+        ex: E,
+        id: Uuid,
+        camera: &CameraExif,
+        captured_at: Option<NaiveDateTime>,
+        gps_lat: Option<f64>,
+        gps_lng: Option<f64>,
+        gps_alt: Option<i32>,
+        orientation: Option<i16>,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let exif_data = serde_json::to_value(camera)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        sqlx::query!(
+            r#"UPDATE pictures
+               SET exif_data   = $2,
+                   captured_at = $3,
+                   gps_lat     = $4,
+                   gps_lng     = $5,
+                   gps_alt     = $6,
+                   orientation = $7,
+                   last_pipeline_run_at = NULL
+               WHERE id = $1"#,
+            id,
+            exif_data,
+            captured_at,
+            gps_lat,
+            gps_lng,
+            gps_alt,
+            orientation,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Replace a received row's `local_exif_overrides` (the recipient's sticky per-field set) — used
+    /// by the local-override endpoint (09 §6.2). The caller re-materialises afterwards. `None` /
+    /// an empty object both clear all overrides. Returns the row's `remote_exif_data` so the caller
+    /// can recompute the merge without an extra read.
+    pub async fn set_local_exif_overrides<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+        overrides: &FullExif,
+    ) -> Result<Option<FullExif>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let overrides_json = serde_json::to_value(overrides)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let row = sqlx::query!(
+            r#"UPDATE pictures
+               SET local_exif_overrides = $3
+               WHERE id = $1 AND local_user_id = $2 AND remote_picture_id IS NOT NULL
+               RETURNING remote_exif_data"#,
+            picture_id,
+            user_id,
+            overrides_json,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(row.map(|r| {
+            r.remote_exif_data
+                .and_then(|v| serde_json::from_value::<FullExif>(v).ok())
+                .unwrap_or_default()
+        }))
     }
 
     /// Delete received-picture rows from `sender` for `recipient_id` that have no remaining
@@ -318,7 +402,11 @@ impl PictureRepository {
             r#"SELECT DISTINCT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,
                       p.owner_instance_domain, p.filename, p.mime_type, p.file_size,
                       p.width, p.height, p.exif_data as "exif_data: _", p.metadata as "metadata: _",
-                      p.deleted_at, p.captured_at, p.ingested_at, p.updated_at,
+                      p.deleted_at, p.deleted_reason as "deleted_reason: _",
+                      p.owner_deleted_at, p.owner_purge_at,
+                      p.remote_exif_data as "remote_exif_data: _",
+                      p.local_exif_overrides as "local_exif_overrides: _",
+                      p.captured_at, p.ingested_at, p.updated_at,
                       p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                       p.thumbnails_generated_at, p.file_hash,
                       p.exif_sync_status as "exif_sync_status: _"
@@ -350,7 +438,11 @@ impl PictureRepository {
             r#"SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                       filename, mime_type, file_size, width, height,
                       exif_data as "exif_data: _", metadata as "metadata: _",
-                      deleted_at, captured_at, ingested_at, updated_at,
+                      deleted_at, deleted_reason as "deleted_reason: _",
+                      owner_deleted_at, owner_purge_at,
+                      remote_exif_data as "remote_exif_data: _",
+                      local_exif_overrides as "local_exif_overrides: _",
+                      captured_at, ingested_at, updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _"
                FROM pictures WHERE id = ANY($1::uuid[])"#,
@@ -370,7 +462,11 @@ impl PictureRepository {
             r#"SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                       filename, mime_type, file_size, width, height,
                       exif_data as "exif_data: _", metadata as "metadata: _",
-                      deleted_at, captured_at, ingested_at, updated_at,
+                      deleted_at, deleted_reason as "deleted_reason: _",
+                      owner_deleted_at, owner_purge_at,
+                      remote_exif_data as "remote_exif_data: _",
+                      local_exif_overrides as "local_exif_overrides: _",
+                      captured_at, ingested_at, updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _"
                FROM pictures WHERE id = $1"#,
@@ -399,7 +495,11 @@ impl PictureRepository {
             r#"SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                       filename, mime_type, file_size, width, height,
                       exif_data as "exif_data: _", metadata as "metadata: _",
-                      deleted_at, captured_at, ingested_at, updated_at,
+                      deleted_at, deleted_reason as "deleted_reason: _",
+                      owner_deleted_at, owner_purge_at,
+                      remote_exif_data as "remote_exif_data: _",
+                      local_exif_overrides as "local_exif_overrides: _",
+                      captured_at, ingested_at, updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _"
                FROM pictures
@@ -468,8 +568,11 @@ impl PictureRepository {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Set or clear `deleted_at` on an owned picture (WebDAV `fullDelete` / un-delete on
-    /// rematch, §7–8). Returns false if the picture is not owned by the user.
+    /// Set or clear `deleted_at` (+ `deleted_reason = 'manual'`) on a picture the user holds —
+    /// owned or received (WebDAV `fullDelete` / un-delete on rematch, §7–8; the Trash API, 09 §5).
+    /// Owned-picture trash keeps share coverage (the share-coverage query does not exclude
+    /// `deleted_at`); received-picture trash is local only. Returns false if the user holds no such
+    /// picture.
     pub async fn set_deleted<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -481,7 +584,8 @@ impl PictureRepository {
     {
         let res = sqlx::query!(
             r#"UPDATE pictures
-               SET deleted_at = CASE WHEN $3 THEN (now() at time zone 'utc') ELSE NULL END
+               SET deleted_at = CASE WHEN $3 THEN (now() at time zone 'utc') ELSE NULL END,
+                   deleted_reason = CASE WHEN $3 THEN 'manual'::picture_deleted_reason ELSE NULL END
                WHERE id = $1 AND local_user_id = $2"#,
             picture_id,
             user_id,
@@ -491,6 +595,46 @@ impl PictureRepository {
         .await
         .map_err(map_sqlx_error)?;
         Ok(res.rows_affected() > 0)
+    }
+
+    /// Owned, soft-deleted pictures whose retention window has elapsed — the purge sweep's work set
+    /// (09 §5.1). `owner_purge_at` is **derived** here as `deleted_at + retention_days` from the
+    /// owner's `user_settings.trash_retention_days` (so a retention change takes effect with no
+    /// backfill). Returns `(picture_id, local_user_id)`.
+    pub async fn find_purgeable<'e, E>(ex: E, limit: i64) -> Result<Vec<(Uuid, Uuid)>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let rows = sqlx::query!(
+            r#"SELECT p.id, p.local_user_id
+               FROM pictures p
+               LEFT JOIN user_settings us ON us.user_id = p.local_user_id
+               WHERE p.remote_picture_id IS NULL
+                 AND p.deleted_at IS NOT NULL
+                 AND p.deleted_at + make_interval(days => COALESCE(us.trash_retention_days, 30))
+                     < (now() at time zone 'utc')
+               ORDER BY p.deleted_at
+               LIMIT $1"#,
+            limit,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows.into_iter().map(|r| (r.id, r.local_user_id)).collect())
+    }
+
+    /// Hard-delete a picture row (purge). Tags cascade; the caller must have already removed the
+    /// S3 objects and unannounced any downstream recipients (`share_announcements` has no FK to
+    /// pictures, so its rows must be deleted explicitly first).
+    pub async fn hard_delete<'e, E>(ex: E, picture_id: Uuid) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!("DELETE FROM pictures WHERE id = $1", picture_id)
+            .execute(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     pub async fn list(
@@ -526,7 +670,9 @@ impl PictureRepository {
                 r#"SELECT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,
                           p.owner_instance_domain, p.filename, p.mime_type, p.file_size,
                           p.width, p.height, p.exif_data, p.metadata,
-                          p.deleted_at, p.captured_at, p.ingested_at, p.updated_at,
+                          p.deleted_at, p.deleted_reason, p.owner_deleted_at, p.owner_purge_at,
+                          p.remote_exif_data, p.local_exif_overrides,
+                          p.captured_at, p.ingested_at, p.updated_at,
                           p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                           p.thumbnails_generated_at, p.file_hash, p.exif_sync_status
                    FROM pictures p WHERE p.local_user_id = "#,
@@ -669,7 +815,11 @@ impl PictureRepository {
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
-                         deleted_at, captured_at, ingested_at, updated_at,
+                         deleted_at, deleted_reason as "deleted_reason: _",
+                         owner_deleted_at, owner_purge_at,
+                         remote_exif_data as "remote_exif_data: _",
+                         local_exif_overrides as "local_exif_overrides: _",
+                         captured_at, ingested_at, updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _""#,
             id,
@@ -727,7 +877,11 @@ impl PictureRepository {
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
-                         deleted_at, captured_at, ingested_at, updated_at,
+                         deleted_at, deleted_reason as "deleted_reason: _",
+                         owner_deleted_at, owner_purge_at,
+                         remote_exif_data as "remote_exif_data: _",
+                         local_exif_overrides as "local_exif_overrides: _",
+                         captured_at, ingested_at, updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _""#,
             id,
@@ -804,35 +958,15 @@ impl PictureRepository {
     pub async fn write_exif_snapshot<'e, E>(
         ex: E,
         id: Uuid,
-        snapshot: &ExifSnapshot,
+        snapshot: &FullExif,
         status: ExifSyncStatus,
     ) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let mut patch = serde_json::Map::new();
-        if let Some(ref v) = snapshot.camera_brand {
-            patch.insert("camera_brand".to_string(), serde_json::json!(v));
-        }
-        if let Some(ref v) = snapshot.camera_model {
-            patch.insert("camera_model".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = snapshot.focal_length_mm {
-            patch.insert("focal_length_mm".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = snapshot.f_number {
-            patch.insert("f_number".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = snapshot.iso_speed {
-            patch.insert("iso_speed".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = snapshot.exposure_time_num {
-            patch.insert("exposure_time_num".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = snapshot.exposure_time_den {
-            patch.insert("exposure_time_den".to_string(), serde_json::json!(v));
-        }
-        let patch = serde_json::Value::Object(patch);
+        // The camera/lens keys to write back into `exif_data` (sparse: only `Some` fields appear).
+        let patch = serde_json::to_value(&snapshot.camera)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         const CAMERA_KEYS: [&str; 7] = [
             "camera_brand",
             "camera_model",

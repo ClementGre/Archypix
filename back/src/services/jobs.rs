@@ -1,5 +1,5 @@
 use crate::domain::job::{
-    EditPictureConfig, ExifEdit, ExifField, ExifOverrides, GenThumbnailConfig, Job, JobConfig,
+    EditPictureConfig, ExifEdit, ExifField, FullExif, GenThumbnailConfig, Job, JobConfig,
 };
 use crate::domain::picture::ExifSyncStatus;
 use crate::infra::error::AppError;
@@ -87,7 +87,7 @@ pub async fn edit_pictures_exif(
     waker: &PipelineWaker,
     user_id: Uuid,
     picture_ids: &[Uuid],
-    set: ExifOverrides,
+    set: FullExif,
     clear: Vec<ExifField>,
 ) -> Result<ExifEditOutcome, AppError> {
     if picture_ids.is_empty() {
@@ -129,7 +129,7 @@ pub async fn edit_pictures_exif(
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     for picture in &pictures {
-        let previous = picture.exif_snapshot();
+        let previous = picture.full_exif();
         let new_state = previous.applied(&set, &clear);
 
         // MIME preflight: a format that cannot embed EXIF gets a DB-only edit, no job.
@@ -181,9 +181,9 @@ async fn enqueue_or_fold_edit(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     user_id: Uuid,
     picture_id: Uuid,
-    set: &ExifOverrides,
+    set: &FullExif,
     clear: &[ExifField],
-    previous: &crate::domain::job::ExifSnapshot,
+    previous: &FullExif,
 ) -> Result<Option<Uuid>, AppError> {
     let new_state = previous.applied(set, clear);
 
@@ -256,14 +256,14 @@ pub async fn resync_picture_exif(
     }
     // Re-enqueue a no-op delta: bring the file from its (unknown) state to the current DB row.
     // `previous` = the current DB snapshot; the worker rewrites every editable field from `set`.
-    let snapshot = picture.exif_snapshot();
-    let (set, clear) = crate::domain::job::ExifSnapshot::default().diff_to(&snapshot);
+    let snapshot = picture.full_exif();
+    let (set, clear) = FullExif::default().diff_to(&snapshot);
     let config = JobConfig::EditPicture(EditPictureConfig {
         picture_id,
         exif: Some(ExifEdit {
             set,
             clear,
-            previous: crate::domain::job::ExifSnapshot::default(),
+            previous: FullExif::default(),
         }),
         visual: None,
     });
@@ -275,10 +275,7 @@ pub async fn resync_picture_exif(
 
 /// Field-level validation of an EXIF edit. Expands a GPS clear to lat+lng+alt, then rejects a field
 /// that appears in both `set` and `clear`, out-of-range GPS, and an invalid orientation.
-fn validate_exif_edit(
-    set: &ExifOverrides,
-    clear: Vec<ExifField>,
-) -> Result<Vec<ExifField>, AppError> {
+fn validate_exif_edit(set: &FullExif, clear: Vec<ExifField>) -> Result<Vec<ExifField>, AppError> {
     // Clearing any GPS component clears all three together.
     let mut clear = clear;
     if clear
@@ -293,7 +290,7 @@ fn validate_exif_edit(
     }
 
     for &f in &clear {
-        if field_in_set(set, f) {
+        if set.has(f) {
             return Err(AppError::BadRequest(format!(
                 "field {f:?} present in both set and clear"
             )));
@@ -317,21 +314,4 @@ fn validate_exif_edit(
         }
     }
     Ok(clear)
-}
-
-fn field_in_set(set: &ExifOverrides, f: ExifField) -> bool {
-    match f {
-        ExifField::CapturedAt => set.captured_at.is_some(),
-        ExifField::GpsLat => set.gps_lat.is_some(),
-        ExifField::GpsLng => set.gps_lng.is_some(),
-        ExifField::GpsAlt => set.gps_alt.is_some(),
-        ExifField::Orientation => set.orientation.is_some(),
-        ExifField::CameraBrand => set.camera_brand.is_some(),
-        ExifField::CameraModel => set.camera_model.is_some(),
-        ExifField::FocalLengthMm => set.focal_length_mm.is_some(),
-        ExifField::FNumber => set.f_number.is_some(),
-        ExifField::IsoSpeed => set.iso_speed.is_some(),
-        ExifField::ExposureTimeNum => set.exposure_time_num.is_some(),
-        ExifField::ExposureTimeDen => set.exposure_time_den.is_some(),
-    }
 }

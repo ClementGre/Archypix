@@ -1,6 +1,6 @@
 mod common;
 
-use archypix_back::domain::job::{ExifField, ExifOverrides};
+use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::domain::picture::ExifSyncStatus;
 use archypix_back::infra::error::AppError;
 use archypix_back::infra::pipeline::PipelineWaker;
@@ -24,9 +24,9 @@ async fn make_editable(db: &PgPool, picture_id: Uuid) {
     .unwrap();
 }
 
-fn gps_edit() -> (ExifOverrides, Vec<ExifField>) {
+fn gps_edit() -> (FullExif, Vec<ExifField>) {
     (
-        ExifOverrides {
+        FullExif {
             gps_lat: Some(45.0),
             gps_lng: Some(6.0),
             ..Default::default()
@@ -70,10 +70,7 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
         None,
         None,
         None,
-        None,
-        None,
-        None,
-        None,
+        &FullExif::default(),
         None,
         None,
     )
@@ -192,7 +189,7 @@ async fn set_and_clear_conflict_is_rejected(db: PgPool) {
     make_editable(&db, pic_id).await;
     let waker = PipelineWaker::disconnected();
 
-    let set = ExifOverrides {
+    let set = FullExif {
         gps_lat: Some(45.0),
         gps_lng: Some(6.0),
         ..Default::default()
