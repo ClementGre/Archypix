@@ -10,6 +10,7 @@ import {Label} from '@/components/ui/label'
 import {Button} from '@/components/ui/button'
 import {RadioGroup, RadioGroupItem} from '@/components/ui/radio-group'
 import {Skeleton} from '@/components/ui/skeleton'
+import {NumberInput} from '@/components/ui/number-input'
 import {useAuthStore} from '@/stores/auth'
 import {apiErrorMessage} from '@/api/client'
 import {useSettings, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
@@ -131,12 +132,35 @@ function LibraryCard() {
         }
     }
 
+    // Uncontrolled input (keyed by the persisted value, so it re-seeds on refetch) committed on blur,
+    // avoiding a setState-in-effect just to mirror server state.
+    const commitRetention = async (input: HTMLInputElement) => {
+        if (!settings) return
+        const n = Math.round(Number(input.value))
+        if (!Number.isFinite(n) || n === settings.trash_retention_days) {
+            input.value = String(settings.trash_retention_days)
+            return
+        }
+        if (n < 1 || n > 3650) {
+            toast.error('Retention must be between 1 and 3650 days')
+            input.value = String(settings.trash_retention_days)
+            return
+        }
+        try {
+            await updateSettings.mutateAsync({trash_retention_days: n})
+            toast.success('Settings saved')
+        } catch (e) {
+            toast.error('Could not save settings', {description: apiErrorMessage(e)})
+            input.value = String(settings.trash_retention_days)
+        }
+    }
+
     return (
         <Card>
             <CardHeader>
                 <CardTitle>Library</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
                 <div className="space-y-3">
                     <Label>Versioning mode</Label>
                     {isLoading ? (
@@ -164,6 +188,34 @@ function LibraryCard() {
                             ))}
                         </RadioGroup>
                     )}
+                </div>
+
+                <div className="space-y-1.5">
+                    <Label htmlFor="trash-retention">Trash retention</Label>
+                    {isLoading ? (
+                        <Skeleton className="h-10 w-40"/>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <NumberInput
+                                id="trash-retention"
+                                key={settings?.trash_retention_days}
+                                className="h-10 w-28"
+                                min={1}
+                                max={3650}
+                                step={1}
+                                defaultValue={settings?.trash_retention_days}
+                                disabled={updateSettings.isPending}
+                                onBlur={(e) => commitRetention(e.target)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                                }}
+                            />
+                            <span className="text-sm text-muted-foreground">days</span>
+                        </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                        How long your trashed photos are kept before being permanently deleted (1–3650).
+                    </p>
                 </div>
             </CardContent>
         </Card>

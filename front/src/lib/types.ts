@@ -34,6 +34,12 @@ export interface PictureListItem {
     owner_username: string | null
     owner_instance: string | null
     exif_sync_status: ExifSyncStatus
+    /** The holder's own local soft-delete (trash); null when not trashed. */
+    deleted_at: string | null
+    /** Received only: the owner's soft-delete — drives the grace-window badge. */
+    owner_deleted_at: string | null
+    /** Received only: the owner's announced purge deadline. */
+    owner_purge_at: string | null
 }
 
 export interface PictureListResponse {
@@ -70,6 +76,14 @@ export interface PictureDetail {
     exif_sync_status: ExifSyncStatus
     owner_username: string | null
     owner_instance_domain: string | null
+    /** The holder's own local soft-delete (trash); null when not trashed. */
+    deleted_at: string | null
+    /** Received only: the owner's soft-delete — drives the grace-window badge. */
+    owner_deleted_at: string | null
+    /** Received only: the owner's announced purge deadline. */
+    owner_purge_at: string | null
+    /** Received only: the recipient's sticky per-field EXIF overrides (sparse FullExif). */
+    local_exif_overrides: Record<string, unknown> | null
     versions: PictureVersion[]
 }
 
@@ -317,6 +331,8 @@ export type VersioningMode = 'none' | 'original_copy' | 'full_versioning'
 export interface UserSettings {
     user_id: string
     versioning_mode: VersioningMode
+    /** Days a trashed owned picture is kept before physical purge (default 30). */
+    trash_retention_days: number
     created_at: string
     updated_at: string
 }
@@ -504,4 +520,22 @@ export interface EditPictureResponse {
     exif_data: Record<string, unknown>
     updated_at: string
     job_id: string | null
+}
+
+/** Response of the recipient-local EXIF override endpoint (received pictures). */
+export interface OverrideExifResponse {
+    id: string
+    captured_at: string | null
+    gps_lat: number | null
+    gps_lng: number | null
+    gps_alt: number | null
+    orientation: number | null
+    exif_data: Record<string, unknown>
+    local_exif_overrides: Record<string, unknown> | null
+    updated_at: string
+}
+
+export interface TrashResponse {
+    id: string
+    deleted_at: string | null
 }

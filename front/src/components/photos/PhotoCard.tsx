@@ -1,7 +1,8 @@
 import {memo, type MouseEvent} from 'react'
-import {Check} from 'lucide-react'
+import {AlertTriangle, Check, Trash2} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {cn} from '@/lib/utils'
+import {countdown} from '@/lib/trash'
 import {Blurhash} from './Blurhash'
 import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
 
@@ -29,6 +30,9 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, onS
     // Rotate the blurhash placeholder the same way as the thumbnail so it lines up behind it.
     const blurhash = orientedCoverStyle(item.orientation, item.width, item.height)
 
+    const trashed = !!item.deleted_at
+    const ownerDeleted = !item.owned && !!item.owner_deleted_at
+
     return (
         <li
             style={{
@@ -39,6 +43,7 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, onS
             className={cn(
                 'group relative cursor-pointer overflow-hidden rounded-[3px] bg-muted',
                 selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
+                trashed && 'opacity-60',
             )}
             onClick={onSelect}
             onDoubleClick={onOpen}
@@ -69,9 +74,29 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, onS
             </div>
 
             {!item.owned && item.owner_username && (
-                <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1 text-[10px] leading-4 text-white">
-          @{item.owner_username}
-        </span>
+                <span
+                    className={cn(
+                        'absolute bottom-1 left-1 flex items-center gap-0.5 rounded px-1 text-[10px] leading-4 text-white',
+                        ownerDeleted ? 'bg-destructive/85' : 'bg-black/55',
+                    )}
+                    title={
+                        ownerDeleted
+                            ? `Owner deleted this — disappears ${countdown(item.owner_purge_at) || 'soon'}`
+                            : undefined
+                    }
+                >
+                    {ownerDeleted && <AlertTriangle className="h-2.5 w-2.5"/>}
+                    @{item.owner_username}
+                </span>
+            )}
+
+            {trashed && (
+                <span
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white"
+                    title="In trash"
+                >
+                    <Trash2 className="h-3 w-3"/>
+                </span>
             )}
         </li>
     )

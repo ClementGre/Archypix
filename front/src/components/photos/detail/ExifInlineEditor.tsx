@@ -1,10 +1,11 @@
-import {useRef, useState} from 'react'
+import {type ReactNode, useRef, useState} from 'react'
 import {Loader2, RotateCcw, Save} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
 import {Section} from './Section'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
 import {GpsPickerPopover} from './GpsPickerPopover'
+import {OverwrittenBadge} from './OverwrittenBadge'
 import {cn} from '@/lib/utils'
 import type {PictureDetail} from '@/lib/types'
 import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
@@ -58,6 +59,7 @@ function EditableRow({
                          prefix,
                          suffix,
                          canEdit,
+                         badge,
                      }: {
     label: string
     value: string
@@ -72,6 +74,8 @@ function EditableRow({
     prefix?: string
     suffix?: string
     canEdit: boolean
+    /** Optional indicator rendered before the value (e.g. an "overwritten" badge). */
+    badge?: ReactNode
 }) {
     const [editing, setEditing] = useState(false)
     const [inputVal, setInputVal] = useState(value)
@@ -106,7 +110,8 @@ function EditableRow({
         <div className="group flex min-h-[1.4rem] items-center gap-1">
             <DirtyDot isDirty={isDirty}/>
             <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
-            <div className="flex min-w-0 flex-1 items-center justify-end">
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                {!editing && badge}
                 {editing ? (
                     <div className="flex w-full items-center rounded border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
                         {prefix && <span className="pl-1.5 text-xs text-muted-foreground">{prefix}</span>}
@@ -153,6 +158,7 @@ function ExposureRow({
                          onChangeDen,
                          onReset,
                          canEdit,
+                         badge,
                      }: {
     num: string
     den: string
@@ -161,6 +167,7 @@ function ExposureRow({
     onChangeDen: (v: string) => void
     onReset: () => void
     canEdit: boolean
+    badge?: ReactNode
 }) {
     const [editing, setEditing] = useState(false)
     const display = num && den ? `${num}/${den} s` : '—'
@@ -173,7 +180,8 @@ function ExposureRow({
         <div className="group flex min-h-[1.4rem] items-center gap-1 text-sm">
             <DirtyDot isDirty={isDirty}/>
             <span className="w-24 shrink-0 text-xs text-muted-foreground">Exposure</span>
-            <div className="flex min-w-0 flex-1 items-center justify-end">
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                {!editing && badge}
                 {editing ? (
                     <div className="flex items-center gap-1" onBlur={handleBlur}>
                         <input
@@ -222,12 +230,18 @@ export function ExifInlineEditor({
     picture: PictureDetail
     exif: ReturnType<typeof useExifDraft>
 }) {
-    const {draft, initialDraft, isDirty, isSaving, set, setGps, reset, resetGps, save} = exif
-    const owned = picture.owner_username == null
+    const {draft, initialDraft, isDirty, isSaving, owned, overriddenKeys, set, setGps, reset, resetGps, save, removeOverride} = exif
+    // The holder can always edit: owned pictures write through to the file; received pictures get a
+    // recipient-local override.
+    const canEdit = true
 
     const syncLabel = SYNC_BADGE[picture.exif_sync_status] ?? picture.exif_sync_status
 
     const dirty = (k: keyof ExifDraft) => draft[k] !== initialDraft[k]
+    const isOverridden = (...keys: Array<keyof ExifDraft>) => !owned && keys.some((k) => overriddenKeys.has(k))
+    /** "overwritten" indicator for a received-picture field (clears the override on ✕). */
+    const overrideBadge = (...keys: Array<keyof ExifDraft>) =>
+        isOverridden(...keys) ? <OverwrittenBadge onRemove={() => removeOverride(...keys)}/> : undefined
 
     const gpsDisplay =
         draft.gps_lat && draft.gps_lng
@@ -264,21 +278,29 @@ export function ExifInlineEditor({
                         variant="outline"
                         className={cn(
                             'h-5 px-1.5 text-[10px]',
-                            owned && isDirty
+                            isDirty
                                 ? 'border-primary text-primary'
-                                : picture.exif_sync_status === 'pending' && 'border-yellow-500 text-yellow-500',
+                                : !owned && overriddenKeys.size > 0
+                                    ? 'border-amber-500 text-amber-500'
+                                    : owned && picture.exif_sync_status === 'pending' && 'border-yellow-500 text-yellow-500',
                         )}
                     >
-                        {owned && isDirty ? 'modified' : syncLabel}
+                        {isDirty
+                            ? 'modified'
+                            : !owned
+                                ? overriddenKeys.size > 0
+                                    ? 'overridden'
+                                    : 'local'
+                                : syncLabel}
                     </Badge>
-                    {owned && isDirty && (
+                    {isDirty && (
                         <Button
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6 text-primary"
                             onClick={save}
                             disabled={isSaving}
-                            title="Save EXIF changes"
+                            title={owned ? 'Save EXIF changes' : 'Save local overrides'}
                         >
                             {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Save className="h-3.5 w-3.5"/>}
                         </Button>
@@ -291,8 +313,9 @@ export function ExifInlineEditor({
                 <div className="group flex min-h-[1.4rem] items-center gap-1 text-sm">
                     <DirtyDot isDirty={dirty('captured_at')}/>
                     <span className="w-24 shrink-0 text-xs text-muted-foreground">Captured at</span>
-                    <div className="flex min-w-0 flex-1 items-center justify-end">
-                        {owned ? (
+                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                        {overrideBadge('captured_at')}
+                        {canEdit ? (
                             <DateTimePickerPopover
                                 value={draft.captured_at || null}
                                 onChange={(v) => set('captured_at', v ?? '')}
@@ -312,8 +335,9 @@ export function ExifInlineEditor({
                 <div className="group flex min-h-[1.4rem] items-center gap-1">
                     <DirtyDot isDirty={gpsIsDirty}/>
                     <span className="w-24 shrink-0 text-xs text-muted-foreground">GPS</span>
-                    <div className="flex min-w-0 flex-1 items-center justify-end">
-                        {owned ? (
+                    <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                        {overrideBadge('gps_lat', 'gps_lng', 'gps_alt')}
+                        {canEdit ? (
                             <GpsPickerPopover
                                 value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt}}
                                 onChange={({lat, lng, alt}) => setGps(lat, lng, alt)}
@@ -343,7 +367,8 @@ export function ExifInlineEditor({
                     onReset={() => reset('camera_brand')}
                     onChange={(v) => set('camera_brand', v)}
                     placeholder="Canon"
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('camera_brand')}
                 />
                 <EditableRow
                     label="Camera model"
@@ -352,7 +377,8 @@ export function ExifInlineEditor({
                     onReset={() => reset('camera_model')}
                     onChange={(v) => set('camera_model', v)}
                     placeholder="EOS R5"
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('camera_model')}
                 />
                 <EditableRow
                     label="Focal length"
@@ -364,7 +390,8 @@ export function ExifInlineEditor({
                     step="any"
                     placeholder="50"
                     suffix="mm"
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('focal_length_mm')}
                 />
                 <EditableRow
                     label="Aperture"
@@ -376,7 +403,8 @@ export function ExifInlineEditor({
                     step="any"
                     placeholder="1.8"
                     prefix="f/"
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('f_number')}
                 />
                 <EditableRow
                     label="ISO"
@@ -388,7 +416,8 @@ export function ExifInlineEditor({
                     step={1}
                     placeholder="400"
                     prefix="ISO "
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('iso_speed')}
                 />
 
                 <ExposureRow
@@ -401,7 +430,8 @@ export function ExifInlineEditor({
                         reset('exposure_time_num');
                         reset('exposure_time_den')
                     }}
-                    canEdit={owned}
+                    canEdit={canEdit}
+                    badge={overrideBadge('exposure_time_num', 'exposure_time_den')}
                 />
 
                 {/* Extra raw exif_data fields (read-only) */}

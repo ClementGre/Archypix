@@ -1,7 +1,7 @@
 import {useState} from 'react'
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {editPicture, getJob} from '@/api/pictures'
+import {editPicture, getJob, overrideExif, restorePicture, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
 import type {EditPictureResponse, ExifField, ExifOverrides} from '@/lib/types'
@@ -54,4 +54,51 @@ export function useEditExif(pictureId: string) {
     })
 
     return {mutation, syncing}
+}
+
+/**
+ * Recipient-local EXIF override for a received picture. DB-only (no file reconcile / job poll),
+ * so it mirrors {@link useEditExif}'s interface (`syncing` is always false) and lets
+ * {@link useExifDraft} treat owned edits and received overrides uniformly.
+ */
+export function useOverrideExif(pictureId: string) {
+    const queryClient = useQueryClient()
+
+    const mutation = useMutation({
+        mutationFn: (body: { set?: Partial<ExifOverrides>; clear?: ExifField[] }) =>
+            overrideExif(pictureId, body),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
+            void queryClient.invalidateQueries({queryKey: ['pictures']})
+        },
+        onError: (error: unknown) => {
+            toast.error('Could not save override', {description: apiErrorMessage(error)})
+        },
+    })
+
+    return {mutation, syncing: false}
+}
+
+/** Soft-delete / restore mutations for pictures the user holds. */
+export function useTrashMutations() {
+    const queryClient = useQueryClient()
+
+    const invalidate = (pictureId: string) => {
+        void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
+        void queryClient.invalidateQueries({queryKey: ['pictures']})
+    }
+
+    const trash = useMutation({
+        mutationFn: trashPicture,
+        onSuccess: (res) => invalidate(res.id),
+        onError: (error: unknown) => toast.error('Could not move to trash', {description: apiErrorMessage(error)}),
+    })
+
+    const restore = useMutation({
+        mutationFn: restorePicture,
+        onSuccess: (res) => invalidate(res.id),
+        onError: (error: unknown) => toast.error('Could not restore', {description: apiErrorMessage(error)}),
+    })
+
+    return {trash, restore}
 }

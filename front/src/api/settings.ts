@@ -6,7 +6,10 @@ export async function getSettings(): Promise<UserSettings> {
     return data
 }
 
-export async function updateSettings(body: { versioning_mode: VersioningMode }): Promise<UserSettings> {
+export async function updateSettings(body: {
+    versioning_mode?: VersioningMode
+    trash_retention_days?: number
+}): Promise<UserSettings> {
     const {data} = await apiClient.patch<UserSettings>('/api/authenticated/settings', body)
     return data
 }

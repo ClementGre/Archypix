@@ -1,9 +1,10 @@
 import {useCallback, useEffect} from 'react'
 import {useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
-import {ChevronLeft, ChevronRight, Loader2, X} from 'lucide-react'
+import {ArchiveRestore, ChevronLeft, ChevronRight, Loader2, Trash2, X} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {getPictureUrl} from '@/api/pictures'
+import {useTrashMutations} from '@/hooks/usePictureEdit'
 import {OrientedContainImage} from './OrientedImage'
 
 /**
@@ -59,7 +60,11 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
         staleTime: 10 * 60 * 1000,
     })
 
+    const {trash, restore} = useTrashMutations()
+
     if (!open || !current) return null
+
+    const trashed = !!current.deleted_at
 
     return (
         <div className="fixed inset-0 z-50 flex flex-col bg-black/90" onClick={close}>
@@ -71,6 +76,28 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
                 <span className="text-xs text-white/60">
           {index + 1} / {items.length}
         </span>
+                {trashed ? (
+                    <button
+                        onClick={() => restore.mutate(current.id)}
+                        disabled={restore.isPending}
+                        aria-label="Restore"
+                        title="Restore"
+                        className="flex items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-white/10"
+                    >
+                        <ArchiveRestore className="h-4 w-4"/>
+                        <span className="hidden sm:inline">Restore</span>
+                    </button>
+                ) : (
+                    <button
+                        onClick={() => trash.mutate(current.id)}
+                        disabled={trash.isPending}
+                        aria-label="Move to trash"
+                        title="Move to trash"
+                        className="rounded p-1 hover:bg-white/10"
+                    >
+                        <Trash2 className="h-5 w-5"/>
+                    </button>
+                )}
                 <button onClick={close} aria-label="Close" className="rounded p-1 hover:bg-white/10">
                     <X className="h-5 w-5"/>
                 </button>

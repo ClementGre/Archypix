@@ -1,5 +1,15 @@
 import {apiClient} from './client'
-import type {EditPictureResponse, ExifField, ExifOverrides, Job, PictureDetail, PictureListResponse, PictureVariant} from '@/lib/types'
+import type {
+    EditPictureResponse,
+    ExifField,
+    ExifOverrides,
+    Job,
+    OverrideExifResponse,
+    PictureDetail,
+    PictureListResponse,
+    PictureVariant,
+    TrashResponse,
+} from '@/lib/types'
 
 export interface UploadSlot {
     picture_id: string
@@ -68,6 +78,34 @@ export async function editPicture(
         `/api/authenticated/pictures/${id}/edit`,
         body,
     )
+    return data
+}
+
+/**
+ * Apply a recipient-local EXIF override to a received picture. DB-only — no file reconcile,
+ * no job. `set` claims a sticky per-field override; `clear` drops the override so the owner's
+ * value flows through again.
+ */
+export async function overrideExif(
+    id: string,
+    body: { set?: Partial<ExifOverrides>; clear?: ExifField[] },
+): Promise<OverrideExifResponse> {
+    const {data} = await apiClient.post<OverrideExifResponse>(
+        `/api/authenticated/pictures/${id}/exif/override`,
+        body,
+    )
+    return data
+}
+
+/** Soft-delete a picture the user holds (owned or received). */
+export async function trashPicture(id: string): Promise<TrashResponse> {
+    const {data} = await apiClient.post<TrashResponse>(`/api/authenticated/pictures/${id}/trash`)
+    return data
+}
+
+/** Restore a soft-deleted picture (clears `deleted_at`). */
+export async function restorePicture(id: string): Promise<TrashResponse> {
+    const {data} = await apiClient.post<TrashResponse>(`/api/authenticated/pictures/${id}/restore`)
     return data
 }
 

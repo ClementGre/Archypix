@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
 import {toast} from 'sonner'
-import {useEditExif} from '@/hooks/usePictureEdit'
+import {useEditExif, useOverrideExif} from '@/hooks/usePictureEdit'
 import {apiErrorMessage} from '@/api/client'
 import type {ExifField, ExifOverrides, PictureDetail} from '@/lib/types'
 
@@ -109,8 +109,20 @@ export function useExifDraft(picture: PictureDetail) {
         setDraft(initialDraft)
     }
 
-    const {mutation, syncing} = useEditExif(picture.id)
+    // Owned pictures edit their own EXIF (write-through + file reconcile); received pictures
+    // get a recipient-local override (DB-only, no file reconcile). Both expose the same shape.
+    const owned = picture.owner_username == null
+    const ownedEdit = useEditExif(picture.id)
+    const receivedOverride = useOverrideExif(picture.id)
+    const {mutation, syncing} = owned ? ownedEdit : receivedOverride
     const isSaving = mutation.isPending || syncing
+
+    // For a received picture, the keys the recipient has claimed as sticky overrides
+    // (sparse FullExif: promoted fields + flattened camera fields, snake-case keys).
+    const overriddenKeys = useMemo(
+        () => new Set(Object.keys(picture.local_exif_overrides ?? {})),
+        [picture.local_exif_overrides],
+    )
 
     // orientation is excluded from the manual dirty/save flow — rotate buttons commit it
     // automatically (see the debounce effect below).
@@ -180,17 +192,30 @@ export function useExifDraft(picture: PictureDetail) {
         })
     }
 
+    // Received-picture only: drop one or more overrides so the owner's value flows through again.
+    // The picture refetches and the draft re-seeds from the new effective value.
+    function removeOverride(...fields: ExifField[]) {
+        if (owned || fields.length === 0) return
+        mutation.mutate(
+            {clear: fields},
+            {onError: (e) => toast.error('Could not remove override', {description: apiErrorMessage(e)})},
+        )
+    }
+
     return {
         draft,
         initialDraft,
         dirtyKeys,
         isDirty,
         isSaving,
+        owned,
+        overriddenKeys,
         set,
         setGps,
         reset,
         resetGps,
         rotate,
         save,
+        removeOverride,
     }
 }

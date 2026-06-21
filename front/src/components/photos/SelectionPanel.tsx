@@ -2,26 +2,32 @@ import {useMemo} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {ImageIcon, List, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
+import {AlertTriangle, ArchiveRestore, ImageIcon, List, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
+import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {getPicture, getPictureUrl} from '@/api/pictures'
 import {listPictureTagsWithSources} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
 import {useBatchEditTags, usePictureTags} from '@/hooks/useTags'
+import {useTrashMutations} from '@/hooks/usePictureEdit'
 import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
+import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
+import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
+import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
 import {cn, formatBytes, formatDateTime, TagPath} from '@/lib/utils'
+import {deadlineLabel, ownedPurgeAt} from '@/lib/trash'
 import type {IncomingShareResponse, PictureDetail, TagSource} from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -192,6 +198,9 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
         enabled: tagProvenance,
     })
 
+    const {trash, restore} = useTrashMutations()
+    const {data: settings} = useSettings()
+
     const batch = useBatchEditTags()
     const addTag = (wire: string) =>
         batch.mutate(
@@ -243,6 +252,15 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     )
 
     const owned = picture.owner_username == null
+    const isTrashed = !!picture.deleted_at
+    const ownerDeleted = !owned && !!picture.owner_deleted_at
+    const ownerPurgeLabel = picture.owner_purge_at ? deadlineLabel(picture.owner_purge_at) : null
+    // Owned trashed pictures: purge deadline is derived (deleted_at + retention).
+    const ownedPurgeLabel =
+        owned && isTrashed && settings
+            ? deadlineLabel(ownedPurgeAt(picture.deleted_at, settings.trash_retention_days))
+            : null
+    const orientationOverridden = !owned && !!picture.local_exif_overrides && 'orientation' in picture.local_exif_overrides
 
     // Live orientation: the served thumbnail is raw pixels, so rotate by the current
     // (draft) orientation. Rotate buttons update the draft and auto-commit after a debounce.
@@ -272,54 +290,102 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     </div>
                 )}
 
-                {/* Owner label for received pictures — overlaid on the preview. */}
+                {/* Owner label for received pictures — overlaid on the preview. Turns red with a
+                    tooltip when the owner has trashed the picture (grace-window). */}
                 {picture.owner_username && (
-                    <span className="absolute bottom-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white">
-                        @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
-                    </span>
+                    ownerDeleted ? (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span
+                                    className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-destructive/85 px-1.5 py-0.5 text-[11px] font-medium text-white"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <AlertTriangle className="h-3 w-3"/>
+                                    @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[15rem] text-xs">
+                                The owner moved this picture to their trash. It will be permanently removed
+                                {ownerPurgeLabel ? ` on ${ownerPurgeLabel}` : ' after their retention window'}.
+                            </TooltipContent>
+                        </Tooltip>
+                    ) : (
+                        <span className="absolute bottom-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                            @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
+                        </span>
+                    )
                 )}
 
-                {/* Rotate overlays (owned pictures only) */}
-                {owned && (
-                    <div className="absolute bottom-2 right-2 flex gap-1 opacity-40 transition-opacity group-hover:opacity-100">
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                exif.rotate('ccw')
-                            }}
-                            title="Rotate left"
-                            className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
-                        >
-                            <RotateCcw className="h-4 w-4"/>
-                        </button>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                exif.rotate('cw')
-                            }}
-                            title="Rotate right"
-                            className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
-                        >
-                            <RotateCw className="h-4 w-4"/>
-                        </button>
-                    </div>
-                )}
+                {/* Rotate overlays — owned pictures rotate their own EXIF; received pictures get a
+                    recipient-local orientation override. */}
+                <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-40 transition-opacity group-hover:opacity-100">
+                    {orientationOverridden && (
+                        <span onClick={(e) => e.stopPropagation()}>
+                            <OverwrittenBadge onRemove={() => exif.removeOverride('orientation')}/>
+                        </span>
+                    )}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            exif.rotate('ccw')
+                        }}
+                        title="Rotate left"
+                        className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                    >
+                        <RotateCcw className="h-4 w-4"/>
+                    </button>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            exif.rotate('cw')
+                        }}
+                        title="Rotate right"
+                        className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                    >
+                        <RotateCw className="h-4 w-4"/>
+                    </button>
+                </div>
             </div>
 
             {/* Picture info */}
-            <div className="px-3 pt-2 pb-1">
-                <p className="truncate text-sm font-medium" title={picture.filename ?? undefined}>
-                    {picture.filename ?? 'Untitled'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                    {[
-                        formatBytes(picture.file_size),
-                        dispDims.width && dispDims.height ? `${dispDims.width} × ${dispDims.height}` : null,
-                        picture.mime_type,
-                    ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                </p>
+            <div className="flex items-start justify-between gap-1 px-3 pt-2 pb-1">
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-medium" title={picture.filename ?? undefined}>
+                        {picture.filename ?? 'Untitled'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        {[
+                            formatBytes(picture.file_size),
+                            dispDims.width && dispDims.height ? `${dispDims.width} × ${dispDims.height}` : null,
+                            picture.mime_type,
+                        ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                    </p>
+                </div>
+                {!isTrashed && (
+                    <ConfirmDialog
+                        trigger={
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                                title="Move to trash"
+                            >
+                                <Trash2 className="h-4 w-4"/>
+                            </Button>
+                        }
+                        title="Move to trash?"
+                        description={
+                            owned
+                                ? 'This photo will be hidden and permanently deleted after your retention window. Shared recipients see a deletion warning until then.'
+                                : 'This removes the photo from your library locally. The owner\'s copy is unaffected.'
+                        }
+                        confirmLabel="Move to trash"
+                        destructive
+                        onConfirm={() => trash.mutate(id)}
+                    />
+                )}
             </div>
 
             {/* Timestamps above tags */}
@@ -327,6 +393,46 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                 <span>Added {formatDateTime(picture.ingested_at)}</span>
                 <span>Edited {formatDateTime(picture.updated_at)}</span>
             </div>
+
+            {/* Owner-deletion grace-window warning (received pictures). */}
+            {ownerDeleted && (
+                <div
+                    className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
+                    <span>
+                        The owner deleted this picture. It will disappear
+                        {ownerPurgeLabel ? <> on <span className="font-medium">{ownerPurgeLabel}</span></> : ' after their retention window'} unless they restore it.
+                    </span>
+                </div>
+            )}
+
+            {/* Local-trash banner (this picture is in your trash). */}
+            {isTrashed && (
+                <div
+                    className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
+                    <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
+                    <span>
+                        In your trash since {formatDateTime(picture.deleted_at)}.
+                        {ownedPurgeLabel && <> Permanently deleted <span className="font-medium">{ownedPurgeLabel}</span>.</>}
+                        {!owned && ' This only hides it locally — the owner\'s copy is untouched.'}
+                    </span>
+                </div>
+            )}
+
+            {/* Restore action (trashed pictures) */}
+            {isTrashed && (
+                <div className="px-3 pb-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start gap-2"
+                        disabled={restore.isPending}
+                        onClick={() => restore.mutate(id)}
+                    >
+                        <ArchiveRestore className="h-4 w-4"/> Restore
+                    </Button>
+                </div>
+            )}
 
             {/* Sections */}
             <div className="px-3">
@@ -435,11 +541,17 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
 
 function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) {
     const batch = useBatchEditTags()
+    const {trash, restore} = useTrashMutations()
     const add = (wire: string) =>
         batch.mutate(
             {picture_ids: ids, add_tags: [wire]},
             {onError: (e) => toast.error('Could not add tag', {description: apiErrorMessage(e)})},
         )
+
+    // No batch trash/restore endpoint — fire one request per picture.
+    const busy = trash.isPending || restore.isPending
+    const trashAll = () => ids.forEach((pid) => trash.mutate(pid))
+    const restoreAll = () => ids.forEach((pid) => restore.mutate(pid))
 
     return (
         <div className="space-y-3 px-3 py-2">
@@ -449,8 +561,20 @@ function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) 
             <Section id="multi-tags" title="Tag all selected">
                 <TagPicker onSelect={add} triggerLabel="Add tag to all"/>
             </Section>
-            <Button variant="outline" className="w-full justify-start gap-2 text-destructive" disabled>
-                <Trash2 className="h-4 w-4"/> Move to trash
+            <ConfirmDialog
+                trigger={
+                    <Button variant="outline" className="w-full justify-start gap-2 text-destructive" disabled={busy}>
+                        <Trash2 className="h-4 w-4"/> Move to trash
+                    </Button>
+                }
+                title={`Move ${ids.length} photos to trash?`}
+                description="Owned photos are purged after your retention window; received photos are only hidden locally."
+                confirmLabel="Move to trash"
+                destructive
+                onConfirm={trashAll}
+            />
+            <Button variant="outline" className="w-full justify-start gap-2" disabled={busy} onClick={restoreAll}>
+                <ArchiveRestore className="h-4 w-4"/> Restore all
             </Button>
             <Button variant="ghost" className="w-full gap-2" onClick={onClear}>
                 <X className="h-4 w-4"/> Clear selection
