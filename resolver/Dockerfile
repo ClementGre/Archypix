@@ -25,7 +25,7 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS prod
 
 WORKDIR /app
 

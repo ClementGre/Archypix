@@ -25,7 +25,7 @@ COPY back/src ./back/src
 RUN touch back/src/main.rs && cargo build --release -p archypix-back
 
 # ---- production runtime ----
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS prod
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /workspace/target/release/archypix-back /usr/local/bin/archypix-back
