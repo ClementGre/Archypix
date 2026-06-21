@@ -42,7 +42,7 @@ pub fn routes(config: &Config) -> Router<AppState> {
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "healthy",
-        "service": "archypix-resolver"
+        "service": "archypix-back"
     }))
 }
 

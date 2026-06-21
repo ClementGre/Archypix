@@ -2,11 +2,17 @@
 // The app is "federated": it talks directly to the backend resolved for the
 // logged-in user via WebFinger, rather than a single fixed API base URL.
 
+// window.__ENV__ (see public/env.js) is populated at container startup, taking
+// precedence over import.meta.env which is baked in at build time.
+function readEnv(key: 'VITE_GLOBAL_DOMAIN' | 'VITE_USE_HTTPS'): string | undefined {
+    return window.__ENV__?.[key] || import.meta.env[key]
+}
+
 /** Default global/identity domain — the part after ':' in @user:domain handles. */
-export const GLOBAL_DOMAIN = import.meta.env.VITE_GLOBAL_DOMAIN || 'archypix.test'
+export const GLOBAL_DOMAIN = readEnv('VITE_GLOBAL_DOMAIN') || 'archypix.test'
 
 /** Whether to reach the global domain (and resolved backends) over HTTPS. */
-export const USE_HTTPS = (import.meta.env.VITE_USE_HTTPS || 'false') === 'true'
+export const USE_HTTPS = (readEnv('VITE_USE_HTTPS') || 'false').toLocaleLowerCase() === 'true'
 
 export const SCHEME = USE_HTTPS ? 'https' : 'http'
 
