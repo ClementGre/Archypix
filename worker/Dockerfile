@@ -17,16 +17,15 @@ COPY Cargo.toml Cargo.lock ./
 COPY common/Cargo.toml ./common/Cargo.toml
 COPY back/Cargo.toml ./back/Cargo.toml
 COPY resolver/Cargo.toml ./resolver/Cargo.toml
-COPY fed-test/Cargo.toml ./fed-test/Cargo.toml
 COPY worker/Cargo.toml ./worker/Cargo.toml
 
 # Stub out every workspace member so cargo can resolve the dependency graph.
-RUN for pkg in common back resolver fed-test worker; do \
+RUN for pkg in common back resolver worker; do \
       mkdir -p $pkg/src && echo 'fn main(){}' > $pkg/src/main.rs; \
     done && \
     touch common/src/lib.rs back/src/lib.rs resolver/src/lib.rs && \
     cargo build --release -p archypix-worker && \
-    rm -rf common/src back/src resolver/src fed-test/src worker/src
+    rm -rf common/src back/src resolver/src worker/src
 
 # Copy real source and rebuild only worker + common (back/resolver are not linked).
 COPY common/src ./common/src

@@ -27,9 +27,9 @@ services:
     container_name: archypix-back1
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend1.rule=Host(`back1.archypix.com`)"
-      - "traefik.http.services.backend1.loadbalancer.server.port=80"
+      traefik.enable: true
+      traefik.http.routers.archypix-backend1.rule: Host(`back1.archypix.com`)
+      traefik.http.services.archypix-backend1.loadbalancer.server.port: 80
     environment:
       RUST_LOG: ${RUST_LOG}
       TRACE_PROPAGATION_PEERS: archypix.com
@@ -73,9 +73,9 @@ services:
     container_name: archypix-back2
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend2.rule=Host(`back2.archypix.com`)"
-      - "traefik.http.services.backend2.loadbalancer.server.port=80"
+      traefik.enable: true
+      traefik.http.routers.archypix-backend2.rule: Host(`back2.archypix.com`)
+      traefik.http.services.archypix-backend2.loadbalancer.server.port: 80
     environment:
       RUST_LOG: ${RUST_LOG}
       TRACE_PROPAGATION_PEERS: archypix.com
@@ -136,9 +136,10 @@ services:
     container_name: archypix-front
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.front.rule=Host(`archypix.com`)"
-      - "traefik.http.services.front.loadbalancer.server.port=80"
+      traefik.enable: true
+      traefik.http.routers.archypix-front.rule: Host(`archypix.com`)
+      traefik.http.services.archypix-front.loadbalancer.server.port: 80
+      traefik.http.routers.archypix-front.middlewares: authelia@docker
     networks:
       - archypix
       - traefik
