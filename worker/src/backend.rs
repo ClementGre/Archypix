@@ -1,13 +1,14 @@
 use crate::auth::generate_token;
 use crate::config::{BackendConfig, Config};
 use crate::error::{Result, WorkerError};
+use crate::observability;
 use archypix_common::job::JobType;
 use archypix_common::transfer::{ClaimJobResponse, ClaimQuery, CompleteJobRequest, FailJobRequest};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
-use tracing::debug;
+use tracing::{debug, instrument};
 use uuid::Uuid;
 
 struct CachedToken {
@@ -125,16 +126,20 @@ impl BackendClient {
     }
 
     /// Report a job as completed.
+    #[instrument(skip(self, body), fields(job_id = %job_id))]
     pub async fn complete_job(&self, job_id: Uuid, body: CompleteJobRequest) -> Result<()> {
         let token = self.get_or_refresh_token()?;
         let url = format!(
             "{}/api/worker/jobs/{job_id}/complete",
             self.back_url.trim_end_matches('/')
         );
+        let mut headers = reqwest::header::HeaderMap::new();
+        observability::inject_into_headers(&mut headers);
         let resp = self
             .api_http
             .post(&url)
             .bearer_auth(&token)
+            .headers(headers)
             .json(&body)
             .send()
             .await?;
@@ -151,6 +156,7 @@ impl BackendClient {
     /// `claim_token` must match what was issued at claim time.
     /// When `permanent` is `true` the backend marks the job permanently failed
     /// regardless of remaining retries.
+    #[instrument(skip(self, claim_token, error), fields(job_id = %job_id, permanent))]
     pub async fn fail_job(
         &self,
         job_id: Uuid,
@@ -168,10 +174,13 @@ impl BackendClient {
             error: error.to_string(),
             permanent,
         };
+        let mut headers = reqwest::header::HeaderMap::new();
+        observability::inject_into_headers(&mut headers);
         let resp = self
             .api_http
             .post(&url)
             .bearer_auth(&token)
+            .headers(headers)
             .json(&body)
             .send()
             .await?;
@@ -184,6 +193,7 @@ impl BackendClient {
     }
 
     /// Download a file from a presigned URL, streaming directly to disk.
+    #[instrument(skip(self))]
     pub async fn download_presigned(&self, url: &str, dest: &std::path::Path) -> Result<()> {
         let resp = self.presign_http.get(url).send().await?;
         if !resp.status().is_success() {
@@ -202,6 +212,7 @@ impl BackendClient {
     }
 
     /// Upload a file to a presigned PUT URL.
+    #[instrument(skip(self))]
     pub async fn upload_presigned(&self, url: &str, src: &std::path::Path) -> Result<()> {
         let data = tokio::fs::read(src).await?;
         let resp = self.presign_http.put(url).body(data).send().await?;

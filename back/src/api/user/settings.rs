@@ -8,6 +8,7 @@ use axum::extract::State;
 use serde::Deserialize;
 use tracing::debug;
 
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn get_settings(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -26,12 +27,12 @@ pub struct UpdateSettingsBody {
     pub trash_retention_days: Option<i32>,
 }
 
+#[tracing::instrument(skip(auth, state, body), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn update_settings(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<UpdateSettingsBody>,
 ) -> Result<Json<UserSettings>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), versioning_mode = ?body.versioning_mode, "update_settings");
     let settings = services::user_settings::update(
         &state.db,
         auth.user_id()?,

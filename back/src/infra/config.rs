@@ -121,6 +121,11 @@ pub struct Config {
     /// (never buffered in memory) and rejected with `413` past this limit. Default: 5 GiB.
     pub webdav_max_upload_bytes: u64,
 
+    // ── Observability ─────────────────────────────────────────────────────────
+    /// Global domains of federation peers that share this operator's Jaeger instance.
+    /// Trace context is propagated to/from these peers only; all others start a fresh root.
+    pub trace_propagation_peers: Vec<String>,
+
     // ── Rate limiting / abuse caps ————————————————————————————————–───────────
     /// Max failed-or-attempted logins per username per window before `429`. Default 10.
     pub rate_limit_login_max: u64,
@@ -227,6 +232,13 @@ impl Config {
             rate_limit_register_window_secs: env_u64("RATE_LIMIT_REGISTER_WINDOW_SECS", 3600)?,
             max_pending_outgoing_shares: env_usize("MAX_PENDING_OUTGOING_SHARES", 100)?,
             max_pending_incoming_shares: env_usize("MAX_PENDING_INCOMING_SHARES", 200)?,
+
+            trace_propagation_peers: std::env::var("TRACE_PROPAGATION_PEERS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         };
 
         let storage_buckets = [
@@ -373,6 +385,7 @@ impl Config {
             rate_limit_register_window_secs: 3600,
             max_pending_outgoing_shares: 100,
             max_pending_incoming_shares: 200,
+            trace_propagation_peers: vec![],
         }
     }
 }

@@ -121,6 +121,12 @@ async fn execute_task(
     waker: PipelineWaker,
     task: InternalTask,
 ) {
+    let task_name = match &task {
+        InternalTask::TagRename { .. } => "tag_rename",
+        InternalTask::UnannounceSharedPictures { .. } => "unannounce_shared_pictures",
+    };
+    let span = tracing::info_span!("background_task", task = task_name);
+    let _enter = span.enter();
     match task {
         InternalTask::TagRename {
             user_id,

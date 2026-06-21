@@ -42,6 +42,8 @@ pub struct Job {
     pub claimed_by: Option<String>,
     /// One-time token issued at claim time; echoed back by workers in complete/fail.
     pub claim_token: Option<Uuid>,
+    /// W3C trace context captured at enqueue time for cross-process propagation to the worker.
+    pub trace_context: Option<Json<serde_json::Value>>,
     pub created_at: NaiveDateTime,
     pub started_at: Option<NaiveDateTime>,
     pub completed_at: Option<NaiveDateTime>,

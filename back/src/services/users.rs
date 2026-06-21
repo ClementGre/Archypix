@@ -6,7 +6,6 @@ use crate::infra::redis::{Cache, RedisKey};
 use crate::repository::auth::CredentialRepository;
 use crate::repository::user::UserRepository;
 use sqlx::PgPool;
-use tracing::trace;
 use uuid::Uuid;
 
 /// Cache-aside lookup: returns the local UUID for `username@instance` if that user lives
@@ -18,6 +17,7 @@ use uuid::Uuid;
 /// Within the same global domain the lookup falls through to a cache-aside DB query.
 /// A negative result (user not on this backend) is cached under the sentinel `"none"` to
 /// avoid repeated DB hits when listing pictures owned by a remote user on the same domain.
+#[tracing::instrument(skip(cache, db, config))]
 pub async fn find_local_user_id(
     cache: &dyn Cache,
     db: &PgPool,
@@ -51,6 +51,7 @@ pub async fn find_local_user_id(
     Ok(found.map(|u| u.id))
 }
 
+#[tracing::instrument(skip(db, password))]
 pub async fn create_user(
     db: &PgPool,
     username: &str,
@@ -59,7 +60,6 @@ pub async fn create_user(
     password: &str,
     is_admin: bool,
 ) -> Result<User, AppError> {
-    trace!(username, email, is_admin, "users: create_user");
     if username.trim().is_empty()
         || !username
             .chars()

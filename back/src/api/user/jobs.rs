@@ -8,7 +8,6 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Deserialize;
-use tracing::debug;
 use uuid::Uuid;
 
 /// Body for a single-picture EXIF edit (`set`/`clear` shape, §7.3).
@@ -21,12 +20,12 @@ pub struct ExifEditBody {
 }
 
 /// `GET /api/authenticated/jobs/{id}` — get the status of a single job.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), job_id = %job_id))]
 pub async fn get_job(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(job_id): Path<Uuid>,
 ) -> Result<Json<Job>, AppError> {
-    debug!(user = %auth.claims.sub, job_id = %job_id, "get_job");
     let job = JobRepository::find_by_id(&state.db, job_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -37,12 +36,12 @@ pub async fn get_job(
 }
 
 /// `GET /api/authenticated/pictures/{id}/jobs` — list all jobs for a picture.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn list_picture_jobs(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<Vec<Job>>, AppError> {
-    debug!(user = %auth.claims.sub, picture_id = %picture_id, "list_picture_jobs");
     let jobs = services::jobs::list_picture_jobs(&state.db, picture_id, auth.user_id()?).await?;
     Ok(Json(jobs))
 }
@@ -50,13 +49,13 @@ pub async fn list_picture_jobs(
 /// `POST /api/authenticated/pictures/{id}/edit` — edit a single picture's EXIF (write-through).
 /// Applies the DB change synchronously and enqueues the file reconcile; returns the updated row,
 /// its `exif_sync_status`, and the reconcile `job_id` (or `null` when `unsupported`).
+#[tracing::instrument(skip(auth, state, body), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn enqueue_edit(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
     Json(body): Json<ExifEditBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, picture_id = %picture_id, "enqueue_edit");
     let user_id = auth.user_id()?;
     let outcome = services::jobs::edit_pictures_exif(
         &state.db,
@@ -85,12 +84,12 @@ pub async fn enqueue_edit(
 }
 
 /// `PATCH /api/authenticated/pictures/exif` — batch EXIF edit (§7.2).
+#[tracing::instrument(skip(auth, state, body), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn batch_edit_exif(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<BatchExifEditBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, count = body.picture_ids.len(), "batch_edit_exif");
     let outcome = services::jobs::edit_pictures_exif(
         &state.db,
         &state.pipeline_waker,
@@ -118,12 +117,12 @@ pub struct BatchExifEditBody {
 }
 
 /// `POST /api/authenticated/pictures/{id}/exif/resync` — re-enqueue a stuck `pending` picture.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn resync_exif(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<Job>, AppError> {
-    debug!(user = %auth.claims.sub, picture_id = %picture_id, "resync_exif");
     let job = services::jobs::resync_picture_exif(
         &state.db,
         &state.pipeline_waker,

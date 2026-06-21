@@ -8,6 +8,7 @@ pub struct OutgoingShareRepository;
 
 impl OutgoingShareRepository {
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -52,6 +53,7 @@ impl OutgoingShareRepository {
             .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn get_by_id<'e, E>(ex: E, share_id: Uuid) -> Result<Option<OutgoingShare>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -75,6 +77,7 @@ impl OutgoingShareRepository {
 
     /// List the owner's active shares that auto-announce new pictures (`future = true`).
     /// Used by the pipeline announcement step to compute current coverage.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_active_future_by_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -104,6 +107,7 @@ impl OutgoingShareRepository {
     /// announcement (`pending_first_announcement`) or recovering from a failed delivery
     /// (`errored`), whose backoff window (`next_retry_at`) has elapsed. The pipeline reconciles each
     /// one's full coverage against the tracking table and flips it to `active` once fully delivered.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_announceable_by_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -136,6 +140,7 @@ impl OutgoingShareRepository {
     /// Find the owner's active shares whose `tag_path` is exactly or under `prefix` (an ltree
     /// path). Used by transitive revocation: when a directly re-shared `SharedToMe.*` tag is
     /// fully revoked upstream, the matching downstream shares are auto-revoked.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn find_by_tag_prefix<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -170,6 +175,7 @@ impl OutgoingShareRepository {
     /// at or under the share's `tag_path`). The owner-side authorisation check for a recipient EXIF
     /// proposal (10 §4.2): the grant is re-verified here, never trusted from the wire. Returns the
     /// first matching share, or `None` if no such grant covers the picture.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn find_active_exif_editable_covering<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -207,6 +213,7 @@ impl OutgoingShareRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn set_status<'e, E>(
         ex: E,
         share_id: Uuid,
@@ -234,6 +241,7 @@ impl OutgoingShareRepository {
     }
 
     /// A reconcile pass fully delivered the share: flip to `active` and clear the backoff.
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn mark_announce_success<'e, E>(ex: E, share_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -253,6 +261,7 @@ impl OutgoingShareRepository {
     /// A delivery failed: record the error and set the backoff. `demote_to_errored` is true when the
     /// share was `active` (the incremental path failed) — it moves to `errored` so the next pass is
     /// a full reconcile; otherwise the status (`pending_first_announcement`/`errored`) is kept.
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn mark_announce_failure<'e, E>(
         ex: E,
         share_id: Uuid,
@@ -278,6 +287,7 @@ impl OutgoingShareRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_by_owner<'e, E>(ex: E, owner_id: Uuid) -> Result<Vec<OutgoingShare>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -304,6 +314,7 @@ pub struct IncomingShareRepository;
 
 impl IncomingShareRepository {
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip(ex), fields(user_id = %recipient_id, outgoing_share_id = %outgoing_share_id))]
     pub async fn create<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -361,6 +372,7 @@ impl IncomingShareRepository {
             .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %recipient_id))]
     pub async fn list_by_recipient<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -386,6 +398,7 @@ impl IncomingShareRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn set_status<'e, E>(
         ex: E,
         share_id: Uuid,
@@ -412,6 +425,7 @@ impl IncomingShareRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn get_by_id<'e, E>(ex: E, share_id: Uuid) -> Result<Option<IncomingShare>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -436,6 +450,7 @@ impl IncomingShareRepository {
 
     /// Find the incoming share for a given outgoing_share_id from a specific sender instance.
     /// Used by the recipient backend when the sender announces pictures after share acceptance.
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id))]
     pub async fn find_by_outgoing_share<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -467,6 +482,7 @@ impl IncomingShareRepository {
     /// Find an **active** incoming share that tagged the given received picture and whose sender
     /// grants EXIF editing (`allow_exif_edit = true`). Drives the recipient-side gate for an EXIF
     /// proposal (10 §4.1): a `propose` is permitted iff such a share exists. Returns the first match.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id, user_id = %recipient_id))]
     pub async fn find_active_exif_editable_for_picture<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -502,6 +518,7 @@ impl IncomingShareRepository {
 
     /// Link an incoming share to the local `SharedTagMappingService` mapping created for it
     /// (ShareBack auto-accept). Stored so the frontend can surface the mapping.
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn set_local_mapping_service<'e, E>(
         ex: E,
         share_id: Uuid,
@@ -524,6 +541,7 @@ impl IncomingShareRepository {
     /// Record that the sender just announced pictures for this share: stamp
     /// `last_announcement_received_at` and refresh the advisory `shared_tag_path` to the tag the
     /// pictures landed under (so a sender-side tag rename / re-target is reflected).
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn record_announcement<'e, E>(
         ex: E,
         share_id: Uuid,

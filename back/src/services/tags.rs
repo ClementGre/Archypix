@@ -3,6 +3,7 @@ use crate::repository::tag::TagRepository;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+#[tracing::instrument(skip(db, picture_ids, add_tags, remove_tags), fields(user_id = %user_id))]
 pub async fn edit_picture_tags(
     db: &PgPool,
     user_id: Uuid,

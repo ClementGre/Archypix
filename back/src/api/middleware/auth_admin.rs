@@ -5,7 +5,7 @@ use crate::state::AppState;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuthAdmin {
     pub claims: JwtClaims,
 }

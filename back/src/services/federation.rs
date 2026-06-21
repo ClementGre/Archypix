@@ -25,6 +25,8 @@ pub struct PresignTokenItem {
 
 /// Validate and record an inbound share announcement from a remote instance.
 /// Returns incoming share ID and a boolean indicating if the share was automatically accepted.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, config, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_announcement(
     db: &PgPool,
     config: &Config,
@@ -141,6 +143,7 @@ pub async fn receive_share_announcement(
 /// `pending_first_announcement` and wake the pipeline, which announces the current coverage and
 /// flips the share to `active`. (The actual picture announcement is the pipeline's job — the
 /// single announce path.)
+#[tracing::instrument(skip(db, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_accept(
     db: &PgPool,
     pipeline_waker: &PipelineWaker,
@@ -185,6 +188,7 @@ pub async fn receive_share_accept(
 
 /// Received a share revocation from the sender; clean up the matching IncomingShare.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_revoke(
     db: &PgPool,
     cache: &dyn Cache,
@@ -216,6 +220,7 @@ pub async fn receive_share_revoke(
 }
 
 /// Received a share rejection from the recipient; tombstone the OutgoingShare.
+#[tracing::instrument(skip(db), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_reject(
     db: &PgPool,
     authenticated_instance: &str,
@@ -255,6 +260,7 @@ pub async fn receive_share_reject(
 /// Loop prevention: pictures whose owner is a local user (the relayed picture is our own) are
 /// skipped.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, config, pipeline_waker, pictures), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_pictures_announcement(
     db: &PgPool,
     cache: &dyn Cache,
@@ -333,6 +339,7 @@ pub async fn receive_pictures_announcement(
 
 /// Received a per-picture unannounce from a sender; remove the share's tags from the named
 /// pictures and delete now-orphaned received-picture rows.
+#[tracing::instrument(skip(db, pipeline_waker, picture_ids), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_pictures_unannouncement(
     db: &PgPool,
     pipeline_waker: &PipelineWaker,
@@ -361,6 +368,7 @@ pub async fn receive_pictures_unannouncement(
 /// requester). Used by both the cross-instance federation handler and the same-backend short-circuit
 /// in `services::pictures::propose_received_exif`.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, waker, set, clear), fields(picture_id))]
 pub async fn receive_picture_edit_request(
     db: &PgPool,
     waker: &PipelineWaker,
@@ -421,6 +429,7 @@ pub async fn receive_picture_edit_request(
 
 /// Resolve per-picture tokens to owned pictures and presign each. The token *is* the
 /// authorization — no federation JWT is required. An unknown token yields 401.
+#[tracing::instrument(skip(db, storage, config, items))]
 pub async fn presign_by_picture_tokens(
     db: &PgPool,
     storage: &dyn Storage,

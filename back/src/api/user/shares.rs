@@ -9,7 +9,6 @@ use axum::Json;
 use axum::extract::{Path, State};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateOutgoingRequest {
@@ -72,18 +71,12 @@ pub struct IncomingShareResponse {
     pub revoked_at: Option<NaiveDateTime>,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn create_outgoing(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateOutgoingRequest>,
 ) -> Result<Json<ShareResponse>, AppError> {
-    debug!(
-        user = %auth.claims.sub,
-        token_type = auth.token_type(),
-        tag_path = %payload.tag_path,
-        recipient = %payload.recipient_username,
-        "create_outgoing_share"
-    );
     let tag_path = TagPath::parse(&payload.tag_path, true).map_err(AppError::BadRequest)?;
     let share = services::shares::create_outgoing_share(
         &state.db,
@@ -123,11 +116,11 @@ pub async fn create_outgoing(
     }))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list_outgoing(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ShareResponse>>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "list_outgoing_shares");
     let shares = OutgoingShareRepository::list_by_owner(&state.db, auth.user_id()?).await?;
     Ok(Json(
         shares
@@ -153,11 +146,11 @@ pub async fn list_outgoing(
     ))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list_incoming(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<IncomingShareResponse>>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "list_incoming_shares");
     let shares = IncomingShareRepository::list_by_recipient(&state.db, auth.user_id()?).await?;
     Ok(Json(
         shares
@@ -184,12 +177,12 @@ pub async fn list_incoming(
     ))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), share_id = %share_id))]
 pub async fn accept_incoming(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), share_id = %share_id, "accept_incoming_share");
     services::shares::accept_incoming_share(
         &state.db,
         state.cache.as_ref(),
@@ -206,12 +199,12 @@ pub async fn accept_incoming(
     Ok(Json(serde_json::json!({ "accepted": true })))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), share_id = %share_id))]
 pub async fn revoke_outgoing(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), share_id = %share_id, "revoke_outgoing_share");
     services::shares::revoke_outgoing_share(
         &state.db,
         state.cache.as_ref(),
@@ -227,12 +220,12 @@ pub async fn revoke_outgoing(
     Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), share_id = %share_id))]
 pub async fn reject_incoming(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), share_id = %share_id, "reject_incoming_share");
     services::shares::reject_incoming_share(
         &state.db,
         state.cache.as_ref(),

@@ -167,6 +167,7 @@ pub struct PictureDetails {
 /// Presign upload slots for a batch of files in one call. Returns one (picture_id, presigned_url)
 /// pair per filename in the same order. Each entry is independent — a failure on one does not
 /// affect the others, but the whole call fails if any presign errors.
+#[tracing::instrument(skip(cache, storage, config), fields(user_id = %user_id, count = filenames.len()))]
 pub async fn begin_upload_batch(
     cache: &dyn Cache,
     storage: &dyn Storage,
@@ -188,6 +189,7 @@ pub async fn begin_upload_batch(
     try_join_all(futures).await
 }
 
+#[tracing::instrument(skip(cache, storage, config), fields(user_id = %user_id))]
 pub async fn begin_upload(
     cache: &dyn Cache,
     storage: &dyn Storage,
@@ -195,7 +197,6 @@ pub async fn begin_upload(
     user_id: Uuid,
     filename: &str,
 ) -> Result<(Uuid, String), AppError> {
-    trace!(user_id = %user_id, filename, "pictures: begin_upload");
     if filename.trim().is_empty() {
         return Err(AppError::BadRequest("Filename cannot be empty".to_string()));
     }
@@ -224,6 +225,7 @@ pub async fn begin_upload(
     Ok((picture_id, presigned_url))
 }
 
+#[tracing::instrument(skip(db, cache, storage, config, meta), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn complete_upload(
     db: &PgPool,
     cache: &dyn Cache,
@@ -233,7 +235,6 @@ pub async fn complete_upload(
     picture_id: Uuid,
     meta: UploadMetadata,
 ) -> Result<Picture, AppError> {
-    trace!(user_id = %user_id, picture_id = %picture_id, "pictures: complete_upload");
     let session: UploadSession = cache_get_json(cache, RedisKey::UploadSession(picture_id))
         .await?
         .ok_or_else(|| AppError::BadRequest("Upload session not found or expired".to_string()))?;
@@ -337,6 +338,7 @@ pub async fn complete_upload(
 /// Reuses the version-snapshot machinery of the worker edit path: S3 copy first (no DB record
 /// exists yet, so it is safe outside a transaction), then the version row in a transaction so
 /// `version_number` is computed and stored atomically. Returns whether a snapshot was taken.
+#[tracing::instrument(skip(db, storage, config, picture), fields(picture_id = %picture.id))]
 pub async fn snapshot_version_on_overwrite(
     db: &PgPool,
     storage: &dyn Storage,
@@ -355,7 +357,6 @@ pub async fn snapshot_version_on_overwrite(
     if !snapshot {
         return Ok(false);
     }
-    trace!(picture_id = %picture.id, mode = ?versioning_mode, "pictures: snapshot version before WebDAV overwrite");
 
     let version_id = Uuid::new_v4();
     storage
@@ -390,6 +391,7 @@ pub async fn snapshot_version_on_overwrite(
 /// it to recipients carrying the owner-deletion lifecycle flag (it stays in share coverage until the
 /// purge sweep removes it); for a **received** picture the delete is purely local (never announced,
 /// never affects downstream relay). Returns the updated picture.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn trash_picture(
     db: &PgPool,
     waker: &crate::infra::pipeline::PipelineWaker,
@@ -401,6 +403,7 @@ pub async fn trash_picture(
 
 /// Restore a soft-deleted picture (clear `deleted_at`/`deleted_reason`). For an owned picture this
 /// re-announces with the lifecycle flag cleared (09 §5.1). Returns the updated picture.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn restore_picture(
     db: &PgPool,
     waker: &crate::infra::pipeline::PipelineWaker,
@@ -410,6 +413,7 @@ pub async fn restore_picture(
     set_trashed(db, waker, user_id, picture_id, false).await
 }
 
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
 async fn set_trashed(
     db: &PgPool,
     waker: &crate::infra::pipeline::PipelineWaker,
@@ -418,7 +422,6 @@ async fn set_trashed(
     deleted: bool,
 ) -> Result<Picture, AppError> {
     use crate::repository::pipeline::PipelineRepository;
-    trace!(user_id = %user_id, picture_id = %picture_id, deleted, "pictures: set_trashed");
     let mut tx = db
         .begin()
         .await
@@ -443,6 +446,7 @@ async fn set_trashed(
 /// only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
 /// fields claim the override; `clear` fields drop the override (the owner's value flows through
 /// again). Returns the updated picture.
+#[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn override_received_exif(
     db: &PgPool,
     waker: &crate::infra::pipeline::PipelineWaker,
@@ -452,7 +456,6 @@ pub async fn override_received_exif(
     clear: Vec<crate::domain::job::ExifField>,
 ) -> Result<Picture, AppError> {
     use crate::repository::pipeline::PipelineRepository;
-    trace!(user_id = %user_id, picture_id = %picture_id, "pictures: override_received_exif");
 
     let picture = PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -534,6 +537,7 @@ const ALL_EXIF_FIELDS: [crate::domain::job::ExifField; 12] = {
 /// authoritative change lands asynchronously (owner reconcile + re-announce), so the caller returns
 /// `202`. Returns the locally-updated picture (overrides cleared for the proposed fields).
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, config, federation, waker), fields(user_id = %user_id))]
 pub async fn propose_received_exif(
     db: &PgPool,
     cache: &dyn Cache,
@@ -548,7 +552,6 @@ pub async fn propose_received_exif(
 ) -> Result<Picture, AppError> {
     use crate::repository::pipeline::PipelineRepository;
     use crate::repository::share::IncomingShareRepository;
-    trace!(user_id = %user_id, picture_id = %picture_id, "pictures: propose_received_exif");
 
     let picture = PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -659,6 +662,7 @@ pub async fn propose_received_exif(
         .ok_or(AppError::NotFound)
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn get_picture_details(
     db: &PgPool,
     user_id: Uuid,
@@ -721,6 +725,7 @@ fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicat
     }))
 }
 
+#[tracing::instrument(skip(db, cache, storage, config, federation, params), fields(user_id = %user_id))]
 pub async fn list_pictures(
     db: &PgPool,
     cache: &dyn Cache,
@@ -730,7 +735,6 @@ pub async fn list_pictures(
     user_id: Uuid,
     params: PictureListParams,
 ) -> Result<PictureListResult, AppError> {
-    trace!(user_id = %user_id, page = params.page, page_size = params.page_size, "pictures: list");
     if params.page_size > 200 {
         return Err(AppError::BadRequest(
             "page_size cannot exceed 200".to_string(),
@@ -770,6 +774,7 @@ pub async fn list_pictures(
 /// returned page. Shared by the public `GET /pictures` list and the hierarchy `browse` endpoint
 /// (which builds its `filter.predicate` server-side from the resolver).
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, storage, config, federation, filter), fields(user_id = %user_id))]
 pub async fn list_with_filter(
     db: &PgPool,
     cache: &dyn Cache,
@@ -838,6 +843,7 @@ pub async fn list_with_filter(
 /// 2. Owned + same-backend cache misses: individual local S3 presigns (cheap, no network hop).
 /// 3. Cross-instance cache misses: grouped by (owner_username, owner_instance) → one HTTP call
 ///    per remote owner backend instead of one call per picture.
+#[tracing::instrument(skip(db, cache, storage, config, federation, pictures, _local_user_id), fields(user_id = %_local_user_id))]
 async fn presign_for_picture_list(
     db: &PgPool,
     cache: &dyn Cache,
@@ -962,6 +968,7 @@ async fn presign_for_picture_list(
     Ok(urls)
 }
 
+#[tracing::instrument(skip(db, cache, storage, config, federation), fields(user_id = %local_user_id, picture_id = %picture_id))]
 pub async fn presign_picture_variant(
     db: &PgPool,
     cache: &dyn Cache,
@@ -972,7 +979,6 @@ pub async fn presign_picture_variant(
     picture_id: Uuid,
     variant: PictureVariant,
 ) -> Result<String, AppError> {
-    trace!(user_id = %local_user_id, picture_id = %picture_id, variant = ?variant, "pictures: presign_variant");
     let pic = PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -986,7 +992,7 @@ pub async fn presign_picture_variant(
         .get_str(RedisKey::PictureUrl(pic.id, variant.as_str()))
         .await?
     {
-        trace!(picture_id = %pic.id, "presign cache hit");
+        trace!("presign cache hit");
         return Ok(cached);
     }
 

@@ -6,6 +6,7 @@ use tracing::info;
 use uuid::Uuid;
 
 /// Placeholder for ML-based jobs. Logs and reports success with empty result.
+#[tracing::instrument(skip(client), fields(job_id = %job_id, job_type = %job_type))]
 pub async fn handle_stub(
     client: &BackendClient,
     job_id: Uuid,

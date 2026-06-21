@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
-use tracing::{debug, error, info};
+use tracing::{Instrument, debug, error, info};
 
 /// A unit of periodic background work. One implementor per behaviour; each carries its own
 /// dependencies (db pool, config values, wake handles, …).
@@ -98,8 +98,10 @@ async fn run_task(task: Arc<dyn RecurringTask>, mut shutdown: watch::Receiver<bo
 }
 
 async fn run_once(task: &Arc<dyn RecurringTask>) {
+    let run_id = uuid::Uuid::new_v4();
+    let span = tracing::info_span!("recurring_task", task = task.name(), run_id = %run_id);
     let start = Instant::now();
-    match task.tick().await {
+    match task.tick().instrument(span).await {
         Ok(()) => debug!(
             task = task.name(),
             elapsed_ms = start.elapsed().as_millis() as u64,

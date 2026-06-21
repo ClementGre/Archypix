@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub struct UserRepository;
 
 impl UserRepository {
+    #[tracing::instrument(skip(ex))]
     pub async fn find_by_username<'e, E>(ex: E, username: &str) -> Result<Option<User>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -21,6 +22,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn find_by_id<'e, E>(ex: E, user_id: Uuid) -> Result<Option<User>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -36,6 +38,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex))]
     pub async fn list<'e, E>(ex: E) -> Result<Vec<User>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -50,6 +53,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex))]
     pub async fn create<'e, E>(
         ex: E,
         username: &str,
@@ -75,6 +79,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn update<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -100,6 +105,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn update_profile<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -125,6 +131,7 @@ impl UserRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn delete<'e, E>(ex: E, user_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,

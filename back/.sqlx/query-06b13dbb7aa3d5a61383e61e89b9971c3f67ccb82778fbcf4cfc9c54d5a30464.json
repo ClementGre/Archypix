@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO jobs (owner_id, job_type, picture_id, config, idempotency_key)\n               VALUES ($1, $2, $3, $4, $5)\n               RETURNING\n                   id, owner_id,\n                   job_type    AS \"job_type: JobType\",\n                   status      AS \"status: JobStatus\",\n                   config      AS \"config: _\",\n                   result      AS \"result: _\",\n                   error_message,\n                   retry_count, max_retries,\n                   idempotency_key,\n                   picture_id, claimed_by, claim_token,\n                   created_at, started_at, completed_at",
+  "query": "SELECT id, owner_id,\n                      job_type    AS \"job_type: JobType\",\n                      status      AS \"status: JobStatus\",\n                      config      AS \"config: _\",\n                      result      AS \"result: _\",\n                      error_message,\n                      retry_count, max_retries,\n                      idempotency_key,\n                      picture_id, claimed_by, claim_token,\n                      trace_context AS \"trace_context: _\",\n                      created_at, started_at, completed_at\n               FROM   jobs\n               WHERE  picture_id = $1\n                 AND  job_type = 'edit_picture'\n                 AND  status IN ('pending', 'processing')\n               LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -173,6 +173,17 @@
       },
       {
         "ordinal": 13,
+        "name": "trace_context: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "trace_context"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -183,7 +194,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "started_at",
         "type_info": "Timestamp",
         "origin": {
@@ -194,7 +205,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "completed_at",
         "type_info": "Timestamp",
         "origin": {
@@ -207,24 +218,7 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        {
-          "Custom": {
-            "name": "job_type",
-            "kind": {
-              "Enum": [
-                "gen_thumbnail",
-                "ml_style",
-                "ml_people",
-                "ml_group_location",
-                "edit_picture"
-              ]
-            }
-          }
-        },
-        "Uuid",
-        "Jsonb",
-        "Varchar"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -241,10 +235,11 @@
       true,
       true,
       true,
+      true,
       false,
       true,
       true
     ]
   },
-  "hash": "12b194c2da1ba60fec73bcaa2c44c11157a4adf680ed5332316909ccac4bf8bd"
+  "hash": "06b13dbb7aa3d5a61383e61e89b9971c3f67ccb82778fbcf4cfc9c54d5a30464"
 }

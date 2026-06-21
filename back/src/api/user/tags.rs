@@ -32,12 +32,12 @@ pub struct ListTagsQuery {
     pub with_sources: bool,
 }
 
+#[tracing::instrument(skip(auth, state, query), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
     Query(query): Query<ListTagsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "list_tags");
     let user_id = auth.user_id()?;
 
     if let Some(picture_id) = query.picture_id {
@@ -82,17 +82,12 @@ pub struct EditPictureTagsRequest {
     pub remove_tags: Vec<String>,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn edit(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<EditPictureTagsRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(
-        user = %auth.claims.sub,
-        token_type = auth.token_type(),
-        picture_count = payload.picture_ids.len(),
-        "edit_picture_tags"
-    );
     let add_tags = parse_tag_paths(&payload.add_tags)?;
     let remove_tags = parse_tag_paths(&payload.remove_tags)?;
     services::tags::edit_picture_tags(

@@ -4,6 +4,7 @@ use crate::domain::job::{EditPictureConfig, ExifEdit, JobConfig, JobStatus, JobT
 use crate::domain::picture::ExifSyncStatus;
 use crate::domain::user_settings::VersioningMode;
 use crate::infra::error::{AppError, map_sqlx_error};
+use crate::infra::observability;
 use crate::infra::s3;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
@@ -16,10 +17,12 @@ use archypix_common::transfer::ClaimQuery;
 use archypix_common::transfer::PresignedWrites;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use tracing::debug;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
+#[tracing::instrument(skip(auth, state, query), fields(worker = auth.worker_id()))]
 pub async fn claim_next_job(
     auth: AuthWorker,
     State(state): State<AppState>,
@@ -30,17 +33,14 @@ pub async fn claim_next_job(
         return Ok(Json(None));
     };
 
-    debug!(
-        worker = auth.worker_id(),
-        job_type = job.job_type.to_string(),
-        job_id = %job.id,
-        "worker: claim_next_job"
-    );
-
     // claim_token was generated and stored by claim_next; forward it to the worker.
     let claim_token = job.claim_token.ok_or_else(|| {
         AppError::InternalServerError("claimed job has no claim_token".to_string())
     })?;
+
+    let trace_context = job.trace_context.as_ref().and_then(|tc| {
+        serde_json::from_value::<std::collections::HashMap<String, String>>(tc.0.clone()).ok()
+    });
 
     // ML jobs have no picture and no S3 I/O for now — return early with empty presigned fields.
     if matches!(
@@ -59,6 +59,7 @@ pub async fn claim_next_job(
             presigned_read: None,
             presigned_writes: PresignedWrites::default(),
             claim_token,
+            trace_context,
         })));
     }
 
@@ -181,16 +182,21 @@ pub async fn claim_next_job(
         presigned_read: Some(presigned_read),
         presigned_writes,
         claim_token,
+        trace_context,
     })))
 }
 
+#[tracing::instrument(skip(auth, state, body, headers), fields(worker = auth.worker_id(), job_id = %job_id))]
 pub async fn complete_job(
     auth: AuthWorker,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(job_id): Path<Uuid>,
     Json(body): Json<CompleteJobRequest>,
 ) -> Result<StatusCode, AppError> {
-    debug!(worker = auth.worker_id(), job_id = %job_id, "worker: complete_job");
+    // The worker injects its job span's context; reparent so completion is child of the job span.
+    let cx = observability::extract_from_headers(&headers);
+    tracing::Span::current().set_parent(cx);
 
     // Read job outside the transaction to get type/config early (fail fast on
     // corrupt JSONB). The claim_token guard inside the UPDATE makes this safe.
@@ -342,12 +348,16 @@ pub async fn complete_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[tracing::instrument(skip(auth, state, body, headers), fields(worker = auth.worker_id(), job_id = %job_id))]
 pub async fn fail_job(
     auth: AuthWorker,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(job_id): Path<Uuid>,
     Json(body): Json<FailJobRequest>,
 ) -> Result<StatusCode, AppError> {
+    let cx = observability::extract_from_headers(&headers);
+    tracing::Span::current().set_parent(cx);
     debug!(
         worker = auth.worker_id(),
         job_id = %job_id,

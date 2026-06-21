@@ -16,6 +16,7 @@ use crate::services::shares::registration::unregister_announced_pictures;
 
 /// Deliver an `UnannounceSharedPictures` task: same-backend removes tags directly, cross-instance
 /// posts to the recipient's `/pictures/unannounce`.
+#[tracing::instrument(skip(db, federation, config, pipeline_waker, task))]
 pub async fn deliver_unannounce_task(
     db: &sqlx::PgPool,
     federation: &FederationClient,

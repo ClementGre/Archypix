@@ -1,26 +1,10 @@
 use crate::domain::job::{Job, JobConfig, JobStatus, JobType};
 use crate::infra::error::{AppError, map_sqlx_error};
+use crate::infra::observability;
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
 pub struct JobRepository;
-
-/// Column list shared by every query that returns a full `Job` row.
-/// Must stay in sync with the `Job` struct field order.
-macro_rules! job_columns {
-    () => {
-        r#"id, owner_id,
-           job_type     AS "job_type: JobType",
-           status       AS "status: JobStatus",
-           config       AS "config: _",
-           result       AS "result: _",
-           error_message,
-           retry_count, max_retries,
-           idempotency_key,
-           picture_id, claimed_by, claim_token,
-           created_at, started_at, completed_at"#
-    };
-}
 
 impl JobRepository {
     /// Atomically claim the next pending job matching any of `job_types`.
@@ -28,6 +12,7 @@ impl JobRepository {
     /// Generates a fresh `claim_token` UUID for this claim; the worker must echo
     /// it back in `complete` / `fail` to prevent stale workers from corrupting
     /// re-claimed jobs.
+    #[tracing::instrument(skip(db, job_types))]
     pub async fn claim_next(
         db: &PgPool,
         worker_id: &str,
@@ -81,6 +66,7 @@ impl JobRepository {
                    retry_count, max_retries,
                    idempotency_key,
                    picture_id, claimed_by, claim_token,
+                   trace_context AS "trace_context: _",
                    created_at, started_at, completed_at"#,
             job_id,
             worker_id,
@@ -99,6 +85,7 @@ impl JobRepository {
     /// Returns `None` when the job is not in `processing` state or the
     /// `claim_token` does not match — this prevents stale workers (reset by the
     /// watchdog) from overwriting results of a re-claimed job.
+    #[tracing::instrument(skip(ex, result), fields(job_id = %job_id))]
     pub async fn complete<'e, E>(
         ex: E,
         job_id: Uuid,
@@ -127,6 +114,7 @@ impl JobRepository {
                    retry_count, max_retries,
                    idempotency_key,
                    picture_id, claimed_by, claim_token,
+                   trace_context AS "trace_context: _",
                    created_at, started_at, completed_at"#,
             job_id,
             claim_token,
@@ -145,6 +133,7 @@ impl JobRepository {
     /// When `permanent` is `true`, the job transitions directly to `failed`
     /// regardless of remaining retries.  When `false`, the retry counter is
     /// checked: if retries remain the job resets to `pending`.
+    #[tracing::instrument(skip(ex), fields(job_id = %job_id))]
     pub async fn fail<'e, E>(
         ex: E,
         job_id: Uuid,
@@ -189,6 +178,7 @@ impl JobRepository {
                    retry_count, max_retries,
                    idempotency_key,
                    picture_id, claimed_by, claim_token,
+                   trace_context AS "trace_context: _",
                    created_at, started_at, completed_at"#,
             job_id,
             claim_token,
@@ -200,11 +190,12 @@ impl JobRepository {
         .map_err(map_sqlx_error)
     }
 
-    /// Enqueue a new job.
+    /// Enqueue a new job. Captures the current OTel trace context so the worker can link back.
     ///
     /// `job_type` is derived from `config` via `JobConfig::job_type()` so the
     /// DB column and the JSONB discriminant can never disagree.
     /// Idempotency conflict returns `AppError::Conflict`.
+    #[tracing::instrument(skip(ex, config), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -218,10 +209,18 @@ impl JobRepository {
         let job_type = config.job_type();
         let config_value = serde_json::to_value(config)
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+        let ctx_map = observability::inject_context();
+        let trace_context: Option<serde_json::Value> = if ctx_map.is_empty() {
+            None
+        } else {
+            serde_json::to_value(&ctx_map).ok()
+        };
+
         sqlx::query_as!(
             Job,
-            r#"INSERT INTO jobs (owner_id, job_type, picture_id, config, idempotency_key)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO jobs (owner_id, job_type, picture_id, config, idempotency_key, trace_context)
+               VALUES ($1, $2, $3, $4, $5, $6)
                RETURNING
                    id, owner_id,
                    job_type    AS "job_type: JobType",
@@ -232,12 +231,14 @@ impl JobRepository {
                    retry_count, max_retries,
                    idempotency_key,
                    picture_id, claimed_by, claim_token,
+                   trace_context AS "trace_context: _",
                    created_at, started_at, completed_at"#,
             owner_id,
             job_type as JobType,
             picture_id,
             config_value as serde_json::Value,
             idempotency_key,
+            trace_context as Option<serde_json::Value>,
         )
         .fetch_one(ex)
         .await
@@ -247,6 +248,7 @@ impl JobRepository {
     /// Find the in-flight (`pending` / `processing`) `edit_picture` job for a picture, if any.
     /// At most one can exist (enforced by `uq_edit_picture_inflight`). Drives the §5 concurrency
     /// rule: fold into a `pending` job, or defer enqueue past a `processing` one.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn find_inflight_edit<'e, E>(ex: E, picture_id: Uuid) -> Result<Option<Job>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -262,6 +264,7 @@ impl JobRepository {
                       retry_count, max_retries,
                       idempotency_key,
                       picture_id, claimed_by, claim_token,
+                      trace_context AS "trace_context: _",
                       created_at, started_at, completed_at
                FROM   jobs
                WHERE  picture_id = $1
@@ -277,6 +280,7 @@ impl JobRepository {
 
     /// Replace the `config` JSONB of a still-`pending` job (the fold path). Only updates while the
     /// job is `pending` so a job that started processing mid-fold is not silently mutated.
+    #[tracing::instrument(skip(ex, config), fields(job_id = %job_id))]
     pub async fn update_config_if_pending<'e, E>(
         ex: E,
         job_id: Uuid,
@@ -298,6 +302,7 @@ impl JobRepository {
         Ok(res.rows_affected() > 0)
     }
 
+    #[tracing::instrument(skip(ex), fields(job_id = %id))]
     pub async fn find_by_id<'e, E>(ex: E, id: Uuid) -> Result<Option<Job>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -313,6 +318,7 @@ impl JobRepository {
                       retry_count, max_retries,
                       idempotency_key,
                       picture_id, claimed_by, claim_token,
+                      trace_context AS "trace_context: _",
                       created_at, started_at, completed_at
                FROM   jobs
                WHERE  id = $1"#,
@@ -323,6 +329,7 @@ impl JobRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(db), fields(picture_id = %picture_id, owner_id = %owner_id))]
     pub async fn list_by_picture(
         db: &PgPool,
         picture_id: Uuid,
@@ -339,6 +346,7 @@ impl JobRepository {
                       retry_count, max_retries,
                       idempotency_key,
                       picture_id, claimed_by, claim_token,
+                      trace_context AS "trace_context: _",
                       created_at, started_at, completed_at
                FROM   jobs
                WHERE  picture_id = $1
@@ -357,6 +365,7 @@ impl JobRepository {
     /// Clears `claimed_by` and `claim_token` so a fresh worker gets a new token
     /// when it re-claims the job — preventing the original (late) worker from
     /// completing the retried run.
+    #[tracing::instrument(skip(db))]
     pub async fn reset_stale(db: &PgPool, timeout_secs: i64) -> Result<u64, AppError> {
         let result = sqlx::query!(
             r#"UPDATE jobs
@@ -392,6 +401,7 @@ impl JobRepository {
     /// Both `completed` and permanently-`failed` jobs set `completed_at` (see [`Self::fail`] /
     /// [`Self::reset_stale`]), so it is the correct retention anchor; rows with a NULL
     /// `completed_at` fall back to `created_at`.
+    #[tracing::instrument(skip(db))]
     pub async fn delete_terminal_older_than(
         db: &PgPool,
         retention_secs: i64,

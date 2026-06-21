@@ -24,6 +24,10 @@ use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+#[tracing::instrument(
+    skip(client, config, presigned_read, presigned_writes),
+    fields(job_id = %job_id, picture_id = %config.picture_id),
+)]
 pub async fn handle(
     client: &BackendClient,
     job_id: Uuid,
@@ -65,7 +69,7 @@ pub async fn handle(
     let tmp = TempDir::new()?;
     let original_path = tmp.path().join("original");
 
-    info!(job_id = %job_id, "gen_thumbnail: downloading original");
+    info!("Downloading original...");
     client
         .download_presigned(&presigned_read, &original_path)
         .await?;
@@ -73,21 +77,25 @@ pub async fn handle(
     let file_size = std::fs::metadata(&original_path)
         .map(|m| m.len() as i64)
         .ok();
-    debug!(size_bytes = ?file_size, "gen_thumbnail: original downloaded");
+    debug!(size_bytes = ?file_size, "Original downloaded");
 
     // ── EXIF extraction (initial jobs only, blocking) ─────────────────────────
     let exif: Option<ExtractedExif> = if should_extract_exif {
         let path = original_path.clone();
-        match tokio::task::spawn_blocking(move || exif_mod::extract_exif(&path))
-            .await
-            .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
+        let span = tracing::info_span!("exif_extract", file = ?path.file_name());
+        match tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
+            exif_mod::extract_exif(&path)
+        })
+        .await
+        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
         {
             Ok(e) => {
-                debug!("gen_thumbnail: EXIF extracted");
+                debug!("EXIF extracted");
                 Some(e)
             }
             Err(e) => {
-                warn!(error = ?e, "gen_thumbnail: EXIF extraction failed; continuing without EXIF");
+                warn!(error = ?e, "EXIF extraction failed; continuing without EXIF");
                 None
             }
         }
@@ -97,12 +105,13 @@ pub async fn handle(
 
     // ── File hash (blocking) ─────────────────────────────────────────────────
     let path_for_hash = original_path.clone();
+    info!(path = %path_for_hash.display(), "Hashing file...");
     let file_hash =
         tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path_for_hash))
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
     if file_hash.is_none() {
-        warn!("gen_thumbnail: file hash failed; skipping");
+        warn!("File hash failed; skipping");
     }
 
     // ── Thumbnails + BlurHash + upload (skipped for non-thumbnailable formats) ─
@@ -138,6 +147,5 @@ pub async fn handle(
         )
         .await?;
 
-    info!(job_id = %job_id, thumbnails_generated, "gen_thumbnail completed");
     Ok(())
 }

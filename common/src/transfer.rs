@@ -53,6 +53,10 @@ pub struct ClaimJobResponse {
     /// `complete` and `fail` call so the backend can reject stale workers that
     /// were reset by the watchdog and then woke up late.
     pub claim_token: Uuid,
+    /// W3C trace context captured at enqueue time; the worker links its job span to it.
+    /// `None` when tracing is disabled or no context was active at enqueue time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_context: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Typed presigned PUT URL map.

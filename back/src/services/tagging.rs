@@ -9,6 +9,7 @@ use uuid::Uuid;
 ///
 /// Returns `false` if the service does not exist or is not owned by `owner_id` (in which
 /// case the transaction is rolled back and no tags are promoted).
+#[tracing::instrument(skip(db), fields(user_id = %owner_id, service_id = %service_id))]
 pub async fn delete_service(
     db: &PgPool,
     owner_id: Uuid,

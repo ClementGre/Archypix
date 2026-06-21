@@ -9,7 +9,7 @@ use crate::error::{Result, WorkerError};
 use crate::imaging::resize;
 use archypix_common::transfer::PresignedWrites;
 use std::path::Path;
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 pub struct ThumbnailOutput {
     /// BlurHash string, if generation succeeded (failure is non-fatal).
@@ -30,6 +30,7 @@ pub struct ThumbnailOutput {
 /// The caller must pass a writable `tmp_dir` for the intermediate WebP files.
 /// The directory is NOT cleaned up here — the caller is responsible for that
 /// (typically by keeping a `TempDir` alive for the duration of the job).
+#[instrument(skip(client, src, writes, tmp_dir), fields(src = %src.display()))]
 pub async fn run(
     client: &BackendClient,
     src: &Path,
@@ -49,7 +50,9 @@ pub async fn run(
     let dir_c = tmp_dir.to_path_buf();
 
     // All image work is CPU-bound — must run on a blocking thread.
+    let span = tracing::Span::current();
     let (paths, blurhash, dimensions) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let _enter = span.enter();
         // Decoded dimensions first — the authoritative source for pictures.width/height.
         let dimensions = resize::image_dimensions(&src_c)?;
 
@@ -58,10 +61,12 @@ pub async fn run(
             let dest = dir_c.join(format!("{name}.webp"));
             resize::generate_thumbnail(&src_c, &dest, height)
                 .map_err(|e| WorkerError::Imaging(format!("'{name}' thumbnail: {e}")))?;
-            paths.push((name.to_string(), dest));
+            paths.push((name.to_string(), dest.clone()));
         }
 
-        let blurhash = match resize::generate_blurhash(&src_c) {
+        let blurhash = match resize::generate_blurhash(
+            &dir_c.join(format!("{}.webp", resize::THUMBNAIL_SMALLER_VARIANT)),
+        ) {
             Ok(s) => Some(s),
             Err(e) => {
                 warn!(error = ?e, "blurhash generation failed; skipping");

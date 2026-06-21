@@ -489,6 +489,7 @@ pub struct TreeResult {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn resolve_tree(
     db: &PgPool,
     user_id: Uuid,
@@ -529,6 +530,7 @@ pub struct BrowseParams {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, storage, config, federation, params), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn browse(
     db: &PgPool,
     cache: &dyn Cache,
@@ -609,12 +611,14 @@ async fn load_owned(
         .ok_or(AppError::NotFound)
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id))]
 pub async fn list_hierarchies(db: &PgPool, user_id: Uuid) -> Result<Vec<HierarchyRow>, AppError> {
     HierarchyRepository::list_by_owner(db, user_id).await
 }
 
 /// Load an owned hierarchy, parse + validate its config, and resolve the directory tree
 /// against the user's current tags. The single entry point the WebDAV `VirtualFs` uses.
+#[tracing::instrument(skip(db), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn load_resolved(
     db: &PgPool,
     user_id: Uuid,
@@ -645,6 +649,7 @@ pub fn list_filter_for(pred: &TagPredicate, page_size: i64) -> PictureListFilter
     }
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn get_hierarchy(
     db: &PgPool,
     user_id: Uuid,
@@ -653,6 +658,7 @@ pub async fn get_hierarchy(
     load_owned(db, user_id, hierarchy_id).await
 }
 
+#[tracing::instrument(skip(db, config_value), fields(user_id = %user_id))]
 pub async fn create_hierarchy(
     db: &PgPool,
     user_id: Uuid,
@@ -669,6 +675,7 @@ pub async fn create_hierarchy(
     HierarchyRepository::create(db, user_id, name.trim(), &normalized).await
 }
 
+#[tracing::instrument(skip(db, config_value), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn update_hierarchy(
     db: &PgPool,
     user_id: Uuid,
@@ -704,6 +711,7 @@ pub async fn update_hierarchy(
     .ok_or(AppError::NotFound)
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn delete_hierarchy(
     db: &PgPool,
     user_id: Uuid,
@@ -735,6 +743,7 @@ fn webdav_url(config: &Config, name: &str) -> String {
 
 /// Get the WebDAV mount info, minting a token on first access (so `GET …/webdav` always
 /// returns a usable credential).
+#[tracing::instrument(skip(db, config), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn get_webdav_info(
     db: &PgPool,
     config: &Config,
@@ -762,6 +771,7 @@ pub async fn get_webdav_info(
 }
 
 /// Rotate the WebDAV token (invalidates any mounted client).
+#[tracing::instrument(skip(db, config), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn regenerate_webdav_token(
     db: &PgPool,
     config: &Config,
@@ -783,6 +793,7 @@ pub async fn regenerate_webdav_token(
 }
 
 /// Toggle the WebDAV read strategy (presigned redirect vs backend proxy).
+#[tracing::instrument(skip(db), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn set_webdav_use_redirect(
     db: &PgPool,
     user_id: Uuid,

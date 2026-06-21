@@ -2,7 +2,7 @@ use crate::error::{Result, WorkerError};
 use magick_rust::{MagickWand, magick_wand_genesis};
 use std::path::Path;
 use std::sync::Once;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 static MAGICK_INIT: Once = Once::new();
 
@@ -16,12 +16,13 @@ fn init_magick() {
 /// Named thumbnail variants and their target heights in pixels.
 pub const THUMBNAIL_VARIANTS: &[(&str, usize)] =
     &[("small", 100), ("medium", 500), ("large", 1000)];
-
+pub const THUMBNAIL_SMALLER_VARIANT: &str = "small";
 /// Read the raw decoded pixel dimensions `(width, height)` of the image at `src`.
 ///
 /// These are the stored-raster dimensions (EXIF orientation applied at display time), so they match
 /// the raw-pixel thumbnails/blurhash. Authoritative source of `pictures.width/height`. Must run
 /// inside `tokio::task::spawn_blocking`.
+#[instrument(skip(src), fields(file = ?src.file_name()))]
 pub fn image_dimensions(src: &Path) -> Result<(i32, i32)> {
     init_magick();
 
@@ -36,12 +37,14 @@ pub fn image_dimensions(src: &Path) -> Result<(i32, i32)> {
             "image has zero dimensions".to_string(),
         ));
     }
+    debug!(src = %src.display(), w, h, "image dimensions read");
     Ok((w as i32, h as i32))
 }
 
 /// Generate a WebP thumbnail at the specified height (maintaining aspect ratio).
 ///
 /// Writes the result to `dest_path`. Must run inside `tokio::task::spawn_blocking`.
+#[instrument(fields(target_height = target_height))]
 pub fn generate_thumbnail(src: &Path, dest: &Path, target_height: usize) -> Result<()> {
     init_magick();
 
@@ -77,6 +80,7 @@ pub fn generate_thumbnail(src: &Path, dest: &Path, target_height: usize) -> Resu
 /// Generate a BlurHash string for an image.
 ///
 /// Must run inside `tokio::task::spawn_blocking`.
+#[instrument(skip(src), fields(file = ?src.file_name()))]
 pub fn generate_blurhash(src: &Path) -> Result<String> {
     init_magick();
 

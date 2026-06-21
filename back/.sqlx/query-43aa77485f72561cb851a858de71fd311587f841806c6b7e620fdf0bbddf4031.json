@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE jobs\n               SET status        = CASE\n                                       WHEN $4 OR retry_count + 1 >= max_retries\n                                           THEN 'failed'::job_status\n                                       ELSE 'pending'::job_status\n                                   END,\n                   retry_count   = retry_count + 1,\n                   error_message = $3,\n                   started_at    = CASE\n                                       WHEN $4 OR retry_count + 1 >= max_retries THEN started_at\n                                       ELSE NULL\n                                   END,\n                   claimed_by    = NULL,\n                   claim_token   = NULL,\n                   completed_at  = CASE\n                                       WHEN $4 OR retry_count + 1 >= max_retries\n                                           THEN (now() AT TIME ZONE 'utc')\n                                       ELSE NULL\n                                   END\n               WHERE id          = $1\n                 AND claim_token = $2\n                 AND status      = 'processing'\n               RETURNING\n                   id, owner_id,\n                   job_type    AS \"job_type: JobType\",\n                   status      AS \"status: JobStatus\",\n                   config      AS \"config: _\",\n                   result      AS \"result: _\",\n                   error_message,\n                   retry_count, max_retries,\n                   idempotency_key,\n                   picture_id, claimed_by, claim_token,\n                   created_at, started_at, completed_at",
+  "query": "UPDATE jobs\n               SET status       = 'completed',\n                   completed_at = (now() AT TIME ZONE 'utc'),\n                   result       = $3\n               WHERE id         = $1\n                 AND claim_token = $2\n                 AND status     = 'processing'\n               RETURNING\n                   id, owner_id,\n                   job_type    AS \"job_type: JobType\",\n                   status      AS \"status: JobStatus\",\n                   config      AS \"config: _\",\n                   result      AS \"result: _\",\n                   error_message,\n                   retry_count, max_retries,\n                   idempotency_key,\n                   picture_id, claimed_by, claim_token,\n                   trace_context AS \"trace_context: _\",\n                   created_at, started_at, completed_at",
   "describe": {
     "columns": [
       {
@@ -173,6 +173,17 @@
       },
       {
         "ordinal": 13,
+        "name": "trace_context: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "trace_context"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -183,7 +194,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "started_at",
         "type_info": "Timestamp",
         "origin": {
@@ -194,7 +205,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "completed_at",
         "type_info": "Timestamp",
         "origin": {
@@ -209,8 +220,7 @@
       "Left": [
         "Uuid",
         "Uuid",
-        "Text",
-        "Bool"
+        "Jsonb"
       ]
     },
     "nullable": [
@@ -227,10 +237,11 @@
       true,
       true,
       true,
+      true,
       false,
       true,
       true
     ]
   },
-  "hash": "56fa62e115c661e811f7464dc7900890a4346c4b651f51cb1e59508ea3308872"
+  "hash": "43aa77485f72561cb851a858de71fd311587f841806c6b7e620fdf0bbddf4031"
 }

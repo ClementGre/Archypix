@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub struct TagRepository;
 
 impl TagRepository {
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id))]
     pub async fn list_paths_by_user<'e, E>(
         ex: E,
         local_user_id: Uuid,
@@ -27,6 +28,7 @@ impl TagRepository {
     }
 
     /// List tags for a specific picture owned by the given user.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id, picture_id = %picture_id))]
     pub async fn list_for_picture<'e, E>(
         ex: E,
         local_user_id: Uuid,
@@ -52,6 +54,7 @@ impl TagRepository {
 
     /// Load tags for a batch of pictures. Used by the pipeline loop to load current tags
     /// for all dirty pictures in one query rather than N per-picture queries.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn list_for_pictures<'e, E>(ex: E, picture_ids: &[Uuid]) -> Result<Vec<Tag>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -82,6 +85,7 @@ impl TagRepository {
     ///
     /// Must be called within a transaction together with `batch_remove` so that the overall
     /// remove-then-add is atomic.
+    #[tracing::instrument(skip(ex, picture_ids, tags), fields(user_id = %local_user_id))]
     pub async fn batch_assign<'e, E>(
         ex: E,
         local_user_id: Uuid,
@@ -144,6 +148,7 @@ impl TagRepository {
     ///
     /// Only removes `source = 'manual'` tags — system-assigned tags (`incoming_share`, `rule`, etc.)
     /// are never touched by user operations.
+    #[tracing::instrument(skip(ex, picture_ids, tags), fields(user_id = %local_user_id))]
     pub async fn batch_remove<'e, E>(
         ex: E,
         local_user_id: Uuid,
@@ -178,6 +183,7 @@ impl TagRepository {
     /// incoming_share) under any of `paths` (inclusive). The WebDAV write-back layer uses this
     /// to detect that an `onRemove` cannot break membership — a live service still asserts the
     /// tag — and return `409 Conflict` instead (06_webdav.md §7.2).
+    #[tracing::instrument(skip(ex, paths), fields(picture_id = %picture_id))]
     pub async fn has_non_manual_tag_under<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -212,6 +218,7 @@ impl TagRepository {
     /// this row and used to authorise presign calls to the sender (and forwarded downstream in
     /// transitive announcements). Uses `ON CONFLICT DO UPDATE SET picture_token` so re-announcing
     /// the same picture refreshes the token without error (token-refresh path).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id, incoming_share_id = %incoming_share_id))]
     pub async fn assign_incoming_share_tag<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -241,6 +248,7 @@ impl TagRepository {
     /// Remove all `incoming_share` tags assigned by the given share, returning the distinct
     /// picture IDs that were affected (needed by `cleanup_incoming_share` to compute survivors).
     /// Called on share revocation to clean up all `/SharedToMe/…` entries for that share.
+    #[tracing::instrument(skip(ex), fields(incoming_share_id = %incoming_share_id))]
     pub async fn remove_incoming_share_tags<'e, E>(
         ex: E,
         incoming_share_id: Uuid,
@@ -267,6 +275,7 @@ impl TagRepository {
     /// Distinct `SharedToMe.*` tag paths currently assigned by an incoming share. Used by
     /// transitive revocation to locate downstream shares re-sharing this tag (before the tags
     /// are removed).
+    #[tracing::instrument(skip(ex), fields(incoming_share_id = %incoming_share_id))]
     pub async fn incoming_share_tag_paths<'e, E>(
         ex: E,
         incoming_share_id: Uuid,
@@ -288,6 +297,7 @@ impl TagRepository {
     /// Remove the incoming-share tags of a specific share for a specific set of pictures.
     /// Used by per-picture unannounce (a subset of the share leaves coverage). Returns the
     /// affected picture ids.
+    #[tracing::instrument(skip(ex, picture_ids), fields(incoming_share_id = %incoming_share_id))]
     pub async fn remove_incoming_share_tags_for_pictures<'e, E>(
         ex: E,
         incoming_share_id: Uuid,
@@ -324,6 +334,7 @@ impl TagRepository {
     ///
     /// Used both by the recipient's presign path and by the pipeline's transitive token
     /// selection (§5.3).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn find_active_picture_token<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -352,6 +363,7 @@ impl TagRepository {
     /// Batch variant of [`find_active_picture_token`](Self::find_active_picture_token): for each
     /// of `picture_ids` that is a received picture with an active covering share, return its
     /// deterministically-chosen token. Used by the pipeline announcement step (token-refresh).
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn active_picture_tokens_for<'e, E>(
         ex: E,
         picture_ids: &[Uuid],
@@ -387,6 +399,7 @@ impl TagRepository {
     /// Called when a service is disabled or deleted without tag promotion — its tags are no longer
     /// live. Also resets `last_pipeline_run_at = NULL` on every affected picture so the pipeline
     /// re-evaluates their coverage and unannounces them from any active share they no longer cover.
+    #[tracing::instrument(skip(ex))]
     pub async fn remove_service_tags<'e, E>(ex: E, service_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -421,6 +434,7 @@ impl TagRepository {
     /// Done as one statement: the data-modifying CTEs delete the colliding rows and the
     /// redundant ancestors, and the outer UPDATE converts the disjoint remainder — no row is
     /// touched twice and the manual uniqueness index is never violated.
+    #[tracing::instrument(skip(ex))]
     pub async fn promote_service_tags_to_manual<'e, E>(
         ex: E,
         service_id: Uuid,

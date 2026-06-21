@@ -19,17 +19,11 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,archypix_back=debug".into()),
-        )
-        .init();
-
-    info!("Starting Archypix Backend...");
-
     let config = Config::from_env()?;
 
+    let _guard = infra::observability::init("archypix-back", config.back_domain.clone());
+
+    info!("Starting Archypix Backend...");
     info!("Back domain:   {}", config.back_domain);
     info!("Global domain: {}", config.global_domain);
     info!("Database:      {}", config.database_url_masked());
@@ -143,8 +137,39 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
     info!("Listening on {}", config.listen_addr);
 
+    use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+    use tower_http::trace::TraceLayer;
+
+    const REQUEST_ID: http::HeaderName = http::HeaderName::from_static("x-request-id");
+
     let app = api::routes(&config)
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID.clone()))
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |req: &http::Request<_>| -> tracing::Span {
+                let request_id = req
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("unknown")
+                    .to_owned();
+                if req.uri().path() == "/health" {
+                    return tracing::Span::none();
+                }
+                // otel.name overrides the Jaeger operation name (tracing-opentelemetry reads it).
+                // Without it every trace appears as "http_request" in the trace list.
+                let otel_name = format!("{} {}", req.method(), req.uri().path());
+                tracing::info_span!(
+                    "http_request",
+                    "otel.name" = otel_name,
+                    method = %req.method(),
+                    path = %req.uri().path(),
+                    request_id = %request_id,
+                    user_id = tracing::field::Empty,
+                    status = tracing::field::Empty,
+                )
+            },
+        ))
+        .layer(SetRequestIdLayer::new(REQUEST_ID.clone(), MakeRequestUuid))
         .with_state(state);
 
     // `into_make_service_with_connect_info` exposes the peer `SocketAddr` to handlers via

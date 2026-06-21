@@ -93,10 +93,12 @@ impl StorageClient {
 
     // ── Browser-facing presigns ───────────────────────────────────────────────
 
+    #[tracing::instrument(skip(self))]
     pub async fn presign_get(&self, bucket: &str, key: &str) -> Result<String, AppError> {
         presign_get_with(&self.presign_client, bucket, key, self.presign_ttl).await
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn presign_put(&self, bucket: &str, key: &str) -> Result<String, AppError> {
         presign_put_with(&self.presign_client, bucket, key, self.presign_ttl).await
     }
@@ -104,15 +106,18 @@ impl StorageClient {
     // ── Worker-facing presigns ────────────────────────────────────────────────
 
     /// Presign a GET URL for worker download — uses `S3_WORKERS_ENDPOINT`.
+    #[tracing::instrument(skip(self))]
     pub async fn presign_get_worker(&self, bucket: &str, key: &str) -> Result<String, AppError> {
         presign_get_with(&self.worker_presign_client, bucket, key, self.presign_ttl).await
     }
 
     /// Presign a PUT URL for worker upload — uses `S3_WORKERS_ENDPOINT`.
+    #[tracing::instrument(skip(self))]
     pub async fn presign_put_worker(&self, bucket: &str, key: &str) -> Result<String, AppError> {
         presign_put_with(&self.worker_presign_client, bucket, key, self.presign_ttl).await
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn copy_object(
         &self,
         src_bucket: &str,
@@ -131,6 +136,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError> {
         self.client
             .delete_object()
@@ -142,6 +148,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
         let out = self
             .client
@@ -161,6 +168,8 @@ impl StorageClient {
 
     /// `HEAD` an object and return its size in bytes. Errors if the object is missing or the
     /// store does not report a content length.
+
+    #[tracing::instrument(skip(self))]
     pub async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError> {
         let out = self
             .client
@@ -177,6 +186,7 @@ impl StorageClient {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -199,6 +209,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn put_object_file(
         &self,
         bucket: &str,

@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod job_watchdog;
+pub mod observability;
 pub mod pipeline;
 pub mod purge_sweep;
 pub mod ratelimit;

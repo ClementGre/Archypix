@@ -25,6 +25,7 @@ pub struct WebdavSession {
 
 /// Resolve a Basic-auth `(username, token)` pair and the mount `slug` to a session. Fails
 /// closed (`Unauthorized`) on any mismatch or when the hierarchy is disabled.
+#[tracing::instrument(skip(state, token))]
 pub async fn authenticate(
     state: &AppState,
     username: &str,

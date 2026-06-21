@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::bearer_token;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuthUser {
     pub claims: JwtClaims,
 }
@@ -45,6 +45,10 @@ impl FromRequestParts<AppState> for AuthUser {
         }
         if claims.uid.is_none() {
             return Err(AppError::Unauthorized("Missing user id".to_string()));
+        }
+
+        if let Some(uid) = &claims.uid {
+            tracing::Span::current().record("user_id", tracing::field::display(uid));
         }
 
         Ok(AuthUser { claims })

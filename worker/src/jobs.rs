@@ -4,12 +4,16 @@ pub mod thumbnail;
 
 use crate::backend::BackendClient;
 use crate::config::Config;
+use crate::observability;
 use archypix_common::job::JobConfig;
 use archypix_common::transfer::ClaimJobResponse;
+use opentelemetry::trace::TraceContextExt;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::{Duration, sleep};
+use tracing::Instrument;
 use tracing::{error, info, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Poll one backend for jobs, competing with other backend loops for slots on the shared semaphore.
 ///
@@ -68,49 +72,70 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     let presigned_read = job.presigned_read;
     let presigned_writes = job.presigned_writes;
     let mime_type = job.mime_type;
+    let trace_context = job.trace_context.clone();
 
-    let result = match job.config {
-        JobConfig::GenThumbnail(config) => {
-            thumbnail::handle(
-                client,
-                job_id,
-                claim_token,
-                config,
-                presigned_read,
-                presigned_writes,
-                mime_type,
-            )
-            .await
-        }
-        JobConfig::EditPicture(config) => {
-            edit_picture::handle(
-                client,
-                job_id,
-                claim_token,
-                config,
-                presigned_read,
-                presigned_writes,
-                mime_type,
-            )
-            .await
-        }
-        JobConfig::MlStyle | JobConfig::MlPeople | JobConfig::MlGroupLocation => {
-            ml::handle_stub(client, job_id, claim_token, job_type).await
-        }
-    };
-
-    if let Err(ref e) = result {
-        let permanent = !e.is_retriable();
-        error!(job_id = %job_id, permanent, error = ?e, "job failed");
-        if let Err(report_err) = client
-            .fail_job(job_id, claim_token, &e.to_string(), permanent)
-            .await
-        {
-            error!(
-                job_id = %job_id,
-                error = ?report_err,
-                "failed to report job failure to backend"
-            );
+    // Create a root span for this job and link it back to the enqueueing trace context.
+    let job_span = tracing::info_span!(
+        "job",
+        job_id = %job_id,
+        job_type = %job_type,
+        picture_id = ?job.picture_id,
+    );
+    if let Some(ctx_map) = &trace_context {
+        let remote_cx = observability::extract_context(ctx_map);
+        let remote_sc = remote_cx.span().span_context().clone();
+        info!(map = ?ctx_map, isvalid = remote_sc.is_valid(), "Extracted trace context: ");
+        if remote_sc.is_valid() {
+            job_span.add_link(remote_sc);
         }
     }
+
+    async move {
+        let result = match job.config {
+            JobConfig::GenThumbnail(config) => {
+                thumbnail::handle(
+                    client,
+                    job_id,
+                    claim_token,
+                    config,
+                    presigned_read,
+                    presigned_writes,
+                    mime_type,
+                )
+                .await
+            }
+            JobConfig::EditPicture(config) => {
+                edit_picture::handle(
+                    client,
+                    job_id,
+                    claim_token,
+                    config,
+                    presigned_read,
+                    presigned_writes,
+                    mime_type,
+                )
+                .await
+            }
+            JobConfig::MlStyle | JobConfig::MlPeople | JobConfig::MlGroupLocation => {
+                ml::handle_stub(client, job_id, claim_token, job_type).await
+            }
+        };
+
+        if let Err(ref e) = result {
+            let permanent = !e.is_retriable();
+            error!(job_id = %job_id, permanent, error = ?e, "job failed");
+            if let Err(report_err) = client
+                .fail_job(job_id, claim_token, &e.to_string(), permanent)
+                .await
+            {
+                error!(
+                    job_id = %job_id,
+                    error = ?report_err,
+                    "failed to report job failure to backend"
+                );
+            }
+        }
+    }
+    .instrument(job_span)
+    .await
 }

@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub struct TaggingServiceRepository;
 
 impl TaggingServiceRepository {
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_by_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -37,6 +38,7 @@ impl TaggingServiceRepository {
     /// Like `list_by_owner` but returns only enabled services (used by the pipeline loop).
     ///
     /// Order: SharedTagMapping always first, then Rule and Segmentation interleaved by `position`.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_enabled_by_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -62,6 +64,7 @@ impl TaggingServiceRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn get_by_owner_and_id<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -89,6 +92,7 @@ impl TaggingServiceRepository {
 
     /// Return the id of the user's first `shared_tag_mapping` service (oldest), if any.
     /// Used by ShareBack auto-accept to attach the new mapping to an existing service.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn first_mapping_service_for_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -108,6 +112,7 @@ impl TaggingServiceRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex, requires, excludes), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -139,6 +144,7 @@ impl TaggingServiceRepository {
     }
 
     /// Update optional fields; pass `None` to leave a field unchanged.
+    #[tracing::instrument(skip(ex, requires, excludes), fields(owner_id = %owner_id))]
     pub async fn update<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -176,6 +182,7 @@ impl TaggingServiceRepository {
 
     /// Bump `last_invalidated_at` on a specific service to NOW(), marking all pictures dirty.
     /// Called after any configuration change (rule/segment/mapping add or delete, enable/disable).
+    #[tracing::instrument(skip(ex))]
     pub async fn touch_invalidated<'e, E>(ex: E, service_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -193,6 +200,7 @@ impl TaggingServiceRepository {
     }
 
     /// Record a pipeline evaluation error on a service, or clear it (pass `None`).
+    #[tracing::instrument(skip(ex))]
     pub async fn set_error<'e, E>(
         ex: E,
         service_id: Uuid,
@@ -228,6 +236,7 @@ impl TaggingServiceRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn delete<'e, E>(ex: E, owner_id: Uuid, service_id: Uuid) -> Result<bool, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -247,6 +256,7 @@ impl TaggingServiceRepository {
     ///
     /// `ordered_ids` is the complete desired order — each ID gets `position = its index`.
     /// Returns an error if any ID does not belong to `owner_id` or is a `SharedTagMapping`.
+    #[tracing::instrument(skip(ex, ordered_ids), fields(owner_id = %owner_id))]
     pub async fn reorder_services<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -292,6 +302,7 @@ impl TaggingServiceRepository {
 pub struct SharedTagMappingRuleRepository;
 
 impl SharedTagMappingRuleRepository {
+    #[tracing::instrument(skip(ex, service_ids))]
     pub async fn list_for_services<'e, E>(
         ex: E,
         service_ids: &[Uuid],
@@ -315,6 +326,7 @@ impl SharedTagMappingRuleRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(incoming_share_id = %incoming_share_id))]
     pub async fn create<'e, E>(
         ex: E,
         service_id: Uuid,
@@ -340,6 +352,7 @@ impl SharedTagMappingRuleRepository {
     }
 
     /// Deletes a mapping rule. Verifies ownership via the parent tagging_service.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn delete<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -368,6 +381,7 @@ impl SharedTagMappingRuleRepository {
 
     /// Flag every mapping rule referencing an incoming share as broken. Called when the share
     /// is revoked/tombstoned so the UI can surface the now-empty mapping.
+    #[tracing::instrument(skip(ex), fields(incoming_share_id = %incoming_share_id))]
     pub async fn flag_broken_for_share<'e, E>(
         ex: E,
         incoming_share_id: Uuid,
@@ -392,6 +406,7 @@ impl SharedTagMappingRuleRepository {
 pub struct RuleTaggingRuleRepository;
 
 impl RuleTaggingRuleRepository {
+    #[tracing::instrument(skip(ex, service_ids))]
     pub async fn list_for_services<'e, E>(
         ex: E,
         service_ids: &[Uuid],
@@ -414,6 +429,7 @@ impl RuleTaggingRuleRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex))]
     pub async fn create<'e, E>(
         ex: E,
         service_id: Uuid,
@@ -437,6 +453,7 @@ impl RuleTaggingRuleRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn delete<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -469,6 +486,7 @@ impl RuleTaggingRuleRepository {
 pub struct SegmentationRuleRepository;
 
 impl SegmentationRuleRepository {
+    #[tracing::instrument(skip(ex, service_ids))]
     pub async fn list_for_services<'e, E>(
         ex: E,
         service_ids: &[Uuid],

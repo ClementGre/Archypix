@@ -88,6 +88,7 @@ pub struct Vfs<'a> {
 
 impl<'a> Vfs<'a> {
     /// Load + resolve the hierarchy for a WebDAV session.
+    #[tracing::instrument(skip(state), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
     pub async fn load(
         state: &'a AppState,
         user_id: Uuid,
@@ -122,6 +123,7 @@ impl<'a> Vfs<'a> {
     /// List a directory: child directories first, then direct files. Brand-new mirror
     /// sub-directories created via `MKCOL` (Redis pending markers) and OS-junk sidecar files are
     /// merged in so they survive a round-trip until a real file lands (06_webdav.md §9, §11).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn list_dir(&self, segments: &[String]) -> Result<Vec<VfsEntry>, AppError> {
         let mut out: Vec<VfsEntry> = Vec::new();
         let mut real_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -157,6 +159,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Stat a path — a directory (real or pending) or a file (real or sidecar).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn stat(&self, segments: &[String]) -> Result<VfsEntry, AppError> {
         if segments.is_empty() {
             return Ok(dir_entry("", false));
@@ -190,6 +193,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Resolve a file read to a redirect or proxied bytes.
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn read_file(&self, segments: &[String]) -> Result<ReadTarget, AppError> {
         let entry = self.file_entry(segments).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
@@ -230,6 +234,7 @@ impl<'a> Vfs<'a> {
     /// computed inline (06_webdav.md §7); `hash`/`size` describe those streamed bytes. Returns
     /// `true` if a new resource was created, `false` if an existing one was overwritten/retagged.
     /// See §7–8.
+    #[tracing::instrument(skip(self, temp_path), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn put_file(
         &self,
         segments: &[String],
@@ -446,6 +451,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// DELETE a file per the directory's `safeDeleteMode` (§7.1).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn delete(&self, segments: &[String]) -> Result<(), AppError> {
         // Deleting an empty, still-pending MKCOL directory just drops its Redis marker.
         if self.dir(segments).is_none() && self.is_pending_dir(segments).await? {
@@ -478,6 +484,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// MOVE: rename within a directory, or re-file across directories (§7.1).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn move_(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
         // Renaming a freshly-created (empty, pending) directory just moves its Redis marker —
         // Finder creates "dossier sans titre" then immediately MOVEs it to the chosen name.
@@ -518,6 +525,7 @@ impl<'a> Vfs<'a> {
 
     /// COPY: the picture gains the destination directory's tags (becomes multi-tagged). The
     /// destination may be a brand-new mirror sub-path (§9).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn copy(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
@@ -534,6 +542,7 @@ impl<'a> Vfs<'a> {
     /// recorded as a transient Redis pending marker so PROPFIND shows the empty directory until a
     /// file lands and mints the real tag (06_webdav.md §9). `static`/`query` structure is fixed,
     /// and an already-existing path is rejected.
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
         if self.dir(segments).is_some() || self.is_pending_dir(segments).await? {
             return Err(AppError::Conflict("directory already exists".into()));
@@ -697,6 +706,7 @@ impl<'a> Vfs<'a> {
 
     /// Store an OS-junk file as a sidecar so it round-trips in listings; oversized bodies are
     /// accepted but not stored (06_webdav.md §11).
+    #[tracing::instrument(skip(self, bytes), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn put_sidecar(
         &self,
         segments: &[String],
@@ -730,6 +740,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Read a stored sidecar's bytes + content-type, if present.
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn read_sidecar(
         &self,
         segments: &[String],
@@ -744,6 +755,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Remove a stored sidecar (DELETE on an OS-junk file).
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
     pub async fn delete_sidecar(&self, segments: &[String]) -> Result<(), AppError> {
         let (parent, name) = split_last(segments)?;
         let key = path_key(parent);

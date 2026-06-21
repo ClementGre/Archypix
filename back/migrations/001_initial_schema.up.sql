@@ -576,6 +576,10 @@ CREATE TABLE jobs
     -- complete/fail so stale workers cannot corrupt a re-claimed job.
     claim_token UUID,
 
+    -- W3C trace context (traceparent/tracestate) captured when the job was enqueued, so the worker
+    -- can link its processing span to the originating trace. NULL when tracing is disabled.
+    trace_context JSONB,
+
     -- Timestamps
     created_at      TIMESTAMP  NOT NULL DEFAULT (now() at time zone 'utc'),
     started_at      TIMESTAMP,

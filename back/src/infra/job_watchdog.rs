@@ -43,6 +43,7 @@ impl RecurringTask for JobWatchdogTask {
         self.interval
     }
 
+    #[tracing::instrument(skip(self))]
     async fn tick(&self) -> anyhow::Result<()> {
         let n = JobRepository::reset_stale(&self.db, self.timeout_secs).await?;
         if n > 0 {
@@ -79,6 +80,7 @@ impl RecurringTask for JobCleanupTask {
         self.interval
     }
 
+    #[tracing::instrument(skip(self))]
     async fn tick(&self) -> anyhow::Result<()> {
         let n = JobRepository::delete_terminal_older_than(&self.db, self.retention_secs).await?;
         if n > 0 {

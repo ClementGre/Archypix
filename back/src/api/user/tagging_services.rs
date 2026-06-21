@@ -16,7 +16,6 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 use uuid::Uuid;
 
 fn parse_tag(raw: &str, allow_protected: bool) -> Result<String, AppError> {
@@ -156,11 +155,11 @@ fn segment_to_response(r: SegmentationRule) -> SegmentationRuleResponse {
 ///
 /// Groups service IDs by type and queries only the relevant rule table for
 /// each group — no cross-type fetches.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list_services(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ServiceDetailResponse>>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "list_pipeline_services");
     let user_id = auth.user_id()?;
     let services = TaggingServiceRepository::list_by_owner(&state.db, user_id).await?;
 
@@ -257,17 +256,12 @@ pub struct CreateServiceRequest {
 }
 
 /// POST /pipeline — create a new tagging service.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn create_service(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ServiceResponse>, AppError> {
-    debug!(
-        user = %auth.claims.sub,
-        token_type = auth.token_type(),
-        service_type = ?payload.service_type,
-        "create_pipeline_service"
-    );
     let user_id = auth.user_id()?;
     let requires = parse_tags_allowing_protected(&payload.requires)?;
     let excludes = parse_tags_allowing_protected(&payload.excludes)?;
@@ -285,12 +279,12 @@ pub async fn create_service(
 }
 
 /// GET /pipeline/{id} — get a service with its rules.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id))]
 pub async fn get_service(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
 ) -> Result<Json<ServiceDetailResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, "get_pipeline_service");
     let user_id = auth.user_id()?;
     let svc = TaggingServiceRepository::get_by_owner_and_id(&state.db, user_id, service_id)
         .await?
@@ -351,13 +345,14 @@ pub struct UpdateServiceRequest {
 }
 
 /// PATCH /pipeline/{id} — update a service.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
 pub async fn update_service(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
     Json(payload): Json<UpdateServiceRequest>,
 ) -> Result<Json<ServiceResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, "update_pipeline_service");
     let user_id = auth.user_id()?;
     let requires = payload
         .requires
@@ -397,13 +392,14 @@ pub struct DeleteServiceQuery {
 /// DELETE /pipeline/{id} — delete a service (cascades to all its rules).
 ///
 /// The tags this service assigned are promoted to `manual` so the user keeps them.
+#[tracing::instrument(skip(auth, state, query), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
 pub async fn delete_service(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
     Query(query): Query<DeleteServiceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), promote_tags = query.promote_tags, %service_id, "delete_pipeline_service");
     let user_id = auth.user_id()?;
     let deleted =
         services::tagging::delete_service(&state.db, user_id, service_id, query.promote_tags)
@@ -424,13 +420,14 @@ pub struct AddMappingRequest {
 }
 
 /// POST /pipeline/{id}/mappings — add a mapping rule to a SharedTagMapping service.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
 pub async fn add_mapping(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
     Json(payload): Json<AddMappingRequest>,
 ) -> Result<Json<SharedTagMappingRuleResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, "add_mapping_rule");
     let user_id = auth.user_id()?;
     let svc = TaggingServiceRepository::get_by_owner_and_id(&state.db, user_id, service_id)
         .await?
@@ -454,12 +451,13 @@ pub async fn add_mapping(
 }
 
 /// DELETE /pipeline/{id}/mappings/{rule_id} — remove a mapping rule.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id, rule_id = %rule_id
+))]
 pub async fn delete_mapping(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((service_id, rule_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, %rule_id, "delete_mapping_rule");
     let user_id = auth.user_id()?;
     let deleted =
         SharedTagMappingRuleRepository::delete(&state.db, user_id, service_id, rule_id).await?;
@@ -480,13 +478,14 @@ pub struct AddRuleRequest {
 }
 
 /// POST /pipeline/{id}/rules — add a rule to a Rule tagging service.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
 pub async fn add_rule(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
     Json(payload): Json<AddRuleRequest>,
 ) -> Result<Json<RuleTaggingRuleResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, "add_tagging_rule");
     let user_id = auth.user_id()?;
     let svc = TaggingServiceRepository::get_by_owner_and_id(&state.db, user_id, service_id)
         .await?
@@ -506,12 +505,13 @@ pub async fn add_rule(
 }
 
 /// DELETE /pipeline/{id}/rules/{rule_id} — remove a rule.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id, rule_id = %rule_id
+))]
 pub async fn delete_rule(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((service_id, rule_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, %rule_id, "delete_tagging_rule");
     let user_id = auth.user_id()?;
     let deleted =
         RuleTaggingRuleRepository::delete(&state.db, user_id, service_id, rule_id).await?;
@@ -535,13 +535,14 @@ pub struct AddSegmentRequest {
 }
 
 /// POST /pipeline/{id}/segments — add a segment to a Segmentation service.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
 pub async fn add_segment(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(service_id): Path<Uuid>,
     Json(payload): Json<AddSegmentRequest>,
 ) -> Result<Json<SegmentationRuleResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, "add_segment");
     let user_id = auth.user_id()?;
     let svc = TaggingServiceRepository::get_by_owner_and_id(&state.db, user_id, service_id)
         .await?
@@ -573,12 +574,13 @@ pub async fn add_segment(
 }
 
 /// DELETE /pipeline/{id}/segments/{segment_id} — remove a segment.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id, segment_id = %segment_id
+))]
 pub async fn delete_segment(
     auth: AuthUser,
     State(state): State<AppState>,
     Path((service_id, segment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %service_id, %segment_id, "delete_segment");
     let user_id = auth.user_id()?;
     let deleted =
         SegmentationRuleRepository::delete(&state.db, user_id, service_id, segment_id).await?;
@@ -603,12 +605,12 @@ pub struct ReorderServicesRequest {
 ///
 /// The caller sends the complete desired ordering as a list of service IDs. Each service
 /// gets `position = its index` in the list. SharedTagMapping services must not be included.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn reorder_services(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<ReorderServicesRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), count = payload.ordered_ids.len(), "reorder_pipeline_services");
     let user_id = auth.user_id()?;
     TaggingServiceRepository::reorder_services(&state.db, user_id, &payload.ordered_ids).await?;
     Ok(Json(serde_json::json!({ "reordered": true })))

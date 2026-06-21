@@ -4,7 +4,6 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 #[derive(Deserialize)]
 pub struct WebFingerQuery {
@@ -29,6 +28,7 @@ struct WebFingerLink {
 /// validates the domain against `GLOBAL_DOMAIN`, and returns this backend's
 /// public base URL. Returns 400 for malformed resources, 404 if the domain
 /// does not match this instance's `GLOBAL_DOMAIN`.
+#[tracing::instrument(skip(state, query), fields(resource = %query.resource))]
 pub async fn handler(
     State(state): State<AppState>,
     Query(query): Query<WebFingerQuery>,
@@ -42,13 +42,6 @@ pub async fn handler(
     }
 
     let public_base_url = state.config.public_base_url();
-    debug!(
-        user = username,
-        token_type = "-",
-        resource = %query.resource,
-        backend_url = %public_base_url,
-        "webfinger"
-    );
 
     let body = WebFingerResponse {
         subject: format!("archypix:@{}:{}", username, domain),

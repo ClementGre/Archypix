@@ -25,6 +25,7 @@ pub struct ShareAnnouncementRepository;
 impl ShareAnnouncementRepository {
     /// Insert a tracking row for one picture, generating its token. Idempotent: if the row
     /// already exists the existing token is returned unchanged.
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id, picture_id = %picture_id))]
     pub async fn insert<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -51,6 +52,7 @@ impl ShareAnnouncementRepository {
     /// moment of this successful (re-)announce. The token must equal the upstream `incoming_share`
     /// tag token for received/transitive pictures. `announced_updated_at` gates metadata
     /// re-announce (§10.3): a later `pictures.updated_at` triggers another announce.
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id, picture_id = %picture_id))]
     pub async fn insert_with_token<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -82,6 +84,7 @@ impl ShareAnnouncementRepository {
     /// Picture ids currently covered by one share — those carrying a tag at-or-under the share's
     /// `tag_path`. Loop prevention is applied inline (pictures whose original owner is the share
     /// recipient are excluded). `picture_ids = None` returns the full coverage.
+    #[tracing::instrument(skip(ex, picture_ids), fields(owner_id = %owner_id))]
     pub async fn coverage_for_share<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -122,6 +125,7 @@ impl ShareAnnouncementRepository {
     /// Tracking rows for one share: `(picture_id, picture_token, announced_updated_at)`.
     /// `picture_ids = None` returns all of the share's rows (full reconcile); `Some(ids)` restricts
     /// to those pictures.
+    #[tracing::instrument(skip(ex, picture_ids), fields(outgoing_share_id = %outgoing_share_id))]
     pub async fn tracking_for_share<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -154,6 +158,7 @@ impl ShareAnnouncementRepository {
     /// at least one recipient. The worker-completion re-announce path checks this before marking a
     /// picture dirty: a not-yet-announced picture has nothing to refresh (its first announce will
     /// carry the now-complete metadata), so only tracked pictures are worth waking the pipeline for.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn is_picture_tracked<'e, E>(ex: E, picture_id: Uuid) -> Result<bool, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -175,6 +180,7 @@ impl ShareAnnouncementRepository {
     /// the refreshed metadata. This is the race-free correctness backstop for the worker-completion
     /// fast path: even if a fast-path wake lost the race against a picture's first announce, a
     /// tracking row that trails its picture is eventually reconciled here.
+    #[tracing::instrument(skip(db))]
     pub async fn find_stale_announcement_pictures(
         db: &sqlx::PgPool,
     ) -> Result<Vec<Uuid>, AppError> {
@@ -191,6 +197,7 @@ impl ShareAnnouncementRepository {
     }
 
     /// Update the token of an existing tracking row (token-refresh path).
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id, picture_id = %picture_id))]
     pub async fn update_token<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -214,6 +221,7 @@ impl ShareAnnouncementRepository {
     }
 
     /// Delete the tracking row for one `(share, picture)` pair (picture left coverage).
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id, picture_id = %picture_id))]
     pub async fn delete<'e, E>(
         ex: E,
         outgoing_share_id: Uuid,
@@ -236,6 +244,7 @@ impl ShareAnnouncementRepository {
 
     /// Delete all tracking rows for a set of pictures, across every share. Used by
     /// `cleanup_incoming_share` after the downstream unannounce tasks are enqueued.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn delete_for_pictures<'e, E>(ex: E, picture_ids: &[Uuid]) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -255,6 +264,7 @@ impl ShareAnnouncementRepository {
 
     /// Delete every tracking row for a share. Used by `revoke_outgoing_share` — all of the
     /// share's tokens die at once.
+    #[tracing::instrument(skip(ex), fields(outgoing_share_id = %outgoing_share_id))]
     pub async fn delete_all_for_share<'e, E>(ex: E, outgoing_share_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -273,6 +283,7 @@ impl ShareAnnouncementRepository {
     /// endpoint's only authorization check: an unknown token (or one that only matches a relayed,
     /// non-owned tracking row) yields `None`. Filtering to owned pictures disambiguates the case
     /// where a relayer copied an upstream token into its own tracking row on the same instance.
+    #[tracing::instrument(skip(ex))]
     pub async fn find_picture_by_token<'e, E>(
         ex: E,
         picture_token: Uuid,
@@ -296,6 +307,7 @@ impl ShareAnnouncementRepository {
 
     /// Find downstream recipients of a set of deleted pictures, so `cleanup_incoming_share`
     /// can enqueue `UnannounceSharedPictures` tasks before deleting the tracking rows.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn find_downstream_for_pictures<'e, E>(
         ex: E,
         picture_ids: &[Uuid],

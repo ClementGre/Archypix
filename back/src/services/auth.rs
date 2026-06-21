@@ -11,7 +11,6 @@ use crate::repository::auth::{CredentialRepository, RefreshTokenRepository};
 use crate::repository::user::UserRepository;
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
-use tracing::trace;
 use uuid::Uuid;
 
 pub struct AuthTokens {
@@ -19,6 +18,7 @@ pub struct AuthTokens {
     pub refresh_token: String,
 }
 
+#[tracing::instrument(skip(db, cache, jwt, config, password))]
 pub async fn login(
     db: &PgPool,
     cache: &dyn Cache,
@@ -27,8 +27,6 @@ pub async fn login(
     username: &str,
     password: &str,
 ) -> Result<AuthTokens, AppError> {
-    trace!(username, "auth: login");
-
     // Throttle credential-stuffing / brute-force per username
     ratelimit::check(
         cache,
@@ -59,13 +57,13 @@ pub async fn login(
     }
 }
 
+#[tracing::instrument(skip(db, jwt, config, refresh_token_raw))]
 pub async fn refresh(
     db: &PgPool,
     jwt: &JwtService,
     config: &Config,
     refresh_token_raw: &str,
 ) -> Result<AuthTokens, AppError> {
-    trace!("auth: refresh");
     let token_hash = hash_refresh_token(refresh_token_raw);
     let stored = RefreshTokenRepository::find_valid(db, &token_hash)
         .await?
@@ -80,12 +78,12 @@ pub async fn refresh(
     issue_tokens(db, jwt, config, &user).await
 }
 
+#[tracing::instrument(skip(db, refresh_token_raw), fields(user_id = ?user_id))]
 pub async fn logout(
     db: &PgPool,
     user_id: Option<Uuid>,
     refresh_token_raw: Option<&str>,
 ) -> Result<(), AppError> {
-    trace!(user_id = ?user_id, "auth: logout");
     if let Some(raw) = refresh_token_raw {
         let hash = hash_refresh_token(raw);
         if let Some(stored) = RefreshTokenRepository::find_valid(db, &hash).await? {

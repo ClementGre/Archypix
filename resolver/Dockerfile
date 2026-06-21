@@ -1,7 +1,7 @@
 # Multi-stage build for Archypix Resolver
 FROM rust:1.96-slim AS builder
 
-WORKDIR /app
+WORKDIR /workspace
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/archypix-resolver /usr/local/bin/archypix-resolver
+COPY --from=builder /workspace/target/release/archypix-resolver /usr/local/bin/archypix-resolver
 
 # Create non-root user
 RUN useradd -m -u 1000 archypix && \
@@ -52,11 +52,11 @@ CMD ["archypix-resolver"]
 
 # ---- dev (source mounted at runtime, cargo run on start) ----
 # Usage: build with --target dev, mount ./src, Cargo.toml, Cargo.lock as volumes.
-# Named volume on /app/target persists compiled deps across restarts.
+# Named volume on /workspace/target persists compiled deps across restarts.
 FROM rust:1.96-slim AS dev
-WORKDIR /app
+WORKDIR /workspace
 RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 EXPOSE 80
 HEALTHCHECK --interval=10s --timeout=3s --start-period=120s --retries=3 \
     CMD addr="${LISTEN_ADDR:-0.0.0.0:80}"; curl -f http://localhost:${addr##*:}/health || exit 1
-CMD ["cargo", "run"]
+CMD ["cargo", "run", "-p", "archypix-resolver"]

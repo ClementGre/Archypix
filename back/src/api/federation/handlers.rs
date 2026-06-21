@@ -7,23 +7,20 @@ use crate::clients::federation::models::{
     ShareRejectRequest, ShareRevokeRequest,
 };
 use crate::infra::error::AppError;
+use crate::infra::observability;
 use crate::services::federation::{self as fed, PresignTokenItem};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use chrono::Utc;
 use tracing::debug;
 
+#[tracing::instrument(skip(state, payload), fields(peer_user = %payload.username, peer_domain = %payload.requester_instance))]
 pub async fn auth_request(
     State(state): State<AppState>,
     Json(payload): Json<FederationAuthRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(
-        user = %payload.username,
-        token_type = "federation",
-        requester_instance = %payload.requester_instance,
-        "federation: auth_request"
-    );
     let token = state
         .federation
         .issue_federation_token(&payload.requester_instance)?;
@@ -45,16 +42,11 @@ pub async fn auth_request(
     Ok(Json(serde_json::json!({ "accepted": true })))
 }
 
+#[tracing::instrument(skip(state, payload), fields(issuer_instance = %payload.issuer_instance))]
 pub async fn auth_grant(
     State(state): State<AppState>,
     Json(payload): Json<FederationAuthGrant>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(
-        user = "-",
-        token_type = "federation",
-        issuer_instance = %payload.issuer_instance,
-        "federation: auth_grant"
-    );
     let ttl = payload.expires_at - Utc::now().timestamp();
     if ttl <= 0 {
         return Err(AppError::BadRequest("Token already expired".to_string()));
@@ -71,20 +63,15 @@ pub async fn auth_grant(
     Ok(Json(serde_json::json!({ "stored": true })))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_user = %payload.sender_username, peer_domain = %auth.claims.sub))]
 pub async fn announce_share(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<ShareAnnouncementRequest>,
 ) -> Result<Json<ShareAnnouncementResponse>, AppError> {
-    debug!(
-        user = %auth.claims.sub,
-        token_type = "federation",
-        sender = %payload.sender_username,
-        sender_instance = %payload.sender_instance,
-        recipient = %payload.recipient_username,
-        tag_path = %payload.tag_path,
-        "federation: announce_share"
-    );
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+
     let (incoming_id, auto_accepted) = fed::receive_share_announcement(
         &state.db,
         &state.config,
@@ -113,20 +100,20 @@ pub async fn announce_share(
         sender_instance = %payload.sender_instance,
         "federation: incoming share stored"
     );
-    // `auto_accepted = true` tells the sender (a ShareBack initiator) to announce its pictures
-    // itself, keeping the whole flow inside the sender's transaction (no callback into the
-    // still-uncommitted sender). See federation consistency rules in 03_BACKEND_ARCHITECTURE.md.
     Ok(Json(ShareAnnouncementResponse {
         accepted: true,
         auto_accepted,
     }))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_domain = %auth.claims.sub, outgoing_share_id = %payload.outgoing_share_id))]
 pub async fn revoke_share(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<ShareRevokeRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -156,11 +143,14 @@ pub async fn revoke_share(
     ))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_domain = %auth.claims.sub, outgoing_share_id = %payload.outgoing_share_id))]
 pub async fn reject_share(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<ShareRejectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -171,11 +161,14 @@ pub async fn reject_share(
     Ok(Json(serde_json::json!({ "rejected": true })))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_domain = %auth.claims.sub, outgoing_share_id = %payload.outgoing_share_id))]
 pub async fn accept_share(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<ShareAcceptRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -196,11 +189,15 @@ pub async fn accept_share(
     Ok(Json(serde_json::json!({ "accepted": true })))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_user = %payload.sender_username, peer_domain = %auth.claims.sub, outgoing_share_id = %payload.outgoing_share_id
+))]
 pub async fn announce_pictures(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<PicturesAnnouncementRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -229,11 +226,15 @@ pub async fn announce_pictures(
     Ok(Json(serde_json::json!({ "registered": registered })))
 }
 
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_user = %payload.sender_username, peer_domain = %auth.claims.sub, outgoing_share_id = %payload.outgoing_share_id
+))]
 pub async fn unannounce_pictures(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<PicturesUnannouncementRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -258,11 +259,15 @@ pub async fn unannounce_pictures(
 /// proposal (10 §4.2). The requester's instance must match the authenticated federation instance;
 /// the owner re-verifies the EXIF-edit grant and applies the edit through its `edit_picture`
 /// write-through, re-announcing to all recipients.
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_user = %payload.requester_username, peer_domain = %auth.claims.sub, picture_id = %payload.picture_id
+))]
 pub async fn edit_picture_request(
     auth: AuthFederation,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<PictureEditRequest>,
 ) -> Result<Json<PictureEditResponse>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
     debug!(
         user = %payload.requester_username,
         token_type = "federation",
@@ -289,6 +294,7 @@ pub async fn edit_picture_request(
     Ok(Json(PictureEditResponse { accepted: true }))
 }
 
+#[tracing::instrument(skip(state, payload))]
 pub async fn presign_pictures(
     State(state): State<AppState>,
     Json(payload): Json<PresignRequest>,

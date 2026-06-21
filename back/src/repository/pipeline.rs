@@ -37,6 +37,7 @@ impl PipelineRepository {
     /// (for tagging or the announcement diff) **or** an `OutgoingShare` awaiting its first
     /// announcement (which the pipeline must announce and flip to `active`, even if the share has
     /// no pictures or none are dirty).
+    #[tracing::instrument(skip(db))]
     pub async fn find_users_with_dirty_pictures(db: &PgPool) -> Result<Vec<Uuid>, AppError> {
         // Soft-deleted pictures are intentionally *not* filtered out: they stay tagged and announced
         // until permanently removed (see doc/features/02 §6).
@@ -67,6 +68,7 @@ impl PipelineRepository {
     ///
     /// A picture is dirty if `last_pipeline_run_at IS NULL` or if any enabled service for that user
     /// has a `last_invalidated_at` newer than the picture's `last_pipeline_run_at`.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn find_dirty_for_user<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -99,6 +101,7 @@ impl PipelineRepository {
     }
 
     /// Set `last_pipeline_run_at = run_at` on successfully processed pictures.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn mark_run<'e, E>(
         ex: E,
         picture_ids: &[Uuid],
@@ -123,6 +126,7 @@ impl PipelineRepository {
 
     /// Reset `last_pipeline_run_at = NULL` on pictures that need re-evaluation.
     /// Called after manual tag changes.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn invalidate<'e, E>(ex: E, picture_ids: &[Uuid]) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -142,6 +146,7 @@ impl PipelineRepository {
 
     /// For each picture in the batch, return the set of `incoming_share_id` values
     /// from tags with `source = 'incoming_share'`. Used by the SharedTagMapping evaluator.
+    #[tracing::instrument(skip(ex, picture_ids))]
     pub async fn find_incoming_share_ids<'e, E>(
         ex: E,
         picture_ids: &[Uuid],
@@ -183,6 +188,7 @@ impl PipelineRepository {
     /// ancestor re-derivation is needed.
     ///
     /// Passing an empty `produced` is valid and clears all pipeline tags from the picture.
+    #[tracing::instrument(skip(ex, produced), fields(picture_id = %picture_id))]
     pub async fn reconcile_pipeline_tags<'e, E>(
         ex: E,
         picture_id: Uuid,

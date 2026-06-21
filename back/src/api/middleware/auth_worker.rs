@@ -11,7 +11,7 @@ use axum::http::request::Parts;
 /// `WORKER_JWT_SECRET` is configured identically on the backend and all worker
 /// instances. Workers sign a short-lived JWT (`TokenType::Worker`) and present
 /// it as a `Bearer` token.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuthWorker {
     pub claims: JwtClaims,
 }

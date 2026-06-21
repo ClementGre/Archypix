@@ -4,10 +4,12 @@ use crate::repository::user_settings::UserSettingsRepository;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id))]
 pub async fn get(db: &PgPool, user_id: Uuid) -> Result<UserSettings, AppError> {
     UserSettingsRepository::get_or_default(db, user_id).await
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id))]
 pub async fn update(
     db: &PgPool,
     user_id: Uuid,

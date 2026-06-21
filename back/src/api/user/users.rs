@@ -8,7 +8,6 @@ use axum::Json;
 use axum::extract::{ConnectInfo, Path, State};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use tracing::debug;
 
 #[derive(Debug, Serialize)]
 pub struct UserResponse {
@@ -32,12 +31,12 @@ pub struct UpdateMeRequest {
     pub email: Option<String>,
 }
 
+#[tracing::instrument(skip(state, payload, addr), fields(user = %payload.username))]
 pub async fn register(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, AppError> {
-    debug!(user = %payload.username, token_type = "-", "register");
     if state.config.use_resolver {
         return Err(AppError::BadRequest(
             "Registration is handled by the resolver".to_string(),
@@ -68,11 +67,11 @@ pub async fn register(
     }))
 }
 
+#[tracing::instrument(skip(state), fields(user = %username))]
 pub async fn get_public(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<Json<UserResponse>, AppError> {
-    debug!(user = %username, token_type = "-", "get_public");
     let user = UserRepository::find_by_username(&state.db, &username)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -84,12 +83,12 @@ pub async fn get_public(
     }))
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn update_me(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<UpdateMeRequest>,
 ) -> Result<Json<UserResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "update_me");
     if let Some(email) = payload.email.as_deref() {
         crate::domain::validation::validate_email(email).map_err(AppError::BadRequest)?;
     }

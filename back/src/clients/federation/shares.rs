@@ -36,6 +36,7 @@ impl FederationClient {
         let resp = self
             .http
             .post(&url)
+            .headers(self.trace_headers_for(owner_global_domain))
             .json(&PresignRequest { pictures: items })
             .send()
             .await
@@ -86,6 +87,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(recipient_global_domain))
             .json(&ShareRevokeRequest { outgoing_share_id })
             .send()
             .await
@@ -127,6 +129,7 @@ impl FederationClient {
             .http
             .post(&url)
             .bearer_auth(token)
+            .headers(self.trace_headers_for(recipient_global_domain))
             .json(announcement)
             .send()
             .await
@@ -170,6 +173,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(sender_global_domain))
             .json(&ShareAcceptRequest { outgoing_share_id })
             .send()
             .await
@@ -209,6 +213,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(sender_global_domain))
             .json(&ShareRejectRequest { outgoing_share_id })
             .send()
             .await
@@ -251,6 +256,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(recipient_global_domain))
             .json(payload)
             .send()
             .await
@@ -290,6 +296,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(owner_global_domain))
             .json(payload)
             .send()
             .await
@@ -331,6 +338,7 @@ impl FederationClient {
         self.http
             .post(&url)
             .bearer_auth(&token)
+            .headers(self.trace_headers_for(recipient_global_domain))
             .json(payload)
             .send()
             .await

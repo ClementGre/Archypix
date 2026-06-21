@@ -55,6 +55,7 @@ impl FederationClient {
         let request_url = format!("{}/api/federation/auth/request", backend_base_url);
         self.http
             .post(&request_url)
+            .headers(self.trace_headers_for(recipient_global_domain))
             .json(&FederationAuthRequest {
                 requester_instance: self.config.global_domain.clone(),
                 username: sender_username.to_string(),
@@ -203,6 +204,7 @@ impl FederationClient {
         let resp = self
             .http
             .post(callback_url)
+            .headers(self.trace_headers_for(requester_global_domain))
             .json(grant)
             .send()
             .await

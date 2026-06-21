@@ -6,7 +6,6 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -30,11 +29,11 @@ pub struct TokenResponse {
     pub refresh_token: String,
 }
 
+#[tracing::instrument(skip(state, payload), fields(user = %payload.username))]
 pub async fn login(
     State(state): State<AppState>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    debug!(user = %payload.username, token_type = "-", "login");
     let tokens = services::auth::login(
         &state.db,
         state.cache.as_ref(),
@@ -50,11 +49,11 @@ pub async fn login(
     }))
 }
 
+#[tracing::instrument(skip(state, payload))]
 pub async fn refresh(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    debug!(user = "-", token_type = "-", "token refresh");
     let tokens =
         services::auth::refresh(&state.db, &state.jwt, &state.config, &payload.refresh_token)
             .await?;
@@ -64,21 +63,21 @@ pub async fn refresh(
     }))
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn logout(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<LogoutRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "logout");
     services::auth::logout(&state.db, auth.claims.uid, payload.refresh_token.as_deref()).await?;
     Ok(Json(serde_json::json!({ "logged_out": true })))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn me(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "me");
     let user = UserRepository::find_by_id(&state.db, auth.user_id()?)
         .await?
         .ok_or(AppError::Unauthorized("User not found".to_string()))?;

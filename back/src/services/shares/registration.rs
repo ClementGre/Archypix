@@ -19,6 +19,7 @@ use uuid::Uuid;
 /// Both `create_received` (ON CONFLICT DO UPDATE) and `assign_incoming_share_tag`
 /// (ON CONFLICT DO UPDATE SET picture_token) are idempotent, so replaying the same
 /// announcement is safe and refreshes the token.
+#[tracing::instrument(skip(db, pictures, shared_tag), fields(user_id = %recipient_id, incoming_share_id = %incoming_share_id))]
 pub async fn register_received_pictures(
     db: &PgPool,
     recipient_id: Uuid,
@@ -106,6 +107,7 @@ pub async fn register_received_pictures(
 /// pictures, delete the picture rows that no longer have any incoming-share tag, and mark the
 /// survivors dirty (token refresh). Used by both the cross-instance handler and the same-backend
 /// task path. Returns the number of deleted picture rows.
+#[tracing::instrument(skip(db, incoming, remote_ids), fields(share_id = %incoming.id))]
 pub async fn unregister_announced_pictures(
     db: &PgPool,
     incoming: &IncomingShare,

@@ -19,6 +19,10 @@ use uuid::Uuid;
 /// 3. Regenerate + upload thumbnails (and BlurHash) from the local edited file (visual edits only).
 /// 4. Compute file_size and file_hash from the (modified) file.
 /// 5. Upload the modified original to the `output` presigned URL — the last fallible step.
+#[tracing::instrument(
+    skip(client, config, presigned_read, presigned_writes, _mime_type),
+    fields(job_id = %job_id, picture_id = %config.picture_id),
+)]
 pub async fn handle(
     client: &BackendClient,
     job_id: Uuid,
@@ -43,13 +47,13 @@ pub async fn handle(
     let tmp = TempDir::new()?;
     let file_path = tmp.path().join("original");
 
-    info!(job_id = %job_id, "edit_picture: downloading original");
+    info!("Downloading original");
     client
         .download_presigned(&presigned_read, &file_path)
         .await?;
     debug!(
         size_bytes = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0),
-        "edit_picture: original downloaded"
+        "Original downloaded"
     );
 
     // ── Apply the EXIF edit (set/clear) into the file ─────────────────────────
@@ -57,9 +61,13 @@ pub async fn handle(
         let path = file_path.clone();
         let set = edit.set.clone();
         let clear = edit.clear.clone();
-        tokio::task::spawn_blocking(move || exif_mod::write_exif_overrides(&path, &set, &clear))
-            .await
-            .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??;
+        let span = tracing::Span::current();
+        tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
+            exif_mod::write_exif_overrides(&path, &set, &clear)
+        })
+        .await
+        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??;
     }
 
     // ── Visual transforms ────────────────────────────────────────────────────

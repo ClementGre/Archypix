@@ -44,6 +44,7 @@ pub struct PictureListFilter {
 pub struct PictureRepository;
 
 impl PictureRepository {
+    #[tracing::instrument(skip(ex), fields(picture_id = %id, user_id = %local_user_id))]
     pub async fn create<'e, E>(
         ex: E,
         id: Uuid,
@@ -98,6 +99,7 @@ impl PictureRepository {
     /// then re-materialises `exif_data` + the promoted columns from the merge via
     /// [`apply_received_materialization`]; this method does not touch them.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip(ex, remote_exif_data), fields(user_id = %recipient_id))]
     pub async fn create_received<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -183,6 +185,7 @@ impl PictureRepository {
     /// `updated_at` (announcement re-delivery gate) and re-dirties the row for the local `metadata`
     /// event (date/GPS rules re-evaluate on the merged EXIF).
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip(ex, camera), fields(picture_id = %id))]
     pub async fn apply_received_materialization<'e, E>(
         ex: E,
         id: Uuid,
@@ -226,6 +229,7 @@ impl PictureRepository {
     /// by the local-override endpoint (09 §6.2). The caller re-materialises afterwards. `None` /
     /// an empty object both clear all overrides. Returns the row's `remote_exif_data` so the caller
     /// can recompute the merge without an extra read.
+    #[tracing::instrument(skip(ex, overrides), fields(user_id = %user_id, picture_id = %picture_id))]
     pub async fn set_local_exif_overrides<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -270,6 +274,7 @@ impl PictureRepository {
     /// excludes them.
     ///
     /// Returns the number of deleted rows.
+    #[tracing::instrument(skip(ex), fields(user_id = %recipient_id))]
     pub async fn delete_received_without_share_tags<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -303,6 +308,7 @@ impl PictureRepository {
     /// From `candidate_picture_ids`, return those that still carry at least one
     /// `incoming_share` source tag (i.e. survived a share's tag cleanup). Used by
     /// `cleanup_incoming_share` to mark survivors dirty for token refresh.
+    #[tracing::instrument(skip(ex, candidate_picture_ids), fields(user_id = %recipient_id))]
     pub async fn find_with_any_incoming_share_tag<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -331,6 +337,7 @@ impl PictureRepository {
 
     /// Map a set of `remote_picture_id` strings to the recipient's local picture ids.
     /// Used by per-picture unannounce to resolve the sender's announce ids locally.
+    #[tracing::instrument(skip(ex, remote_ids), fields(user_id = %recipient_id))]
     pub async fn find_ids_by_remote_ids<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -356,6 +363,7 @@ impl PictureRepository {
 
     /// Delete the received pictures in `picture_ids` that have no remaining `incoming_share`
     /// tag. Returns the deleted ids. Used by per-picture unannounce.
+    #[tracing::instrument(skip(ex, picture_ids), fields(user_id = %recipient_id))]
     pub async fn delete_orphans_among<'e, E>(
         ex: E,
         recipient_id: Uuid,
@@ -389,6 +397,7 @@ impl PictureRepository {
     /// List all active owned pictures that carry a tag under `tag_path_ltree` (inclusive).
     ///
     /// Used by Alice's backend to enumerate pictures to announce when a share is accepted.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_by_tag_and_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -426,6 +435,7 @@ impl PictureRepository {
 
     /// Load a batch of picture rows by id (order unspecified). Used by the pipeline
     /// announcement step to build announcement payloads for the pictures it announces.
+    #[tracing::instrument(skip(ex, ids))]
     pub async fn list_by_ids<'e, E>(ex: E, ids: &[Uuid]) -> Result<Vec<Picture>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -453,6 +463,7 @@ impl PictureRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(picture_id = %id))]
     pub async fn find_by_id<'e, E>(ex: E, id: Uuid) -> Result<Option<Picture>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -481,6 +492,7 @@ impl PictureRepository {
     /// path to recognise a relocate/copy expressed as a fresh upload and avoid creating a
     /// duplicate (06_webdav.md §8). `include_deleted` lets the caller also match a recently
     /// trashed picture (un-delete on rematch).
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn find_owned_by_hash<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -521,6 +533,7 @@ impl PictureRepository {
     /// before the thumbnail worker runs. This makes the ETag (`file_hash`) and dedupe
     /// (`find_owned_by_hash`) correct immediately, so a quick re-upload of the same bytes is
     /// recognised as a relocate rather than a fresh picture (06_webdav.md §8).
+    #[tracing::instrument(skip(ex), fields(picture_id = %id))]
     pub async fn set_file_hash<'e, E>(
         ex: E,
         id: Uuid,
@@ -547,6 +560,7 @@ impl PictureRepository {
 
     /// Rename an owned picture (WebDAV MOVE within a directory, §7.1). Returns false if the
     /// picture is not owned by the user.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
     pub async fn set_filename<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -573,6 +587,7 @@ impl PictureRepository {
     /// Owned-picture trash keeps share coverage (the share-coverage query does not exclude
     /// `deleted_at`); received-picture trash is local only. Returns false if the user holds no such
     /// picture.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
     pub async fn set_deleted<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -601,6 +616,7 @@ impl PictureRepository {
     /// (09 §5.1). `owner_purge_at` is **derived** here as `deleted_at + retention_days` from the
     /// owner's `user_settings.trash_retention_days` (so a retention change takes effect with no
     /// backfill). Returns `(picture_id, local_user_id)`.
+    #[tracing::instrument(skip(ex))]
     pub async fn find_purgeable<'e, E>(ex: E, limit: i64) -> Result<Vec<(Uuid, Uuid)>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -626,6 +642,7 @@ impl PictureRepository {
     /// Hard-delete a picture row (purge). Tags cascade; the caller must have already removed the
     /// S3 objects and unannounced any downstream recipients (`share_announcements` has no FK to
     /// pictures, so its rows must be deleted explicitly first).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn hard_delete<'e, E>(ex: E, picture_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -637,6 +654,7 @@ impl PictureRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(db, filter), fields(user_id = %local_user_id))]
     pub async fn list(
         db: &PgPool,
         local_user_id: Uuid,
@@ -694,6 +712,7 @@ impl PictureRepository {
 
     /// Count pictures matching `filter` (no pagination). Used by the hierarchy `tree` endpoint's
     /// per-directory `picture_count` / empty-directory pruning.
+    #[tracing::instrument(skip(db, filter), fields(user_id = %local_user_id))]
     pub async fn count(
         db: &PgPool,
         local_user_id: Uuid,
@@ -789,6 +808,7 @@ impl PictureRepository {
         q.push(")");
     }
 
+    #[tracing::instrument(skip(ex, exif_data), fields(picture_id = %id))]
     pub async fn update_metadata<'e, E>(
         ex: E,
         id: Uuid,
@@ -837,6 +857,7 @@ impl PictureRepository {
 
     /// Update a picture's worker-extracted data after initial thumbnail generation.
     /// Only updates fields that the worker provides (COALESCE keeps existing values).
+    #[tracing::instrument(skip(ex, exif_data_patch), fields(picture_id = %id))]
     pub async fn update_from_worker<'e, E>(
         ex: E,
         id: Uuid,
@@ -907,6 +928,7 @@ impl PictureRepository {
     ///
     /// `set_thumbnails` controls whether `thumbnails_generated_at` is stamped; the
     /// other fields are always applied via COALESCE (existing value kept when `None`).
+    #[tracing::instrument(skip(ex), fields(picture_id = %id))]
     pub async fn update_after_processing<'e, E>(
         ex: E,
         id: Uuid,
@@ -955,6 +977,7 @@ impl PictureRepository {
     ///
     /// Used for both the forward edit (snapshot = previous applied with set/clear) and a value-gated
     /// revert (snapshot = previous), so the row state always reflects a full, coherent EXIF set.
+    #[tracing::instrument(skip(ex, snapshot), fields(picture_id = %id))]
     pub async fn write_exif_snapshot<'e, E>(
         ex: E,
         id: Uuid,
@@ -1007,6 +1030,7 @@ impl PictureRepository {
     }
 
     /// Set only the `exif_sync_status` column (e.g. flip to `synced` once a reconcile succeeds).
+    #[tracing::instrument(skip(ex), fields(picture_id = %id))]
     pub async fn set_exif_sync_status<'e, E>(
         ex: E,
         id: Uuid,
@@ -1028,6 +1052,7 @@ impl PictureRepository {
 
     /// Picture ids in `pending` EXIF sync that have no in-flight `edit_picture` job — the
     /// crash-mid-completion case the optional resync sweep / manual resync recovers.
+    #[tracing::instrument(skip(ex))]
     pub async fn find_exif_pending_without_job<'e, E>(ex: E) -> Result<Vec<Uuid>, AppError>
     where
         E: Executor<'e, Database = Postgres>,

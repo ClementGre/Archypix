@@ -24,7 +24,6 @@ use crate::services::users::find_local_user_id;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
-use tracing::trace;
 use uuid::Uuid;
 
 /// Remove tags, delete unreachable received pictures, set the share to `final_status`, flag
@@ -34,6 +33,7 @@ use uuid::Uuid;
 /// See doc/features/01_better_sharing_support.md §8 for the full sequence. Returns the number of
 /// received pictures deleted.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker, share), fields(share_id = %share.id))]
 pub async fn cleanup_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
@@ -149,6 +149,7 @@ pub async fn cleanup_incoming_share(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %rejector_id))]
 pub async fn reject_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
@@ -160,8 +161,6 @@ pub async fn reject_incoming_share(
     rejector_username: &str,
     share_id: Uuid,
 ) -> Result<(), AppError> {
-    trace!(share_id = %share_id, rejector_id = %rejector_id, "shares: reject_incoming_share");
-
     let incoming = IncomingShareRepository::get_by_id(db, share_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -225,6 +224,7 @@ pub async fn reject_incoming_share(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, federation, config, pipeline_waker), fields(user_id = %owner_id))]
 pub async fn create_outgoing_share(
     db: &PgPool,
     cache: &dyn Cache,
@@ -243,15 +243,6 @@ pub async fn create_outgoing_share(
     future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<OutgoingShare, AppError> {
-    trace!(
-        owner_id = %owner_id,
-        sender = sender_username,
-        tag_path,
-        recipient = recipient_username,
-        recipient_instance,
-        "shares: create_outgoing_share"
-    );
-
     // Validate the user-supplied recipient instance before it drives any WebFinger / federation
     // HTTP call — blocks the blind-SSRF / request-amplification vector (07_security_audit.md §2.4).
     crate::domain::validation::validate_federation_domain(recipient_instance)
@@ -422,6 +413,7 @@ pub async fn create_outgoing_share(
 /// announce path):
 /// - Same-backend: move the sender's OutgoingShare to `pending_first_announcement`.
 /// - Cross-instance: notify the sender, who moves *its* OutgoingShare and announces back.
+#[tracing::instrument(skip(db, cache, federation, config, pipeline_waker), fields(share_id = %share_id, user_id = %acceptor_id))]
 pub async fn accept_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
@@ -432,8 +424,6 @@ pub async fn accept_incoming_share(
     acceptor_username: &str,
     share_id: Uuid,
 ) -> Result<(), AppError> {
-    trace!(share_id = %share_id, acceptor = acceptor_username, "shares: accept_incoming_share");
-
     let incoming = IncomingShareRepository::get_by_id(db, share_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -499,6 +489,7 @@ pub async fn accept_incoming_share(
 
 /// Revoke an outgoing share owned by `owner_id`.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %owner_id))]
 pub async fn revoke_outgoing_share(
     db: &PgPool,
     cache: &dyn Cache,
@@ -510,8 +501,6 @@ pub async fn revoke_outgoing_share(
     owner_username: &str,
     share_id: Uuid,
 ) -> Result<(), AppError> {
-    trace!(share_id = %share_id, owner_id = %owner_id, "shares: revoke_outgoing_share");
-
     let share = OutgoingShareRepository::get_by_id(db, share_id)
         .await?
         .ok_or(AppError::NotFound)?;

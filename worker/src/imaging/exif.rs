@@ -4,11 +4,12 @@ use chrono::NaiveDateTime;
 use num_rational::Ratio;
 use rexiv2::{GpsInfo, Metadata};
 use std::path::Path;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 /// Load and extract EXIF data from an image file.
 ///
 /// Must be called inside `tokio::task::spawn_blocking` since rexiv2 is synchronous.
+#[instrument(skip(path), fields(file = ?path.file_name()))]
 pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
     let metadata = Metadata::new_from_path(path)
         .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF: {e}")))?;
@@ -91,12 +92,8 @@ pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
     );
 
     Ok(ExtractedExif {
-        width: if width > 0 { Some(width as i32) } else { None },
-        height: if height > 0 {
-            Some(height as i32)
-        } else {
-            None
-        },
+        width: if width > 0 { Some(width) } else { None },
+        height: if height > 0 { Some(height) } else { None },
         exif: FullExif {
             captured_at,
             gps_lat,
@@ -121,6 +118,7 @@ fn parse_exif_datetime(s: &str) -> Option<NaiveDateTime> {
 /// promoted columns (date, GPS, orientation) and the camera/lens fields (make, model, focal length,
 /// f-number, ISO, exposure time). Fields not named in either `set` or `clear` are left untouched.
 /// Must run inside `tokio::task::spawn_blocking`.
+#[instrument(skip(path, set, clear), fields(file = ?path.file_name(), clear_fields = clear.len()))]
 pub fn write_exif_overrides(path: &Path, set: &FullExif, clear: &[ExifField]) -> Result<()> {
     let metadata = Metadata::new_from_path(path)
         .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF write: {e}")))?;
@@ -249,7 +247,7 @@ fn extract_iso(metadata: &Metadata) -> Option<i32> {
     None
 }
 
-fn rational_to_f64(r: Option<num_rational::Ratio<i32>>) -> Option<f64> {
+fn rational_to_f64(r: Option<Ratio<i32>>) -> Option<f64> {
     r.and_then(|r| {
         if *r.denom() == 0 {
             None

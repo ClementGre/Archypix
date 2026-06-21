@@ -9,7 +9,6 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -23,12 +22,12 @@ pub struct CreateUploadResponse {
     pub presigned_url: String,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn create_upload(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateUploadRequest>,
 ) -> Result<Json<CreateUploadResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), filename = %payload.filename, "create_upload");
     let (picture_id, presigned_url) = services::pictures::begin_upload(
         state.cache.as_ref(),
         state.storage.as_ref(),
@@ -48,12 +47,12 @@ pub struct BatchCreateUploadRequest {
     pub filenames: Vec<String>,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn batch_create_upload(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<BatchCreateUploadRequest>,
 ) -> Result<Json<Vec<CreateUploadResponse>>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), count = payload.filenames.len(), "batch_create_upload");
     let results = services::pictures::begin_upload_batch(
         state.cache.as_ref(),
         state.storage.as_ref(),
@@ -73,13 +72,13 @@ pub async fn batch_create_upload(
     ))
 }
 
+#[tracing::instrument(skip(auth, state, meta), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn complete_upload(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
     Json(meta): Json<UploadMetadata>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "complete_upload");
     // Whether this completion should wake the pipeline itself. The wake is **debounced**, so a batch
     // upload's per-file completions coalesce into a single pipeline run on their own — no need for the
     // caller to defer and wake once at the end. `defer_pipeline = true` remains an opt-out for a
@@ -105,21 +104,21 @@ pub async fn complete_upload(
 }
 
 /// Explicitly wake the caller's tagging pipeline.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn wake_pipeline(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), "wake_pipeline");
     state.pipeline_waker.wake(auth.user_id()?);
     Ok(Json(serde_json::json!({ "woken": true })))
 }
 
+#[tracing::instrument(skip(auth, state, params), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<PictureListParams>,
 ) -> Result<Json<PictureListResult>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), page = params.page, page_size = params.page_size, "list_pictures");
     let result = services::pictures::list_pictures(
         &state.db,
         state.cache.as_ref(),
@@ -138,13 +137,13 @@ pub struct PictureUrlQuery {
     pub variant: PictureVariant,
 }
 
+#[tracing::instrument(skip(auth, state, query), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn picture_url(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
     Query(query): Query<PictureUrlQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, variant = ?query.variant, "picture_url");
     let url = services::pictures::presign_picture_variant(
         &state.db,
         state.cache.as_ref(),
@@ -161,12 +160,12 @@ pub async fn picture_url(
     ))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn details(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "picture_details");
     let d = services::pictures::get_picture_details(&state.db, auth.user_id()?, picture_id).await?;
     Ok(Json(serde_json::json!({
         "id": d.picture.id,
@@ -197,12 +196,12 @@ pub async fn details(
 }
 
 /// `POST /api/authenticated/pictures/{id}/trash` — soft-delete (owned or received) the picture.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn trash(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "trash_picture");
     let picture = services::pictures::trash_picture(
         &state.db,
         &state.pipeline_waker,
@@ -217,12 +216,12 @@ pub async fn trash(
 }
 
 /// `POST /api/authenticated/pictures/{id}/restore` — restore a soft-deleted picture.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn restore(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "restore_picture");
     let picture = services::pictures::restore_picture(
         &state.db,
         &state.pipeline_waker,
@@ -266,13 +265,13 @@ pub struct ReceivedExifEditBody {
 ///   (the authoritative change lands asynchronously).
 ///
 /// Owned pictures are rejected — use `POST /pictures/{id}/edit`.
+#[tracing::instrument(skip(auth, state, body), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn edit_received_exif(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
     Json(body): Json<ReceivedExifEditBody>,
 ) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, mode = ?body.mode, "edit_received_exif");
     let user_id = auth.user_id()?;
     match body.mode {
         ReceivedExifMode::Local => {

@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct CredentialRepository;
 
 impl CredentialRepository {
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn get_password_hash<'e, E>(ex: E, user_id: Uuid) -> Result<Option<String>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -20,6 +21,7 @@ impl CredentialRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex, password_hash), fields(user_id = %user_id))]
     pub async fn upsert_password<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -46,6 +48,7 @@ impl CredentialRepository {
 pub struct RefreshTokenRepository;
 
 impl RefreshTokenRepository {
+    #[tracing::instrument(skip(ex, token_hash), fields(user_id = %user_id))]
     pub async fn create<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -69,6 +72,7 @@ impl RefreshTokenRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex, token_hash))]
     pub async fn find_valid<'e, E>(
         ex: E,
         token_hash: &str,
@@ -90,6 +94,7 @@ impl RefreshTokenRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex))]
     pub async fn revoke<'e, E>(ex: E, token_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -104,6 +109,7 @@ impl RefreshTokenRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn revoke_all_for_user<'e, E>(ex: E, user_id: Uuid) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,

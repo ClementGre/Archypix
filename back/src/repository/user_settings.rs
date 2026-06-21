@@ -9,6 +9,7 @@ impl UserSettingsRepository {
     /// The user's `trash_retention_days` (defaulting to 30 when no settings row exists yet) — a
     /// read-only lookup that does **not** create a row. Used by the announcement step (derived
     /// `owner_purge_at`) and the purge sweep.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
     pub async fn trash_retention_days<'e, E>(ex: E, user_id: Uuid) -> Result<i32, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -24,6 +25,7 @@ impl UserSettingsRepository {
     }
 
     /// Get settings for the given user, inserting a default row if not yet present.
+    #[tracing::instrument(skip(db), fields(user_id = %user_id))]
     pub async fn get_or_default(db: &PgPool, user_id: Uuid) -> Result<UserSettings, AppError> {
         // Insert defaults if not present, then select
         sqlx::query!(
@@ -48,6 +50,7 @@ impl UserSettingsRepository {
     }
 
     /// Upsert settings. `None` fields keep the existing value (or the column default on insert).
+    #[tracing::instrument(skip(db), fields(user_id = %user_id))]
     pub async fn upsert(
         db: &PgPool,
         user_id: Uuid,

@@ -73,6 +73,7 @@ impl From<TreeResult> for TreeResponse {
 
 // ─── CRUD ────────────────────────────────────────────────────────────────────────
 
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -89,12 +90,12 @@ pub struct CreateHierarchyRequest {
     pub config: Option<serde_json::Value>,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
 pub async fn create(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateHierarchyRequest>,
 ) -> Result<Json<HierarchyDetail>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), name = %payload.name, "create_hierarchy");
     let config = payload.config.unwrap_or_else(|| {
         serde_json::to_value(HierarchyConfig::default()).expect("default config serializes")
     });
@@ -104,12 +105,12 @@ pub async fn create(
     Ok(Json(row.into()))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<HierarchyDetail>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "get_hierarchy");
     let row = services::hierarchy::get_hierarchy(&state.db, auth.user_id()?, id).await?;
     Ok(Json(row.into()))
 }
@@ -121,13 +122,13 @@ pub struct UpdateHierarchyRequest {
     pub config: Option<serde_json::Value>,
 }
 
+#[tracing::instrument(skip(auth, state, payload), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn update(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateHierarchyRequest>,
 ) -> Result<Json<HierarchyDetail>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "update_hierarchy");
     let row = services::hierarchy::update_hierarchy(
         &state.db,
         auth.user_id()?,
@@ -140,12 +141,12 @@ pub async fn update(
     Ok(Json(row.into()))
 }
 
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn delete(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "delete_hierarchy");
     let deleted = services::hierarchy::delete_hierarchy(&state.db, auth.user_id()?, id).await?;
     if !deleted {
         return Err(AppError::NotFound);
@@ -175,24 +176,24 @@ impl From<services::hierarchy::WebdavInfo> for WebdavResponse {
 }
 
 /// `GET /{id}/webdav` — the mount URL + token (minted on first access).
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn webdav_get(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebdavResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "hierarchy_webdav_get");
     let info =
         services::hierarchy::get_webdav_info(&state.db, &state.config, auth.user_id()?, id).await?;
     Ok(Json(info.into()))
 }
 
 /// `POST /{id}/webdav/regenerate` — rotate the token.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn webdav_regenerate(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebdavResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, "hierarchy_webdav_regenerate");
     let info =
         services::hierarchy::regenerate_webdav_token(&state.db, &state.config, auth.user_id()?, id)
             .await?;
@@ -205,13 +206,13 @@ pub struct WebdavPatchRequest {
 }
 
 /// `PATCH /{id}/webdav` — toggle the read strategy.
+#[tracing::instrument(skip(auth, state, payload), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn webdav_patch(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(payload): Json<WebdavPatchRequest>,
 ) -> Result<Json<WebdavResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, use_redirect = payload.use_redirect, "hierarchy_webdav_patch");
     let user_id = auth.user_id()?;
     services::hierarchy::set_webdav_use_redirect(&state.db, user_id, id, payload.use_redirect)
         .await?;
@@ -235,13 +236,13 @@ pub struct TreeQuery {
     pub counts: bool,
 }
 
+#[tracing::instrument(skip(auth, state, query), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn tree(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(query): Query<TreeQuery>,
 ) -> Result<Json<TreeResponse>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, path = %query.path, depth = query.depth, counts = query.counts, "hierarchy_tree");
     let result = services::hierarchy::resolve_tree(
         &state.db,
         auth.user_id()?,
@@ -284,13 +285,13 @@ pub struct BrowseQuery {
     pub thumbnail: Option<ThumbnailSize>,
 }
 
+#[tracing::instrument(skip(auth, state, query), fields(user_id = %auth.claims.uid.unwrap_or_default(), hierarchy_id = %id))]
 pub async fn browse(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(query): Query<BrowseQuery>,
 ) -> Result<Json<PictureListResult>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), %id, path = %query.path, "hierarchy_browse");
     let params = BrowseParams {
         page: query.page,
         page_size: query.page_size,

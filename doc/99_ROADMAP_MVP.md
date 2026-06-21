@@ -61,8 +61,17 @@
   federation verb with same-backend short-circuit; owner re-verifies the grant and applies via
   `edit_picture` write-through (re-announce to all); escalate clears the local override. Frontend
   toggle + received-picture editor pending. See `doc/features/10_recipient_exif_editing.md`.
-- [ ] **Better Rules** — Add more pipeline rule tagging rules. Allow to do ands and ors of rules (curently only ORs ?). Better UI for
-  rules. Fix UI for segmentations.
+- [ ] **Logging robustness** — Better tracing, logs that does not mix up with multi-threading, Otel compatibility.
+  - [x] Span-tracing & Otel compatibility.
+  - [ ] Webdav/VFS proper span tracing.
+  - [ ] Federation/Clients proper span tracing and linkage between instances.
+  - [ ] Doc and best practices update.
+- [ ] **Better Rules** — Replace text predicates with a structured JSONB predicate tree supporting
+  arbitrary AND/OR/NOT composition; extend field coverage to all EXIF/file/ownership attributes
+  (camera brand/model, ISO, f-number, focal length, exposure time, mime type, file size, dimensions,
+  `is_owned`, GPS radius); add `is_present` cross-field check and `gps_radius` spatial predicate.
+  Schema: `rule_tagging_services.predicate TEXT → JSONB`; `PipelineInput` extended.
+  See `doc/features/13_better_rules.md`.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
   logic, presigned URL caching for remote pictures.
@@ -71,16 +80,15 @@
   values if there is not too much). The idea would be to take the current right tab for a single picture, and use about the same interface for when
   selecting multiple pictures. Endpoints should be added to the API to support batch tag read, batch exif read/write, and other info batch read (file
   size, ...).
-- [ ] **Logging robustness** — Better tracing, logs that does not mix up with multi-threading (Otel compatibility?).
 
 ## To-do for v1.0
 
-- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
-- [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Physical copy & content dedup** — "rescue" copy of a received picture into your own library
   (new distinct identity); `content_hash`-based dedup of identical copies (one live survivor,
   reversible `content_dedupe` hiding, rescue-on-purge), and the deleted-content `boomerang` guard.
   Schema already in 001 (via the trash migration). See `doc/features/11_physical_copy_and_dedup.md`.
+- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
+- [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
   features).
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).

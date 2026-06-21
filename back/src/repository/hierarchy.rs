@@ -28,6 +28,7 @@ pub struct WebdavRow {
 pub struct HierarchyRepository;
 
 impl HierarchyRepository {
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_by_owner<'e, E>(ex: E, owner_id: Uuid) -> Result<Vec<HierarchyRow>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -46,6 +47,7 @@ impl HierarchyRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn get_by_owner_and_id<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -68,6 +70,7 @@ impl HierarchyRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex, config), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -93,6 +96,7 @@ impl HierarchyRepository {
     }
 
     /// Update name / enabled / config (any subset). Omitted fields are left unchanged.
+    #[tracing::instrument(skip(ex, config), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn update<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -125,6 +129,7 @@ impl HierarchyRepository {
     }
 
     /// Load the WebDAV mount settings for one hierarchy (06_webdav.md §3).
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn get_webdav<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -148,6 +153,7 @@ impl HierarchyRepository {
 
     /// Store (or rotate) the encrypted WebDAV token. Returns false if the hierarchy is
     /// not owned by the user.
+    #[tracing::instrument(skip(ex, token_enc), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn set_webdav_token<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -170,6 +176,7 @@ impl HierarchyRepository {
     }
 
     /// Toggle the WebDAV read strategy (presigned redirect vs backend proxy, §6).
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn set_webdav_use_redirect<'e, E>(
         ex: E,
         owner_id: Uuid,
@@ -191,6 +198,7 @@ impl HierarchyRepository {
         Ok(res.rows_affected() > 0)
     }
 
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, hierarchy_id = %id))]
     pub async fn delete<'e, E>(ex: E, owner_id: Uuid, id: Uuid) -> Result<bool, AppError>
     where
         E: Executor<'e, Database = Postgres>,

@@ -146,6 +146,7 @@ impl StatusRow for ShareStatusCount {
 impl AdminRepository {
     // ── Instance-wide stats ───────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn instance_stats(db: &PgPool) -> Result<InstanceStats, AppError> {
         let user_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM users")
             .fetch_one(db)
@@ -234,6 +235,7 @@ impl AdminRepository {
 
     // ── Per-user stats ────────────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db), fields(user_id = %user_id))]
     pub async fn user_stats(db: &PgPool, user_id: Uuid) -> Result<UserStats, AppError> {
         let owned_picture_count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) AS \"count!\" FROM pictures \
@@ -335,6 +337,7 @@ impl AdminRepository {
 
     // ── User list with storage ────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn list_users_with_storage(db: &PgPool) -> Result<Vec<UserWithStorage>, AppError> {
         sqlx::query_as!(
             UserWithStorage,
@@ -354,6 +357,7 @@ impl AdminRepository {
 
     // ── Job list (dynamic filters) ────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn list_jobs(
         db: &PgPool,
         status_filter: Option<JobStatus>,
@@ -397,6 +401,7 @@ impl AdminRepository {
 
     // ── Stale jobs ────────────────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn list_stale_jobs(
         db: &PgPool,
         timeout_secs: i64,
@@ -424,6 +429,7 @@ impl AdminRepository {
 
     /// Force-reset a job to pending regardless of current state. Clears claim info and retry count.
     /// Only applies to non-terminal jobs (pending/processing).
+    #[tracing::instrument(skip(db), fields(job_id = %job_id))]
     pub async fn reset_job(db: &PgPool, job_id: Uuid) -> Result<Option<AdminJob>, AppError> {
         sqlx::query_as!(
             AdminJob,
@@ -454,6 +460,7 @@ impl AdminRepository {
     }
 
     /// Permanently fail a job (admin cancel). Applies to any non-terminal job.
+    #[tracing::instrument(skip(db), fields(job_id = %job_id))]
     pub async fn cancel_job(db: &PgPool, job_id: Uuid) -> Result<Option<AdminJob>, AppError> {
         sqlx::query_as!(
             AdminJob,
@@ -484,6 +491,7 @@ impl AdminRepository {
 
     // ── Errored shares (global) ───────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn list_errored_shares(db: &PgPool) -> Result<Vec<ErroredShare>, AppError> {
         sqlx::query_as!(
             ErroredShare,
@@ -503,6 +511,7 @@ impl AdminRepository {
 
     // ── Federation instances ──────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn list_federation_instances(
         db: &PgPool,
     ) -> Result<Vec<FederationInstance>, AppError> {
@@ -566,6 +575,7 @@ impl AdminRepository {
 
     // ── Consistency check ─────────────────────────────────────────────────────
 
+    #[tracing::instrument(skip(db))]
     pub async fn consistency_stats(db: &PgPool) -> Result<ConsistencyStats, AppError> {
         let stuck_exif_pending_count: i64 = sqlx::query_scalar!(
             r#"SELECT COUNT(*) AS "count!"
@@ -613,6 +623,7 @@ impl AdminRepository {
 
     /// Clear `next_retry_at` for an errored/pending_first_announcement share so the pipeline
     /// picks it up immediately on next wake. Returns the owner_id if the share was found and updated.
+    #[tracing::instrument(skip(db), fields(share_id = %share_id))]
     pub async fn clear_share_backoff(
         db: &PgPool,
         share_id: Uuid,

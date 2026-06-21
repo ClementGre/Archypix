@@ -8,6 +8,7 @@ pub struct PictureVersionRepository;
 impl PictureVersionRepository {
     /// `id` must be the same UUID used to key the S3 object
     /// (`{user_id}/{picture_id}/{id}`), so it can always be reconstructed from the DB.
+    #[tracing::instrument(skip(ex), fields(version_id = %id, picture_id = %picture_id))]
     pub async fn create<'e, E>(
         ex: E,
         id: Uuid,
@@ -35,6 +36,7 @@ impl PictureVersionRepository {
         .map_err(map_sqlx_error)
     }
 
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn list_by_picture<'e, E>(
         ex: E,
         picture_id: Uuid,
@@ -57,6 +59,7 @@ impl PictureVersionRepository {
 
     /// Whether the picture already has at least one stored version. Drives the versioning
     /// snapshot predicate (§9): `OriginalCopy` keeps only the first snapshot.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn has_versions<'e, E>(ex: E, picture_id: Uuid) -> Result<bool, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -72,6 +75,7 @@ impl PictureVersionRepository {
     }
 
     /// Returns MAX(version_number) + 1 for the given picture, defaulting to 1 if no versions exist.
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
     pub async fn next_version_number<'e, E>(ex: E, picture_id: Uuid) -> Result<i32, AppError>
     where
         E: Executor<'e, Database = Postgres>,

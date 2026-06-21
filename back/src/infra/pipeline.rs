@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{Semaphore, mpsc};
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Borrowed dependencies for a single per-user pipeline run. Delivery is now inline (the pipeline
@@ -236,7 +237,13 @@ impl Scheduler {
                     config: &this.config,
                     waker: &this.waker,
                 };
-                if let Err(e) = evaluation::run_for_user(&run, user_id).await {
+                let run_id = uuid::Uuid::new_v4();
+                let span =
+                    tracing::info_span!("pipeline_run", user_id = %user_id, run_id = %run_id);
+                if let Err(e) = evaluation::run_for_user(&run, user_id)
+                    .instrument(span)
+                    .await
+                {
                     tracing::error!(user_id = %user_id, error = ?e, "pipeline: failed for user");
                 }
                 drop(permit);
@@ -362,6 +369,7 @@ impl crate::infra::scheduler::RecurringTask for PipelineRecoverySweepTask {
         true
     }
 
+    #[tracing::instrument(skip(self))]
     async fn tick(&self) -> anyhow::Result<()> {
         // Announce-stale backstop (D): mark dirty any picture whose last announce trails the row
         // (e.g. a worker-completion fast-path wake that lost the race against the first announce).

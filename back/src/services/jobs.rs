@@ -14,6 +14,7 @@ use uuid::Uuid;
 ///
 /// Pass `is_initial = true` for the first-ever run (worker also extracts EXIF).
 /// Pass `is_initial = false` to re-generate thumbnails without EXIF re-extraction.
+#[tracing::instrument(skip(ex), fields(owner_id = %owner_id, picture_id = %picture_id))]
 pub async fn enqueue_thumbnail_job<'e, E>(
     ex: E,
     owner_id: Uuid,
@@ -42,6 +43,7 @@ where
     .await
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id, job_id = %job_id))]
 pub async fn get_job(db: &PgPool, job_id: Uuid, user_id: Uuid) -> Result<Job, AppError> {
     let job = JobRepository::find_by_id(db, job_id)
         .await?
@@ -52,6 +54,7 @@ pub async fn get_job(db: &PgPool, job_id: Uuid, user_id: Uuid) -> Result<Job, Ap
     Ok(job)
 }
 
+#[tracing::instrument(skip(db), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn list_picture_jobs(
     db: &PgPool,
     picture_id: Uuid,
@@ -82,6 +85,7 @@ pub struct ExifEditOutcome {
 /// then in a single transaction applies the `set`/`clear` delta to every row, bumps `updated_at`,
 /// resets `last_pipeline_run_at`, sets `exif_sync_status`, and enqueues a reconcile job per the §5
 /// concurrency rule. The pipeline is woken once after commit.
+#[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id))]
 pub async fn edit_pictures_exif(
     db: &PgPool,
     waker: &PipelineWaker,
@@ -229,6 +233,7 @@ async fn enqueue_or_fold_edit(
 
 /// Manually re-enqueue a reconcile for a picture stuck in `pending` with no in-flight job
 /// (the rare crash-mid-completion case). Returns the new job.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn resync_picture_exif(
     db: &PgPool,
     waker: &PipelineWaker,
