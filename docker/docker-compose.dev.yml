@@ -48,6 +48,10 @@ x-workspace-volumes: &workspace-volumes
   - ../Cargo.lock:/workspace/Cargo.lock
   # Shared build cache
   - workspace_target:/workspace/target
+  - back_target:/workspace/back/target
+  - resolver_target:/workspace/resolver/target
+  - worker_target:/workspace/worker/target
+  - common_target:/workspace/common/target
 
 # ── Extra hosts injected into every backend/worker container ─────────────────
 # Maps all fake hostnames to Traefik's static IP so that inter-service requests
@@ -78,8 +82,10 @@ services:
 
   resolver:
     build:
-      context: ../resolver
+      context: ..
+      dockerfile: resolver/Dockerfile
       target: dev
+    image: archypix-resolver:dev
     container_name: archypix-resolver
     environment:
       DB_HOST: postgres
@@ -90,11 +96,8 @@ services:
       RESOLVER_JWT_SECRET: devsecret
       CORS_ORIGINS: "*"
       RUST_LOG: info,archypix_resolver=trace
-    volumes:
-      - ../resolver/Cargo.toml:/app/Cargo.toml
-      - ../resolver/Cargo.lock:/app/Cargo.lock
-      - ../resolver/src:/app/src
-      - resolver_target:/app/target
+    volumes: *workspace-volumes
+    extra_hosts: *backend-extra-hosts
     networks:
       - archypix
     labels:
@@ -280,6 +283,17 @@ services:
       backend3:
         condition: service_healthy
 
+  jaeger:
+    image: jaegertracing/jaeger:latest
+    container_name: archypix-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP/HTTP (OTEL_EXPORTER_OTLP_ENDPOINT)
+    networks:
+      - archypix
+
   postgres:
     image: postgres:18-alpine
     container_name: archypix-postgres
@@ -346,7 +360,10 @@ networks:
 volumes:
   # Cargo build caches — pre-seeded from image on first start, persist across restarts.
   resolver_target:
-  workspace_target:   # shared by all back + worker services
+  back_target:
+  worker_target:
+  common_target:
+  workspace_target:
   # Infrastructure data
   postgres_data:
   redis_data:
