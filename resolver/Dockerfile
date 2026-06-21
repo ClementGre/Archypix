@@ -1,5 +1,5 @@
 # Multi-stage build for Archypix Resolver
-FROM rust:1.96-slim-bookworm AS builder
+FROM rust:1.96-slim-trixie AS builder
 
 WORKDIR /workspace
 
@@ -29,7 +29,7 @@ COPY resolver/src ./resolver/src
 RUN find resolver/src -type f -exec touch {} + && cargo build --release -p archypix-resolver
 
 # Runtime stage
-FROM debian:bookworm-slim AS prod
+FROM debian:trixie-slim AS prod
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
@@ -47,7 +47,7 @@ CMD ["archypix-resolver"]
 # ---- dev (source mounted at runtime, cargo run on start) ----
 # Usage: build with --target dev, mount ./src, Cargo.toml, Cargo.lock as volumes.
 # Named volume on /workspace/target persists compiled deps across restarts.
-FROM rust:1.96-slim-bookworm AS dev
+FROM rust:1.96-slim-trixie AS dev
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 EXPOSE 80

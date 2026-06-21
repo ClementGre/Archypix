@@ -140,6 +140,9 @@ services:
       traefik.http.routers.archypix-front.rule: Host(`archypix.com`)
       traefik.http.services.archypix-front.loadbalancer.server.port: 80
       traefik.http.routers.archypix-front.middlewares: authelia@docker
+    environment:
+      VITE_GLOBAL_DOMAIN: archypix.com
+      VITE_USE_HTTPS: true
     networks:
       - archypix
       - traefik

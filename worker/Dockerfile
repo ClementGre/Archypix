@@ -1,6 +1,6 @@
 # ── Production builder ─────────────────────────────────────────────────────────
 # Build context must be the repo root (contains both worker/ and common/).
-FROM rust:1.96-slim-bookworm AS builder
+FROM rust:1.96-slim-trixie AS builder
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y \
     pkg-config \
@@ -33,9 +33,11 @@ COPY worker/src ./worker/src
 RUN find common/src worker/src -type f -exec touch {} + && cargo build --release -p archypix-worker
 
 # ── Production runtime ─────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS prod
-RUN apt-get update && apt-get install -y \
-    libmagickwand-6.q16-6 \
+FROM debian:trixie-slim AS prod
+RUN apt-get update && \
+    MAGICKWAND_PKG=$(apt-cache pkgnames | grep -E '^libmagickwand-7\.' | sort -V | tail -n1) && \
+    apt-get install -y \
+    "$MAGICKWAND_PKG" \
     libgexiv2-2 \
     ca-certificates \
     curl \
@@ -52,7 +54,7 @@ CMD ["archypix-worker"]
 # ── Development (source mounted at runtime, cargo run on start) ────────────────
 # Build context: repo root. Mount worker/src, common/src, and Cargo files as volumes.
 # Named volume on /workspace/target persists compiled deps across restarts.
-FROM rust:1.96-slim-bookworm AS dev
+FROM rust:1.96-slim-trixie AS dev
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
