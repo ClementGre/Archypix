@@ -16,12 +16,13 @@ RUN for pkg in common back resolver worker; do \
     done && \
     touch common/src/lib.rs worker/src/lib.rs resolver/src/lib.rs && \
     cargo build --release -p archypix-back && \
-    rm -rf common/src back/src resolver/src worker/src
+    rm -rf common/src back/src
 
 COPY back/.sqlx ./back/.sqlx
+COPY back/migrations ./back/migrations
 COPY common/src ./common/src
 COPY back/src ./back/src
-RUN touch back/src/main.rs && cargo build --release -p archypix-back
+RUN find common/src back/src -type f -exec touch {} + && cargo build --release -p archypix-back
 
 # ---- production runtime ----
 FROM debian:bookworm-slim AS prod

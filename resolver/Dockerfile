@@ -22,11 +22,11 @@ RUN for pkg in common back resolver worker; do \
     done && \
     touch common/src/lib.rs back/src/lib.rs resolver/src/lib.rs && \
     cargo build --release -p archypix-resolver && \
-    rm -rf common/src back/src resolver/src worker/src
+    rm -rf resolver/src
 
-# Copy real source and rebuild only worker + common (back/resolver are not linked).
+# Copy real source and rebuild only resolver (common/back/worker are not linked).
 COPY resolver/src ./resolver/src
-RUN touch resolver/src/main.rs && cargo build --release -p archypix-resolver
+RUN find resolver/src -type f -exec touch {} + && cargo build --release -p archypix-resolver
 
 # Runtime stage
 FROM debian:bookworm-slim AS prod

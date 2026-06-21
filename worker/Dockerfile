@@ -25,17 +25,17 @@ RUN for pkg in common back resolver worker; do \
     done && \
     touch common/src/lib.rs back/src/lib.rs resolver/src/lib.rs && \
     cargo build --release -p archypix-worker && \
-    rm -rf common/src back/src resolver/src worker/src
+    rm -rf common/src worker/src
 
 # Copy real source and rebuild only worker + common (back/resolver are not linked).
 COPY common/src ./common/src
 COPY worker/src ./worker/src
-RUN touch worker/src/main.rs && cargo build --release -p archypix-worker
+RUN find common/src worker/src -type f -exec touch {} + && cargo build --release -p archypix-worker
 
 # ── Production runtime ─────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS prod
 RUN apt-get update && apt-get install -y \
-    libmagickwand-7.q16-3 \
+    libmagickwand-6.q16-6 \
     libgexiv2-2 \
     ca-certificates \
     curl \
