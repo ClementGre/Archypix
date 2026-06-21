@@ -2,7 +2,7 @@ import {useEffect, useMemo, useRef, useState} from 'react'
 import {toast} from 'sonner'
 import {useEditExif, useOverrideExif} from '@/hooks/usePictureEdit'
 import {apiErrorMessage} from '@/api/client'
-import type {ExifField, ExifOverrides, PictureDetail} from '@/lib/types'
+import type {ExifEditMode, ExifField, ExifOverrides, PictureDetail} from '@/lib/types'
 
 export interface ExifDraft {
     captured_at: string // "YYYY-MM-DDTHH:MM:SS" or ''
@@ -91,7 +91,10 @@ const ROT_CCW: Record<number, number> = {1: 8, 8: 3, 3: 6, 6: 1, 2: 5, 5: 4, 4: 
 // of clicks results in a single edit.
 const ROTATE_COMMIT_DEBOUNCE_MS = 700
 
-export function useExifDraft(picture: PictureDetail) {
+export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: boolean }) {
+    // Whether the incoming share authorises proposing EXIF edits to the owner. Only meaningful for
+    // received pictures; owned pictures always write through to their own file.
+    const allowExifEdit = !!opts?.allowExifEdit
     const initialDraft = useMemo(
         () => buildInitial(picture),
         // re-seed when the persisted picture data changes (id + updated_at signature)
@@ -124,6 +127,13 @@ export function useExifDraft(picture: PictureDetail) {
         [picture.local_exif_overrides],
     )
 
+    // Attach the received-picture edit mode (owned edits ignore it). Rotation and the per-field
+    // reset always stay a private local override; only an explicit Save can propose to the owner.
+    const withMode = (
+        body: { set?: Partial<ExifOverrides>; clear?: ExifField[] },
+        mode: ExifEditMode = 'local',
+    ) => (owned ? body : {mode, ...body})
+
     // orientation is excluded from the manual dirty/save flow — rotate buttons commit it
     // automatically (see the debounce effect below).
     const dirtyKeys = useMemo(
@@ -145,7 +155,7 @@ export function useExifDraft(picture: PictureDetail) {
         if (value == null) return
         const timer = setTimeout(() => {
             mutation.mutate(
-                {set: {orientation: value}},
+                withMode({set: {orientation: value}}),
                 {onError: (e) => toast.error('Could not rotate picture', {description: apiErrorMessage(e)})},
             )
         }, ROTATE_COMMIT_DEBOUNCE_MS)
@@ -184,10 +194,12 @@ export function useExifDraft(picture: PictureDetail) {
         })
     }
 
-    function save() {
+    // Save the pending edit. For received pictures `mode` chooses between a private local override
+    // (default) and a proposal to the owner ('propose', only valid when the share authorises it).
+    function save(mode: ExifEditMode = 'local') {
         const payload = buildPayload(draft, initialDraft)
         if (!payload) return
-        mutation.mutate(payload, {
+        mutation.mutate(withMode(payload, mode), {
             onError: (e) => toast.error('Could not save EXIF', {description: apiErrorMessage(e)}),
         })
     }
@@ -197,7 +209,7 @@ export function useExifDraft(picture: PictureDetail) {
     function removeOverride(...fields: ExifField[]) {
         if (owned || fields.length === 0) return
         mutation.mutate(
-            {clear: fields},
+            withMode({clear: fields}),
             {onError: (e) => toast.error('Could not remove override', {description: apiErrorMessage(e)})},
         )
     }
@@ -209,6 +221,7 @@ export function useExifDraft(picture: PictureDetail) {
         isDirty,
         isSaving,
         owned,
+        allowExifEdit,
         overriddenKeys,
         set,
         setGps,

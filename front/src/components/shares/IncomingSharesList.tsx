@@ -113,6 +113,7 @@ function ShareRow({
                             message: share.message,
                             status: share.status,
                             allowShareBack: share.allow_share_back,
+                            allowExifEdit: share.allow_exif_edit,
                             future: share.future,
                             sharedTag: share.shared_tag_path,
                             createdAt: share.created_at,

@@ -1,6 +1,7 @@
 import {apiClient} from './client'
 import type {
     EditPictureResponse,
+    ExifEditMode,
     ExifField,
     ExifOverrides,
     Job,
@@ -81,20 +82,29 @@ export async function editPicture(
     return data
 }
 
+/** Result of {@link editReceivedExif}: the body plus the HTTP status (200 local / 202 propose). */
+export interface ReceivedExifResult {
+    data: OverrideExifResponse
+    /** 200 for a local override, 202 when a proposal was accepted by the owner's backend. */
+    status: number
+}
+
 /**
- * Apply a recipient-local EXIF override to a received picture. DB-only — no file reconcile,
- * no job. `set` claims a sticky per-field override; `clear` drops the override so the owner's
- * value flows through again.
+ * Edit a **received** picture's EXIF (`doc/features/10 §4.1`). Two modes:
+ *
+ * - `mode: 'local'` (default) — a recipient-local override. DB-only, no file reconcile, no job.
+ *   `set` claims a sticky per-field override; `clear` drops it so the owner's value flows through
+ *   again. Always permitted. Returns `200`.
+ * - `mode: 'propose'` — propose the edit to the owner, who auto-applies + re-announces so all
+ *   recipients converge. Requires the incoming share to grant editing (`403` otherwise). The
+ *   proposed fields' local overrides are cleared. Lands asynchronously — returns `202`.
  */
-export async function overrideExif(
+export async function editReceivedExif(
     id: string,
-    body: { set?: Partial<ExifOverrides>; clear?: ExifField[] },
-): Promise<OverrideExifResponse> {
-    const {data} = await apiClient.post<OverrideExifResponse>(
-        `/api/authenticated/pictures/${id}/exif/override`,
-        body,
-    )
-    return data
+    body: { mode?: ExifEditMode; set?: Partial<ExifOverrides>; clear?: ExifField[] },
+): Promise<ReceivedExifResult> {
+    const res = await apiClient.post<OverrideExifResponse>(`/api/authenticated/pictures/${id}/exif`, body)
+    return {data: res.data, status: res.status}
 }
 
 /** Soft-delete a picture the user holds (owned or received). */

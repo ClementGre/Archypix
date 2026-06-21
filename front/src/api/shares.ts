@@ -30,6 +30,8 @@ export interface CreateOutgoingShareBody {
     recipient_username: string
     recipient_instance: string
     allow_share_back?: boolean
+    /** Let recipients propose EXIF edits the owner auto-applies (default false). */
+    allow_exif_edit?: boolean
     future?: boolean
     shareback_of?: string
 }

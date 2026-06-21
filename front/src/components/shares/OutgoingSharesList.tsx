@@ -64,6 +64,7 @@ function GroupedShareRow({
         message: s.message,
         status: s.status,
         allowShareBack: s.allow_share_back,
+        allowExifEdit: s.allow_exif_edit,
         future: s.future,
         sharedTag: s.tag_path,
         createdAt: s.created_at,

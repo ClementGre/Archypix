@@ -171,8 +171,6 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const [, setSp] = useSearchParams()
     const {update} = useGalleryParams()
 
-    const exif = useExifDraft(picture)
-
     const {data: preview} = useQuery({
         queryKey: ['pictures', 'url', id, 'medium'],
         queryFn: () => getPictureUrl(id, 'medium'),
@@ -181,6 +179,25 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const {data: plainTags} = usePictureTags(id)
     const {data: outgoing} = useOutgoingShares()
     const {data: incoming} = useIncomingShares()
+
+    // For a received picture, find the live incoming share from its owner: a direct share's sender
+    // IS the picture's owner. We match owner → sender to read the `allow_exif_edit` grant that gates
+    // the "Suggest to owner" action. (Assumption: for transitive shares where the relayer differs
+    // from the owner, no matching incoming share is found and only the local override is offered —
+    // the propose path is owner-addressed anyway.)
+    const incomingShare = useMemo(() => {
+        if (picture.owner_username == null) return null
+        const live = (incoming ?? []).filter((s) => s.status === 'active' || s.status === 'pending')
+        return (
+            live.find(
+                (s) =>
+                    s.sender_username === picture.owner_username &&
+                    s.sender_instance === picture.owner_instance_domain,
+            ) ?? null
+        )
+    }, [incoming, picture.owner_username, picture.owner_instance_domain])
+
+    const exif = useExifDraft(picture, {allowExifEdit: !!incomingShare?.allow_exif_edit})
 
     const tagProvenance = useUIStore((s) => s.tagProvenance)
     const toggleTagProvenance = useUIStore((s) => s.toggleTagProvenance)

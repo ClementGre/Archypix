@@ -110,6 +110,8 @@ export interface ShareResponse {
     recipient_instance: string
     status: ShareStatus
     allow_share_back: boolean
+    /** Whether recipients may propose EXIF edits the owner auto-applies. */
+    allow_exif_edit: boolean
     future: boolean
     /** ShareBack provenance: the incoming share (by its `outgoing_share_id`) this share answers. */
     shareback_of: string | null
@@ -130,6 +132,8 @@ export interface IncomingShareResponse {
     outgoing_share_id: string
     status: ShareStatus
     allow_share_back: boolean
+    /** Propagated — whether the sender lets you propose EXIF edits the owner auto-applies. */
+    allow_exif_edit: boolean
     /** Whether the sender auto-announces new pictures under the shared tag. */
     future: boolean
     /** Local `/SharedToMe/<sender>/…` tag (wire form) the received pictures land under. */
@@ -508,6 +512,9 @@ export interface ExifOverrides {
 }
 
 export type ExifField = keyof ExifOverrides
+
+/** Mode for the received-picture EXIF endpoint: a private local override, or a proposal to the owner. */
+export type ExifEditMode = 'local' | 'propose'
 
 export interface EditPictureResponse {
     id: string

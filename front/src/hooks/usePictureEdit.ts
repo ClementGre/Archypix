@@ -1,10 +1,10 @@
 import {useState} from 'react'
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {editPicture, getJob, overrideExif, restorePicture, trashPicture} from '@/api/pictures'
+import {editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
-import type {EditPictureResponse, ExifField, ExifOverrides} from '@/lib/types'
+import type {EditPictureResponse, ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
 
 const POLL_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
 
@@ -56,23 +56,38 @@ export function useEditExif(pictureId: string) {
     return {mutation, syncing}
 }
 
+/** Body of a received-picture EXIF edit: a `set`/`clear` delta plus the edit mode. */
+type ReceivedExifBody = { mode?: ExifEditMode; set?: Partial<ExifOverrides>; clear?: ExifField[] }
+
 /**
- * Recipient-local EXIF override for a received picture. DB-only (no file reconcile / job poll),
- * so it mirrors {@link useEditExif}'s interface (`syncing` is always false) and lets
- * {@link useExifDraft} treat owned edits and received overrides uniformly.
+ * EXIF edit for a **received** picture (feature 10). Supports both modes of
+ * `POST /pictures/{id}/exif`:
+ *
+ * - `local` — a recipient-local override (DB-only, no file reconcile / job poll), returns `200`.
+ * - `propose` — propose to the owner; lands asynchronously, returns `202`. On a `202` we surface a
+ *   "sent to owner" toast since the authoritative value only arrives later via re-announce.
+ *
+ * Mirrors {@link useEditExif}'s `{mutation, syncing}` interface (`syncing` always false) so
+ * {@link useExifDraft} can treat owned edits and received edits uniformly.
  */
 export function useOverrideExif(pictureId: string) {
     const queryClient = useQueryClient()
 
     const mutation = useMutation({
-        mutationFn: (body: { set?: Partial<ExifOverrides>; clear?: ExifField[] }) =>
-            overrideExif(pictureId, body),
-        onSuccess: () => {
+        mutationFn: (body: ReceivedExifBody) => editReceivedExif(pictureId, body),
+        onSuccess: (res) => {
             void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
             void queryClient.invalidateQueries({queryKey: ['pictures']})
+            // 202 Accepted: the proposal was accepted but the owner applies + re-announces
+            // asynchronously, so the authoritative value lands a moment later.
+            if (res.status === 202) {
+                toast.success('Suggested to owner', {
+                    description: 'The owner will apply it and it will sync back to everyone shortly.',
+                })
+            }
         },
         onError: (error: unknown) => {
-            toast.error('Could not save override', {description: apiErrorMessage(error)})
+            toast.error('Could not save EXIF', {description: apiErrorMessage(error)})
         },
     })
 

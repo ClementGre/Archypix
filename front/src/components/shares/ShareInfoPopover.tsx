@@ -14,6 +14,8 @@ export interface ShareInfoEntry {
     status?: ShareStatus
     /** ShareBack allowed (sender's setting). */
     allowShareBack?: boolean
+    /** Recipients may propose EXIF edits the owner auto-applies. */
+    allowExifEdit?: boolean
     /** New pictures auto-announced. */
     future?: boolean
     /** Tag the pictures land under (wire form); shown in display form. */
@@ -66,6 +68,7 @@ function closedLabel(status?: ShareStatus): string {
 function Entry({entry}: { entry: ShareInfoEntry }) {
     const flags: ReactNode[] = []
     if (entry.allowShareBack !== undefined) flags.push(<FlagChip key="sb" label="ShareBack" on={entry.allowShareBack}/>)
+    if (entry.allowExifEdit !== undefined) flags.push(<FlagChip key="ee" label="EXIF editing" on={entry.allowExifEdit}/>)
     if (entry.future !== undefined) flags.push(<FlagChip key="fu" label="Future additions" on={entry.future}/>)
 
     return (

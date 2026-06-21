@@ -1,7 +1,8 @@
 import {type ReactNode, useRef, useState} from 'react'
-import {Loader2, RotateCcw, Save} from 'lucide-react'
+import {ChevronDown, Loader2, RotateCcw, Save, Send, UserRound} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {Section} from './Section'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
 import {GpsPickerPopover} from './GpsPickerPopover'
@@ -230,7 +231,10 @@ export function ExifInlineEditor({
     picture: PictureDetail
     exif: ReturnType<typeof useExifDraft>
 }) {
-    const {draft, initialDraft, isDirty, isSaving, owned, overriddenKeys, set, setGps, reset, resetGps, save, removeOverride} = exif
+    const {draft, initialDraft, isDirty, isSaving, owned, allowExifEdit, overriddenKeys, set, setGps, reset, resetGps, save, removeOverride} = exif
+    // A received picture whose incoming share authorises EXIF editing offers two save modes:
+    // "Suggest to owner" (propose — propagates to everyone) vs "Just for me" (private local override).
+    const canPropose = !owned && allowExifEdit
     // The holder can always edit: owned pictures write through to the file; received pictures get a
     // recipient-local override.
     const canEdit = true
@@ -293,18 +297,56 @@ export function ExifInlineEditor({
                                     : 'local'
                                 : syncLabel}
                     </Badge>
-                    {isDirty && (
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-primary"
-                            onClick={save}
-                            disabled={isSaving}
-                            title={owned ? 'Save EXIF changes' : 'Save local overrides'}
-                        >
-                            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Save className="h-3.5 w-3.5"/>}
-                        </Button>
-                    )}
+                    {isDirty &&
+                        (canPropose ? (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-10 text-primary"
+                                        disabled={isSaving}
+                                        title="Save EXIF changes"
+                                    >
+                                        {isSaving ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin"/>
+                                        ) : (
+                                            <span className="flex items-center">
+                                                <Save className="h-3.5 w-3.5"/>
+                                                <ChevronDown className="h-2.5 w-2.5"/>
+                                            </span>
+                                        )}
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-56">
+                                    <DropdownMenuItem onClick={() => save('propose')} className="gap-2">
+                                        <Send className="h-3.5 w-3.5"/>
+                                        <span className="flex flex-col">
+                                            <span>Suggest to owner</span>
+                                            <span className="text-[10px] text-muted-foreground">Applies for everyone</span>
+                                        </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => save('local')} className="gap-2">
+                                        <UserRound className="h-3.5 w-3.5"/>
+                                        <span className="flex flex-col">
+                                            <span>Just for me</span>
+                                            <span className="text-[10px] text-muted-foreground">Private local override</span>
+                                        </span>
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        ) : (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-primary"
+                                onClick={() => save('local')}
+                                disabled={isSaving}
+                                title={owned ? 'Save EXIF changes' : 'Save local overrides'}
+                            >
+                                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Save className="h-3.5 w-3.5"/>}
+                            </Button>
+                        ))}
                 </div>
             }
         >

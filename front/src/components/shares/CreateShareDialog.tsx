@@ -128,6 +128,7 @@ export function CreateShareDialog({
     const [message, setMessage] = useState('')
     const [tag, setTag] = useState('')
     const [allowShareBack, setAllowShareBack] = useState(true)
+    const [allowExifEdit, setAllowExifEdit] = useState(false)
     const [future, setFuture] = useState(true)
     const [sharebackOfId, setSharebackOfId] = useState('') // selected incoming share id, '' = none
     const [recipients, setRecipients] = useState<Recipient[]>(() => [newRecipient()])
@@ -163,6 +164,7 @@ export function CreateShareDialog({
             setMessage('')
             setTag('')
             setAllowShareBack(true)
+            setAllowExifEdit(false)
             setFuture(true)
             setSharebackOfId('')
             setRecipients([newRecipient()])
@@ -215,6 +217,7 @@ export function CreateShareDialog({
                     recipient_username: r.username.trim(),
                     recipient_instance: r.instance.trim(),
                     allow_share_back: allowShareBack,
+                    allow_exif_edit: allowExifEdit,
                     future,
                     shareback_of: sharebackOf,
                 })
@@ -409,6 +412,15 @@ export function CreateShareDialog({
                             id="allow-share-back"
                             checked={allowShareBack}
                             onCheckedChange={setAllowShareBack}
+                            disabled={submitting || complete}
+                        />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="allow-exif-edit">Allow recipients to edit EXIF</Label>
+                        <Switch
+                            id="allow-exif-edit"
+                            checked={allowExifEdit}
+                            onCheckedChange={setAllowExifEdit}
                             disabled={submitting || complete}
                         />
                     </div>
