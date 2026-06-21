@@ -124,6 +124,7 @@ services:
     restart: unless-stopped
     environment:
       RUST_LOG: ${RUST_LOG}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
       WORKER_ID: worker
       BACK_URL: http://backend1,http://backend2
       BACK_DOMAIN: back1.archypix.com,back2.archypix.com
