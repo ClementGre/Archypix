@@ -1,10 +1,10 @@
 //! All models for the federation API are defined in `clients/federation/models.rs`.
 use crate::api::middleware::auth_federation::AuthFederation;
 use crate::clients::federation::models::{
-    FederationAuthGrant, FederationAuthRequest, PicturesAnnouncementRequest,
-    PicturesUnannouncementRequest, PresignRequest, PresignResponse, PresignResultItem,
-    ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse, ShareRejectRequest,
-    ShareRevokeRequest,
+    FederationAuthGrant, FederationAuthRequest, PictureEditRequest, PictureEditResponse,
+    PicturesAnnouncementRequest, PicturesUnannouncementRequest, PresignRequest, PresignResponse,
+    PresignResultItem, ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse,
+    ShareRejectRequest, ShareRevokeRequest,
 };
 use crate::infra::error::AppError;
 use crate::services::federation::{self as fed, PresignTokenItem};
@@ -99,6 +99,7 @@ pub async fn announce_share(
         &payload.name,
         payload.message.as_deref(),
         payload.allow_share_back,
+        payload.allow_exif_edit,
         payload.future,
         payload.shareback_of,
     )
@@ -251,6 +252,41 @@ pub async fn unannounce_pictures(
     Ok(Json(
         serde_json::json!({ "unannounced": true, "pictures_deleted": deleted }),
     ))
+}
+
+/// `POST /api/federation/pictures/edit_request` — owner-side handler for a recipient's EXIF edit
+/// proposal (10 §4.2). The requester's instance must match the authenticated federation instance;
+/// the owner re-verifies the EXIF-edit grant and applies the edit through its `edit_picture`
+/// write-through, re-announcing to all recipients.
+pub async fn edit_picture_request(
+    auth: AuthFederation,
+    State(state): State<AppState>,
+    Json(payload): Json<PictureEditRequest>,
+) -> Result<Json<PictureEditResponse>, AppError> {
+    debug!(
+        user = %payload.requester_username,
+        token_type = "federation",
+        requester_instance = %payload.requester_instance,
+        picture_id = %payload.picture_id,
+        "federation: edit_picture_request"
+    );
+    // Bind the proposing identity to the authenticated peer: a peer may only propose as itself.
+    if payload.requester_instance != auth.claims.sub {
+        return Err(AppError::Unauthorized(
+            "Requester instance does not match the authenticated instance".to_string(),
+        ));
+    }
+    fed::receive_picture_edit_request(
+        &state.db,
+        &state.pipeline_waker,
+        &payload.picture_id,
+        &payload.requester_username,
+        &payload.requester_instance,
+        payload.set,
+        payload.clear,
+    )
+    .await?;
+    Ok(Json(PictureEditResponse { accepted: true }))
 }
 
 pub async fn presign_pictures(

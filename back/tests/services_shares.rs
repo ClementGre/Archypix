@@ -72,6 +72,7 @@ async fn alice_shares_with_bob(
         "test.com", // same as global_domain → same-backend path
         false,
         false,
+        false,
         None,
     )
     .await
@@ -126,6 +127,7 @@ async fn create_outgoing_share_propagates_name_and_message_same_backend(db: PgPo
         "test.com",
         false,
         false,
+        false,
         None,
     )
     .await
@@ -167,6 +169,7 @@ async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
         "test.com",
         false,
         false,
+        false,
         None,
     )
     .await;
@@ -200,6 +203,7 @@ async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
         None,
         "bob",
         "localhost",
+        false,
         false,
         false,
         None,
@@ -240,6 +244,7 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
         "test.com",
         false,
         false,
+        false,
         None,
     )
     .await
@@ -259,6 +264,7 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
         None,
         "bob",
         "test.com",
+        false,
         false,
         false,
         None,
@@ -726,6 +732,7 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
         None,
         "bob",
         "test.com",
+        false,
         false,
         false,
         None,

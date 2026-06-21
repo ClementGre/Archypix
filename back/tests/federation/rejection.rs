@@ -139,6 +139,7 @@ async fn reject_share_rejects_instance_mismatch(db: PgPool) {
         "b.test",
         true,
         false,
+        false,
         None,
     )
     .await
@@ -175,6 +176,7 @@ async fn accept_share_rejects_instance_mismatch(db: PgPool) {
         "bob",
         "b.test",
         true,
+        false,
         false,
         None,
     )
@@ -214,6 +216,7 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
         "Test share",
         None,
         outgoing_id,
+        false,
         false,
         false,
         None,

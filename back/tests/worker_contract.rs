@@ -224,6 +224,7 @@ async fn complete_gen_thumbnail_redirties_only_tracked_pictures(db: PgPool) {
         "bob",
         "other.com",
         true,
+        false,
         true,
         None,
     )

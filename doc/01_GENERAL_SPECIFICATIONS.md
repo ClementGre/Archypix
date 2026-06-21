@@ -258,6 +258,8 @@ OutgoingShare:
   message: "Hope you enjoy"  # optional free-text note (nullable)
   recipient: "@bob:other.com"
   allowShareBack: true         # if false, ShareBack creates a normal share request (no auto-accept)
+  allowExifEdit: false         # if true, the recipient may propose EXIF edits the owner auto-applies
+                               # and re-announces (see §6.3); propagated to the IncomingShare
   future: true                 # new pictures added to the tag are announced automatically
   sharebackOf: null            # if set, the original OutgoingShare this share answers (ShareBack provenance)
   status: pending              # pending | pending_first_announcement | active | errored | revoked
@@ -272,6 +274,7 @@ IncomingShare:
   name: "Alps 2024"            # propagated from the sender's OutgoingShare
   message: "Hope you enjoy"    # propagated (nullable)
   outgoingShareId: os-001      # reference to the sender's OutgoingShare
+  allowExifEdit: false         # propagated: whether the recipient may propose EXIF edits (§6.3)
   future: true                 # propagated: whether the sender auto-announces new pictures
   sharedTagPath: /SharedToMe/alice_AT_instance_DOT_com/Photos/Travel/Alps
                                # advisory local tag the pictures land under; set at creation,
@@ -294,6 +297,13 @@ Bob's client fetches blobs directly from Alice's backend. With `future: true`, n
 Bob can assign local tags to received pictures. `SharedTagMappingService` maps `IncomingShare` `is-001` to `/Photos/Holidays/2024`.
 `SegmentationTaggingService` can fire on received pictures — `requires`/`excludes` evaluate against Bob's local tag set (including `/SharedToMe/...`).
 None of this mutates Alice's tags or metadata.
+
+**Recipient EXIF.** Bob may also customise a received picture's EXIF (fix `captured_at`, add geo). Two
+paths: a private **local override** (DB-only, sticky per-field, never propagates) or — when Alice's
+share sets `allowExifEdit: true` — a **propose-to-owner** edit that Alice auto-applies to the
+authoritative picture and re-announces, so every recipient converges (the owner is the serialization
+point, last-write-wins). Escalating a field to a proposal clears its local override. Full mechanism:
+`doc/features/10_recipient_exif_editing.md`.
 
 ### 6.4 Transitive sharing
 

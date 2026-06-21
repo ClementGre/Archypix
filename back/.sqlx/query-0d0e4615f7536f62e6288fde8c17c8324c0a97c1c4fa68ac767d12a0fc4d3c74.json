@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, recipient_id, sender_username, sender_instance,\n                      name, message, outgoing_share_id,\n                      local_mapping_service_id,\n                      status as \"status: ShareStatus\",\n                      allow_share_back, future,\n                      shared_tag_path::text as shared_tag_path,\n                      last_announcement_received_at, shareback_of,\n                      created_at, revoked_at\n               FROM incoming_shares WHERE recipient_id = $1 ORDER BY created_at DESC",
+  "query": "SELECT id, recipient_id, sender_username, sender_instance,\n                      name, message, outgoing_share_id,\n                      local_mapping_service_id,\n                      status as \"status: ShareStatus\",\n                      allow_share_back, allow_exif_edit, future,\n                      shared_tag_path::text as shared_tag_path,\n                      last_announcement_received_at, shareback_of,\n                      created_at, revoked_at\n               FROM incoming_shares WHERE recipient_id = $1 ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -129,6 +129,17 @@
       },
       {
         "ordinal": 10,
+        "name": "allow_exif_edit",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "allow_exif_edit"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "future",
         "type_info": "Bool",
         "origin": {
@@ -139,13 +150,13 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "shared_tag_path",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "last_announcement_received_at",
         "type_info": "Timestamp",
         "origin": {
@@ -156,7 +167,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "shareback_of",
         "type_info": "Uuid",
         "origin": {
@@ -167,7 +178,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -178,7 +189,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -206,6 +217,7 @@
       false,
       false,
       false,
+      false,
       null,
       true,
       true,
@@ -213,5 +225,5 @@
       true
     ]
   },
-  "hash": "85e06511aa90294ba2ed71ef3b4e683c1df9932fe2fcf4b1f94aa1bfc6d22228"
+  "hash": "0d0e4615f7536f62e6288fde8c17c8324c0a97c1c4fa68ac767d12a0fc4d3c74"
 }

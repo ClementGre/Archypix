@@ -146,6 +146,7 @@ async fn cross_instance_share_announce_and_accept_propagates_pictures(db: PgPool
         "b.test",
         false,
         false,
+        false,
         None,
     )
     .await
@@ -209,6 +210,7 @@ async fn cross_instance_revoke_removes_received_pictures(db: PgPool) {
         None,
         "bob",
         "b.test",
+        false,
         false,
         false,
         None,
@@ -282,6 +284,7 @@ async fn cross_instance_reject_active_share_cleans_up_received_pictures(db: PgPo
         None,
         "bob",
         "b.test",
+        false,
         false,
         false,
         None,
@@ -376,7 +379,8 @@ async fn cross_instance_shareback_auto_accepts_without_deadlock(db: PgPool) {
         None,
         "bob",
         "b.test",
-        true,  // allow_share_back
+        true,
+        false, // allow_share_back
         false, // future
         None,
     )
@@ -398,6 +402,7 @@ async fn cross_instance_shareback_auto_accepts_without_deadlock(db: PgPool) {
         None,
         "alice",
         "a.test",
+        false,
         false,
         false,
         Some(alice_share.id), // shareback_of references Alice's original OutgoingShare
@@ -461,6 +466,7 @@ async fn cross_instance_reject_tombstones_outgoing_share(db: PgPool) {
         None,
         "bob",
         "b.test",
+        false,
         false,
         false,
         None,

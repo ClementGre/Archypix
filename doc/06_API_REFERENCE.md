@@ -613,19 +613,33 @@ Re-enqueue a stuck EXIF sync (picture stuck in `exif_sync_status = "pending"` wi
 
 ---
 
-#### `POST /api/authenticated/pictures/{id}/exif/override`
+#### `POST /api/authenticated/pictures/{id}/exif`
 
-Apply a **recipient-local** EXIF override to a received picture (`set`/`clear`, same shape as an owned
-edit). DB-only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
-fields claim a sticky per-field override; `clear` fields drop the override so the owner's value flows
-through again. The effective `exif_data` (+ promoted columns) is `merge(owner snapshot, overrides)`.
-See `doc/features/09_trash_and_exif_overrides.md §6`.
+Edit a **received** picture's EXIF (`set`/`clear`, same shape as an owned edit) in one of two modes
+(`doc/features/10_recipient_exif_editing.md §4.1`):
+
+```ts
+{
+    mode?: "local" | "propose";   // default "local"
+    set?: Partial<ExifOverrides>;
+    clear?: ExifField[];
+}
+```
+
+- `mode: "local"` (default) — a **recipient-local** override. DB-only; no `edit_picture` job, no file
+  reconcile (the recipient does not own the file). `set` fields claim a sticky per-field override;
+  `clear` fields drop it so the owner's value flows through again. The effective `exif_data` (+
+  promoted columns) is `merge(owner snapshot, overrides)`. Always permitted. Returns `200`.
+- `mode: "propose"` — **propose the edit to the owner**, who auto-applies it to the authoritative
+  picture and re-announces so all recipients converge (owner is the serialization point;
+  last-write-wins). Requires the incoming share to grant editing
+  (`IncomingShareResponse.allow_exif_edit = true`), else `403`. On success the proposed fields'
+  local overrides are cleared (the owner's value is authoritative). The change lands asynchronously,
+  so this returns `202 Accepted`.
 
 **Path params:** `id: string` — must be a received (`owned = false`) picture.
 
-**Request:** `{ set?: Partial<ExifOverrides>; clear?: ExifField[] }`
-
-**Response `200`:**
+**Response `200` (local) / `202` (propose):**
 
 ```ts
 {
@@ -641,7 +655,9 @@ See `doc/features/09_trash_and_exif_overrides.md §6`.
 }
 ```
 
-**Errors:** `400` if the picture is owned (use `/edit` instead); `404` if not found.
+**Errors:** `400` if the picture is owned (use `/edit` instead); `403` (`propose` only) if the share
+does not authorise editing; `404` if not found; `409` (`propose` only) if the owner's picture is
+still in initial extraction.
 
 ---
 
@@ -1121,6 +1137,7 @@ Create an outgoing share.
     recipient_username: string;
     recipient_instance: string;      // global domain (e.g. "other.example.com")
     allow_share_back ? : boolean;      // default true — if true, auto-accepts a ShareBack from the recipient
+    allow_exif_edit ? : boolean;       // default false — let recipients propose EXIF edits the owner auto-applies
     future ? : boolean;                // default true — automatically share pictures added to the tag later
   shareback_of ? : string;           // marks this as a ShareBack — the `outgoing_share_id` of the
                                      // incoming share being shared back (i.e. the original sender's
@@ -1140,6 +1157,7 @@ interface ShareResponse {
     recipient_instance: string;
     status: ShareStatus;
     allow_share_back: boolean;
+    allow_exif_edit: boolean;        // whether recipients may propose EXIF edits the owner auto-applies
     future: boolean;
     shareback_of: string | null;     // provenance: the original OutgoingShare this share answers
     last_error_at: string | null;    // ISO — last failed announcement (while errored/recovering)
@@ -1207,6 +1225,7 @@ interface IncomingShareResponse {
     outgoing_share_id: string;
     status: ShareStatus;
     allow_share_back: boolean;       // whether the sender allows a ShareBack
+  allow_exif_edit: boolean;        // propagated — whether the sender lets you propose EXIF edits
   future: boolean;                 // propagated — whether the sender auto-announces new pictures
   shared_tag_path: string | null;  // local /SharedToMe/<sender>/… tag (wire form) these land under;
                                    // set at creation, refreshed on each announcement
@@ -1809,17 +1828,18 @@ for completeness.
 
 All require a federation JWT (pairwise, issued by the target instance).
 
-| Method | Path                                  | Description                                                   |
-|--------|---------------------------------------|---------------------------------------------------------------|
-| `POST` | `/api/federation/auth/request`        | Request a federation JWT from another instance                |
-| `POST` | `/api/federation/auth/grant`          | Receive a federation JWT                                      |
-| `POST` | `/api/federation/shares/announce`     | Announce a new share                                          |
-| `POST` | `/api/federation/shares/accept`       | Notify sender of share acceptance                             |
-| `POST` | `/api/federation/shares/reject`       | Notify sender of share rejection                              |
-| `POST` | `/api/federation/shares/revoke`       | Revoke a share (sender → recipient)                           |
-| `POST` | `/api/federation/pictures/announce`   | Deliver picture announcements for an active share             |
-| `POST` | `/api/federation/pictures/unannounce` | Remove specific pictures from a share                         |
-| `POST` | `/api/federation/pictures/presign`    | Get presigned URLs using per-picture tokens (no JWT required) |
+| Method | Path                                    | Description                                                    |
+|--------|-----------------------------------------|----------------------------------------------------------------|
+| `POST` | `/api/federation/auth/request`          | Request a federation JWT from another instance                 |
+| `POST` | `/api/federation/auth/grant`            | Receive a federation JWT                                       |
+| `POST` | `/api/federation/shares/announce`       | Announce a new share                                           |
+| `POST` | `/api/federation/shares/accept`         | Notify sender of share acceptance                              |
+| `POST` | `/api/federation/shares/reject`         | Notify sender of share rejection                               |
+| `POST` | `/api/federation/shares/revoke`         | Revoke a share (sender → recipient)                            |
+| `POST` | `/api/federation/pictures/announce`     | Deliver picture announcements for an active share              |
+| `POST` | `/api/federation/pictures/unannounce`   | Remove specific pictures from a share                          |
+| `POST` | `/api/federation/pictures/edit_request` | Recipient → owner: propose an EXIF edit the owner auto-applies |
+| `POST` | `/api/federation/pictures/presign`      | Get presigned URLs using per-picture tokens (no JWT required)  |
 
 The `presign` endpoint is notable: it is called by the **recipient backend** on behalf of the recipient's frontend when fetching a picture owned by
 the sender. The frontend does not call it directly — the `GET /api/authenticated/pictures/{id}/url` endpoint handles cross-instance presigning

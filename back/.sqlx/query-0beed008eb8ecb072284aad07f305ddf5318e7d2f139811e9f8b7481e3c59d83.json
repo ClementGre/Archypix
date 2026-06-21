@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      name, message,\n                      recipient_username, recipient_instance,\n                      allow_share_back, future, shareback_of,\n                      status as \"status: ShareStatus\",\n                      last_error_at, next_retry_at,\n                      created_at, revoked_at\n               FROM outgoing_shares\n               WHERE owner_id = $1 AND status = 'active'::share_status AND future = true",
+  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      name, message,\n                      recipient_username, recipient_instance,\n                      allow_share_back, allow_exif_edit, future, shareback_of,\n                      status as \"status: ShareStatus\",\n                      last_error_at, next_retry_at,\n                      created_at, revoked_at\n               FROM outgoing_shares WHERE owner_id = $1 ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -88,6 +88,17 @@
       },
       {
         "ordinal": 8,
+        "name": "allow_exif_edit",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "outgoing_shares",
+            "name": "allow_exif_edit"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "future",
         "type_info": "Bool",
         "origin": {
@@ -98,7 +109,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "shareback_of",
         "type_info": "Uuid",
         "origin": {
@@ -109,7 +120,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "status: ShareStatus",
         "type_info": {
           "Custom": {
@@ -134,7 +145,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "last_error_at",
         "type_info": "Timestamp",
         "origin": {
@@ -145,7 +156,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "next_retry_at",
         "type_info": "Timestamp",
         "origin": {
@@ -156,7 +167,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -167,7 +178,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -193,6 +204,7 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       true,
@@ -201,5 +213,5 @@
       true
     ]
   },
-  "hash": "43ea4be32e4148a74d1844c53652092747858063197640cab924b84f1c599f96"
+  "hash": "0beed008eb8ecb072284aad07f305ddf5318e7d2f139811e9f8b7481e3c59d83"
 }

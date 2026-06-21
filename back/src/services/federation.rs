@@ -39,6 +39,7 @@ pub async fn receive_share_announcement(
     name: &str,
     message: Option<&str>,
     allow_share_back: bool,
+    allow_exif_edit: bool,
     future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<(Uuid, bool), AppError> {
@@ -101,6 +102,7 @@ pub async fn receive_share_announcement(
         message,
         outgoing_share_id,
         allow_share_back,
+        allow_exif_edit,
         future,
         Some(shared_tag.as_ltree()),
         shareback_of,
@@ -349,6 +351,72 @@ pub async fn receive_pictures_unannouncement(
     let deleted = unregister_announced_pictures(db, &incoming, picture_ids).await?;
     pipeline_waker.wake(incoming.recipient_id);
     Ok(deleted)
+}
+
+/// Owner-side handler for a recipient EXIF edit proposal (10 §4.2). Re-verifies the grant — an
+/// **active** `OutgoingShare` to the requester with `allow_exif_edit` covering the picture (never
+/// trusts the wire) — validates and applies the edit via the owner's existing `edit_picture`
+/// write-through (`edit_pictures_exif`), which bumps `updated_at`, marks the picture dirty, and
+/// wakes the pipeline so the metadata change re-announces to **all** recipients (incl. the
+/// requester). Used by both the cross-instance federation handler and the same-backend short-circuit
+/// in `services::pictures::propose_received_exif`.
+#[allow(clippy::too_many_arguments)]
+pub async fn receive_picture_edit_request(
+    db: &PgPool,
+    waker: &PipelineWaker,
+    picture_id: &str,
+    requester_username: &str,
+    requester_instance: &str,
+    set: crate::domain::job::FullExif,
+    clear: Vec<crate::domain::job::ExifField>,
+) -> Result<(), AppError> {
+    let picture_id: Uuid = picture_id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid picture_id".to_string()))?;
+
+    // The picture must be owned (stored) on this backend. A relayer never applies a proposal — it is
+    // addressed to the owner's backend (10 §5, transitive shares).
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if !picture.is_owned() {
+        return Err(AppError::NotFound);
+    }
+
+    // Authorisation: an active grant to this requester covering the picture. Re-checked here so a
+    // revoked-in-flight grant is rejected (10 §6.2).
+    if OutgoingShareRepository::find_active_exif_editable_covering(
+        db,
+        picture_id,
+        requester_username,
+        requester_instance,
+    )
+    .await?
+    .is_none()
+    {
+        warn!(
+            %picture_id,
+            requester = requester_username,
+            requester_instance,
+            "federation: picture edit request rejected — no active EXIF-edit grant covers it"
+        );
+        return Err(AppError::Forbidden(
+            "no active share grants EXIF editing of this picture".to_string(),
+        ));
+    }
+
+    // Apply through the owner's write-through. Reuses field validation (GPS/orientation/set∪clear),
+    // the still-processing 409 guard, MIME preflight, the §5 in-flight rule, and the re-announce wake.
+    crate::services::jobs::edit_pictures_exif(
+        db,
+        waker,
+        picture.local_user_id,
+        &[picture_id],
+        set,
+        clear,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Resolve per-picture tokens to owned pictures and presign each. The token *is* the

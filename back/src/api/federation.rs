@@ -14,5 +14,9 @@ pub fn routes() -> Router<AppState> {
         .route("/shares/revoke", post(handlers::revoke_share))
         .route("/pictures/announce", post(handlers::announce_pictures))
         .route("/pictures/unannounce", post(handlers::unannounce_pictures))
+        .route(
+            "/pictures/edit_request",
+            post(handlers::edit_picture_request),
+        )
         .route("/pictures/presign", post(handlers::presign_pictures))
 }

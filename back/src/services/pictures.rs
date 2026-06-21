@@ -506,6 +506,159 @@ pub async fn override_received_exif(
         .ok_or(AppError::NotFound)
 }
 
+/// The twelve editable EXIF fields, used to enumerate which fields a `set`/`clear` delta touches.
+const ALL_EXIF_FIELDS: [crate::domain::job::ExifField; 12] = {
+    use crate::domain::job::ExifField::*;
+    [
+        CapturedAt,
+        GpsLat,
+        GpsLng,
+        GpsAlt,
+        Orientation,
+        CameraBrand,
+        CameraModel,
+        FocalLengthMm,
+        FNumber,
+        IsoSpeed,
+        ExposureTimeNum,
+        ExposureTimeDen,
+    ]
+};
+
+/// Propose an EXIF edit on a **received** picture to its owner (10 §4.1, `mode: "propose"`).
+///
+/// Requires an active incoming share that grants editing (`allow_exif_edit`); otherwise `403`. The
+/// delta is sent to the owner's backend (same-backend owners are short-circuited to a direct service
+/// call). On success the proposed fields are **dropped from `local_exif_overrides`** so the owner's
+/// authoritative value — arriving via the owner's re-announce — is no longer shadowed (09 §6.2). The
+/// authoritative change lands asynchronously (owner reconcile + re-announce), so the caller returns
+/// `202`. Returns the locally-updated picture (overrides cleared for the proposed fields).
+#[allow(clippy::too_many_arguments)]
+pub async fn propose_received_exif(
+    db: &PgPool,
+    cache: &dyn Cache,
+    config: &Config,
+    federation: &FederationClient,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    requester_username: &str,
+    picture_id: Uuid,
+    set: crate::domain::job::FullExif,
+    clear: Vec<crate::domain::job::ExifField>,
+) -> Result<Picture, AppError> {
+    use crate::repository::pipeline::PipelineRepository;
+    use crate::repository::share::IncomingShareRepository;
+    trace!(user_id = %user_id, picture_id = %picture_id, "pictures: propose_received_exif");
+
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+    if picture.is_owned() {
+        return Err(AppError::BadRequest(
+            "EXIF proposals apply to received pictures only; use /edit for owned pictures"
+                .to_string(),
+        ));
+    }
+
+    // Gate: an active incoming share covering this picture must grant EXIF editing (10 §4.1).
+    if IncomingShareRepository::find_active_exif_editable_for_picture(db, picture_id, user_id)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::Forbidden(
+            "this share does not authorise EXIF editing; use a local override instead".to_string(),
+        ));
+    }
+
+    let owner_username = picture.owner_username.clone().unwrap_or_default();
+    let owner_instance = picture.owner_instance_domain.clone().unwrap_or_default();
+    let remote_id = picture.remote_picture_id.clone().ok_or_else(|| {
+        AppError::InternalServerError("received picture missing remote_picture_id".into())
+    })?;
+
+    // Deliver the proposal to the owner. Same-backend owner → direct service call (mirrors the
+    // share-announce same-backend short-circuit); cross-instance → federation. The owner validates
+    // the fields and re-checks the grant, so an invalid/forbidden proposal errors here *before* we
+    // clear any local override.
+    if find_local_user_id(cache, db, config, &owner_username, &owner_instance)
+        .await?
+        .is_some()
+    {
+        crate::services::federation::receive_picture_edit_request(
+            db,
+            waker,
+            &remote_id,
+            requester_username,
+            &config.global_domain,
+            set.clone(),
+            clear.clone(),
+        )
+        .await?;
+    } else {
+        federation
+            .send_picture_edit_request(
+                requester_username,
+                &owner_username,
+                &owner_instance,
+                &crate::clients::federation::models::PictureEditRequest {
+                    picture_id: remote_id,
+                    requester_username: requester_username.to_string(),
+                    requester_instance: config.global_domain.clone(),
+                    set: set.clone(),
+                    clear: clear.clone(),
+                    idempotency_key: Uuid::new_v4().to_string(),
+                },
+            )
+            .await?;
+    }
+
+    // Escalate clears the per-field local override so the owner's applied value (arriving via the
+    // re-announce) is authoritative (09 §6.2 / 10 §2). Drop every field the proposal touched.
+    let mut touched: Vec<crate::domain::job::ExifField> = clear.clone();
+    for f in ALL_EXIF_FIELDS {
+        if set.has(f) && !touched.contains(&f) {
+            touched.push(f);
+        }
+    }
+    let mut overrides = picture
+        .local_exif_overrides
+        .as_ref()
+        .map(|j| j.0.clone())
+        .unwrap_or_default();
+    overrides.clear_fields(&touched);
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let remote =
+        PictureRepository::set_local_exif_overrides(&mut *tx, user_id, picture_id, &overrides)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    let merged = remote.merged_with(&overrides);
+    PictureRepository::apply_received_materialization(
+        &mut *tx,
+        picture_id,
+        &merged.camera,
+        merged.captured_at,
+        merged.gps_lat,
+        merged.gps_lng,
+        merged.gps_alt,
+        merged.orientation,
+    )
+    .await?;
+    PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    waker.wake(user_id);
+
+    PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 pub async fn get_picture_details(
     db: &PgPool,
     user_id: Uuid,

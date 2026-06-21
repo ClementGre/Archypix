@@ -53,7 +53,7 @@ clients/
   federation/
     mod.rs          # FederationClient struct + shared protocol types
     handshake.rs    # WebFinger resolution, token request/grant/store/issue
-    shares.rs       # announce_share, send_share_accept, send_share_reject, send_revocation, announce_pictures, presign_remote_pictures
+    shares.rs       # announce_share, send_share_accept, send_share_reject, send_revocation, announce_pictures, presign_remote_pictures, send_picture_edit_request
   resolver.rs       # self_register, update_mapping, verify_token
 
 services/
@@ -157,6 +157,16 @@ columns) is re-materialised as `merge(remote_exif_data, local_exif_overrides)` (
 per-field). A local override is DB-only (a `metadata` event, no `edit_picture` job). The purge sweep
 physically deletes owned pictures past their (derived) retention, unannouncing them. See
 `doc/features/09_trash_and_exif_overrides.md`.
+
+**Recipient EXIF editing (10)** — a per-share `allow_exif_edit` grant (on `OutgoingShare`, propagated
+to the `IncomingShare`) lets a recipient propose EXIF edits. `POST /pictures/{id}/exif` on a received
+picture takes `mode: "local" | "propose"`: `local` is the 09 DB-only override; `propose` requires the
+grant (else 403) and sends the delta to the owner via the `pictures/edit_request` federation verb
+(same-backend owners short-circuit to a direct service call). The owner re-verifies the grant
+(active `OutgoingShare` to the requester with `allow_exif_edit` covering the picture — never trusts
+the wire), then applies it through its existing `edit_picture` write-through, which re-announces to
+all recipients. Escalating a field to a proposal clears its local override. See
+`doc/features/10_recipient_exif_editing.md`.
 
 **Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
 removes them, controlled by the `promote_tags` flag.

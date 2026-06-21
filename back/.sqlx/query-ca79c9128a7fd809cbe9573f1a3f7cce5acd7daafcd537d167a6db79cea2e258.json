@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO incoming_shares\n                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id,\n                    allow_share_back, future, shared_tag_path, shareback_of)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::ltree, $10)\n               ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)\n               DO UPDATE SET status = incoming_shares.status,\n                             allow_share_back = EXCLUDED.allow_share_back,\n                             future = EXCLUDED.future,\n                             name = EXCLUDED.name,\n                             message = EXCLUDED.message,\n                             shared_tag_path = COALESCE(EXCLUDED.shared_tag_path, incoming_shares.shared_tag_path),\n                             shareback_of = COALESCE(EXCLUDED.shareback_of, incoming_shares.shareback_of)\n               RETURNING id, recipient_id, sender_username, sender_instance,\n                         name, message, outgoing_share_id,\n                         local_mapping_service_id,\n                         status as \"status: ShareStatus\",\n                         allow_share_back, future,\n                         shared_tag_path::text as shared_tag_path,\n                         last_announcement_received_at, shareback_of,\n                         created_at, revoked_at",
+  "query": "INSERT INTO incoming_shares\n                   (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id,\n                    allow_share_back, allow_exif_edit, future, shared_tag_path, shareback_of)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::ltree, $11)\n               ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)\n               DO UPDATE SET status = incoming_shares.status,\n                             allow_share_back = EXCLUDED.allow_share_back,\n                             allow_exif_edit = EXCLUDED.allow_exif_edit,\n                             future = EXCLUDED.future,\n                             name = EXCLUDED.name,\n                             message = EXCLUDED.message,\n                             shared_tag_path = COALESCE(EXCLUDED.shared_tag_path, incoming_shares.shared_tag_path),\n                             shareback_of = COALESCE(EXCLUDED.shareback_of, incoming_shares.shareback_of)\n               RETURNING id, recipient_id, sender_username, sender_instance,\n                         name, message, outgoing_share_id,\n                         local_mapping_service_id,\n                         status as \"status: ShareStatus\",\n                         allow_share_back, allow_exif_edit, future,\n                         shared_tag_path::text as shared_tag_path,\n                         last_announcement_received_at, shareback_of,\n                         created_at, revoked_at",
   "describe": {
     "columns": [
       {
@@ -129,6 +129,17 @@
       },
       {
         "ordinal": 10,
+        "name": "allow_exif_edit",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "allow_exif_edit"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "future",
         "type_info": "Bool",
         "origin": {
@@ -139,13 +150,13 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "shared_tag_path",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "last_announcement_received_at",
         "type_info": "Timestamp",
         "origin": {
@@ -156,7 +167,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "shareback_of",
         "type_info": "Uuid",
         "origin": {
@@ -167,7 +178,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -178,7 +189,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "revoked_at",
         "type_info": "Timestamp",
         "origin": {
@@ -199,6 +210,7 @@
         "Uuid",
         "Bool",
         "Bool",
+        "Bool",
         "Text",
         "Uuid"
       ]
@@ -215,6 +227,7 @@
       false,
       false,
       false,
+      false,
       null,
       true,
       true,
@@ -222,5 +235,5 @@
       true
     ]
   },
-  "hash": "695884bab268235f2fd3a479bdc8bab4ac2cb247858061f2579d92e81a906730"
+  "hash": "ca79c9128a7fd809cbe9573f1a3f7cce5acd7daafcd537d167a6db79cea2e258"
 }

@@ -19,6 +19,8 @@ pub struct CreateOutgoingRequest {
     pub recipient_username: String,
     pub recipient_instance: String,
     pub allow_share_back: Option<bool>,
+    /// Grant recipients EXIF editing of the shared pictures (10 §3). Default `false`.
+    pub allow_exif_edit: Option<bool>,
     pub future: Option<bool>,
     pub shareback_of: Option<uuid::Uuid>,
 }
@@ -33,6 +35,8 @@ pub struct ShareResponse {
     pub recipient_instance: String,
     pub status: ShareStatus,
     pub allow_share_back: bool,
+    /// Whether recipients may propose EXIF edits the owner auto-applies (10 §3).
+    pub allow_exif_edit: bool,
     pub future: bool,
     /// ShareBack provenance: the recipient's incoming share (by its `outgoing_share_id`) this
     /// share answers. `None` for a normal share.
@@ -55,6 +59,8 @@ pub struct IncomingShareResponse {
     pub outgoing_share_id: uuid::Uuid,
     pub status: ShareStatus,
     pub allow_share_back: bool,
+    /// Whether the sender allows the recipient to propose EXIF edits (10 §3).
+    pub allow_exif_edit: bool,
     pub future: bool,
     /// Local `/SharedToMe/<sender>/…` tag (ltree wire form) the received pictures land under.
     pub shared_tag_path: Option<String>,
@@ -93,6 +99,7 @@ pub async fn create_outgoing(
         &payload.recipient_username,
         &payload.recipient_instance,
         payload.allow_share_back.unwrap_or(true),
+        payload.allow_exif_edit.unwrap_or(false),
         payload.future.unwrap_or(true),
         payload.shareback_of,
     )
@@ -106,6 +113,7 @@ pub async fn create_outgoing(
         recipient_instance: share.recipient_instance,
         status: share.status,
         allow_share_back: share.allow_share_back,
+        allow_exif_edit: share.allow_exif_edit,
         future: share.future,
         shareback_of: share.shareback_of,
         last_error_at: share.last_error_at,
@@ -133,6 +141,7 @@ pub async fn list_outgoing(
                 recipient_instance: s.recipient_instance,
                 status: s.status,
                 allow_share_back: s.allow_share_back,
+                allow_exif_edit: s.allow_exif_edit,
                 future: s.future,
                 shareback_of: s.shareback_of,
                 last_error_at: s.last_error_at,
@@ -162,6 +171,7 @@ pub async fn list_incoming(
                 outgoing_share_id: s.outgoing_share_id,
                 status: s.status,
                 allow_share_back: s.allow_share_back,
+                allow_exif_edit: s.allow_exif_edit,
                 future: s.future,
                 shared_tag_path: s.shared_tag_path,
                 last_announcement_received_at: s.last_announcement_received_at,

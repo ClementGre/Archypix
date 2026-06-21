@@ -56,12 +56,22 @@
     actions (selection panel, lightbox, batch), owner-deletion warning badge (red owner chip + grace
     banner), recipient EXIF overrides editable inline with an "overwritten" tag (+ WebDAV-caveat
     tooltip), retention setting. See `doc/features/09_trash_and_exif_overrides.md`.
-- [ ] **Recipient EXIF editing** — per-share `allow_exif_edit` grant; authorised recipients propose
-  edits that the owner auto-applies and re-announces (local override is the unauthorised fallback).
-  Schema already in 001 (via the trash migration). See `doc/features/10_recipient_exif_editing.md`.
+- [x] **Recipient EXIF editing** (backend) — per-share `allow_exif_edit` grant (propagated to the
+  incoming share); `POST /pictures/{id}/exif` with `mode: local | propose`; `pictures/edit_request`
+  federation verb with same-backend short-circuit; owner re-verifies the grant and applies via
+  `edit_picture` write-through (re-announce to all); escalate clears the local override. Frontend
+  toggle + received-picture editor pending. See `doc/features/10_recipient_exif_editing.md`.
+- [ ] **Better Rules** — Add more pipeline rule tagging rules. Allow to do ands and ors of rules (curently only ORs ?). Better UI for
+  rules. Fix UI for segmentations.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
   logic, presigned URL caching for remote pictures.
+- [ ] **Multi-picture edits** — The frontend offers very limited multi-picture viewing and editing support. The idea would be to see all common tags
+  and metadata of selected pictures. See tags not on all pictures also, and show mixed exif data as mixed (maybe with a popup showing the different
+  values if there is not too much). The idea would be to take the current right tab for a single picture, and use about the same interface for when
+  selecting multiple pictures. Endpoints should be added to the API to support batch tag read, batch exif read/write, and other info batch read (file
+  size, ...).
+- [ ] **Logging robustness** — Better tracing, logs that does not mix up with multi-threading (Otel compatibility?).
 
 ## To-do for v1.0
 

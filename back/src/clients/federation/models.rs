@@ -35,6 +35,10 @@ pub struct ShareAnnouncementRequest {
     pub name: String,
     pub message: Option<String>,
     pub allow_share_back: bool,
+    /// Whether the recipient may propose EXIF edits the owner auto-applies (10 §3). Default `false`
+    /// for peers that predate the field.
+    #[serde(default)]
+    pub allow_exif_edit: bool,
     pub future: bool,
     pub shareback_of: Option<Uuid>,
 }
@@ -111,6 +115,33 @@ pub struct PicturesUnannouncementRequest {
     pub sender_username: String,
     pub sender_instance: String,
     pub picture_ids: Vec<String>,
+}
+
+//———————————————— Recipient EXIF edit proposal (10 §4.2) ————————————————
+
+/// Sent by the recipient's backend to the **owner's** backend to propose an EXIF edit on a received
+/// picture (10 §4.2). The owner re-verifies the grant (an active `OutgoingShare` to `requester` with
+/// `allow_exif_edit`), validates the fields, and applies it through its own `edit_picture`
+/// write-through — re-announcing the change to all recipients. `set`/`clear` reuse the owned-edit
+/// three-state shape ([04 §7.3]).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PictureEditRequest {
+    /// The owner's picture id (UUID string) — i.e. the recipient's `remote_picture_id`.
+    pub picture_id: String,
+    /// The proposing recipient's identity, as recorded on the owner's `OutgoingShare.recipient_*`.
+    pub requester_username: String,
+    pub requester_instance: String,
+    #[serde(default)]
+    pub set: FullExif,
+    #[serde(default)]
+    pub clear: Vec<crate::domain::job::ExifField>,
+    /// Dedupe key for a retried delivery (the apply itself is last-write-wins idempotent).
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PictureEditResponse {
+    pub accepted: bool,
 }
 
 //———————————————— Presigning ————————————————

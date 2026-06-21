@@ -134,6 +134,7 @@ async fn active_share(
         recipient_name,
         &config.global_domain,
         true,
+        false,
         future,
         None,
     )
@@ -329,6 +330,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
         "bob",
         &config.global_domain,
         true,
+        false,
         true,
         None,
     )
@@ -351,6 +353,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
         "alice",
         &config.global_domain,
         true,
+        false,
         true,
         Some(alice_share.id),
     )
@@ -438,6 +441,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
         "bob",
         &config.global_domain,
         false,
+        false,
         true,
         None,
     )
@@ -459,6 +463,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
         "alice",
         &config.global_domain,
         true,
+        false,
         true,
         Some(alice_share.id),
     )

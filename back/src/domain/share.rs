@@ -35,6 +35,9 @@ pub struct OutgoingShare {
     pub recipient_username: String,
     pub recipient_instance: String,
     pub allow_share_back: bool,
+    /// Whether the recipient may propose EXIF edits to these pictures that the owner auto-applies and
+    /// re-announces (10 §3). Propagated to the recipient's `IncomingShare`. Default `false`.
+    pub allow_exif_edit: bool,
     pub future: bool,
     pub shareback_of: Option<Uuid>,
     pub status: ShareStatus,
@@ -58,6 +61,9 @@ pub struct IncomingShare {
     pub status: ShareStatus,
     /// Whether the sender allows sharing these pictures back with auto-accept.
     pub allow_share_back: bool,
+    /// Propagated from the sender's OutgoingShare: whether the recipient may propose EXIF edits the
+    /// owner auto-applies (10 §3). Drives the recipient UI; the owner re-checks it server-side.
+    pub allow_exif_edit: bool,
     /// Propagated from the sender's OutgoingShare: whether new pictures are auto-announced.
     pub future: bool,
     /// Local `/SharedToMe/<sender>/…` tag these pictures land under. Set at creation, refreshed on

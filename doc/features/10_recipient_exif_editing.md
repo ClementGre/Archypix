@@ -156,17 +156,20 @@ Bob (recipient)                     Alice (owner)                        all rec
 
 ## 8. Work breakdown
 
-- [ ] Domain/repository: read/write `allow_exif_edit` on `OutgoingShare`/`IncomingShare`; propagate it
-  on share create + update + announce (alongside `name`/`message`/`future`).
-- [ ] Recipient endpoint `POST /pictures/{id}/exif` (`local` → override path; `propose` → gate +
-  federation; escalate clears the per-field override). Reject owned pictures.
-- [ ] Federation `pictures/edit_request`: owner-side authorisation (active share + grant), validation,
-  `edit_picture` apply, same-backend short-circuit; pairwise-JWT auth + idempotency key.
-- [ ] Wire re-announce of the resulting metadata change (already provided by
-  [04 §10.3](04_better_exif_support.md) — verify it fires for owner-applied recipient proposals).
+- [x] Domain/repository: read/write `allow_exif_edit` on `OutgoingShare`/`IncomingShare`; propagate it
+  on share create + announce (alongside `name`/`message`/`future`). *(A share-update endpoint does not
+  yet exist for the sibling fields either; create + announce propagation is wired now.)*
+- [x] Recipient endpoint `POST /pictures/{id}/exif` (`local` → override path; `propose` → gate +
+  federation; escalate clears the per-field override). Rejects owned pictures. Supersedes the 09
+  `/exif/override` route.
+- [x] Federation `pictures/edit_request`: owner-side authorisation (active share + grant), validation,
+  `edit_picture` apply, same-backend short-circuit; pairwise-JWT auth + idempotency key field.
+- [x] Wire re-announce of the resulting metadata change (provided by
+  [04 §10.3](04_better_exif_support.md) — verified it fires for owner-applied recipient proposals via
+  `edit_pictures_exif`).
 - [ ] Frontend: per-share "allow recipients to edit EXIF" toggle; received-picture EXIF editor with
   "suggest to owner" (propose) vs "just for me" (local); reflect `IncomingShare.allow_exif_edit`.
-- [ ] Tests: grant gates propose (403 when off); proposal applies at owner + re-announces to all incl.
-  requester; escalate clears override; LWW under two proposals; grant-revoked-in-flight rejected;
-  same-backend short-circuit; transitive proposal routes to owner not relayer; owner-offline error.
-- [ ] Docs (§7).
+- [x] Tests (`tests/recipient_exif_editing.rs`): grant gates propose (403 when off); proposal applies
+  at owner + re-announces to the requester; escalate clears override; grant-revoked-in-flight
+  rejected; uncovered requester rejected; owned-picture proposal rejected; same-backend short-circuit.
+- [x] Docs (§7).

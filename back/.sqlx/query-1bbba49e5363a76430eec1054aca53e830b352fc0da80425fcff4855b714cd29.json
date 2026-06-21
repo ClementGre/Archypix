@@ -1,0 +1,230 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT i.id, i.recipient_id, i.sender_username, i.sender_instance,\n                      i.name, i.message, i.outgoing_share_id,\n                      i.local_mapping_service_id,\n                      i.status as \"status: ShareStatus\",\n                      i.allow_share_back, i.allow_exif_edit, i.future,\n                      i.shared_tag_path::text as shared_tag_path,\n                      i.last_announcement_received_at, i.shareback_of,\n                      i.created_at, i.revoked_at\n               FROM incoming_shares i\n               JOIN tags t ON t.source = 'incoming_share'::tag_source AND t.source_id = i.id\n               WHERE t.picture_id = $1\n                 AND i.recipient_id = $2\n                 AND i.status = 'active'::share_status\n                 AND i.allow_exif_edit = true\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "recipient_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "recipient_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "sender_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "sender_username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "sender_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "sender_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "message",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "message"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "outgoing_share_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "outgoing_share_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "local_mapping_service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "local_mapping_service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "status: ShareStatus",
+        "type_info": {
+          "Custom": {
+            "name": "share_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "pending_first_announcement",
+                "active",
+                "errored",
+                "revoked",
+                "tombstoned"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "allow_share_back",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "allow_share_back"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "allow_exif_edit",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "allow_exif_edit"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "future",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "future"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "shared_tag_path",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "last_announcement_received_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "last_announcement_received_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "shareback_of",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "shareback_of"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "revoked_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "incoming_shares",
+            "name": "revoked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      null,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "1bbba49e5363a76430eec1054aca53e830b352fc0da80425fcff4855b714cd29"
+}

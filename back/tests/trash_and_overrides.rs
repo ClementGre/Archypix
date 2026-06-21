@@ -47,6 +47,7 @@ async fn share_and_announce(db: &PgPool, tag: &str) -> (Uuid, Uuid, Uuid) {
         "bob",
         "test.com",
         true,
+        false,
         true, // future = true → active-delta re-announce on metadata/lifecycle change
         None,
     )

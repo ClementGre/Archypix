@@ -239,6 +239,7 @@ pub async fn create_outgoing_share(
     recipient_username: &str,
     recipient_instance: &str,
     allow_share_back: bool,
+    allow_exif_edit: bool,
     future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<OutgoingShare, AppError> {
@@ -288,6 +289,7 @@ pub async fn create_outgoing_share(
         recipient_username,
         recipient_instance,
         allow_share_back,
+        allow_exif_edit,
         future,
         shareback_of,
     )
@@ -312,6 +314,7 @@ pub async fn create_outgoing_share(
             message,
             share.id,
             allow_share_back,
+            allow_exif_edit,
             future,
             Some(shared_tag.as_ltree()),
             shareback_of,
@@ -339,6 +342,7 @@ pub async fn create_outgoing_share(
                     name: name.to_string(),
                     message: message.map(str::to_string),
                     allow_share_back,
+                    allow_exif_edit,
                     future,
                     shareback_of,
                 },

@@ -1,8 +1,8 @@
 use super::FederationClient;
 use crate::clients::federation::models::{
-    PicturesAnnouncementRequest, PicturesUnannouncementRequest, PresignRequest, PresignRequestItem,
-    PresignResponse, ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse,
-    ShareRejectRequest, ShareRevokeRequest,
+    PictureEditRequest, PicturesAnnouncementRequest, PicturesUnannouncementRequest, PresignRequest,
+    PresignRequestItem, PresignResponse, ShareAcceptRequest, ShareAnnouncementRequest,
+    ShareAnnouncementResponse, ShareRejectRequest, ShareRevokeRequest,
 };
 use crate::infra::error::AppError;
 use std::collections::HashMap;
@@ -256,6 +256,45 @@ impl FederationClient {
             .await
             .map_err(|e| {
                 warn!(recipient_global_domain, error = %e, "federation: pictures announcement delivery failed");
+                AppError::InternalServerError(e.to_string())
+            })?
+            .error_for_status()
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Send a recipient's EXIF edit proposal to the **owner's** backend (10 §4.2). The proposing
+    /// recipient (`requester_username`) holds the federation token toward the owner. The owner
+    /// re-verifies the grant and applies the edit; a non-2xx (e.g. 403 grant revoked, 409 still
+    /// processing) surfaces as an error the caller can relay to the recipient.
+    pub async fn send_picture_edit_request(
+        &self,
+        requester_username: &str,
+        owner_username: &str,
+        owner_global_domain: &str,
+        payload: &PictureEditRequest,
+    ) -> Result<(), AppError> {
+        let token = self
+            .get_or_wait_federation_token(requester_username, owner_username, owner_global_domain)
+            .await?;
+        let backend_base_url = self
+            .resolve_backend_url(owner_username, owner_global_domain)
+            .await?;
+        debug!(
+            owner_global_domain,
+            backend_base_url,
+            picture_id = %payload.picture_id,
+            "federation: sending picture edit request"
+        );
+        let url = format!("{}/api/federation/pictures/edit_request", backend_base_url);
+        self.http
+            .post(&url)
+            .bearer_auth(&token)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(owner_global_domain, error = %e, "federation: picture edit request delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()

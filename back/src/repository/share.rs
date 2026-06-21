@@ -17,6 +17,7 @@ impl OutgoingShareRepository {
         recipient_username: &str,
         recipient_instance: &str,
         allow_share_back: bool,
+        allow_exif_edit: bool,
         future: bool,
         shareback_of: Option<Uuid>,
     ) -> Result<OutgoingShare, AppError>
@@ -26,12 +27,12 @@ impl OutgoingShareRepository {
         sqlx::query_as!(
             OutgoingShare,
             r#"INSERT INTO outgoing_shares
-                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, future, shareback_of)
-               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8, $9)
+                   (owner_id, tag_path, name, message, recipient_username, recipient_instance, allow_share_back, allow_exif_edit, future, shareback_of)
+               VALUES ($1, $2::text::ltree, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id, owner_id, tag_path::text as "tag_path!",
                          name, message,
                          recipient_username, recipient_instance,
-                         allow_share_back, future, shareback_of,
+                         allow_share_back, allow_exif_edit, future, shareback_of,
                          status as "status: ShareStatus",
                          last_error_at, next_retry_at,
                          created_at, revoked_at"#,
@@ -42,6 +43,7 @@ impl OutgoingShareRepository {
             recipient_username,
             recipient_instance,
             allow_share_back,
+            allow_exif_edit,
             future,
             shareback_of,
         )
@@ -59,7 +61,7 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future, shareback_of,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
                       status as "status: ShareStatus",
                       last_error_at, next_retry_at,
                       created_at, revoked_at
@@ -85,7 +87,7 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future, shareback_of,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
                       status as "status: ShareStatus",
                       last_error_at, next_retry_at,
                       created_at, revoked_at
@@ -115,7 +117,7 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future, shareback_of,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
                       status as "status: ShareStatus",
                       last_error_at, next_retry_at,
                       created_at, revoked_at
@@ -147,7 +149,7 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future, shareback_of,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
                       status as "status: ShareStatus",
                       last_error_at, next_retry_at,
                       created_at, revoked_at
@@ -159,6 +161,48 @@ impl OutgoingShareRepository {
             prefix_ltree,
         )
         .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Find an **active** outgoing share to `recipient` that grants EXIF editing
+    /// (`allow_exif_edit = true`) and **covers** the given owned picture (the picture carries a tag
+    /// at or under the share's `tag_path`). The owner-side authorisation check for a recipient EXIF
+    /// proposal (10 §4.2): the grant is re-verified here, never trusted from the wire. Returns the
+    /// first matching share, or `None` if no such grant covers the picture.
+    pub async fn find_active_exif_editable_covering<'e, E>(
+        ex: E,
+        picture_id: Uuid,
+        recipient_username: &str,
+        recipient_instance: &str,
+    ) -> Result<Option<OutgoingShare>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            OutgoingShare,
+            r#"SELECT os.id, os.owner_id, os.tag_path::text as "tag_path!",
+                      os.name, os.message,
+                      os.recipient_username, os.recipient_instance,
+                      os.allow_share_back, os.allow_exif_edit, os.future, os.shareback_of,
+                      os.status as "status: ShareStatus",
+                      os.last_error_at, os.next_retry_at,
+                      os.created_at, os.revoked_at
+               FROM outgoing_shares os
+               WHERE os.recipient_username = $2
+                 AND os.recipient_instance = $3
+                 AND os.status = 'active'::share_status
+                 AND os.allow_exif_edit = true
+                 AND EXISTS (
+                     SELECT 1 FROM tags t
+                     WHERE t.picture_id = $1 AND t.tag_path <@ os.tag_path
+                 )
+               LIMIT 1"#,
+            picture_id,
+            recipient_username,
+            recipient_instance,
+        )
+        .fetch_optional(ex)
         .await
         .map_err(map_sqlx_error)
     }
@@ -243,7 +287,7 @@ impl OutgoingShareRepository {
             r#"SELECT id, owner_id, tag_path::text as "tag_path!",
                       name, message,
                       recipient_username, recipient_instance,
-                      allow_share_back, future, shareback_of,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
                       status as "status: ShareStatus",
                       last_error_at, next_retry_at,
                       created_at, revoked_at
@@ -269,6 +313,7 @@ impl IncomingShareRepository {
         message: Option<&str>,
         outgoing_share_id: Uuid,
         allow_share_back: bool,
+        allow_exif_edit: bool,
         future: bool,
         shared_tag_path: Option<&str>,
         shareback_of: Option<Uuid>,
@@ -280,11 +325,12 @@ impl IncomingShareRepository {
             IncomingShare,
             r#"INSERT INTO incoming_shares
                    (recipient_id, sender_username, sender_instance, name, message, outgoing_share_id,
-                    allow_share_back, future, shared_tag_path, shareback_of)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::ltree, $10)
+                    allow_share_back, allow_exif_edit, future, shared_tag_path, shareback_of)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::ltree, $11)
                ON CONFLICT (recipient_id, sender_username, sender_instance, outgoing_share_id)
                DO UPDATE SET status = incoming_shares.status,
                              allow_share_back = EXCLUDED.allow_share_back,
+                             allow_exif_edit = EXCLUDED.allow_exif_edit,
                              future = EXCLUDED.future,
                              name = EXCLUDED.name,
                              message = EXCLUDED.message,
@@ -294,7 +340,7 @@ impl IncomingShareRepository {
                          name, message, outgoing_share_id,
                          local_mapping_service_id,
                          status as "status: ShareStatus",
-                         allow_share_back, future,
+                         allow_share_back, allow_exif_edit, future,
                          shared_tag_path::text as shared_tag_path,
                          last_announcement_received_at, shareback_of,
                          created_at, revoked_at"#,
@@ -305,6 +351,7 @@ impl IncomingShareRepository {
             message,
             outgoing_share_id,
             allow_share_back,
+            allow_exif_edit,
             future,
             shared_tag_path,
             shareback_of,
@@ -327,7 +374,7 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, future,
+                      allow_share_back, allow_exif_edit, future,
                       shared_tag_path::text as shared_tag_path,
                       last_announcement_received_at, shareback_of,
                       created_at, revoked_at
@@ -375,7 +422,7 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, future,
+                      allow_share_back, allow_exif_edit, future,
                       shared_tag_path::text as shared_tag_path,
                       last_announcement_received_at, shareback_of,
                       created_at, revoked_at
@@ -403,7 +450,7 @@ impl IncomingShareRepository {
                       name, message, outgoing_share_id,
                       local_mapping_service_id,
                       status as "status: ShareStatus",
-                      allow_share_back, future,
+                      allow_share_back, allow_exif_edit, future,
                       shared_tag_path::text as shared_tag_path,
                       last_announcement_received_at, shareback_of,
                       created_at, revoked_at
@@ -411,6 +458,42 @@ impl IncomingShareRepository {
                WHERE outgoing_share_id = $1 AND sender_instance = $2"#,
             outgoing_share_id,
             sender_instance,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Find an **active** incoming share that tagged the given received picture and whose sender
+    /// grants EXIF editing (`allow_exif_edit = true`). Drives the recipient-side gate for an EXIF
+    /// proposal (10 §4.1): a `propose` is permitted iff such a share exists. Returns the first match.
+    pub async fn find_active_exif_editable_for_picture<'e, E>(
+        ex: E,
+        picture_id: Uuid,
+        recipient_id: Uuid,
+    ) -> Result<Option<IncomingShare>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            IncomingShare,
+            r#"SELECT DISTINCT i.id, i.recipient_id, i.sender_username, i.sender_instance,
+                      i.name, i.message, i.outgoing_share_id,
+                      i.local_mapping_service_id,
+                      i.status as "status: ShareStatus",
+                      i.allow_share_back, i.allow_exif_edit, i.future,
+                      i.shared_tag_path::text as shared_tag_path,
+                      i.last_announcement_received_at, i.shareback_of,
+                      i.created_at, i.revoked_at
+               FROM incoming_shares i
+               JOIN tags t ON t.source = 'incoming_share'::tag_source AND t.source_id = i.id
+               WHERE t.picture_id = $1
+                 AND i.recipient_id = $2
+                 AND i.status = 'active'::share_status
+                 AND i.allow_exif_edit = true
+               LIMIT 1"#,
+            picture_id,
+            recipient_id,
         )
         .fetch_optional(ex)
         .await
@@ -502,6 +585,7 @@ mod tests {
             "bob",
             "other.com",
             true,
+            false,
             true,
             None,
         )
@@ -525,6 +609,7 @@ mod tests {
             "bob",
             "other.com",
             true,
+            false,
             true,
             None,
         )
@@ -555,6 +640,7 @@ mod tests {
             "bob",
             "other.com",
             true,
+            false,
             true,
             None,
         )
@@ -591,6 +677,7 @@ mod tests {
             "recipient",
             "this.com",
             true,
+            false,
             true,
             None,
         )
@@ -606,6 +693,7 @@ mod tests {
             None,
             outgoing.id,
             true,
+            false,
             true,
             Some("SharedToMe.sender_AT_other_DOT_com.Photos"),
             None,
@@ -636,6 +724,7 @@ mod tests {
             "recipient",
             "this.com",
             true,
+            false,
             true,
             None,
         )
@@ -650,6 +739,7 @@ mod tests {
             "Test share",
             None,
             outgoing.id,
+            false,
             false,
             false,
             None,
@@ -678,6 +768,7 @@ mod tests {
             "bob",
             "other.com",
             true,
+            false,
             true,
             None,
         )
@@ -697,6 +788,7 @@ mod tests {
             "other.com",
             true,
             false,
+            false,
             None,
         )
         .await
@@ -714,6 +806,7 @@ mod tests {
             "bob",
             "other.com",
             true,
+            false,
             true,
             None,
         )
@@ -739,6 +832,7 @@ mod tests {
             "carol",
             "carol.com",
             true,
+            false,
             true,
             None,
         )
@@ -756,6 +850,7 @@ mod tests {
             "carol",
             "carol.com",
             true,
+            false,
             true,
             None,
         )
@@ -774,6 +869,7 @@ mod tests {
             "carol",
             "carol.com",
             true,
+            false,
             true,
             None,
         )

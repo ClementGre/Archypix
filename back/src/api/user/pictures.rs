@@ -236,42 +236,98 @@ pub async fn restore(
     })))
 }
 
-/// Body for a received-picture local EXIF override (`set`/`clear`, same shape as an owned edit).
+/// Whether a received-picture EXIF edit is a private local override or a propose-to-owner edit
+/// (10 §4.1). Defaults to `local` (always permitted; no grant required).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceivedExifMode {
+    #[default]
+    Local,
+    Propose,
+}
+
+/// Body for a received-picture EXIF edit (`set`/`clear`, same shape as an owned edit) plus the
+/// `mode` discriminator (10 §4.1).
 #[derive(Debug, Deserialize)]
-pub struct ExifOverrideBody {
+pub struct ReceivedExifEditBody {
+    #[serde(default)]
+    pub mode: ReceivedExifMode,
     #[serde(default)]
     pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<ExifField>,
 }
 
-/// `POST /api/authenticated/pictures/{id}/exif/override` — apply a recipient-local EXIF override to
-/// a received picture (DB-only; 09 §6.2).
-pub async fn override_exif(
+/// `POST /api/authenticated/pictures/{id}/exif` — edit a **received** picture's EXIF (10 §4.1).
+///
+/// - `mode: "local"` (default) → private, DB-only sticky override (09 §6.2). Returns `200`.
+/// - `mode: "propose"` → send the delta to the owner, who auto-applies + re-announces; requires the
+///   share to grant editing (else `403`). Clears the proposed fields' local overrides. Returns `202`
+///   (the authoritative change lands asynchronously).
+///
+/// Owned pictures are rejected — use `POST /pictures/{id}/edit`.
+pub async fn edit_received_exif(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
-    Json(body): Json<ExifOverrideBody>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, "override_exif");
-    let picture = services::pictures::override_received_exif(
-        &state.db,
-        &state.pipeline_waker,
-        auth.user_id()?,
-        picture_id,
-        body.set,
-        body.clear,
-    )
-    .await?;
-    Ok(Json(serde_json::json!({
-        "id": picture.id,
-        "captured_at": picture.captured_at,
-        "gps_lat": picture.gps_lat,
-        "gps_lng": picture.gps_lng,
-        "gps_alt": picture.gps_alt,
-        "orientation": picture.orientation,
-        "exif_data": picture.exif_data,
-        "local_exif_overrides": picture.local_exif_overrides,
-        "updated_at": picture.updated_at,
-    })))
+    Json(body): Json<ReceivedExifEditBody>,
+) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), AppError> {
+    debug!(user = %auth.claims.sub, token_type = auth.token_type(), picture_id = %picture_id, mode = ?body.mode, "edit_received_exif");
+    let user_id = auth.user_id()?;
+    match body.mode {
+        ReceivedExifMode::Local => {
+            let picture = services::pictures::override_received_exif(
+                &state.db,
+                &state.pipeline_waker,
+                user_id,
+                picture_id,
+                body.set,
+                body.clear,
+            )
+            .await?;
+            Ok((
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "id": picture.id,
+                    "captured_at": picture.captured_at,
+                    "gps_lat": picture.gps_lat,
+                    "gps_lng": picture.gps_lng,
+                    "gps_alt": picture.gps_alt,
+                    "orientation": picture.orientation,
+                    "exif_data": picture.exif_data,
+                    "local_exif_overrides": picture.local_exif_overrides,
+                    "updated_at": picture.updated_at,
+                })),
+            ))
+        }
+        ReceivedExifMode::Propose => {
+            let picture = services::pictures::propose_received_exif(
+                &state.db,
+                state.cache.as_ref(),
+                &state.config,
+                &state.federation,
+                &state.pipeline_waker,
+                user_id,
+                &auth.claims.sub,
+                picture_id,
+                body.set,
+                body.clear,
+            )
+            .await?;
+            Ok((
+                axum::http::StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "id": picture.id,
+                    "captured_at": picture.captured_at,
+                    "gps_lat": picture.gps_lat,
+                    "gps_lng": picture.gps_lng,
+                    "gps_alt": picture.gps_alt,
+                    "orientation": picture.orientation,
+                    "exif_data": picture.exif_data,
+                    "local_exif_overrides": picture.local_exif_overrides,
+                    "updated_at": picture.updated_at,
+                })),
+            ))
+        }
+    }
 }
