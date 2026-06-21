@@ -1,13 +1,13 @@
 services:
   resolver:
-    image: gh.io/ClementGre/Archypix/archypix-resolver:latest
+    image: ghcr.io/clementgre/archypix-resolver:${TAG}
     container_name: archypix-resolver
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.resolver.rule=Host(`archypix.com`) && PathPrefix(`/.well-known`)"
-      - "traefik.http.routers.resolver.priority=100"
-      - "traefik.http.services.resolver.loadbalancer.server.port=80"
+      traefik.enable: true
+      traefik.http.routers.resolver.rule: Host(`archypix.com`) && PathPrefix(`/.well-known`)
+      traefik.http.routers.resolver.priority: 100
+      traefik.http.services.resolver.loadbalancer.server.port: 80
     environment:
       RUST_LOG: ${RUST_LOG}
       CORS_ORIGINS: "https://archypix.com"
@@ -23,7 +23,7 @@ services:
       - postgres
 
   backend1:
-    image: gh.io/ClementGre/Archypix/archypix-back:latest
+    image: ghcr.io/clementgre/archypix-back:${TAG}
     container_name: archypix-back1
     restart: unless-stopped
     labels:
@@ -69,7 +69,7 @@ services:
       - redis
 
   backend2:
-    image: gh.io/ClementGre/Archypix/archypix-back:latest
+    image: ghcr.io/clementgre/archypix-back:${TAG}
     container_name: archypix-back2
     restart: unless-stopped
     labels:
@@ -115,7 +115,7 @@ services:
       - redis
 
   worker:
-    image: gh.io/ClementGre/Archypix/archypix-worker:latest
+    image: ghcr.io/clementgre/archypix-worker:${TAG}
     container_name: archypix-worker
     restart: unless-stopped
     environment:
@@ -132,7 +132,7 @@ services:
       - archypix
 
   front:
-    image: gh.io/ClementGre/Archypix/archypix-front:latest
+    image: ghcr.io/clementgre/archypix-front:${TAG}
     container_name: archypix-front
     restart: unless-stopped
     labels:

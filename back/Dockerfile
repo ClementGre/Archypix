@@ -1,6 +1,6 @@
 # ---- production builder ----
 # Build context must be the repo root (workspace: back/ + common/).
-FROM rust:1.96-slim AS builder
+FROM rust:1.96-slim-bookworm AS builder
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -39,7 +39,7 @@ CMD ["archypix-back"]
 # ---- dev (source mounted at runtime, cargo run on start) ----
 # Build context: repo root. Mount back/src, common/src, and Cargo files as volumes.
 # Named volume on /workspace/target persists compiled deps across restarts.
-FROM rust:1.96-slim AS dev
+FROM rust:1.96-slim-bookworm AS dev
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 EXPOSE 80
