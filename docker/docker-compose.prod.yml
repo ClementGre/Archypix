@@ -1,0 +1,157 @@
+services:
+  resolver:
+    image: gh.io/ClementGre/Archypix/archypix-resolver:latest
+    container_name: archypix-resolver
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.resolver.rule=Host(`archypix.com`) && PathPrefix(`/.well-known`)"
+      - "traefik.http.routers.resolver.priority=100"
+      - "traefik.http.services.resolver.loadbalancer.server.port=80"
+    environment:
+      RUST_LOG: ${RUST_LOG}
+      CORS_ORIGINS: "https://archypix.com"
+      DB_HOST: ${DB_HOST}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: archypix_resolver
+      GLOBAL_DOMAIN: archypix.com
+      RESOLVER_JWT_SECRET: ${RESOLVER_JWT_SECRET}
+    networks:
+      - archypix
+
+  backend1:
+    image: gh.io/ClementGre/Archypix/archypix-back:latest
+    container_name: archypix-back1
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend1.rule=Host(`back1.archypix.com`)"
+      - "traefik.http.services.backend1.loadbalancer.server.port=80"
+    environment:
+      RUST_LOG: ${RUST_LOG}
+      TRACE_PROPAGATION_PEERS: archypix.com
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      BACK_DOMAIN: back1.archypix.com
+      BACK_INTERNAL_URL: http://backend1
+      GLOBAL_DOMAIN: archypix.com
+      CORS_ORIGINS: "https://archypix.com"
+      USE_RESOLVER: "true"
+      RESOLVER_INTERNAL_URL: http://resolver
+      RESOLVER_JWT_SECRET: ${RESOLVER_JWT_SECRET}
+      WORKER_JWT_SECRET: ${WORKER_JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET_1}
+      DB_HOST: ${DB_HOST}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: archypix_back1
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "1"
+      S3_BUCKET_STAGING: b1-archypix-staging
+      S3_BUCKET_PICTURES: b1-archypix-pictures
+      S3_BUCKET_VERSIONS: b1-archypix-versions
+      S3_BUCKET_SMALL: b1-archypix-small
+      S3_BUCKET_MEDIUM: b1-archypix-medium
+      S3_BUCKET_LARGE: b1-archypix-large
+    depends_on:
+      - resolver
+      - minio
+    networks:
+      - archypix
+
+  backend2:
+    image: gh.io/ClementGre/Archypix/archypix-back:latest
+    container_name: archypix-back2
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend2.rule=Host(`back2.archypix.com`)"
+      - "traefik.http.services.backend2.loadbalancer.server.port=80"
+    environment:
+      RUST_LOG: ${RUST_LOG}
+      TRACE_PROPAGATION_PEERS: archypix.com
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      BACK_DOMAIN: back2.archypix.com
+      BACK_INTERNAL_URL: http://backend2
+      GLOBAL_DOMAIN: archypix.com
+      CORS_ORIGINS: "https://archypix.com"
+      USE_RESOLVER: "true"
+      RESOLVER_INTERNAL_URL: http://resolver
+      RESOLVER_JWT_SECRET: ${RESOLVER_JWT_SECRET}
+      WORKER_JWT_SECRET: ${WORKER_JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET_2}
+      DB_HOST: ${DB_HOST}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: archypix_back2
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "2"
+      S3_BUCKET_STAGING: b2-archypix-staging
+      S3_BUCKET_PICTURES: b2-archypix-pictures
+      S3_BUCKET_VERSIONS: b2-archypix-versions
+      S3_BUCKET_SMALL: b2-archypix-small
+      S3_BUCKET_MEDIUM: b2-archypix-medium
+      S3_BUCKET_LARGE: b2-archypix-large
+    depends_on:
+      - resolver
+      - minio
+    networks:
+      - archypix
+
+  worker:
+    image: gh.io/ClementGre/Archypix/archypix-worker:latest
+    container_name: archypix-worker
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG}
+      WORKER_ID: worker
+      BACK_URL: http://backend1,http://backend2
+      BACK_DOMAIN: back1.archypix.com,back2.archypix.com
+      GLOBAL_DOMAIN: archypix.com
+      WORKER_JWT_SECRET: ${WORKER_JWT_SECRET}
+    depends_on:
+      - backend1
+      - backend2
+    networks:
+      - archypix
+
+  front:
+    image: gh.io/ClementGre/Archypix/archypix-front:latest
+    container_name: archypix-front
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.front.rule=Host(`archypix.com`)"
+      - "traefik.http.services.front.loadbalancer.server.port=80"
+    networks:
+      - archypix
+
+  minio:
+    image: minio/minio:latest
+    container_name: archypix-minio
+    command: server /data --address :9000 --console-address :9001
+    ports:
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: archypix
+      MINIO_ROOT_PASSWORD: archypix
+    volumes:
+      - /mnt/large/archypix-minio:/data
+    networks:
+      - archypix
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 10s
+      timeout: 2s
+      retries: 2
+
+networks:
+  archypix:
+    driver: bridge
+  postgres:
+    external: true
+  redis:
+    external: true
+
