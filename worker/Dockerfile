@@ -34,7 +34,7 @@ COPY worker/src ./worker/src
 RUN touch worker/src/main.rs && cargo build --release -p archypix-worker
 
 # ── Production runtime ─────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim AS prod
 RUN apt-get update && apt-get install -y \
     libmagickwand-7.q16-3 \
     libgexiv2-2 \
