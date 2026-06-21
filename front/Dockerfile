@@ -5,11 +5,11 @@ FROM node:24-alpine AS build
 WORKDIR /app
 
 # Copy package.json and pnpm-lock.yaml and install dependencies
-COPY package.json pnpm-lock.yaml ./
+COPY ./front/package.json ./front/pnpm-lock.yaml ./
 RUN npm install -g pnpm && pnpm install
 
 # Copy the rest of the application source code
-COPY . .
+COPY ./front .
 
 # Build the application
 RUN pnpm build
