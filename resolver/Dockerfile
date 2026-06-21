@@ -9,44 +9,38 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
+# Workspace skeleton — pre-compile dependencies before copying real source.
 COPY Cargo.toml Cargo.lock ./
+COPY common/Cargo.toml ./common/Cargo.toml
+COPY back/Cargo.toml ./back/Cargo.toml
+COPY resolver/Cargo.toml ./resolver/Cargo.toml
+COPY worker/Cargo.toml ./worker/Cargo.toml
 
-# Create a dummy src to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
-    rm -rf src
+# Stub out every workspace member so cargo can resolve the dependency graph.
+RUN for pkg in common back resolver worker; do \
+      mkdir -p $pkg/src && echo 'fn main(){}' > $pkg/src/main.rs; \
+    done && \
+    touch common/src/lib.rs back/src/lib.rs resolver/src/lib.rs && \
+    cargo build --release -p archypix-resolver && \
+    rm -rf common/src back/src resolver/src worker/src
 
-# Copy actual source code
-COPY src ./src
-
-# Build the real application
-RUN touch src/main.rs && cargo build --release
+# Copy real source and rebuild only worker + common (back/resolver are not linked).
+COPY resolver/src ./resolver/src
+RUN touch resolver/src/main.rs && cargo build --release -p archypix-resolver
 
 # Runtime stage
 FROM debian:bookworm-slim AS prod
-
-WORKDIR /app
-
-# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary from builder
 COPY --from=builder /workspace/target/release/archypix-resolver /usr/local/bin/archypix-resolver
 
-# Create non-root user
-RUN useradd -m -u 1000 archypix && \
-    chown -R archypix:archypix /app
-
+RUN useradd -m -u 1000 archypix
 USER archypix
-
-# Expose port
 EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD addr="${LISTEN_ADDR:-0.0.0.0:80}"; curl -f http://localhost:${addr##*:}/health || exit 1
 CMD ["archypix-resolver"]
 
