@@ -1,7 +1,7 @@
 # Use a multi-stage build to create a small, optimized production image.
 
 # 1. Build stage: Install dependencies and build the frontend application.
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 
 # Copy package.json and pnpm-lock.yaml and install dependencies
