@@ -21,6 +21,9 @@ WORKDIR /usr/share/nginx/html
 # Copy the built application from the build stage
 COPY --from=build /app/dist .
 
+# SPA fallback: redirect unknown paths (e.g. /settings) to index.html
+COPY ./front/nginx.conf /etc/nginx/conf.d/default.conf
+
 # Entrypoint regenerates env.js from container env vars at startup, so
 # VITE_GLOBAL_DOMAIN / VITE_USE_HTTPS can be overridden without rebuilding.
 COPY ./front/docker-entrypoint.sh /docker-entrypoint.sh
