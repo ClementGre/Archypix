@@ -5,10 +5,15 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
 import {TagPicker} from '@/components/tags/TagPicker'
+import {DateRangePicker} from '@/components/common/DateRangePicker'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
 import type {SegmentationSegment} from '@/lib/types'
+
+// Radix Select forbids an empty-string item value, so the "no parent" choice uses a sentinel
+// that maps back to '' (top-level segment).
+const NONE_PARENT = '__none__'
 
 interface SegmentEditorProps {
     serviceId: string
@@ -27,10 +32,9 @@ export function SegmentEditor({serviceId, segments}: SegmentEditorProps) {
 
     const validate = () => {
         if (!dateStart || !dateEnd) return false
-        const start = new Date(dateStart)
-        const end = new Date(dateEnd)
-        if (end <= start) {
-            setDateError('End date must be after start date.')
+        // Naive strings of the same format compare correctly lexicographically.
+        if (dateEnd <= dateStart) {
+            setDateError('End must be after start.')
             return false
         }
         setDateError('')
@@ -43,8 +47,9 @@ export function SegmentEditor({serviceId, segments}: SegmentEditorProps) {
             {
                 serviceId,
                 name: name.trim(),
-                date_start: new Date(dateStart).toISOString(),
-                date_end: new Date(dateEnd).toISOString(),
+                // Naive datetimes (no timezone) — the backend deserializes a NaiveDateTime.
+                date_start: dateStart,
+                date_end: dateEnd,
                 assign_tag: assignTag,
                 parent_segment_id: parentId || undefined,
             },
@@ -112,12 +117,15 @@ export function SegmentEditor({serviceId, segments}: SegmentEditorProps) {
                     </div>
                     <div>
                         <label className="mb-1 block text-xs text-muted-foreground">Parent segment (optional)</label>
-                        <Select value={parentId} onValueChange={setParentId}>
+                        <Select
+                            value={parentId || NONE_PARENT}
+                            onValueChange={(v) => setParentId(v === NONE_PARENT ? '' : v)}
+                        >
                             <SelectTrigger className="h-8 text-sm">
                                 <SelectValue placeholder="None (top-level)"/>
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="">None (top-level)</SelectItem>
+                                <SelectItem value={NONE_PARENT}>None (top-level)</SelectItem>
                                 {segments
                                     .filter((s) => !s.parent_segment_id)
                                     .map((s) => (
@@ -129,31 +137,19 @@ export function SegmentEditor({serviceId, segments}: SegmentEditorProps) {
                         </Select>
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                    <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Date start</label>
-                        <Input
-                            type="datetime-local"
-                            value={dateStart}
-                            onChange={(e) => {
-                                setDateStart(e.target.value)
-                                setDateError('')
-                            }}
-                            className="h-8 text-sm"
-                        />
-                    </div>
-                    <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Date end</label>
-                        <Input
-                            type="datetime-local"
-                            value={dateEnd}
-                            onChange={(e) => {
-                                setDateEnd(e.target.value)
-                                setDateError('')
-                            }}
-                            className="h-8 text-sm"
-                        />
-                    </div>
+                <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Date range</label>
+                    <DateRangePicker
+                        mode="datetime"
+                        from={dateStart}
+                        to={dateEnd}
+                        onChange={(f, t) => {
+                            setDateStart(f)
+                            setDateEnd(t)
+                            setDateError('')
+                        }}
+                        placeholder="Pick start and end days"
+                    />
                 </div>
                 {dateError && <p className="text-xs text-destructive">{dateError}</p>}
                 <div className="flex flex-wrap items-end gap-2">

@@ -66,6 +66,7 @@ export function DateTimePickerPopover({value, onChange, children}: DateTimePicke
             <PopoverContent className="w-auto space-y-3 p-3" side="left" align="start">
                 <Calendar
                     mode="single"
+                    weekStartsOn={1}
                     selected={selectedDate}
                     onSelect={handleSelectDate}
                     captionLayout="dropdown"

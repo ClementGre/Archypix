@@ -266,6 +266,8 @@ export type ServiceType = 'shared_tag_mapping' | 'rule' | 'segmentation'
 
 export interface ServiceBase {
     id: string
+    /** User-facing label (may be empty; UI falls back to a type label). */
+    name: string
     service_type: ServiceType
     requires: string[]
     excludes: string[]
@@ -284,9 +286,37 @@ export interface SharedTagMappingRule {
 
 export interface RuleTaggingRule {
     id: string
-    predicate: string
+    /** Structured predicate tree (feature 13). See `lib/predicate.ts`. */
+    predicate: RulePredicate
     assign_tag: string
 }
+
+/** GPS bounding box for a `gps_bbox` predicate node. */
+export interface GpsBbox {
+    lat_min: number
+    lat_max: number
+    lon_min: number
+    lon_max: number
+}
+
+/** GPS centre + radius (km) for a `gps_radius` predicate node. */
+export interface GpsRadius {
+    lat: number
+    lng: number
+    km: number
+}
+
+/** A field-condition leaf: `{ field, <condition_key>: value, ... }`. */
+export type FieldPredicate = { field: string } & Record<string, unknown>
+
+/** A structured rule predicate tree (feature 13). */
+export type RulePredicate =
+    | { and: RulePredicate[] }
+    | { or: RulePredicate[] }
+    | { not: RulePredicate }
+    | { gps_bbox: GpsBbox }
+    | { gps_radius: GpsRadius }
+    | FieldPredicate
 
 export interface SegmentationSegment {
     id: string
@@ -319,6 +349,7 @@ export type ServiceDetailResponse =
 
 export interface ServiceResponse {
     id: string
+    name: string
     service_type: ServiceType
     requires: string[]
     excludes: string[]

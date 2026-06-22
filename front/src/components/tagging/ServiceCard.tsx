@@ -10,6 +10,7 @@ import {Switch} from '@/components/ui/switch'
 import {Separator} from '@/components/ui/separator'
 import {RequiresExcludesEditor} from './RequiresExcludesEditor'
 import {DeleteServiceDialog} from './DeleteServiceDialog'
+import {ServiceNameEditor} from './ServiceNameEditor'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {apiErrorMessage} from '@/api/client'
 import type {RuleServiceDetail, SegmentationServiceDetail} from '@/lib/types'
@@ -95,6 +96,16 @@ export function ServiceCard({service}: ServiceCardProps) {
                         >
                             {TYPE_LABEL[service.service_type]}
                         </Badge>
+
+                        {/* Name (inline editable) */}
+                        <ServiceNameEditor
+                            name={service.name}
+                            placeholder={`Unnamed ${TYPE_LABEL[service.service_type].toLowerCase()}`}
+                            onRename={(name) =>
+                                update.mutate({id: service.id, body: {name}}, {onError: (err) => toast.error(apiErrorMessage(err))})
+                            }
+                            isPending={update.isPending}
+                        />
 
                         {/* Item count */}
                         <span className="text-xs text-muted-foreground">{itemCount(service)}</span>

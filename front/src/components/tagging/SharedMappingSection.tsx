@@ -5,6 +5,7 @@ import {Card, CardContent} from '@/components/ui/card'
 import {Separator} from '@/components/ui/separator'
 import {MappingEditor} from './MappingEditor'
 import {DeleteServiceDialog} from './DeleteServiceDialog'
+import {ServiceNameEditor} from './ServiceNameEditor'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {apiErrorMessage} from '@/api/client'
 import type {SharedTagMappingServiceDetail} from '@/lib/types'
@@ -14,7 +15,7 @@ interface SharedMappingSectionProps {
 }
 
 export function SharedMappingSection({services}: SharedMappingSectionProps) {
-    const {remove} = useTaggingMutations()
+    const {remove, update} = useTaggingMutations()
 
     if (services.length === 0) return null
 
@@ -56,6 +57,17 @@ export function SharedMappingSection({services}: SharedMappingSectionProps) {
                                                 >
                                                     Shared-tag mapping
                                                 </Badge>
+                                                <ServiceNameEditor
+                                                    name={service.name}
+                                                    placeholder="Unnamed mapping"
+                                                    onRename={(name) =>
+                                                        update.mutate(
+                                                            {id: service.id, body: {name}},
+                                                            {onError: (err) => toast.error(apiErrorMessage(err))},
+                                                        )
+                                                    }
+                                                    isPending={update.isPending}
+                                                />
                                                 <span className="text-xs text-muted-foreground">
                                                     {service.mappings.length} mapping
                                                     {service.mappings.length !== 1 ? 's' : ''}

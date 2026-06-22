@@ -7,6 +7,7 @@ import {Switch} from '@/components/ui/switch'
 import {Separator} from '@/components/ui/separator'
 import {Skeleton} from '@/components/ui/skeleton'
 import {RequiresExcludesEditor} from '@/components/tagging/RequiresExcludesEditor'
+import {ServiceNameEditor} from '@/components/tagging/ServiceNameEditor'
 import {RuleEditor} from '@/components/tagging/RuleEditor'
 import {SegmentEditor} from '@/components/tagging/SegmentEditor'
 import {MappingEditor} from '@/components/tagging/MappingEditor'
@@ -84,7 +85,15 @@ export default function ServiceEditorPage() {
                             >
                                 {TYPE_LABEL[service.service_type]}
                             </Badge>
-                            <h1 className="text-xl font-semibold">Service editor</h1>
+                            <ServiceNameEditor
+                                name={service.name}
+                                placeholder={`Unnamed ${TYPE_LABEL[service.service_type].toLowerCase()}`}
+                                onRename={(name) =>
+                                    update.mutate({id: service.id, body: {name}}, {onError: (err) => toast.error(apiErrorMessage(err))})
+                                }
+                                isPending={update.isPending}
+                                className="text-lg"
+                            />
                             <div className="flex-1"/>
                             <div className="flex items-center gap-2">
                                 <span className="text-sm text-muted-foreground">

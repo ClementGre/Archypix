@@ -10,10 +10,13 @@ import {
     deleteService,
     getService,
     listServices,
+    reorderRules,
     reorderServices,
+    updateRule,
     updateService,
 } from '@/api/tagging'
 import {queryKeys} from '@/lib/constants'
+import type {RulePredicate} from '@/lib/types'
 
 export function useTaggingServices() {
     return useQuery({queryKey: queryKeys.taggingServices(), queryFn: listServices})
@@ -43,8 +46,10 @@ export function useTaggingMutations() {
     return {
         create: useMutation({mutationFn: createService, onSuccess: invalidate}),
         update: useMutation({
-            mutationFn: (vars: { id: string; body: { enabled?: boolean; requires?: string[]; excludes?: string[] } }) =>
-                updateService(vars.id, vars.body),
+            mutationFn: (vars: {
+                id: string
+                body: { name?: string; enabled?: boolean; requires?: string[]; excludes?: string[] }
+            }) => updateService(vars.id, vars.body),
             onSuccess: invalidate,
         }),
         remove: useMutation({
@@ -62,8 +67,18 @@ export function useTaggingMutations() {
             onSuccess: invalidate,
         }),
         addRule: useMutation({
-            mutationFn: (vars: { serviceId: string; predicate: string; assign_tag: string }) =>
+            mutationFn: (vars: { serviceId: string; predicate: RulePredicate; assign_tag: string }) =>
                 addRule(vars.serviceId, {predicate: vars.predicate, assign_tag: vars.assign_tag}),
+            onSuccess: invalidate,
+        }),
+        editRule: useMutation({
+            mutationFn: (vars: { serviceId: string; ruleId: string; predicate: RulePredicate; assign_tag: string }) =>
+                updateRule(vars.serviceId, vars.ruleId, {predicate: vars.predicate, assign_tag: vars.assign_tag}),
+            onSuccess: invalidate,
+        }),
+        reorderRules: useMutation({
+            mutationFn: (vars: { serviceId: string; orderedIds: string[] }) =>
+                reorderRules(vars.serviceId, vars.orderedIds),
             onSuccess: invalidate,
         }),
         deleteRule: useMutation({

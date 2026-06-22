@@ -6,15 +6,36 @@ import {Badge} from '@/components/ui/badge'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
+import {type ShareInfoEntry, ShareInfoPopover} from '@/components/shares/ShareInfoPopover'
 import {useIncomingShares} from '@/hooks/useShares'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
-import type {SharedTagMappingRule} from '@/lib/types'
+import type {IncomingShareResponse, SharedTagMappingRule} from '@/lib/types'
 
 interface MappingEditorProps {
     serviceId: string
     mappings: SharedTagMappingRule[]
+}
+
+const shareHandle = (s: IncomingShareResponse) => `@${s.sender_username}:${s.sender_instance}`
+/** Dropdown / row label: the share name plus the owner handle (handle alone if unnamed). */
+const shareLabel = (s: IncomingShareResponse) => (s.name ? `${s.name} — ${shareHandle(s)}` : shareHandle(s))
+
+/** Build the rich `ShareInfoPopover` entry (the same (i) detail card the incoming-shares tab uses). */
+function toEntry(s: IncomingShareResponse): ShareInfoEntry {
+    return {
+        name: s.name,
+        message: s.message,
+        status: s.status,
+        allowShareBack: s.allow_share_back,
+        allowExifEdit: s.allow_exif_edit,
+        future: s.future,
+        sharedTag: s.shared_tag_path,
+        createdAt: s.created_at,
+        lastReceivedAt: s.last_announcement_received_at,
+        closedAt: s.revoked_at,
+    }
 }
 
 export function MappingEditor({serviceId, mappings}: MappingEditorProps) {
@@ -45,6 +66,7 @@ export function MappingEditor({serviceId, mappings}: MappingEditorProps) {
     // A share may carry a single mapping — only offer shares not already mapped here.
     const mappedShareIds = new Set(mappings.map((m) => m.incoming_share_id))
     const selectableShares = (shares ?? []).filter((s) => s.status === 'active' && !mappedShareIds.has(s.id))
+    const selectedShare = (shares ?? []).find((s) => s.id === selectedShareId)
 
     return (
         <div className="space-y-3">
@@ -54,9 +76,19 @@ export function MappingEditor({serviceId, mappings}: MappingEditorProps) {
                     const share = (shares ?? []).find((s) => s.id === m.incoming_share_id)
                     return (
                         <div key={m.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-              <span className="flex-1 font-mono text-xs text-muted-foreground">
-                {share ? `@${share.sender_username}:${share.sender_instance}` : m.incoming_share_id}
-              </span>
+                            {share ? (
+                                <span className="flex min-w-0 flex-1 flex-col">
+                                    <span className="truncate">{share.name || shareHandle(share)}</span>
+                                    {share.name && (
+                                        <span className="truncate font-mono text-[11px] text-muted-foreground">
+                                            {shareHandle(share)}
+                                        </span>
+                                    )}
+                                </span>
+                            ) : (
+                                <span className="flex-1 font-mono text-xs text-muted-foreground">{m.incoming_share_id}</span>
+                            )}
+                            {share && <ShareInfoPopover entries={[toEntry(share)]}/>}
                             <span className="text-muted-foreground">→</span>
                             <span className="flex-1">{TagPath.toDisplay(m.assign_tag)}</span>
                             {m.is_broken && (
@@ -90,7 +122,10 @@ export function MappingEditor({serviceId, mappings}: MappingEditorProps) {
             {/* Add mapping form */}
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-dashed p-3">
                 <div className="min-w-40 flex-1">
-                    <label className="mb-1 block text-xs text-muted-foreground">Incoming share</label>
+                    <label className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                        Incoming share
+                        {selectedShare && <ShareInfoPopover entries={[toEntry(selectedShare)]}/>}
+                    </label>
                     <Select value={selectedShareId} onValueChange={setSelectedShareId}>
                         <SelectTrigger className="h-8 text-sm">
                             <SelectValue placeholder="Select share…"/>
@@ -98,7 +133,7 @@ export function MappingEditor({serviceId, mappings}: MappingEditorProps) {
                         <SelectContent>
                             {selectableShares.map((s) => (
                                 <SelectItem key={s.id} value={s.id}>
-                                    @{s.sender_username}:{s.sender_instance}
+                                    {shareLabel(s)}
                                 </SelectItem>
                             ))}
                             {selectableShares.length === 0 && (

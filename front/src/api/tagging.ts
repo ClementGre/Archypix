@@ -1,5 +1,13 @@
 import {apiClient} from './client'
-import type {RuleTaggingRule, SegmentationSegment, ServiceDetailResponse, ServiceResponse, ServiceType, SharedTagMappingRule,} from '@/lib/types'
+import type {
+    RulePredicate,
+    RuleTaggingRule,
+    SegmentationSegment,
+    ServiceDetailResponse,
+    ServiceResponse,
+    ServiceType,
+    SharedTagMappingRule,
+} from '@/lib/types'
 
 const BASE = '/api/authenticated/tagging-services'
 
@@ -15,6 +23,7 @@ export async function getService(id: string): Promise<ServiceDetailResponse> {
 
 export async function createService(body: {
     service_type: ServiceType
+    name?: string
     requires?: string[]
     excludes?: string[]
 }): Promise<ServiceResponse> {
@@ -24,7 +33,7 @@ export async function createService(body: {
 
 export async function updateService(
     id: string,
-    body: { enabled?: boolean; requires?: string[]; excludes?: string[] },
+    body: { name?: string; enabled?: boolean; requires?: string[]; excludes?: string[] },
 ): Promise<ServiceResponse> {
     const {data} = await apiClient.patch<ServiceResponse>(`${BASE}/${id}`, body)
     return data
@@ -56,10 +65,23 @@ export async function deleteMapping(serviceId: string, ruleId: string): Promise<
 
 export async function addRule(
     serviceId: string,
-    body: { predicate: string; assign_tag: string },
+    body: { predicate: RulePredicate; assign_tag: string },
 ): Promise<RuleTaggingRule> {
     const {data} = await apiClient.post<RuleTaggingRule>(`${BASE}/${serviceId}/rules`, body)
     return data
+}
+
+export async function updateRule(
+    serviceId: string,
+    ruleId: string,
+    body: { predicate: RulePredicate; assign_tag: string },
+): Promise<RuleTaggingRule> {
+    const {data} = await apiClient.patch<RuleTaggingRule>(`${BASE}/${serviceId}/rules/${ruleId}`, body)
+    return data
+}
+
+export async function reorderRules(serviceId: string, orderedIds: string[]): Promise<void> {
+    await apiClient.post(`${BASE}/${serviceId}/rules/reorder`, {ordered_ids: orderedIds})
 }
 
 export async function deleteRule(serviceId: string, ruleId: string): Promise<void> {
