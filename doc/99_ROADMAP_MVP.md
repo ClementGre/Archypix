@@ -87,13 +87,13 @@
   (new distinct identity); `content_hash`-based dedup of identical copies (one live survivor,
   reversible `content_dedupe` hiding, rescue-on-purge), and the deleted-content `boomerang` guard.
   Schema already in 001 (via the trash migration). See `doc/features/11_physical_copy_and_dedup.md`.
-- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
-- [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
-  features).
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions. Frontend viewing and editing versions.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — support for Directory-level operations (DELETE/MOVE/COPY on collections), Conditional & range requests (`If-Match`/
+- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
+- [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
+  features).
   `If-None-Match`, `Overwrite`, `Range`), and Real LOCK/UNLOCK enforcement
 - [ ] **Rate limiting & validators** — More rate limiting
