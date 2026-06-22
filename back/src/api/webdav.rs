@@ -7,7 +7,7 @@
 
 use crate::infra::error::AppError;
 use crate::services::vfs::{ReadTarget, Vfs, VfsEntry};
-use crate::services::webdav::{self, WebdavSession};
+use crate::services::webdav;
 use crate::state::AppState;
 use axum::Router;
 use axum::body::Body;
@@ -18,7 +18,7 @@ use axum::routing::any;
 use base64::Engine as _;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
-use tracing::debug;
+use tracing::{trace, warn};
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
@@ -37,6 +37,10 @@ async fn handler(State(state): State<AppState>, req: Request<Body>) -> Response 
     }
 }
 
+// `method` and `path` are already carried by the ambient `http_request` span (main.rs's
+// TraceLayer), so this span only adds what isn't known until Basic-auth resolves: the webdav
+// user and target hierarchy.
+#[tracing::instrument(skip_all, fields(token_type = "webdav", user, hierarchy))]
 async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppError> {
     let method = req.method().clone();
     let uri_path = req.uri().path().to_string();
@@ -46,12 +50,14 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
 
     // OPTIONS is allowed pre-auth (clients probe before sending credentials).
     if method == Method::OPTIONS {
-        debug!(user = "-", token_type = "-", %slug, "webdav OPTIONS");
         return Ok(options_response());
     }
 
     let (username, token) = basic_auth(&headers)?;
     let session = webdav::authenticate(&state, &username, &token, &slug).await?;
+    let span = tracing::Span::current();
+    span.record("user", username.as_str());
+    span.record("hierarchy", tracing::field::display(session.hierarchy_id));
 
     let vfs = Vfs::load(
         &state,
@@ -65,67 +71,41 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
     // They are stored as transient Redis sidecars so they round-trip in listings, but never get
     // ingested as pictures (06_webdav.md §11).
     if is_ignored(&segments) {
-        tracing::trace!(user = %username, path = %segments.join("/"), method = %method, "webdav OS sidecar file");
         return ignored(&state, &vfs, &method, &slug, &segments, &headers, req).await;
     }
 
-    // Common fields for the per-endpoint debug records (tracing policy: one debug per handler).
-    let hierarchy = session.hierarchy_id;
-    let path = segments.join("/");
-
     match method.as_str() {
-        "PROPFIND" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav PROPFIND");
-            propfind(&vfs, &slug, &segments, depth_header(&headers)).await
-        }
-        "GET" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav GET");
-            read(&vfs, &segments, true).await
-        }
-        "HEAD" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav HEAD");
-            read(&vfs, &segments, false).await
-        }
-        "PUT" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav PUT");
-            put(&state, &session, &vfs, &segments, &headers, req).await
-        }
+        "PROPFIND" => propfind(&vfs, &slug, &segments, depth_header(&headers)).await,
+        "GET" => read(&vfs, &segments, true).await,
+        "HEAD" => read(&vfs, &segments, false).await,
+        "PUT" => put(&state, &vfs, &segments, &headers, req).await,
         "DELETE" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav DELETE");
             vfs.delete(&segments).await?;
             Ok(empty(StatusCode::NO_CONTENT))
         }
         "MKCOL" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav MKCOL");
             vfs.mkcol(&segments).await?;
             Ok(empty(StatusCode::CREATED))
         }
         "MOVE" => {
             let dest = destination_segments(&headers)?;
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, dest = %dest.join("/"), "webdav MOVE");
+            trace!(dest = %dest.join("/"), "webdav: destination");
             vfs.move_(&segments, &dest).await?;
             Ok(empty(StatusCode::NO_CONTENT))
         }
         "COPY" => {
             let dest = destination_segments(&headers)?;
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, dest = %dest.join("/"), "webdav COPY");
+            trace!(dest = %dest.join("/"), "webdav: destination");
             vfs.copy(&segments, &dest).await?;
             Ok(empty(StatusCode::NO_CONTENT))
         }
-        "PROPPATCH" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav PROPPATCH");
-            Ok(proppatch_response(&slug, &segments))
-        }
-        "LOCK" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav LOCK");
-            Ok(lock_response())
-        }
-        "UNLOCK" => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, "webdav UNLOCK");
-            Ok(empty(StatusCode::NO_CONTENT))
-        }
+        "PROPPATCH" => Ok(proppatch_response(&slug, &segments)),
+        "LOCK" => Ok(lock_response()),
+        "UNLOCK" => Ok(empty(StatusCode::NO_CONTENT)),
         other => {
-            debug!(user = %username, token_type = "webdav", %hierarchy, %path, method = %other, "webdav unsupported method");
+            // Not centrally logged: this returns a plain Response, not an AppError, so the
+            // generic 4xx warn in `AppError::into_response` never sees it.
+            warn!("webdav: unsupported method {other}");
             Ok(empty(StatusCode::METHOD_NOT_ALLOWED))
         }
     }
@@ -166,7 +146,6 @@ async fn read(vfs: &Vfs<'_>, segments: &[String], with_body: bool) -> Result<Res
 
 async fn put(
     state: &AppState,
-    _session: &WebdavSession,
     vfs: &Vfs<'_>,
     segments: &[String],
     headers: &HeaderMap,
@@ -203,6 +182,7 @@ async fn put(
 /// Stream a request body to a temporary file, enforcing `max_bytes`, and return the file handle
 /// (keep it alive to retain the file), its SHA-256 hex digest, and its byte length. Hashing reads
 /// the finished file in `spawn_blocking` so the async runtime is never blocked (06_webdav.md §7).
+#[tracing::instrument(skip_all, fields(bytes))]
 async fn stream_to_temp(
     body: Body,
     max_bytes: u64,
@@ -240,6 +220,7 @@ async fn stream_to_temp(
         .map_err(|e| AppError::InternalServerError(format!("hash task: {e}")))?
         .ok_or_else(|| AppError::InternalServerError("failed to hash uploaded file".into()))?;
 
+    tracing::Span::current().record("bytes", size);
     Ok((tmp, hash, size))
 }
 

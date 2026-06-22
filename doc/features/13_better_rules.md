@@ -29,11 +29,11 @@ level alongside field conditions:
 {"or":  [<predicate>, ...]}          // at least one child must match
 {"not": <predicate>}                 // inverts child
 
-// Spatial (multi-field — the only exceptions to the single-field model)
+// Spatial predicate (multi-field — the only exceptions to the single-field model)
 {"gps_bbox":   {"lat_min": 45.0, "lat_max": 46.0, "lon_min": 4.0, "lon_max": 5.0}}
 {"gps_radius": {"lat": 48.86, "lng": 2.35, "km": 50.0}}
 
-// Field condition (the main leaf form — see §2.2 and §2.3)
+// Field predicate (the main leaf form — see §2.2 and §2.3)
 {"field": "<field_name>", "<condition_key>": <value>, ...}
 ```
 

@@ -14,6 +14,10 @@ impl FederationClient {
     /// by per-picture tokens. A single HTTP call is made per owner backend. The owner identity
     /// is only used to resolve the backend URL — the request body carries just the tokens, which
     /// are self-resolving on the owner's side. Returns a map of `picture_token → url`.
+    #[tracing::instrument(
+        skip(self, pictures),
+        fields(owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_count = pictures.len())
+    )]
     pub async fn presign_remote_pictures(
         &self,
         owner_username: &str,
@@ -60,6 +64,11 @@ impl FederationClient {
     ///
     /// Identified by `outgoing_share_id` so the recipient can look up their `IncomingShare`
     /// without Alice needing to know Bob's internal IDs.
+    #[tracing::instrument(
+        skip(self),
+        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, %outgoing_share_id
+        )
+    )]
     pub async fn send_revocation(
         &self,
         sender_username: &str,
@@ -77,12 +86,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(recipient_username, recipient_global_domain)
             .await?;
-        debug!(
-            recipient_global_domain,
-            backend_base_url,
-            %outgoing_share_id,
-            "federation: sending share revocation"
-        );
+        debug!(backend_base_url, "federation: sending share revocation");
         let url = format!("{}/api/federation/shares/revoke", backend_base_url);
         self.http
             .post(&url)
@@ -92,7 +96,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(recipient_global_domain, error = %e, "federation: revocation delivery failed");
+                warn!(error = %e, "federation: revocation delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -107,6 +111,10 @@ impl FederationClient {
     /// itself announce its pictures to the recipient (the recipient does *not* call back, so the
     /// flow stays linear and within one transaction; see the federation consistency rules in
     /// `03_BACKEND_ARCHITECTURE.md`).
+    #[tracing::instrument(
+        skip(self, token, announcement),
+        fields(recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, tag_path = %announcement.tag_path)
+    )]
     pub async fn announce_share(
         &self,
         recipient_username: &str,
@@ -117,13 +125,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(recipient_username, recipient_global_domain)
             .await?;
-        debug!(
-            recipient = recipient_username,
-            recipient_global_domain,
-            backend_base_url,
-            tag_path = %announcement.tag_path,
-            "federation: announcing share"
-        );
+        debug!(backend_base_url, "federation: announcing share");
         let url = format!("{}/api/federation/shares/announce", backend_base_url);
         let resp = self
             .http
@@ -134,7 +136,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(recipient_global_domain, error = %e, "federation: share announcement delivery failed");
+                warn!(error = %e, "federation: share announcement delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -150,6 +152,11 @@ impl FederationClient {
     ///
     /// Called by the recipient (Bob) after accepting an incoming share. The sender (Alice) will
     /// respond by announcing all current pictures under the shared tag.
+    #[tracing::instrument(
+        skip(self),
+        fields(acceptor_username = %acceptor_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
+        )
+    )]
     pub async fn send_share_accept(
         &self,
         acceptor_username: &str,
@@ -163,12 +170,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(sender_username, sender_global_domain)
             .await?;
-        debug!(
-            sender_global_domain,
-            backend_base_url,
-            %outgoing_share_id,
-            "federation: sending share accept"
-        );
+        debug!(backend_base_url, "federation: sending share accept");
         let url = format!("{}/api/federation/shares/accept", backend_base_url);
         self.http
             .post(&url)
@@ -178,7 +180,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(sender_global_domain, error = %e, "federation: share accept delivery failed");
+                warn!(error = %e, "federation: share accept delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -190,6 +192,11 @@ impl FederationClient {
     ///
     /// Called by the recipient (Bob) after rejecting an incoming share. The sender (Alice) will
     /// tombstone her OutgoingShare so it no longer appears as pending/active on her side.
+    #[tracing::instrument(
+        skip(self),
+        fields(rejector_username = %rejector_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
+        )
+    )]
     pub async fn send_share_reject(
         &self,
         rejector_username: &str,
@@ -203,12 +210,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(sender_username, sender_global_domain)
             .await?;
-        debug!(
-            sender_global_domain,
-            backend_base_url,
-            %outgoing_share_id,
-            "federation: sending share reject"
-        );
+        debug!(backend_base_url, "federation: sending share reject");
         let url = format!("{}/api/federation/shares/reject", backend_base_url);
         self.http
             .post(&url)
@@ -218,7 +220,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(sender_global_domain, error = %e, "federation: share reject delivery failed");
+                warn!(error = %e, "federation: share reject delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -229,6 +231,11 @@ impl FederationClient {
     /// Announce a batch of pictures to the recipient's backend after share acceptance.
     ///
     /// Called by the sender (Alice) to push all pictures currently under the shared tag to Bob.
+    #[tracing::instrument(
+        skip(self, payload),
+        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.pictures.len()
+        )
+    )]
     pub async fn announce_pictures_to_backend(
         &self,
         sender_username: &str,
@@ -246,12 +253,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(recipient_username, recipient_global_domain)
             .await?;
-        debug!(
-            recipient_global_domain,
-            backend_base_url,
-            picture_count = payload.pictures.len(),
-            "federation: announcing pictures"
-        );
+        debug!(backend_base_url, "federation: announcing pictures");
         let url = format!("{}/api/federation/pictures/announce", backend_base_url);
         self.http
             .post(&url)
@@ -261,7 +263,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(recipient_global_domain, error = %e, "federation: pictures announcement delivery failed");
+                warn!(error = %e, "federation: pictures announcement delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -273,6 +275,11 @@ impl FederationClient {
     /// recipient (`requester_username`) holds the federation token toward the owner. The owner
     /// re-verifies the grant and applies the edit; a non-2xx (e.g. 403 grant revoked, 409 still
     /// processing) surfaces as an error the caller can relay to the recipient.
+    #[tracing::instrument(
+        skip(self, payload),
+        fields(requester_username = %requester_username, owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_id = %payload.picture_id
+        )
+    )]
     pub async fn send_picture_edit_request(
         &self,
         requester_username: &str,
@@ -286,12 +293,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(owner_username, owner_global_domain)
             .await?;
-        debug!(
-            owner_global_domain,
-            backend_base_url,
-            picture_id = %payload.picture_id,
-            "federation: sending picture edit request"
-        );
+        debug!(backend_base_url, "federation: sending picture edit request");
         let url = format!("{}/api/federation/pictures/edit_request", backend_base_url);
         self.http
             .post(&url)
@@ -301,7 +303,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(owner_global_domain, error = %e, "federation: picture edit request delivery failed");
+                warn!(error = %e, "federation: picture edit request delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -311,6 +313,11 @@ impl FederationClient {
 
     /// Unannounce a batch of pictures from the recipient's backend (pictures left a share's
     /// coverage while the share remains active).
+    #[tracing::instrument(
+        skip(self, payload),
+        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.picture_ids.len()
+        )
+    )]
     pub async fn unannounce_pictures_to_backend(
         &self,
         sender_username: &str,
@@ -328,12 +335,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(recipient_username, recipient_global_domain)
             .await?;
-        debug!(
-            recipient_global_domain,
-            backend_base_url,
-            picture_count = payload.picture_ids.len(),
-            "federation: unannouncing pictures"
-        );
+        debug!(backend_base_url, "federation: unannouncing pictures");
         let url = format!("{}/api/federation/pictures/unannounce", backend_base_url);
         self.http
             .post(&url)
@@ -343,7 +345,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(recipient_global_domain, error = %e, "federation: pictures unannouncement delivery failed");
+                warn!(error = %e, "federation: pictures unannouncement delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()

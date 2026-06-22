@@ -61,11 +61,11 @@
   federation verb with same-backend short-circuit; owner re-verifies the grant and applies via
   `edit_picture` write-through (re-announce to all); escalate clears the local override. Frontend
   toggle + received-picture editor pending. See `doc/features/10_recipient_exif_editing.md`.
-- [ ] **Logging robustness** — Better tracing, logs that does not mix up with multi-threading, Otel compatibility.
+- [x] **Logging robustness** — Better tracing, logs that does not mix up with multi-threading, Otel compatibility.
   - [x] Span-tracing & Otel compatibility.
-  - [ ] Webdav/VFS proper span tracing.
-  - [ ] Federation/Clients proper span tracing and linkage between instances.
-  - [ ] Doc and best practices update.
+  - [x] Webdav/VFS proper span tracing.
+  - [x] Federation/Clients proper span tracing and linkage between instances.
+  - [x] Doc and best practices update.
 - [ ] **Better Rules** — Replace text predicates with a structured JSONB predicate tree supporting
   arbitrary AND/OR/NOT composition; extend field coverage to all EXIF/file/ownership attributes
   (camera brand/model, ISO, f-number, focal length, exposure time, mime type, file size, dimensions,

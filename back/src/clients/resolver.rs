@@ -29,6 +29,7 @@ impl ResolverClient {
     /// Sends `back_domain`, `use_https`, and `internal_url` so the resolver can:
     /// - Return the correct public URL in WebFinger responses.
     /// - Use the internal URL to forward user registration requests.
+    #[tracing::instrument(skip(self), fields(back_domain = %self.config.back_domain, resolver_url))]
     pub async fn self_register(&self) -> Result<(), AppError> {
         if !self.config.use_resolver {
             debug!("resolver: use_resolver=false, skipping self-registration");
@@ -49,6 +50,7 @@ impl ResolverClient {
             "{}/api/backends",
             self.config.resolver_internal_url.trim_end_matches('/')
         );
+        tracing::Span::current().record("resolver_url", url.as_str());
 
         let internal_url = self
             .config
@@ -67,31 +69,27 @@ impl ResolverClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(resolver_url = %url, error = %e, "resolver: self-registration request failed");
+                warn!(error = %e, "resolver: self-registration request failed");
                 AppError::InternalServerError(format!("Resolver self-register: {e}"))
             })?
             .error_for_status()
             .map_err(|e| {
-                warn!(resolver_url = %url, error = %e, "resolver: self-registration rejected");
+                warn!(error = %e, "resolver: self-registration rejected");
                 AppError::InternalServerError(format!("Resolver self-register: {e}"))
             })?;
 
-        info!(
-            resolver_url = %self.config.resolver_internal_url,
-            back_domain = %self.config.back_domain,
-            internal_url = %internal_url,
-            "Registered with resolver"
-        );
+        info!(internal_url, "Registered with resolver");
         Ok(())
     }
 
     /// Register or update the username→backend mapping in the resolver.
     /// No-op when `use_resolver=false`.
+    #[tracing::instrument(skip(self), fields(username = %username, back_domain = %self.config.back_domain))]
     pub async fn update_mapping(&self, username: &str) -> Result<(), AppError> {
         if !self.config.use_resolver {
             return Ok(());
         }
-        debug!(username, back_domain = %self.config.back_domain, "resolver: update_mapping");
+        debug!("resolver: update_mapping");
 
         let token = self.jwt.issue(
             "resolver-update",
@@ -118,7 +116,7 @@ impl ResolverClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(username, error = %e, "resolver: update_mapping request failed");
+                warn!(error = %e, "resolver: update_mapping request failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()

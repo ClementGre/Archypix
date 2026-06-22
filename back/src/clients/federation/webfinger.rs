@@ -13,6 +13,7 @@ impl FederationClient {
     /// API calls are built directly from this URL — no separate scheme config needed.
     ///
     /// Result is cached under `FederationBackend(username, global_domain)`.
+    #[tracing::instrument(skip(self), fields(username = %username, global_domain = %global_domain))]
     pub async fn resolve_backend_url(
         &self,
         username: &str,
@@ -25,17 +26,11 @@ impl FederationClient {
             .ok()
             .flatten()
         {
-            trace!(
-                username,
-                global_domain, "federation: backend URL resolved from cache"
-            );
+            trace!("federation: backend URL resolved from cache");
             return Ok(cached);
         }
 
-        debug!(
-            username,
-            global_domain, "federation: resolving backend URL via WebFinger"
-        );
+        debug!("federation: resolving backend URL via WebFinger");
         let webfinger_url = format!(
             "{}://{}/.well-known/webfinger",
             self.config.webfinger_scheme(),
@@ -51,7 +46,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(username, global_domain, error = %e, "federation: WebFinger request failed");
+                warn!(error = %e, "federation: WebFinger request failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -70,8 +65,8 @@ impl FederationClient {
             .ok_or_else(|| AppError::BadRequest("Missing backend_url in WebFinger".to_string()))?;
 
         debug!(
-            username,
-            global_domain, backend_url, "federation: backend URL resolved via WebFinger"
+            backend_url,
+            "federation: backend URL resolved via WebFinger"
         );
 
         let _ = self

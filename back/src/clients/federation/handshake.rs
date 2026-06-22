@@ -12,6 +12,7 @@ impl FederationClient {
     /// Request a federation token from the remote instance, if not already cached.
     /// Returns `Some(token)` on cache hit, `None` when the async grant is still in flight.
     /// `sender_username` is required so the backend B can resolve back the backend domain of A
+    #[tracing::instrument(skip(self), fields(sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
     pub async fn ensure_federation_token(
         &self,
         sender_username: &str,
@@ -25,10 +26,7 @@ impl FederationClient {
             .ok()
             .flatten()
         {
-            trace!(
-                recipient_global_domain,
-                "federation: token resolved from cache"
-            );
+            trace!("federation: token resolved from cache");
             return Ok(Some(token));
         }
 
@@ -48,10 +46,7 @@ impl FederationClient {
             )
             .await;
 
-        debug!(
-            sender = sender_username,
-            recipient_global_domain, backend_base_url, "federation: requesting auth token"
-        );
+        debug!(backend_base_url, "federation: requesting auth token");
         let request_url = format!("{}/api/federation/auth/request", backend_base_url);
         self.http
             .post(&request_url)
@@ -68,7 +63,7 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(recipient_global_domain, error = %e, "federation: auth request failed");
+                warn!(error = %e, "federation: auth request failed");
                 AppError::InternalServerError(e.to_string())
             })?
             .error_for_status()
@@ -79,6 +74,7 @@ impl FederationClient {
 
     /// Get a valid federation token for `recipient_global_domain`, polling the cache until the
     /// grant callback arrives if the token is not already cached.
+    #[tracing::instrument(skip(self), fields(sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
     pub async fn get_or_wait_federation_token(
         &self,
         sender_username: &str,
@@ -92,10 +88,7 @@ impl FederationClient {
             return Ok(token);
         }
 
-        debug!(
-            recipient_global_domain,
-            "federation: waiting for auth token grant"
-        );
+        debug!("federation: waiting for auth token grant");
         let deadline = Duration::from_millis(self.config.federation_request_timeout_ms);
         let domain = recipient_global_domain;
         let cache = self.cache.clone();
@@ -115,16 +108,14 @@ impl FederationClient {
         })
         .await
         .map_err(|_| {
-            warn!(
-                recipient_global_domain,
-                "federation: auth token grant timed out"
-            );
+            warn!("federation: auth token grant timed out");
             AppError::BadRequest("Federation token request timed out".to_string())
         })?
     }
 
     /// Store a federation token received via the `/api/federation/auth/grant` callback.
     /// Verifies the grant's `nonce` against the one persisted.
+    #[tracing::instrument(skip(self, token, nonce), fields(issuer_global_domain = %issuer_global_domain, ttl_secs = ttl_secs))]
     pub async fn store_federation_token(
         &self,
         issuer_global_domain: &str,
@@ -152,7 +143,6 @@ impl FederationClient {
             }
             _ => {
                 warn!(
-                    issuer_global_domain,
                     "federation: rejected auth grant — no matching pending request (possible poisoning attempt)"
                 );
                 return Err(AppError::Unauthorized(
@@ -161,10 +151,7 @@ impl FederationClient {
             }
         }
 
-        trace!(
-            issuer_global_domain,
-            ttl_secs, "federation: storing auth token"
-        );
+        trace!("federation: storing auth token");
         self.cache
             .set_str_ex(RedisKey::FederationToken(issuer_global_domain), token, ttl)
             .await
@@ -187,6 +174,7 @@ impl FederationClient {
     }
 
     /// Send the federation token grant to the requester's backend.
+    #[tracing::instrument(skip(self, grant), fields(username = %username, requester_global_domain = %requester_global_domain))]
     pub async fn send_auth_grant(
         &self,
         username: &str,
@@ -196,10 +184,7 @@ impl FederationClient {
         let backend_base_url = self
             .resolve_backend_url(username, requester_global_domain)
             .await?;
-        debug!(
-            requester_global_domain,
-            backend_base_url, "federation: sending auth grant"
-        );
+        debug!(backend_base_url, "federation: sending auth grant");
         let callback_url = format!("{}/api/federation/auth/grant", backend_base_url);
         let resp = self
             .http
@@ -209,12 +194,12 @@ impl FederationClient {
             .send()
             .await
             .map_err(|e| {
-                warn!(requester_global_domain, error = %e, "federation: auth grant delivery failed");
+                warn!(error = %e, "federation: auth grant delivery failed");
                 AppError::InternalServerError(e.to_string())
             })?;
 
         if !resp.status().is_success() {
-            warn!(requester_global_domain, status = %resp.status(), "federation: auth grant rejected by remote");
+            warn!(status = %resp.status(), "federation: auth grant rejected by remote");
             return Err(AppError::InternalServerError(format!(
                 "Callback rejected grant: {}",
                 resp.status()

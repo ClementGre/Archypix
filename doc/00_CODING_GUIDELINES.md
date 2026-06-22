@@ -34,6 +34,24 @@ Follow Rust best practices. Always favor refactoring over sticking to existing l
 
 For modules with sub-files, use a `module_name.rs` file alongside the `module_name/` directory instead of placing a `mod.rs` inside the directory.
 
+## Tracing
+
+Use `#[tracing::instrument]` with `fields(...)` for identifying context instead of logging it at
+the call site: don't repeat a field already on the span (own or ancestor's); log calls should
+just carry genuinely new info (errors, counts, computed values). Use empty fields +
+`Span::current().record(...)` for values only known partway through the function.
+
+In `fields(...)`, a bare `name` declares an empty field — it does **not** capture the in-scope
+variable (unlike `span!`/`event!`). Use `name = value` (or `%name`/`?name` shorthand) to actually
+record it.
+
+`AppError`-based error responses are already logged by `AppError::into_response()` — no need for
+an extra `warn!` next to a function that just returns `AppError`.
+
+Federation calls propagate trace context via headers (`trace_headers_for`/
+`maybe_set_remote_parent` in `back/src/infra/observability.rs`, gated on the JWT-verified peer);
+worker jobs propagate it through the DB job row instead.
+
 # Common mistakes
 
 - Global domain comparaison can’t tell if the instances are the same. bob_global_domain == alice_global_domain does not tell if bob and alice are on

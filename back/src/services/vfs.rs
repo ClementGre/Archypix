@@ -123,7 +123,7 @@ impl<'a> Vfs<'a> {
     /// List a directory: child directories first, then direct files. Brand-new mirror
     /// sub-directories created via `MKCOL` (Redis pending markers) and OS-junk sidecar files are
     /// merged in so they survive a round-trip until a real file lands (06_webdav.md §9, §11).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn list_dir(&self, segments: &[String]) -> Result<Vec<VfsEntry>, AppError> {
         let mut out: Vec<VfsEntry> = Vec::new();
         let mut real_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -159,7 +159,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Stat a path — a directory (real or pending) or a file (real or sidecar).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn stat(&self, segments: &[String]) -> Result<VfsEntry, AppError> {
         if segments.is_empty() {
             return Ok(dir_entry("", false));
@@ -193,16 +193,17 @@ impl<'a> Vfs<'a> {
     }
 
     /// Resolve a file read to a redirect or proxied bytes.
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), picture_id))]
     pub async fn read_file(&self, segments: &[String]) -> Result<ReadTarget, AppError> {
         let entry = self.file_entry(segments).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
+        tracing::Span::current().record("picture_id", tracing::field::display(pid));
         let pic = PictureRepository::find_by_id(&self.state.db, pid)
             .await?
             .ok_or(AppError::NotFound)?;
         // Cross-instance received pictures always redirect (the bytes live on the owner's S3).
         if self.use_redirect || pic.remote_picture_id.is_some() {
-            trace!(user_id = %self.user_id, picture_id = %pid, "vfs read: redirect to presigned url");
+            trace!("vfs read: redirect to presigned url");
             let url = pictures::presign_picture_variant(
                 &self.state.db,
                 self.state.cache.as_ref(),
@@ -216,7 +217,7 @@ impl<'a> Vfs<'a> {
             .await?;
             Ok(ReadTarget::Redirect(url))
         } else {
-            trace!(user_id = %self.user_id, picture_id = %pid, "vfs read: proxy bytes from S3");
+            trace!("vfs read: proxy bytes from S3");
             let key = s3::picture_key(pic.local_user_id, pic.id);
             let data = self
                 .state
@@ -234,7 +235,10 @@ impl<'a> Vfs<'a> {
     /// computed inline (06_webdav.md §7); `hash`/`size` describe those streamed bytes. Returns
     /// `true` if a new resource was created, `false` if an existing one was overwritten/retagged.
     /// See §7–8.
-    #[tracing::instrument(skip(self, temp_path), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(
+        skip(self, temp_path),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), hash = %hash, bytes = size, picture_id)
+    )]
     pub async fn put_file(
         &self,
         segments: &[String],
@@ -249,7 +253,7 @@ impl<'a> Vfs<'a> {
         // placeholder before writing the real bytes in a second PUT. Accept it but ingest
         // nothing, so empty objects never reach S3 or the picture table.
         if size == 0 {
-            trace!(user_id = %self.user_id, name = %name, "vfs put: empty body — accepted without ingesting");
+            trace!("vfs put: empty body — accepted without ingesting");
             return Ok(true);
         }
 
@@ -267,6 +271,7 @@ impl<'a> Vfs<'a> {
                 .find(|f| f.name == name)
             {
                 let pid = existing.picture_id.ok_or(AppError::NotFound)?;
+                tracing::Span::current().record("picture_id", tracing::field::display(pid));
                 let pic = PictureRepository::find_by_id(&self.state.db, pid)
                     .await?
                     .ok_or(AppError::NotFound)?;
@@ -278,11 +283,11 @@ impl<'a> Vfs<'a> {
 
                 // Idempotent re-PUT: a dumb sync client re-uploading identical bytes.
                 if pic.file_hash.as_deref() == Some(hash) {
-                    trace!(user_id = %self.user_id, picture_id = %pid, %hash, "vfs put: identical bytes (hash match) — no-op overwrite");
+                    trace!("vfs put: identical bytes (hash match) — no-op overwrite");
                     return Ok(false);
                 }
 
-                trace!(user_id = %self.user_id, picture_id = %pid, name = %name, bytes = size, "vfs put: overwrite existing picture");
+                trace!("vfs put: overwrite existing picture");
 
                 // Versioning on overwrite (§7.3): snapshot the current bytes per the user's
                 // versioning_mode before replacing them.
@@ -330,7 +335,8 @@ impl<'a> Vfs<'a> {
         if let Some(p) =
             PictureRepository::find_owned_by_hash(&self.state.db, self.user_id, hash, false).await?
         {
-            trace!(user_id = %self.user_id, picture_id = %p.id, %hash, "vfs put: hash matched live picture — retag instead of new upload");
+            tracing::Span::current().record("picture_id", tracing::field::display(p.id));
+            trace!("vfs put: hash matched live picture — retag instead of new upload");
             self.apply_add_ops(&on_add, p.id).await?;
             self.clear_pending_dir(parent).await;
             self.state.pipeline_waker.wake_debounced(self.user_id);
@@ -340,7 +346,8 @@ impl<'a> Vfs<'a> {
         if let Some(p) =
             PictureRepository::find_owned_by_hash(&self.state.db, self.user_id, hash, true).await?
         {
-            trace!(user_id = %self.user_id, picture_id = %p.id, %hash, "vfs put: hash matched trashed picture — un-delete and retag");
+            tracing::Span::current().record("picture_id", tracing::field::display(p.id));
+            trace!("vfs put: hash matched trashed picture — un-delete and retag");
             PictureRepository::set_deleted(&self.state.db, self.user_id, p.id, false).await?;
             self.apply_add_ops(&on_add, p.id).await?;
             self.clear_pending_dir(parent).await;
@@ -350,7 +357,8 @@ impl<'a> Vfs<'a> {
 
         // Genuine new picture: stream bytes to S3, create the row + thumbnail job, then apply tags.
         let new_id = Uuid::new_v4();
-        trace!(user_id = %self.user_id, picture_id = %new_id, name = %name, bytes = size, "vfs put: ingest new picture");
+        tracing::Span::current().record("picture_id", tracing::field::display(new_id));
+        trace!("vfs put: ingest new picture");
         let key = s3::picture_key(self.user_id, new_id);
         self.state
             .storage
@@ -451,26 +459,27 @@ impl<'a> Vfs<'a> {
     }
 
     /// DELETE a file per the directory's `safeDeleteMode` (§7.1).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), picture_id))]
     pub async fn delete(&self, segments: &[String]) -> Result<(), AppError> {
         // Deleting an empty, still-pending MKCOL directory just drops its Redis marker.
         if self.dir(segments).is_none() && self.is_pending_dir(segments).await? {
-            trace!(user_id = %self.user_id, path = %segments.join("/"), "vfs delete: drop pending directory marker");
+            trace!("vfs delete: drop pending directory marker");
             self.clear_pending_dir(segments).await;
             return Ok(());
         }
         let entry = self.file_entry(segments).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
+        tracing::Span::current().record("picture_id", tracing::field::display(pid));
         let (parent, _) = split_last(segments)?;
         let dir = self.dir(parent).ok_or(AppError::NotFound)?;
         match dir.safe_delete_mode {
             SafeDeleteMode::FullDelete => {
-                trace!(user_id = %self.user_id, picture_id = %pid, "vfs delete: fullDelete (trash picture)");
+                trace!("vfs delete: fullDelete (trash picture)");
                 // Trash (received pictures too — local deleted_at only).
                 PictureRepository::set_deleted(&self.state.db, self.user_id, pid, true).await?;
             }
             SafeDeleteMode::SingleBranch => {
-                trace!(user_id = %self.user_id, picture_id = %pid, "vfs delete: singleBranch (apply onRemove)");
+                trace!("vfs delete: singleBranch (apply onRemove)");
                 let wb = dir.write_back.as_ref().ok_or_else(|| {
                     AppError::Forbidden(
                         "read-only directory; singleBranch delete not allowed".into(),
@@ -484,29 +493,33 @@ impl<'a> Vfs<'a> {
     }
 
     /// MOVE: rename within a directory, or re-file across directories (§7.1).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(
+        skip(self),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, from = %from.join("/"), to = %to.join("/"), picture_id)
+    )]
     pub async fn move_(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
         // Renaming a freshly-created (empty, pending) directory just moves its Redis marker —
         // Finder creates "dossier sans titre" then immediately MOVEs it to the chosen name.
         if self.dir(from).is_none() && self.is_pending_dir(from).await? {
-            trace!(user_id = %self.user_id, from = %from.join("/"), to = %to.join("/"), "vfs move: rename pending directory");
+            trace!("vfs move: rename pending directory");
             self.clear_pending_dir(from).await;
             self.add_pending_dir(to).await?;
             return Ok(());
         }
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
+        tracing::Span::current().record("picture_id", tracing::field::display(pid));
         let (from_parent, _) = split_last(from)?;
         let (to_parent, to_name) = split_last(to)?;
 
         if from_parent == to_parent {
             // Rename — set the filename (meaningful for naming=original).
-            trace!(user_id = %self.user_id, picture_id = %pid, new_name = %to_name, "vfs move: rename within directory");
+            trace!("vfs move: rename within directory");
             PictureRepository::set_filename(&self.state.db, self.user_id, pid, &to_name).await?;
             self.state.pipeline_waker.wake_debounced(self.user_id);
             return Ok(());
         }
-        trace!(user_id = %self.user_id, picture_id = %pid, from = %from_parent.join("/"), to = %to_parent.join("/"), "vfs move: re-file across directories");
+        trace!("vfs move: re-file across directories");
 
         // Re-file: remove from source, add to destination (existing dir or mirror extension §9).
         let src = self.dir(from_parent).ok_or(AppError::NotFound)?;
@@ -525,13 +538,17 @@ impl<'a> Vfs<'a> {
 
     /// COPY: the picture gains the destination directory's tags (becomes multi-tagged). The
     /// destination may be a brand-new mirror sub-path (§9).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(
+        skip(self),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, from = %from.join("/"), to = %to.join("/"), picture_id)
+    )]
     pub async fn copy(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
+        tracing::Span::current().record("picture_id", tracing::field::display(pid));
         let (to_parent, _) = split_last(to)?;
         let dst_on_add = self.on_add_ops(&self.resolve_path(to_parent)?)?;
-        trace!(user_id = %self.user_id, picture_id = %pid, to = %to_parent.join("/"), "vfs copy: add destination tags");
+        trace!("vfs copy: add destination tags");
         self.apply_add_ops(&dst_on_add, pid).await?;
         self.clear_pending_dir(to_parent).await;
         self.state.pipeline_waker.wake_debounced(self.user_id);
@@ -542,7 +559,7 @@ impl<'a> Vfs<'a> {
     /// recorded as a transient Redis pending marker so PROPFIND shows the empty directory until a
     /// file lands and mints the real tag (06_webdav.md §9). `static`/`query` structure is fixed,
     /// and an already-existing path is rejected.
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
         if self.dir(segments).is_some() || self.is_pending_dir(segments).await? {
             return Err(AppError::Conflict("directory already exists".into()));
@@ -552,19 +569,22 @@ impl<'a> Vfs<'a> {
                 Err(AppError::Conflict("directory already exists".into()))
             }
             PathResolution::MirrorExtension { .. } => {
-                trace!(user_id = %self.user_id, path = %segments.join("/"), "vfs mkcol: recorded pending mirror sub-directory");
+                trace!("vfs mkcol: recorded pending mirror sub-directory");
                 self.add_pending_dir(segments).await?;
                 Ok(())
             }
         }
     }
 
+    // `user_id`/`picture_id` are already on the calling span (put_file/move_/copy record
+    // `picture_id` before reaching here) — no fields of our own to add.
+    #[tracing::instrument(skip_all)]
     async fn apply_add_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<(), AppError> {
         let (assigns, removes) = split_ops(ops);
         // Case-insensitive write-side reuse (§10c): fold each assigned tag onto an existing
         // case-variant sibling so a case-insensitive client never mints a case-only duplicate.
         let assigns = self.fold_case(assigns).await?;
-        trace!(user_id = %self.user_id, picture_id = %pid, ?assigns, ?removes, "vfs: apply onAdd ops");
+        trace!(?assigns, ?removes, "vfs: apply onAdd ops");
         if !assigns.is_empty() {
             TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
         }
@@ -590,11 +610,14 @@ impl<'a> Vfs<'a> {
 
     /// Apply `onRemove` ops, rejecting with 409 if a removed tag would survive because a live
     /// service still asserts it (§7.2).
+    // `user_id`/`picture_id` are already on the calling span (delete/move_ record `picture_id`
+    // before reaching here) — no fields of our own to add.
+    #[tracing::instrument(skip_all)]
     async fn apply_remove_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<(), AppError> {
         let (assigns, removes) = split_ops(ops);
-        trace!(user_id = %self.user_id, picture_id = %pid, ?removes, ?assigns, "vfs: apply onRemove ops");
+        trace!(?removes, ?assigns, "vfs: apply onRemove ops");
         if TagRepository::has_non_manual_tag_under(&self.state.db, pid, &removes).await? {
-            trace!(user_id = %self.user_id, picture_id = %pid, "vfs: onRemove rejected — non-manual tag still asserted (409)");
+            trace!("vfs: onRemove rejected — non-manual tag still asserted (409)");
             return Err(AppError::Conflict(
                 "a tagging service still asserts this tag — cannot remove via WebDAV".into(),
             ));
@@ -706,7 +729,10 @@ impl<'a> Vfs<'a> {
 
     /// Store an OS-junk file as a sidecar so it round-trips in listings; oversized bodies are
     /// accepted but not stored (06_webdav.md §11).
-    #[tracing::instrument(skip(self, bytes), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(
+        skip(self, bytes),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), bytes = bytes.len())
+    )]
     pub async fn put_sidecar(
         &self,
         segments: &[String],
@@ -715,7 +741,7 @@ impl<'a> Vfs<'a> {
     ) -> Result<(), AppError> {
         let (parent, name) = split_last(segments)?;
         if bytes.len() > SIDECAR_MAX_BYTES {
-            trace!(user_id = %self.user_id, name = %name, bytes = bytes.len(), "vfs sidecar: oversized — accepted without storing");
+            trace!("vfs sidecar: oversized — accepted without storing");
             return Ok(());
         }
         let key = path_key(parent);
@@ -740,7 +766,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Read a stored sidecar's bytes + content-type, if present.
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn read_sidecar(
         &self,
         segments: &[String],
@@ -755,7 +781,7 @@ impl<'a> Vfs<'a> {
     }
 
     /// Remove a stored sidecar (DELETE on an OS-junk file).
-    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id))]
+    #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn delete_sidecar(&self, segments: &[String]) -> Result<(), AppError> {
         let (parent, name) = split_last(segments)?;
         let key = path_key(parent);
