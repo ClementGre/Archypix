@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE rule_tagging_services rts\n               SET position = ord.pos\n               FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::int[]) AS pos) AS ord,\n                    tagging_services ts\n               WHERE rts.id = ord.id\n                 AND rts.service_id = $3\n                 AND ts.id = $3\n                 AND ts.owner_id = $4\n               RETURNING rts.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rule_tagging_services",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4Array",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4581f26ee972344e8b4a77937485bbc2d2bbb5dde7635335888966bf081deeb6"
+}

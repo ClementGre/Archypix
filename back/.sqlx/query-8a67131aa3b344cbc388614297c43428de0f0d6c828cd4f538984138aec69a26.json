@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rule_tagging_services (service_id, predicate, assign_tag, position)\n               VALUES ($1, $2, $3::text::ltree,\n                       COALESCE((SELECT MAX(position) FROM rule_tagging_services WHERE service_id = $1), -1) + 1)\n               RETURNING id, service_id, predicate as \"predicate!: serde_json::Value\",\n                         assign_tag::text as \"assign_tag!\", position",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rule_tagging_services",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "service_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rule_tagging_services",
+            "name": "service_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "predicate!: serde_json::Value",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "rule_tagging_services",
+            "name": "predicate"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "assign_tag!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "position",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "rule_tagging_services",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "8a67131aa3b344cbc388614297c43428de0f0d6c828cd4f538984138aec69a26"
+}
