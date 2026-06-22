@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n         SET mime_type = 'image/gif', thumbnails_generated_at = (now() AT TIME ZONE 'utc')\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "176e64b6760fa208a6db3fb3822d19acf04b0ca71e0f8746c219d33ec1e2b841"
+}

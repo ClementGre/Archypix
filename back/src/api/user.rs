@@ -97,8 +97,12 @@ pub fn authenticated_routes() -> Router<AppState> {
             post(tagging_services::add_rule),
         )
         .route(
+            "/tagging-services/{id}/rules/reorder",
+            post(tagging_services::reorder_rules),
+        )
+        .route(
             "/tagging-services/{id}/rules/{rule_id}",
-            delete(tagging_services::delete_rule),
+            patch(tagging_services::update_rule).delete(tagging_services::delete_rule),
         )
         .route(
             "/tagging-services/{id}/segments",

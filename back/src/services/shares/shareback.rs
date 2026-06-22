@@ -21,9 +21,15 @@ async fn find_or_create_shared_tag_mapping_service(
     {
         return Ok(id);
     }
-    let svc =
-        TaggingServiceRepository::create(db, owner_id, ServiceType::SharedTagMapping, &[], &[])
-            .await?;
+    let svc = TaggingServiceRepository::create(
+        db,
+        owner_id,
+        ServiceType::SharedTagMapping,
+        "Share-backs",
+        &[],
+        &[],
+    )
+    .await?;
     Ok(svc.id)
 }
 

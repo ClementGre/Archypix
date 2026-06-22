@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET last_pipeline_run_at = now() AT TIME ZONE 'utc' WHERE id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "77788cae7170be06d2fc64a87771b32945c5e48a6bb7ca5f7b48aceb19c64496"
+}

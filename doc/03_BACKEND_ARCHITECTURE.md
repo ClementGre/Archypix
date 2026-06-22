@@ -132,7 +132,11 @@ the announcement delta re-delivers the refreshed metadata. The race-free backsto
 **Evaluation order** — `SharedTagMapping` always first. Rule and Segmentation services in user-defined `position` order. Gating accumulates tags from
 `manual` + `incoming_share` + earlier services; pipeline tags re-derived from scratch each run.
 
-**Rule predicates** — `gps_within_bbox(lat_min, lat_max, lon_min, lon_max)`, `capture_year(YYYY)`, `capture_month(M)`, `filename_contains("string")`.
+**Rule predicates** — a structured JSONB predicate tree (feature 13): logical `and`/`or`/`not`
+composition over spatial nodes (`gps_bbox`, `gps_radius`) and typed field-condition leaves covering
+all EXIF/file/ownership attributes. Parsed into `domain::pipeline::Predicate` (validated on
+create/update, evaluated against the `PipelineInput` projection). See
+`doc/features/13_better_rules.md`.
 
 **Tag storage (per-source)** — two partial unique indexes: `(picture_id, tag_path) WHERE source='manual'` and
 `(picture_id, tag_path, source, source_id) WHERE source<>'manual'`. `source_id` is the `tagging_services.id` for pipeline sources,

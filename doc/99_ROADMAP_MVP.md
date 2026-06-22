@@ -66,11 +66,15 @@
   - [x] Webdav/VFS proper span tracing.
   - [x] Federation/Clients proper span tracing and linkage between instances.
   - [x] Doc and best practices update.
-- [ ] **Better Rules** — Replace text predicates with a structured JSONB predicate tree supporting
-  arbitrary AND/OR/NOT composition; extend field coverage to all EXIF/file/ownership attributes
+- [x] **Better Rules** — Replaced text predicates with a structured JSONB predicate tree supporting
+  arbitrary AND/OR/NOT composition; extended field coverage to all EXIF/file/ownership attributes
   (camera brand/model, ISO, f-number, focal length, exposure time, mime type, file size, dimensions,
-  `is_owned`, GPS radius); add `is_present` cross-field check and `gps_radius` spatial predicate.
-  Schema: `rule_tagging_services.predicate TEXT → JSONB`; `PipelineInput` extended.
+  `is_owned`, GPS radius); added `is_present` check and the `gps_radius` spatial predicate.
+  Schema migration `0002` (`rule_tagging_services.predicate TEXT → JSONB`, legacy forms converted);
+  `PipelineInput` extended with the new fields; validation on create/update (type compatibility,
+  ranges, regex, depth ≤ 10). **Frontend:** a nested block composer (`PredicateBuilder`) for AND/OR/NOT
+  groups, field-condition + GPS-area leaves, drag-to-reorder within a group; rules render as readable
+  expressions. Also fixed the segmentation editor crash (empty-string `<Select.Item>` value).
   See `doc/features/13_better_rules.md`.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry

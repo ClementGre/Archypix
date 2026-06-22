@@ -104,13 +104,35 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
             // stored pipeline tag absent from it.
             let mut produced: Vec<PipelineTagAssignment> = Vec::new();
 
+            // Camera/lens fields + the derived exposure time, shared across all services.
+            let cam = &picture.exif_data.0;
+            let exposure_time = match (cam.exposure_time_num, cam.exposure_time_den) {
+                (Some(num), Some(den)) if den != 0 => Some(num as f64 / den as f64),
+                _ => None,
+            };
+
             for service in &services {
                 let input = PipelineInput {
                     picture_id: picture.id,
                     captured_at: picture.captured_at,
+                    ingested_at: Some(picture.ingested_at),
+                    updated_at: Some(picture.updated_at),
                     gps_lat: picture.gps_lat,
                     gps_lng: picture.gps_lng,
+                    gps_alt: picture.gps_alt,
                     filename: picture.filename.clone(),
+                    camera_brand: cam.camera_brand.clone(),
+                    camera_model: cam.camera_model.clone(),
+                    focal_length_mm: cam.focal_length_mm,
+                    f_number: cam.f_number,
+                    iso_speed: cam.iso_speed,
+                    exposure_time,
+                    orientation: picture.orientation,
+                    mime_type: picture.mime_type.clone(),
+                    file_size: picture.file_size,
+                    width: picture.width,
+                    height: picture.height,
+                    is_owned: picture.is_owned,
                     current_tags: gating_tags.clone(),
                 };
 

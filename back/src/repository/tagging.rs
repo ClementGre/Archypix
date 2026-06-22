@@ -19,7 +19,7 @@ impl TaggingServiceRepository {
     {
         sqlx::query_as!(
             TaggingService,
-            r#"SELECT id, owner_id,
+            r#"SELECT id, owner_id, name,
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, last_invalidated_at, last_error_at, last_error_msg,
@@ -48,7 +48,7 @@ impl TaggingServiceRepository {
     {
         sqlx::query_as!(
             TaggingService,
-            r#"SELECT id, owner_id,
+            r#"SELECT id, owner_id, name,
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, last_invalidated_at, last_error_at, last_error_msg,
@@ -75,7 +75,7 @@ impl TaggingServiceRepository {
     {
         sqlx::query_as!(
             TaggingService,
-            r#"SELECT id, owner_id,
+            r#"SELECT id, owner_id, name,
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, last_invalidated_at, last_error_at, last_error_msg,
@@ -117,6 +117,7 @@ impl TaggingServiceRepository {
         ex: E,
         owner_id: Uuid,
         service_type: ServiceType,
+        name: &str,
         requires: &[String],
         excludes: &[String],
     ) -> Result<TaggingService, AppError>
@@ -125,10 +126,10 @@ impl TaggingServiceRepository {
     {
         sqlx::query_as!(
             TaggingService,
-            r#"INSERT INTO tagging_services (owner_id, service_type, requires, excludes, position)
-               VALUES ($1, $2, $3::ltree[], $4::ltree[],
+            r#"INSERT INTO tagging_services (owner_id, service_type, name, requires, excludes, position)
+               VALUES ($1, $2, $5, $3::ltree[], $4::ltree[],
                        COALESCE((SELECT MAX(position) FROM tagging_services WHERE owner_id = $1), -1) + 1)
-               RETURNING id, owner_id,
+               RETURNING id, owner_id, name,
                          service_type as "service_type: ServiceType",
                          requires::text[] as "requires!", excludes::text[] as "excludes!",
                          enabled, position, last_invalidated_at, last_error_at, last_error_msg,
@@ -137,6 +138,7 @@ impl TaggingServiceRepository {
             service_type as ServiceType,
             requires as &[String],
             excludes as &[String],
+            name,
         )
         .fetch_one(ex)
         .await
@@ -149,6 +151,7 @@ impl TaggingServiceRepository {
         ex: E,
         owner_id: Uuid,
         service_id: Uuid,
+        name: Option<&str>,
         enabled: Option<bool>,
         requires: Option<&[String]>,
         excludes: Option<&[String]>,
@@ -162,9 +165,10 @@ impl TaggingServiceRepository {
                SET enabled    = COALESCE($3, enabled),
                    requires   = COALESCE($4::ltree[], requires),
                    excludes   = COALESCE($5::ltree[], excludes),
+                   name       = COALESCE($6, name),
                    updated_at = now() AT TIME ZONE 'utc'
                WHERE id = $1 AND owner_id = $2
-               RETURNING id, owner_id,
+               RETURNING id, owner_id, name,
                          service_type as "service_type: ServiceType",
                          requires::text[] as "requires!", excludes::text[] as "excludes!",
                          enabled, position, last_invalidated_at, last_error_at, last_error_msg,
@@ -174,6 +178,7 @@ impl TaggingServiceRepository {
             enabled as Option<bool>,
             requires as Option<&[String]>,
             excludes as Option<&[String]>,
+            name as Option<&str>,
         )
         .fetch_optional(ex)
         .await
@@ -419,9 +424,11 @@ impl RuleTaggingRuleRepository {
         }
         sqlx::query_as!(
             RuleTaggingRule,
-            r#"SELECT id, service_id, predicate, assign_tag::text as "assign_tag!"
+            r#"SELECT id, service_id, predicate as "predicate!: serde_json::Value",
+                      assign_tag::text as "assign_tag!", position
                FROM rule_tagging_services
-               WHERE service_id = ANY($1::uuid[])"#,
+               WHERE service_id = ANY($1::uuid[])
+               ORDER BY position, id"#,
             service_ids as &[Uuid],
         )
         .fetch_all(ex)
@@ -429,11 +436,11 @@ impl RuleTaggingRuleRepository {
         .map_err(map_sqlx_error)
     }
 
-    #[tracing::instrument(skip(ex))]
+    #[tracing::instrument(skip(ex, predicate))]
     pub async fn create<'e, E>(
         ex: E,
         service_id: Uuid,
-        predicate: &str,
+        predicate: &serde_json::Value,
         assign_tag: &str,
     ) -> Result<RuleTaggingRule, AppError>
     where
@@ -441,9 +448,11 @@ impl RuleTaggingRuleRepository {
     {
         sqlx::query_as!(
             RuleTaggingRule,
-            r#"INSERT INTO rule_tagging_services (service_id, predicate, assign_tag)
-               VALUES ($1, $2, $3::text::ltree)
-               RETURNING id, service_id, predicate, assign_tag::text as "assign_tag!""#,
+            r#"INSERT INTO rule_tagging_services (service_id, predicate, assign_tag, position)
+               VALUES ($1, $2, $3::text::ltree,
+                       COALESCE((SELECT MAX(position) FROM rule_tagging_services WHERE service_id = $1), -1) + 1)
+               RETURNING id, service_id, predicate as "predicate!: serde_json::Value",
+                         assign_tag::text as "assign_tag!", position"#,
             service_id,
             predicate,
             assign_tag,
@@ -451,6 +460,87 @@ impl RuleTaggingRuleRepository {
         .fetch_one(ex)
         .await
         .map_err(map_sqlx_error)
+    }
+
+    /// Update a rule's predicate and assigned tag. Verifies ownership via the parent service.
+    /// Returns `None` if the rule does not exist under that owner's service.
+    #[tracing::instrument(skip(ex, predicate), fields(owner_id = %owner_id))]
+    pub async fn update<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        service_id: Uuid,
+        rule_id: Uuid,
+        predicate: &serde_json::Value,
+        assign_tag: &str,
+    ) -> Result<Option<RuleTaggingRule>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            RuleTaggingRule,
+            r#"UPDATE rule_tagging_services rts
+               SET predicate = $4, assign_tag = $5::text::ltree
+               FROM tagging_services ts
+               WHERE rts.id = $1
+                 AND rts.service_id = $2
+                 AND ts.id = $2
+                 AND ts.owner_id = $3
+               RETURNING rts.id, rts.service_id,
+                         rts.predicate as "predicate!: serde_json::Value",
+                         rts.assign_tag::text as "assign_tag!", rts.position"#,
+            rule_id,
+            service_id,
+            owner_id,
+            predicate,
+            assign_tag,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Reassign `position` for the given rules of one service. `ordered_ids` is the complete
+    /// desired order — each rule gets `position = its index`. Errors if any id does not belong to
+    /// the service / owner.
+    #[tracing::instrument(skip(ex, ordered_ids), fields(owner_id = %owner_id))]
+    pub async fn reorder<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        service_id: Uuid,
+        ordered_ids: &[Uuid],
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if ordered_ids.is_empty() {
+            return Ok(());
+        }
+        let positions: Vec<i32> = (0..ordered_ids.len() as i32).collect();
+        let updated = sqlx::query_scalar!(
+            r#"UPDATE rule_tagging_services rts
+               SET position = ord.pos
+               FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::int[]) AS pos) AS ord,
+                    tagging_services ts
+               WHERE rts.id = ord.id
+                 AND rts.service_id = $3
+                 AND ts.id = $3
+                 AND ts.owner_id = $4
+               RETURNING rts.id"#,
+            ordered_ids as &[Uuid],
+            &positions as &[i32],
+            service_id,
+            owner_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if updated.len() != ordered_ids.len() {
+            return Err(AppError::BadRequest(
+                "one or more rule IDs not found or not owned by you".into(),
+            ));
+        }
+        Ok(())
     }
 
     #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]

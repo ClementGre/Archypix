@@ -33,6 +33,7 @@ fn parse_tags_allowing_protected(paths: &[String]) -> Result<Vec<String>, AppErr
 #[derive(Debug, Serialize)]
 pub struct ServiceResponse {
     pub id: Uuid,
+    pub name: String,
     pub service_type: ServiceType,
     pub requires: Vec<String>,
     pub excludes: Vec<String>,
@@ -53,7 +54,8 @@ pub struct SharedTagMappingRuleResponse {
 #[derive(Debug, Serialize, Clone)]
 pub struct RuleTaggingRuleResponse {
     pub id: Uuid,
-    pub predicate: String,
+    /// Structured JSONB predicate tree (feature 13).
+    pub predicate: serde_json::Value,
     pub assign_tag: String,
 }
 
@@ -76,6 +78,7 @@ pub struct SegmentationRuleResponse {
 pub enum ServiceDetailResponse {
     SharedTagMapping {
         id: Uuid,
+        name: String,
         requires: Vec<String>,
         excludes: Vec<String>,
         enabled: bool,
@@ -86,6 +89,7 @@ pub enum ServiceDetailResponse {
     },
     Rule {
         id: Uuid,
+        name: String,
         requires: Vec<String>,
         excludes: Vec<String>,
         enabled: bool,
@@ -96,6 +100,7 @@ pub enum ServiceDetailResponse {
     },
     Segmentation {
         id: Uuid,
+        name: String,
         requires: Vec<String>,
         excludes: Vec<String>,
         enabled: bool,
@@ -111,6 +116,7 @@ pub enum ServiceDetailResponse {
 fn service_to_response(s: TaggingService) -> ServiceResponse {
     ServiceResponse {
         id: s.id,
+        name: s.name,
         service_type: s.service_type,
         requires: s.requires,
         excludes: s.excludes,
@@ -185,7 +191,8 @@ pub async fn list_services(
         .into_iter()
         .map(|svc| {
             let id = svc.id;
-            let (requires, excludes, enabled, position, created_at, updated_at) = (
+            let (name, requires, excludes, enabled, position, created_at, updated_at) = (
+                svc.name.clone(),
                 svc.requires.clone(),
                 svc.excludes.clone(),
                 svc.enabled,
@@ -196,6 +203,7 @@ pub async fn list_services(
             match svc.service_type {
                 ServiceType::SharedTagMapping => ServiceDetailResponse::SharedTagMapping {
                     id,
+                    name,
                     requires,
                     excludes,
                     enabled,
@@ -211,6 +219,7 @@ pub async fn list_services(
                 },
                 ServiceType::Rule => ServiceDetailResponse::Rule {
                     id,
+                    name,
                     requires,
                     excludes,
                     enabled,
@@ -226,6 +235,7 @@ pub async fn list_services(
                 },
                 ServiceType::Segmentation => ServiceDetailResponse::Segmentation {
                     id,
+                    name,
                     requires,
                     excludes,
                     enabled,
@@ -250,6 +260,8 @@ pub async fn list_services(
 pub struct CreateServiceRequest {
     pub service_type: ServiceType,
     #[serde(default)]
+    pub name: String,
+    #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]
     pub excludes: Vec<String>,
@@ -269,6 +281,7 @@ pub async fn create_service(
         &state.db,
         user_id,
         payload.service_type,
+        payload.name.trim(),
         &requires,
         &excludes,
     )
@@ -296,6 +309,7 @@ pub async fn get_service(
                 SharedTagMappingRuleRepository::list_for_services(&state.db, &[svc.id]).await?;
             ServiceDetailResponse::SharedTagMapping {
                 id: svc.id,
+                name: svc.name,
                 requires: svc.requires,
                 excludes: svc.excludes,
                 enabled: svc.enabled,
@@ -309,6 +323,7 @@ pub async fn get_service(
             let rules = RuleTaggingRuleRepository::list_for_services(&state.db, &[svc.id]).await?;
             ServiceDetailResponse::Rule {
                 id: svc.id,
+                name: svc.name,
                 requires: svc.requires,
                 excludes: svc.excludes,
                 enabled: svc.enabled,
@@ -323,6 +338,7 @@ pub async fn get_service(
                 SegmentationRuleRepository::list_for_services(&state.db, &[svc.id]).await?;
             ServiceDetailResponse::Segmentation {
                 id: svc.id,
+                name: svc.name,
                 requires: svc.requires,
                 excludes: svc.excludes,
                 enabled: svc.enabled,
@@ -339,6 +355,7 @@ pub async fn get_service(
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateServiceRequest {
+    pub name: Option<String>,
     pub enabled: Option<bool>,
     pub requires: Option<Vec<String>>,
     pub excludes: Option<Vec<String>>,
@@ -368,6 +385,7 @@ pub async fn update_service(
         &state.db,
         user_id,
         service_id,
+        payload.name.as_deref().map(str::trim),
         payload.enabled,
         requires.as_deref(),
         excludes.as_deref(),
@@ -473,7 +491,8 @@ pub async fn delete_mapping(
 
 #[derive(Debug, Deserialize)]
 pub struct AddRuleRequest {
-    pub predicate: String,
+    /// Structured JSONB predicate tree (feature 13). Validated server-side before persistence.
+    pub predicate: serde_json::Value,
     pub assign_tag: String,
 }
 
@@ -502,6 +521,61 @@ pub async fn add_rule(
     TaggingServiceRepository::touch_invalidated(&state.db, service_id).await?;
     state.pipeline_waker.wake(auth.user_id()?);
     Ok(Json(rule_to_response(rule)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRuleRequest {
+    /// Structured JSONB predicate tree (feature 13). Validated server-side before persistence.
+    pub predicate: serde_json::Value,
+    pub assign_tag: String,
+}
+
+/// PATCH /pipeline/{id}/rules/{rule_id} — edit a rule's predicate and assigned tag.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id, rule_id = %rule_id
+))]
+pub async fn update_rule(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((service_id, rule_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<UpdateRuleRequest>,
+) -> Result<Json<RuleTaggingRuleResponse>, AppError> {
+    let user_id = auth.user_id()?;
+    let assign_tag = parse_tag(&payload.assign_tag, false)?;
+    Predicate::parse(&payload.predicate).map_err(AppError::BadRequest)?;
+    let rule = RuleTaggingRuleRepository::update(
+        &state.db,
+        user_id,
+        service_id,
+        rule_id,
+        &payload.predicate,
+        &assign_tag,
+    )
+    .await?
+    .ok_or(AppError::NotFound)?;
+    TaggingServiceRepository::touch_invalidated(&state.db, service_id).await?;
+    state.pipeline_waker.wake(user_id);
+    Ok(Json(rule_to_response(rule)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReorderRulesRequest {
+    /// Complete list of the service's rule IDs in the desired display order.
+    pub ordered_ids: Vec<Uuid>,
+}
+
+/// POST /pipeline/{id}/rules/reorder — set the display order of a rule service's rules.
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
+))]
+pub async fn reorder_rules(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(service_id): Path<Uuid>,
+    Json(payload): Json<ReorderRulesRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    RuleTaggingRuleRepository::reorder(&state.db, user_id, service_id, &payload.ordered_ids)
+        .await?;
+    Ok(Json(serde_json::json!({ "reordered": true })))
 }
 
 /// DELETE /pipeline/{id}/rules/{rule_id} — remove a rule.

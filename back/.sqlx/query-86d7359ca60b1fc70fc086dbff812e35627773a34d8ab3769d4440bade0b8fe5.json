@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE outgoing_shares SET allow_exif_edit = false WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "86d7359ca60b1fc70fc086dbff812e35627773a34d8ab3769d4440bade0b8fe5"
+}

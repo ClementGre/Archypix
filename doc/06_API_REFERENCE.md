@@ -830,6 +830,7 @@ type ServiceDetailResponse =
 // Common fields on all service types:
 interface ServiceBase {
     id: string;
+    name: string;        // user-facing label (may be empty; UI falls back to a type label)
     service_type: ServiceType;
     requires: string[];  // ltree paths — service only fires if picture has ALL of these tags
     excludes: string[];  // ltree paths — service only fires if picture has NONE of these tags
@@ -863,7 +864,7 @@ interface SharedTagMappingRule {
 
 interface RuleTaggingRule {
     id: string;
-    predicate: string;   // e.g. "gps_within_bbox(45.8, 6.8, 46.1, 7.1)"
+    predicate: RulePredicate;   // structured predicate tree (see below)
     assign_tag: string;
 }
 
@@ -877,12 +878,37 @@ interface SegmentationSegment {
 }
 ```
 
-**Supported predicates for `RuleTaggingRule.predicate`:**
+**`RuleTaggingRule.predicate` — structured predicate tree (feature 13):**
 
-- `gps_within_bbox(lat_min, lat_max, lon_min, lon_max)` — GPS bounding box
-- `capture_year(YYYY)` — year of capture date
-- `capture_month(M)` — month of capture date (1–12)
-- `filename_contains("string")` — case-sensitive substring match on filename
+A recursive JSON value combining logical nodes, spatial predicates, and typed field conditions.
+See `doc/features/13_better_rules.md` for the full model; the backend validates the tree on
+create/update (unknown keys, type-incompatible conditions, bad ranges, invalid regex, depth > 10).
+
+```ts
+type RulePredicate =
+        | { and: RulePredicate[] }              // all children match (empty ⇒ always)
+        | { or: RulePredicate[] }               // any child matches (empty ⇒ never)
+        | { not: RulePredicate }                // inverts the child
+        | { gps_bbox: { lat_min; lat_max; lon_min; lon_max } }
+        | { gps_radius: { lat; lng; km } }
+        | ({ field: string } & Record<string, unknown>);  // typed field condition leaf
+```
+
+Fields: `captured_at` / `ingested_at` / `updated_at` (date), `gps_lat`/`gps_lng`/`gps_alt`,
+`iso_speed`, `f_number`, `focal_length_mm`, `exposure_time` (s), `orientation`, `camera_brand`,
+`camera_model`, `filename`, `mime_type`, `file_size`, `width`, `height`, `is_owned` (bool).
+Conditions by base type:
+
+- **int/float** — `eq`, `min`, `max` (combine `min`+`max` for a range)
+- **str** — `eq`, `eq_ic` (case-insensitive), `contains`, `starts_with`, `ends_with` (all
+  case-insensitive), `regex` (RE2, case-sensitive)
+- **date** — `year`, `month` (1–12), `season` (`spring|summer|autumn|winter`),
+  `date_range: {from, to}` (each bound `YYYY-MM-DD` for a full day, or `YYYY-MM-DDTHH:MM:SS` for a
+  precise instant), `time_range: {from, to}` (`HH:MM`, may cross midnight)
+- **bool** — `eq`
+- **any nullable field** — `is_present: boolean`
+
+Example: `{"and": [{"field": "camera_brand", "eq_ic": "fujifilm"}, {"field": "iso_speed", "min": 100, "max": 800}]}`.
 
 ---
 
@@ -907,6 +933,7 @@ Create a new tagging service.
 ```ts
 {
     service_type: ServiceType;   // "shared_tag_mapping" | "rule" | "segmentation"
+    name ? : string;              // optional user-facing label
     requires ? : string[];
     excludes ? : string[];
 }
@@ -917,6 +944,7 @@ Create a new tagging service.
 ```ts
 interface ServiceResponse {
     id: string;
+  name: string;
     service_type: ServiceType;
     requires: string[];
     excludes: string[];
@@ -943,6 +971,7 @@ Update a service.
 
 ```ts
 {
+    name ? : string;        // rename the service
     enabled ? : boolean;
     requires ? : string[];  // replaces the entire current list
     excludes ? : string[];  // replaces the entire current list
@@ -1049,14 +1078,50 @@ Add a rule to a `rule` tagging service.
 
 ```ts
 {
-    predicate: string;   // validated predicate expression
-    assign_tag: string;  // ltree path (no protected prefixes)
+    predicate: RulePredicate;  // structured predicate tree (validated server-side)
+    assign_tag: string;        // ltree path (no protected prefixes)
 }
 ```
+
+`400` if the predicate is structurally invalid, applies a type-incompatible condition to a field,
+has an out-of-range bound, an uncompilable regex, or nests deeper than 10 levels — the error names
+the offending node.
 
 **Response `200`:** `RuleTaggingRule`
 
 **Errors:** 400 if service is not `rule` type, or predicate syntax is invalid; 404 if not found.
+
+New rules are appended (highest `position`).
+
+---
+
+#### `PATCH /api/authenticated/tagging-services/{id}/rules/{rule_id}`
+
+Edit a rule's predicate and assigned tag.
+
+**Path params:** `id: string`, `rule_id: string`
+
+**Request:**
+
+```ts
+{
+    predicate: RulePredicate;  // structured predicate tree (validated server-side)
+    assign_tag: string;        // ltree path (no protected prefixes)
+}
+```
+
+**Response `200`:** `RuleTaggingRule`. **Errors:** `400` invalid predicate; `404` if not found.
+
+---
+
+#### `POST /api/authenticated/tagging-services/{id}/rules/reorder`
+
+Set the display order of a rule service's rules (presentation only — rules are evaluated
+independently of order).
+
+**Request:** `{ ordered_ids: string[] }` — the complete list of the service's rule IDs in order.
+
+**Response `200`:** `{ reordered: true }`. **Errors:** `400` if an ID is not part of the service.
 
 ---
 

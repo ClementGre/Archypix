@@ -4,20 +4,35 @@
 //! they operate on a projection of `pictures` that the pipeline needs, and on
 //! bulk tag-assignment logic specific to pipeline output.
 
+use crate::domain::job::CameraExif;
 use crate::infra::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
+use sqlx::types::Json;
 use sqlx::{Executor, PgPool, Postgres};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// Minimal picture projection used by the pipeline evaluator.
+/// Minimal picture projection used by the pipeline evaluator. Carries every field the rule
+/// predicates (feature 13) and segmentation can read; camera/lens fields come from `exif_data`.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PipelinePicture {
     pub id: Uuid,
     pub captured_at: Option<NaiveDateTime>,
+    pub ingested_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
     pub gps_lat: Option<f64>,
     pub gps_lng: Option<f64>,
+    pub gps_alt: Option<i32>,
+    pub orientation: Option<i16>,
     pub filename: Option<String>,
+    pub mime_type: Option<String>,
+    pub file_size: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    /// Camera/lens EXIF (brand, model, focal length, f-number, ISO, exposure num/den).
+    pub exif_data: Json<CameraExif>,
+    /// `true` when this user owns the picture (`remote_picture_id IS NULL`).
+    pub is_owned: bool,
 }
 
 /// A tag to assign as output of the pipeline, with its source.
@@ -80,7 +95,11 @@ impl PipelineRepository {
         // see doc/features/02 §6), so they are not filtered out here.
         sqlx::query_as!(
             PipelinePicture,
-            r#"SELECT p.id, p.captured_at, p.gps_lat, p.gps_lng, p.filename
+            r#"SELECT p.id, p.captured_at, p.ingested_at, p.updated_at,
+                      p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
+                      p.filename, p.mime_type, p.file_size, p.width, p.height,
+                      p.exif_data as "exif_data: Json<CameraExif>",
+                      (p.remote_picture_id IS NULL) as "is_owned!"
                FROM pictures p
                WHERE p.local_user_id = $1
                  AND (

@@ -78,7 +78,7 @@ pub struct PicturesAnnouncementRequest {
 /// A picture announced in a [PicturesAnnouncementRequest].
 ///
 /// Carries the owner's EXIF/geo metadata so federated recipients converge on the same metadata the
-/// owner holds (and so recipient-side `gps_within_bbox`/date tagging works on shared pictures).
+/// owner holds (and so recipient-side GPS/date rule tagging works on shared pictures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnouncedPicture {
     pub picture_id: String,

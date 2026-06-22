@@ -302,14 +302,22 @@ pub async fn health_handler() -> impl IntoResponse {
 
 #[derive(Debug, Deserialize)]
 struct ResolverJwtClaims {
+    #[allow(dead_code)]
     sub: String,
+    #[allow(dead_code)]
     is_admin: bool,
+    #[allow(dead_code)]
     instance: String,
     token_type: String,
+    #[allow(dead_code)]
     aud: String,
+    #[allow(dead_code)]
     iss: String,
+    #[allow(dead_code)]
     exp: i64,
+    #[allow(dead_code)]
     iat: i64,
+    #[allow(dead_code)]
     jti: String,
 }
 

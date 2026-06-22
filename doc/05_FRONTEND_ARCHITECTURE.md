@@ -198,7 +198,15 @@ so the rotate buttons never leave the EXIF section "dirty".
 **Leaflet is loaded from CDN at runtime** (vanilla `leaflet` via a one-time injected `<script>`/`<link>`, no npm package) — the `react-leaflet`
 wrapper
 pulled a duplicate React copy under the project's mixed npm/pnpm `node_modules` and crashed with "Invalid hook call". Vanilla Leaflet has no React
-dependency, so `GpsPickerPopover` drives the map imperatively in a `useEffect`.
+dependency, so the map is driven imperatively. The loader + typed surface live in `lib/leaflet.ts`; the factored
+`components/common/MapView` renders it in three modes — **point** (a draggable pin; EXIF GPS picking), **bbox** (a
+rectangle with draggable corner + centre handles), **circle** (centre + radius handles) — reused by both `GpsPickerPopover`
+(point) and the rules' `MapZonePopover` (bbox/circle). The **basemap is user-selectable** (`BASEMAPS` in `lib/leaflet.ts`:
+Streets = CARTO Voyager default, Satellite = Esri World Imagery, OSM, Light, Dark — all free/no-key, choice persisted in
+`stores/mapStyle.ts`). `MapView` also offers a **"center on my location"** control, an **enlarge** button (opens the map
+in a large modal `Dialog`), and **favourite locations** — saved points (localStorage, `stores/favoriteLocations.ts`)
+shown as star pins (click to centre the pin/rect/circle on them), saved via the ★ control and renamed inline (default
+name = coordinates).
 
 **`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; click sets the `tag` filter and **clears any active `hierarchy`/`hpath`** so the tag
 filters the flat gallery rather than the current hierarchy directory; auto-expands ancestors of the active tag and scrolls it
@@ -213,7 +221,17 @@ then
 `PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s.
 `RequiresExcludesEditor`
 (gates as a **local draft committed on Save**), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
-`NewServiceMenu`.
+`NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
+AND/OR/NOT block composer where **a single root @dnd-kit `DndContext` lets you drag a block between levels** (out of a
+group, into a sibling group) as well as reorder within one; field-condition leaves pick a field via a **grouped,
+searchable `FieldPicker`** (Dates / Camera / Location / File / Ownership) + a type-aware operator/value (numbers use the
+`NumberInput` stepper component), date conditions use the shared `DateRangePicker` (datetime), and GPS leaves open
+`MapZonePopover` (rectangle/circle on a real map). Existing rules are **editable inline** (hydrated via
+`lib/predicate.ts:deserialize`) and **drag-reorderable** (persisted via `POST …/rules/reorder`). Predicate model +
+serialize/deserialize/describe + tree-move helpers live in `lib/predicate.ts`. **Every service (rule / segmentation /
+shared-mapping) is inline-renameable** via `ServiceNameEditor` (the card, the editor-page header, and the shared-mapping
+accordion all use it). `SegmentEditor` uses the `DateRangePicker` (datetime mode) emitting **NaiveDateTime** strings (no
+timezone, as the backend requires).
 
 **`shares/`** — both lists split shares into **Closed (revoked + tombstoned, collapsed by default) / Pending / Active** foldable `Section`s (so the
 section already conveys status — there is **no** inline status badge on a card) and surface each share's details through `ShareInfoPopover` (an `Info`
@@ -253,7 +271,10 @@ per-node card; add/remove/reorder of `mirror`/`query`/`static` nodes with their 
 naming/safeDeleteMode), `WriteBackEditor` (query-node write-back op-lists with a "suggest from predicate" helper — forward-looking, exercised by
 WebDAV), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed), `JsonConfigDialog` (raw `config` textarea; applies to the draft).
 
-**`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions).
+**`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions), `MapView` (shared imperative Leaflet map;
+point/bbox/circle modes), `DateRangePicker` (calendar range on the shadcn `Calendar`, **week starts Monday**; `date` mode
+emits `YYYY-MM-DD` bounds, `datetime` mode emits NaiveDateTime bounds with **optional times** — default first-day 00:00:00 /
+last-day 23:59:59).
 
 ---
 

@@ -25,6 +25,8 @@ pub enum SafeDeleteMode {
 pub struct TaggingService {
     pub id: Uuid,
     pub owner_id: Uuid,
+    /// User-facing label (may be empty; the UI falls back to a type label).
+    pub name: String,
     pub service_type: ServiceType,
     /// Tags that must ALL be present for this service to fire (ltree[] as text[]).
     pub requires: Vec<String>,
@@ -54,12 +56,18 @@ pub struct SharedTagMappingRule {
 }
 
 /// Assigns a tag when a predicate over EXIF/filename/GPS matches.
+///
+/// `predicate` is a structured JSONB predicate tree (feature 13); parse it into
+/// [`crate::domain::pipeline::Predicate`] to validate or evaluate it.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct RuleTaggingRule {
     pub id: Uuid,
     pub service_id: Uuid,
-    pub predicate: String,
+    pub predicate: serde_json::Value,
     pub assign_tag: String,
+    /// User-controlled display order within the service (presentation only — rules are
+    /// evaluated independently).
+    pub position: i32,
 }
 
 /// Assigns a tag when a picture's capture date falls within a date range.
