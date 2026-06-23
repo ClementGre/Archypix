@@ -413,6 +413,46 @@ pub async fn restore_picture(
     set_trashed(db, waker, user_id, picture_id, false).await
 }
 
+/// Result of a batch trash/restore: the dry-run count, or the applied count.
+pub enum TrashBatchOutcome {
+    DryRun(crate::services::aggregate::DryRun),
+    Applied { affected: i64 },
+}
+
+/// Batch soft-delete / restore over a [`ResolvedSelection`] (feature 14 §6) — a single set-based
+/// UPDATE (no per-picture loop). With `dry_run` returns the affected count without mutating.
+/// Re-dirties + wakes the pipeline so owned pictures re-announce their owner-deletion lifecycle.
+#[tracing::instrument(skip(db, waker, sel), fields(user_id = %user_id, deleted, dry_run))]
+pub async fn batch_set_trashed_selection(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    sel: &crate::repository::picture::ResolvedSelection,
+    deleted: bool,
+    dry_run: bool,
+) -> Result<TrashBatchOutcome, AppError> {
+    if dry_run {
+        let affected = PictureRepository::count_selection(db, user_id, sel).await?;
+        return Ok(TrashBatchOutcome::DryRun(
+            crate::services::aggregate::DryRun {
+                affected,
+                ..Default::default()
+            },
+        ));
+    }
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let affected =
+        PictureRepository::batch_set_trashed_selection(&mut *tx, user_id, sel, deleted).await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    waker.wake(user_id);
+    Ok(TrashBatchOutcome::Applied {
+        affected: affected as i64,
+    })
+}
+
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
 async fn set_trashed(
     db: &PgPool,

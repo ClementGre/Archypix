@@ -1,7 +1,21 @@
 use crate::domain::tag::{Tag, TagSource};
 use crate::infra::error::{AppError, map_sqlx_error};
-use sqlx::{Executor, Postgres};
+use crate::repository::picture::{PictureRepository, ResolvedSelection};
+use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
+
+/// One ancestor-expanded tag aggregate over a selection (feature 14 §4.2). `count` is
+/// ancestor-inclusive (a picture stored as `A.B.C` contributes to `A`, `A.B`, `A.B.C`);
+/// `count == total` ⇒ on every selected picture. `manual_count` counts pictures holding a *manual*
+/// row under this path and drives the remove affordance. `sources` is populated only when
+/// provenance is requested.
+#[derive(Debug)]
+pub struct TagAgg {
+    pub path: String,
+    pub count: i64,
+    pub manual_count: i64,
+    pub sources: Vec<(TagSource, i64)>,
+}
 
 pub struct TagRepository;
 
@@ -419,6 +433,97 @@ impl TagRepository {
             .await
             .map_err(map_sqlx_error)?;
         Ok(())
+    }
+
+    /// Count pictures in the selection holding a **manual** tag at or under any of `paths`
+    /// (inclusive) — the removable count for the tags batch dry-run (feature 14 §6.1). Mirrors the
+    /// `batch_remove` predicate (`tag_path <@ path AND source = 'manual'`).
+    #[tracing::instrument(skip(db, sel, paths), fields(user_id = %local_user_id))]
+    pub async fn count_selection_with_manual_under(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        paths: &[String],
+    ) -> Result<i64, AppError> {
+        if sel.is_empty() || paths.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*)::bigint FROM pictures p WHERE EXISTS (SELECT 1 FROM tags tg \
+             WHERE tg.picture_id = p.id AND tg.source = 'manual'::tag_source AND tg.tag_path <@ ANY(",
+        );
+        q.push_bind(paths.to_vec()).push("::ltree[])) AND ");
+        PictureRepository::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Ancestor-expanded tag aggregation over a selection (feature 14 §4.2). When `provenance` is
+    /// set, each path also carries its per-source breakdown (a heavier path×source query).
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id, provenance))]
+    pub async fn aggregate_tags(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        provenance: bool,
+    ) -> Result<Vec<TagAgg>, AppError> {
+        use sqlx::Row;
+        if sel.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Path → (count, manual_count), ancestor-expanded via a per-tag prefix lateral.
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT pfx.prefix::text AS path, COUNT(DISTINCT tg.picture_id)::bigint AS cnt, \
+             (COUNT(DISTINCT tg.picture_id) FILTER (WHERE tg.source = 'manual'::tag_source))::bigint AS manual_count \
+             FROM tags tg JOIN pictures p ON p.id = tg.picture_id \
+             CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix \
+                                 FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx \
+             WHERE ",
+        );
+        PictureRepository::push_selection_where(&mut q, local_user_id, sel);
+        q.push(" GROUP BY pfx.prefix ORDER BY pfx.prefix");
+        let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+
+        let mut aggs: Vec<TagAgg> = Vec::with_capacity(rows.len());
+        for r in rows {
+            aggs.push(TagAgg {
+                path: r.try_get("path").map_err(map_sqlx_error)?,
+                count: r.try_get("cnt").map_err(map_sqlx_error)?,
+                manual_count: r.try_get("manual_count").map_err(map_sqlx_error)?,
+                sources: vec![],
+            });
+        }
+
+        if provenance {
+            let mut pq = sqlx::QueryBuilder::<Postgres>::new(
+                "SELECT pfx.prefix::text AS path, tg.source AS \"source\", COUNT(DISTINCT tg.picture_id)::bigint AS cnt \
+                 FROM tags tg JOIN pictures p ON p.id = tg.picture_id \
+                 CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix \
+                                     FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx \
+                 WHERE ",
+            );
+            PictureRepository::push_selection_where(&mut pq, local_user_id, sel);
+            pq.push(" GROUP BY pfx.prefix, tg.source");
+            let rows = pq.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+            let mut by_path: std::collections::HashMap<String, Vec<(TagSource, i64)>> =
+                std::collections::HashMap::new();
+            for r in rows {
+                let path: String = r.try_get("path").map_err(map_sqlx_error)?;
+                let source: TagSource = r.try_get("source").map_err(map_sqlx_error)?;
+                let cnt: i64 = r.try_get("cnt").map_err(map_sqlx_error)?;
+                by_path.entry(path).or_default().push((source, cnt));
+            }
+            for agg in &mut aggs {
+                if let Some(sources) = by_path.remove(&agg.path) {
+                    agg.sources = sources;
+                }
+            }
+        }
+
+        Ok(aggs)
     }
 
     /// Promote a service's pipeline tags to `manual`, preserving the user's curation when

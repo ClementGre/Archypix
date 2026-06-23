@@ -2,6 +2,7 @@ use crate::clients::federation::FederationClient;
 use crate::clients::resolver::ResolverClient;
 use crate::infra::config::Config;
 use crate::infra::crypto::JwtService;
+use crate::infra::exif_drain::ExifDrainWaker;
 use crate::infra::pipeline::PipelineWaker;
 use crate::infra::redis::Cache;
 use crate::infra::s3::Storage;
@@ -29,6 +30,9 @@ pub struct AppState {
     /// that creates dirty pictures or share work for that user (ingest, tag edit, service config
     /// change, share accept, …) — see `infra::pipeline::PipelineWaker`.
     pub pipeline_waker: PipelineWaker,
+    /// Wake handle for the deferred-EXIF-job drain (feature 14 §5). Call `wake()` after a batch EXIF
+    /// edit stamps new `pending_job_creation` rows — see `infra::exif_drain::ExifDrainWaker`.
+    pub exif_drain: ExifDrainWaker,
 }
 
 impl AppState {
@@ -43,6 +47,7 @@ impl AppState {
         resolver: ResolverClient,
         task_queue: TaskQueue,
         pipeline_waker: PipelineWaker,
+        exif_drain: ExifDrainWaker,
     ) -> Self {
         Self {
             config,
@@ -55,6 +60,7 @@ impl AppState {
             resolver,
             task_queue,
             pipeline_waker,
+            exif_drain,
         }
     }
 }

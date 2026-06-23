@@ -93,6 +93,12 @@ pub struct Config {
     /// worker-completion wakes into one pass. `0` disables debouncing (run immediately) — the value
     /// used by tests for determinism. Default: 5000.
     pub pipeline_debounce_ms: u64,
+    /// How often (seconds) the deferred-EXIF-job drain runs its fallback sweep (feature 14 §5). A
+    /// batch EXIF edit also wakes the drain immediately; the interval is the crash/lost-wake
+    /// recovery backstop. Default: 5.
+    pub exif_drain_interval_secs: u64,
+    /// Maximum pictures the deferred-EXIF-job drain turns into reconcile jobs per pass. Default: 200.
+    pub exif_drain_batch: i64,
 
     // ── S3 / Object storage ───────────────────────────────────────────────────
     pub s3_endpoint: String,
@@ -208,6 +214,8 @@ impl Config {
             pipeline_concurrency: env_usize("PIPELINE_CONCURRENCY", 4)?,
             pipeline_retry_backoff_secs: env_i64("PIPELINE_RETRY_BACKOFF_SECS", 60)?,
             pipeline_debounce_ms: env_u64("PIPELINE_DEBOUNCE_MS", 5000)?,
+            exif_drain_interval_secs: env_u64("EXIF_DRAIN_INTERVAL_SECS", 5)?,
+            exif_drain_batch: env_i64("EXIF_DRAIN_BATCH", 200)?,
 
             s3_public_endpoint: env("S3_PUBLIC_ENDPOINT", s3_endpoint.clone()),
             s3_workers_endpoint: env("S3_WORKERS_ENDPOINT", s3_endpoint.clone()),
@@ -364,6 +372,8 @@ impl Config {
             pipeline_concurrency: 4,
             pipeline_retry_backoff_secs: 60,
             pipeline_debounce_ms: 0,
+            exif_drain_interval_secs: 5,
+            exif_drain_batch: 200,
             s3_endpoint: "http://localhost:9000".to_string(),
             s3_public_endpoint: "http://localhost:9000".to_string(),
             s3_workers_endpoint: "http://localhost:9000".to_string(),

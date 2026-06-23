@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures\n             (id, local_user_id, mime_type, file_size, file_hash, captured_at,\n              gps_lat, gps_lng, exif_data, thumbnails_generated_at)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,\n                   CASE WHEN $10 THEN (now() at time zone 'utc') ELSE NULL END)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Int8",
+        "Text",
+        "Timestamp",
+        "Float8",
+        "Float8",
+        "Jsonb",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b14c2a86fbe8c193a4aabc82018d3bdc004b9c01f18cbf950e09b49e8f8382e1"
+}

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.local_user_id\n               FROM pictures p\n               WHERE p.exif_sync_status = 'pending_job_creation'\n                 AND NOT EXISTS (\n                     SELECT 1 FROM jobs j\n                     WHERE j.picture_id = p.id\n                       AND j.job_type = 'edit_picture'\n                       AND j.status IN ('pending', 'processing')\n                 )\n               ORDER BY p.updated_at\n               LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "local_user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f74d82d0977df3a5ccb9c2e8025ae23313ad0a2c714044159019e681442600a0"
+}

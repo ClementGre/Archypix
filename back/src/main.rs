@@ -121,6 +121,16 @@ async fn main() -> anyhow::Result<()> {
         pipeline_waker.clone(),
     ));
 
+    // Start the deferred-EXIF-job drain loop (feature 14 §5): turns `pending_job_creation` rows
+    // stamped by batch EXIF edits into `edit_picture` reconcile jobs. Event-driven (woken by the
+    // batch handler) with a short poll fallback.
+    let (exif_drain, exif_drain_loop) = infra::exif_drain::create(
+        db.clone(),
+        Duration::from_secs(config.exif_drain_interval_secs),
+        config.exif_drain_batch,
+    );
+    tokio::spawn(exif_drain_loop);
+
     let state = AppState::new(
         config.clone(),
         db,
@@ -132,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         resolver,
         task_queue,
         pipeline_waker,
+        exif_drain,
     );
 
     let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;

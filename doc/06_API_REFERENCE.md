@@ -579,27 +579,40 @@ When `exif_sync_status = "unsupported"`, the format cannot embed EXIF (e.g. PNG)
 
 #### `PATCH /api/authenticated/pictures/exif`
 
-Batch EXIF edit on multiple owned pictures.
+Batch EXIF edit over a **selection** (feature 14 §5–§6). See [§6.11](#611-batch-operations-feature-14)
+for the `PictureSelection` model. Owned pictures take a **deferred-job** write-through (a single
+set-based `UPDATE` stamps `exif_sync_status = "pending_job_creation"`; a background drain creates the
+`edit_picture` reconcile jobs and flips them to `pending`). Received pictures take a recipient-local
+override merge — or, in `mode: "suggest"` where the share grants editing, a propose-to-owner edit.
+Because jobs are created by the drain, **no per-picture `job_id` is returned**; convergence is tracked
+through the `exif_sync` histogram from `POST /pictures/aggregate`.
 
 **Request:**
 
 ```ts
 {
-    picture_ids: string[];         // must all be owned by the current user
+    selection?: PictureSelection;     // the selection (or use picture_ids)
+    picture_ids?: string[];           // legacy explicit set (used when selection is absent)
     set ? : Partial<ExifOverrides>;
     clear ? : ExifField[];
+    mode?: "local" | "suggest";       // default "local" (§6.1)
+    dry_run?: boolean;                // default false
 }
 ```
 
-**Response `200`:**
+**Response `200` (apply):**
 
 ```ts
 {
-    updated: number;       // count of pictures updated in DB
-    jobs: string[];        // job UUIDs created (one per picture that needs file reconcile)
-    unsupported: number;   // count of pictures whose format cannot embed EXIF
+    affected: number;        // total pictures touched
+    edited: number;          // owned, write-through (now pending_job_creation)
+    suggested: number;       // received, proposed to owner (suggest mode + grant)
+    local_override: number;  // received, recipient-local override
+    unsupported: number;     // owned, format cannot embed EXIF
 }
 ```
+
+**Response `200` (dry-run):** the [§6.11 dry-run breakdown](#611-batch-operations-feature-14).
 
 ---
 
@@ -682,6 +695,13 @@ lifecycle flag cleared.
 **Response `200`:** `{ id: string; deleted_at: null }`
 
 **Errors (both):** `404` if the user holds no such picture.
+
+#### `POST /api/authenticated/pictures/trash` · `POST /api/authenticated/pictures/restore`
+
+Batch soft-delete / restore over a **selection** (feature 14 §6). One set-based write (no per-picture
+loop). See [§6.11](#611-batch-operations-feature-14) for the request/response shape. Restore must
+target a selection that includes the trashed rows (e.g. the trash view's `include_deleted` query, or
+explicit ids).
 
 ---
 
@@ -784,27 +804,28 @@ List tags. Behavior varies by query params.
 
 #### `PATCH /api/authenticated/tags`
 
-Add or remove tags on one or more pictures.
+Add or remove tags across a **selection** (feature 14 §6.4). See
+[§6.11](#611-batch-operations-feature-14) for the `PictureSelection` model. Removal only affects
+`manual` rows, so the removable count reflects `manual_count`, not `count`.
 
 **Request:**
 
 ```ts
 {
-    picture_ids: string[];   // required
+    selection?: PictureSelection;   // the selection (or use picture_ids)
+    picture_ids?: string[];         // legacy explicit set (used when selection is absent)
     add_tags ? : string[];     // ltree paths (dot-separated) to add as "manual" tags
     remove_tags ? : string[];  // ltree paths to remove — only removes "manual" tags
+    dry_run?: boolean;         // default false
 }
 ```
 
 Tag paths must not start with `SharedToMe` (protected prefix).
 
-**Response `200`:**
+**Response `200` (apply):** `{ ok: true; affected: number }`
 
-```ts
-{
-    ok: true
-}
-```
+**Response `200` (dry-run):** the [§6.11 dry-run breakdown](#611-batch-operations-feature-14)
+(`added` = pictures that gain a tag; `removed` = pictures holding a manual row under a removed path).
 
 **Side-effects:** Pipeline is invalidated for all affected pictures and woken.
 
@@ -1516,6 +1537,106 @@ Toggle the read strategy. **Request:** `{ use_redirect: boolean }`. **Response `
 
 ---
 
+### 6.11 Batch operations (feature 14)
+
+Every batch endpoint speaks one **selection descriptor**: a `query` (a homogenized
+[`PictureFilter`](#picturefilter)) plus explicit id deltas. The effective set is
+`(resolve(query) ∪ include_ids) \ exclude_ids`, always scoped server-side to the caller. Resolution
+runs at **apply time** (`Ctrl+A` = "everything this query matches now"); the dry-run re-resolves
+through the same path so the previewed count cannot diverge from the apply. See
+`doc/features/14_better_batch_editing.md`.
+
+```ts
+interface PictureSelection {
+  query?: PictureFilter | null;   // null ⇒ pure explicit set
+  include_ids?: string[];         // pictures explicitly added
+  exclude_ids?: string[];         // pictures subtracted from the query result
+}
+```
+
+<a id="picturefilter"></a>
+
+```ts
+type PictureFilter =
+  | { kind: "flat"; tag?: string; include_tags?: string[]; exclude_tags?: string[];
+      match?: "all" | "any"; untagged?: boolean;
+      // shared scope/date params:
+      owned_only?: boolean; shared_with_me?: boolean; include_deleted?: boolean;
+      captured_after?: string; captured_before?: string }
+  | { kind: "hierarchy"; hierarchy_id: string; path: string;
+      /* + the same shared scope/date params */ };
+```
+
+The `flat` form mirrors `GET /pictures` (tag lists as arrays here, not comma strings). The
+`hierarchy` form resolves the directory `path` to its "most-specific node wins" direct predicate,
+AND-ed with the scope/date params.
+
+Endpoints accepting a selection (all also accept a legacy `picture_ids` array as a pure explicit
+set, and `dry_run: true`): `PATCH /tags`, `PATCH /pictures/exif`, `POST /pictures/trash`,
+`POST /pictures/restore`, `POST /pictures/aggregate`.
+
+**Dry-run breakdown** (returned by every batch write when `dry_run: true`, §6.1):
+
+```ts
+{
+  affected: number;
+  // EXIF batch only:
+  edited?: number; suggested?: number; local_override?: number; unsupported?: number;
+  // tags batch only:
+  added?: number; removed?: number;
+}
+```
+
+#### `POST /api/authenticated/pictures/aggregate`
+
+Type-aware aggregation over a selection (§4) — a server-side GROUP BY / conditional aggregate, so a
+select-all of 10k pictures is never materialised or downloaded.
+
+**Request:**
+
+```ts
+{
+  selection: PictureSelection;
+  sections?: Array<"summary" | "tags" | "exif">;   // default ["summary"]
+  tag_provenance?: boolean;                          // default false; only meaningful with "tags"
+}
+```
+
+**Response `200`:**
+
+```ts
+{
+  // summary — always returned (all from the pictures row, zero joins)
+  count: number; owned_count: number; received_count: number;
+  total_file_size: number; trashed_count: number; owner_deleting_count: number;
+  thumbnail_pending_count: number; duplicate_count: number;
+  owners: Array<{ username: string; instance: string; count: number }>;  // distinct remote owners
+  exif_sync: Record<ExifSyncStatus, number>;        // histogram incl. pending_job_creation
+
+  // tags — only when "tags" requested; ancestor-inclusive counts
+  tags?: Array<{
+    path: string; count: number; manual_count: number;
+    sources?: Array<{ source: TagSource; count: number }>;  // only when tag_provenance=true
+  }>;
+
+  // exif — only when "exif" requested; per-field, type-aware
+  exif?: Record<string, FieldAggregate>;
+}
+
+type FieldAggregate =
+  | { type: "distinct"; common: unknown | null; distinct: Array<{ value: unknown; count: number }>;
+      distinct_overflow: number; null_count: number }
+  | { type: "numeric"; min: number | null; max: number | null; avg: number | null; null_count: number }
+  | { type: "date";    min: string | null; max: string | null; avg: string | null; null_count: number }
+  | { type: "gps";     bbox: { lat_min; lat_max; lng_min; lng_max } | null;
+      centroid: { lat; lng } | null; null_count: number };
+```
+
+`count == total` ⇒ the tag is on every selected picture; `count < total` ⇒ on some. `manual_count`
+drives the remove affordance (batch remove only deletes `manual` rows).
+
+---
+
 ## 7. Admin Endpoints
 
 All endpoints require a user JWT with `is_admin = true`. The admin check is on the `is_admin` JWT claim — there is no separate admin token type.
@@ -1986,9 +2107,10 @@ type VersioningMode =
 
 // EXIF sync status
 type ExifSyncStatus =
-    | "synced"        // DB and file are in sync
-    | "pending"       // edit_picture job is in flight reconciling the file
-    | "unsupported";  // format cannot embed EXIF; DB is updated, file is not
+        | "synced"               // DB and file are in sync
+        | "pending"              // edit_picture job is in flight reconciling the file
+        | "unsupported"          // format cannot embed EXIF; DB is updated, file is not
+        | "pending_job_creation";// batch edit applied set-based; the drain will create the reconcile job (feature 14 §5)
 
 // Picture variants (thumbnail sizes)
 type PictureVariant = "original" | "small" | "medium" | "large";

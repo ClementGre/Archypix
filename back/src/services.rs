@@ -1,8 +1,10 @@
+pub mod aggregate;
 pub mod auth;
 pub mod federation;
 pub mod hierarchy;
 pub mod jobs;
 pub mod pictures;
+pub mod selection;
 pub mod shares;
 pub mod tagging;
 pub mod tags;

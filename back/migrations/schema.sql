@@ -43,7 +43,8 @@ CREATE TYPE public.picture_deleted_reason AS ENUM (
 CREATE TYPE public.picture_exif_sync_status AS ENUM (
     'synced',
     'pending',
-    'unsupported'
+    'unsupported',
+    'pending_job_creation'
 );
 
 CREATE TYPE public.safe_delete_mode AS ENUM (

@@ -23,7 +23,7 @@ echo "current up.sql SHA-384: ${CHECKSUM1} and ${CHECKSUM2}"
 
 # The dev DB (archypix_back) is rebuilt via `sqlx migrate revert/run`; only the seeded test DBs
 # need patching. Override with e.g. `DBS="archypix_back archypix_back1"` if needed.
-DBS="${DBS:-archypix_back1 archypix_back2 archypix_back3}"
+DBS="${DBS:-archypix_back archypix_back1 archypix_back2 archypix_back3}"
 
 for db in $DBS; do
   echo "==> patching ${db} _sqlx_migrations version 1"

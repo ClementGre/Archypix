@@ -58,6 +58,8 @@ clients/
 
 services/
   auth.rs / users.rs / pictures.rs / user_settings.rs / jobs.rs
+  selection.rs      # feature 14: PictureSelection/PictureFilter → ResolvedSelection (membership term)
+  aggregate.rs      # feature 14: type-aware summary/tags/exif aggregation + dry-run shape
   hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration; load_resolved + WebDAV token mgmt
   vfs.rs            # protocol-agnostic VirtualFs over the hierarchy resolver (list/stat/read + write-back);
   webdav.rs         # WebDAV Basic-auth resolution (token → session) + Redis cache
@@ -82,6 +84,7 @@ infra/
   tasks.rs           # in-process Tokio task queue (tag rename, revocation-cascade unannounce)
   scheduler.rs       # RecurringTask trait + Scheduler: runs all periodic loops
   pipeline.rs        # tagging pipeline: event-driven loop + PipelineRecoverySweepTask (poll fallback)
+  exif_drain.rs      # feature 14: deferred-EXIF-job drain (event-driven loop + ExifDrainWaker, poll fallback)
   pipeline/
     evaluation.rs    # per-user tag service evaluation + reconciliation, then announcement
     announcement.rs  # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
@@ -174,6 +177,17 @@ all recipients. Escalating a field to a proposal clears its local override. See
 
 **Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
 removes them, controlled by the `promote_tags` flag.
+
+**Batch editing & deferred EXIF jobs (14)** — every batch endpoint (`aggregate`, tags, EXIF,
+trash/restore) resolves a `PictureSelection` (`services::selection`) into a `ResolvedSelection` whose
+membership term (`PictureRepository::push_selection_where`) is reused as a SQL subquery — aggregation
+(`services::aggregate`) and the batch writes are set-based, never materialising a 10k selection.
+A batch EXIF edit cannot create one `edit_picture` job per picture synchronously: owned pictures take
+a single set-based `UPDATE` that stamps `exif_sync_status = 'pending_job_creation'`, and the
+deferred-job drain (`infra::exif_drain`, mirroring the pipeline's dirty-then-drain + waker + poll
+fallback) creates the reconcile jobs and flips them to `pending`. Received pictures take the
+set-based local-override merge (or a propose-to-owner edit in `suggest` mode). Convergence is tracked
+through the `exif_sync` histogram, not per-picture job ids. See `doc/features/14_better_batch_editing.md`.
 
 ## F) API Conventions
 

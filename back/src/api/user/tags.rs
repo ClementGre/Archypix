@@ -1,15 +1,15 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::tag::TagPath;
 use crate::infra::error::AppError;
-use crate::repository::pipeline::PipelineRepository;
 use crate::repository::tag::TagRepository;
 use crate::services;
+use crate::services::selection::{self, PictureSelection};
+use crate::services::tags::TagBatchOutcome;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use tracing::debug;
 use uuid::Uuid;
 
 fn parse_tag_paths(paths: &[String]) -> Result<Vec<String>, AppError> {
@@ -73,36 +73,57 @@ pub async fn list(
     Ok(Json(serde_json::json!({ "tags": tags })))
 }
 
+/// `PATCH /api/authenticated/tags` — add/remove tags across a [`PictureSelection`] (feature 14
+/// §6.4). Accepts the selection descriptor or a legacy explicit `picture_ids` list. With
+/// `dry_run: true` returns the §6.1 breakdown without mutating.
 #[derive(Debug, Deserialize)]
 pub struct EditPictureTagsRequest {
+    #[serde(default)]
+    pub selection: Option<PictureSelection>,
+    /// Legacy explicit id list (used when `selection` is absent).
+    #[serde(default)]
     pub picture_ids: Vec<Uuid>,
     #[serde(default)]
     pub add_tags: Vec<String>,
     #[serde(default)]
     pub remove_tags: Vec<String>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
-#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), dry_run = payload.dry_run
+))]
 pub async fn edit(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<EditPictureTagsRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
     let add_tags = parse_tag_paths(&payload.add_tags)?;
     let remove_tags = parse_tag_paths(&payload.remove_tags)?;
-    services::tags::edit_picture_tags(
+    let sel = selection::resolve_or_explicit(
         &state.db,
-        auth.user_id()?,
-        &payload.picture_ids,
-        &add_tags,
-        &remove_tags,
+        user_id,
+        payload.selection.as_ref(),
+        payload.picture_ids.clone(),
     )
     .await?;
-    // Manual tag changes invalidate these pictures so the pipeline re-evaluates
-    // requires/excludes conditions that may now be satisfied or violated.
-    if let Err(e) = PipelineRepository::invalidate(&state.db, &payload.picture_ids).await {
-        tracing::error!(error = ?e, "failed to invalidate pipeline for edited pictures");
-    }
-    state.pipeline_waker.wake(auth.user_id()?);
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let outcome = services::tags::batch_edit_tags(
+        &state.db,
+        &state.pipeline_waker,
+        user_id,
+        &sel,
+        &add_tags,
+        &remove_tags,
+        payload.dry_run,
+    )
+    .await?;
+    Ok(Json(match outcome {
+        TagBatchOutcome::DryRun(dry) => {
+            serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
+        }
+        TagBatchOutcome::Applied { affected } => {
+            serde_json::json!({ "ok": true, "affected": affected })
+        }
+    }))
 }

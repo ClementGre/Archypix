@@ -1,0 +1,3 @@
+-- Postgres cannot drop a value from an enum type. The label is left in place; any row left in the
+-- transient `pending_job_creation` state would be drained to `pending` by the drain task before a
+-- rollback would matter, so this down migration is intentionally a no-op.

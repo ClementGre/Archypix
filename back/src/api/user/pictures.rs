@@ -2,9 +2,11 @@ use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::job::{ExifField, FullExif};
 use crate::infra::error::AppError;
 use crate::services;
+use crate::services::aggregate::AggregateRequest;
 use crate::services::pictures::{
-    PictureListParams, PictureListResult, PictureVariant, UploadMetadata,
+    PictureListParams, PictureListResult, PictureVariant, TrashBatchOutcome, UploadMetadata,
 };
+use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -215,7 +217,87 @@ pub async fn trash(
     })))
 }
 
-/// `POST /api/authenticated/pictures/{id}/restore` — restore a soft-deleted picture.
+#[tracing::instrument(skip(auth, state, body), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
+pub async fn aggregate(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<AggregateRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = services::aggregate::aggregate(&state.db, auth.user_id()?, body).await?;
+    Ok(Json(result))
+}
+
+/// Body for a batch trash/restore over a selection (feature 14 §6). Accepts the selection descriptor
+/// or a legacy explicit `picture_ids` list; `dry_run: true` returns the affected count only.
+#[derive(Debug, Deserialize)]
+pub struct BatchTrashRequest {
+    #[serde(default)]
+    pub selection: Option<PictureSelection>,
+    #[serde(default)]
+    pub picture_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+async fn batch_set_trashed(
+    auth: AuthUser,
+    state: AppState,
+    body: BatchTrashRequest,
+    deleted: bool,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let sel = selection::resolve_or_explicit(
+        &state.db,
+        user_id,
+        body.selection.as_ref(),
+        body.picture_ids.clone(),
+    )
+    .await?;
+    let outcome = services::pictures::batch_set_trashed_selection(
+        &state.db,
+        &state.pipeline_waker,
+        user_id,
+        &sel,
+        deleted,
+        body.dry_run,
+    )
+    .await?;
+    Ok(Json(match outcome {
+        TrashBatchOutcome::DryRun(dry) => {
+            serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
+        }
+        TrashBatchOutcome::Applied { affected } => {
+            serde_json::json!({ "affected": affected })
+        }
+    }))
+}
+
+#[tracing::instrument(
+    skip(auth, state, body),
+    fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), dry_run = body.dry_run)
+)]
+pub async fn batch_trash(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<BatchTrashRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    batch_set_trashed(auth, state, body, true).await
+}
+
+/// `POST /api/authenticated/pictures/restore`: batch restore over a selection
+#[tracing::instrument(
+    skip(auth, state, body),
+    fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), dry_run = body.dry_run)
+)]
+pub async fn batch_restore(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<BatchTrashRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    batch_set_trashed(auth, state, body, false).await
+}
+
+/// `POST /api/authenticated/pictures/{id}/restore`: restore a soft-deleted picture.
 #[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn restore(
     auth: AuthUser,

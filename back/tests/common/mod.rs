@@ -281,6 +281,7 @@ pub fn test_app_state_with_storage(
         resolver,
         task_queue,
         pipeline_waker,
+        archypix_back::infra::exif_drain::ExifDrainWaker::disconnected(),
     )
 }
 

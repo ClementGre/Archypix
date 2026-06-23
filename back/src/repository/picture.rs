@@ -41,6 +41,96 @@ pub struct PictureListFilter {
     pub captured_before: Option<NaiveDateTime>,
 }
 
+/// A picture selection (feature 14 §2) resolved against the DB: the query lowered to a
+/// [`PictureListFilter`] (`None` ⇒ pure explicit set, or a hierarchy directory with no direct files)
+/// plus the explicit id deltas. The reusable membership term every batch endpoint resolves to:
+/// `(filter ∪ include_ids) \ exclude_ids`, scoped to the caller. Built by `services::selection`.
+#[derive(Debug, Clone)]
+pub struct ResolvedSelection {
+    pub filter: Option<PictureListFilter>,
+    pub include_ids: Vec<Uuid>,
+    pub exclude_ids: Vec<Uuid>,
+}
+
+impl ResolvedSelection {
+    /// A pure explicit set over the given ids (the degenerate single-/multi-click case).
+    pub fn explicit(include_ids: Vec<Uuid>) -> Self {
+        Self {
+            filter: None,
+            include_ids,
+            exclude_ids: vec![],
+        }
+    }
+
+    /// True when the selection can match no picture regardless of the user's holdings (no query and
+    /// no explicitly-included id). Callers short-circuit to an empty result.
+    pub fn is_empty(&self) -> bool {
+        self.filter.is_none() && self.include_ids.is_empty()
+    }
+}
+
+/// Selection-summary aggregate (feature 14 §4.1) — all read straight off the `pictures` row.
+#[derive(Debug, Default)]
+pub struct SelectionSummary {
+    pub count: i64,
+    pub owned_count: i64,
+    pub received_count: i64,
+    pub total_file_size: i64,
+    pub trashed_count: i64,
+    pub owner_deleting_count: i64,
+    pub thumbnail_pending_count: i64,
+    pub duplicate_count: i64,
+    /// Distinct remote owners of received pictures in the selection.
+    pub owners: Vec<OwnerCount>,
+    /// `exif_sync_status` histogram (label → count), including `pending_job_creation`.
+    pub exif_sync: Vec<(ExifSyncStatus, i64)>,
+}
+
+#[derive(Debug)]
+pub struct OwnerCount {
+    pub username: String,
+    pub instance: String,
+    pub count: i64,
+}
+
+/// Min/max/avg of a numeric field over the selection (`null_count` = rows where the field is NULL).
+#[derive(Debug, Default, Clone)]
+pub struct NumericAgg {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub avg: Option<f64>,
+    pub null_count: i64,
+}
+
+/// Min/max range + avg instant of a date field over the selection.
+#[derive(Debug, Default, Clone)]
+pub struct DateAgg {
+    pub min: Option<NaiveDateTime>,
+    pub max: Option<NaiveDateTime>,
+    pub avg: Option<NaiveDateTime>,
+    pub null_count: i64,
+}
+
+/// Exact bounding box + centroid of the GPS points in the selection.
+#[derive(Debug, Default, Clone)]
+pub struct GpsAgg {
+    pub lat_min: Option<f64>,
+    pub lat_max: Option<f64>,
+    pub lng_min: Option<f64>,
+    pub lng_max: Option<f64>,
+    pub centroid_lat: Option<f64>,
+    pub centroid_lng: Option<f64>,
+    pub null_count: i64,
+}
+
+/// Distinct-value histogram of a string/enum field over the selection.
+#[derive(Debug, Default, Clone)]
+pub struct DistinctAgg {
+    /// `(value, count)` pairs ordered by descending count (NULLs excluded — see `null_count`).
+    pub values: Vec<(String, i64)>,
+    pub null_count: i64,
+}
+
 pub struct PictureRepository;
 
 impl PictureRepository {
@@ -1072,4 +1162,692 @@ impl PictureRepository {
         .await
         .map_err(map_sqlx_error)
     }
+
+    // ── Selection (feature 14) ────────────────────────────────────────────────
+
+    /// Push the selection membership predicate over alias `p` into `q`, scoped to `local_user_id`:
+    /// `(query ∪ include_ids) \ exclude_ids`. Assumes `q` is positioned where a boolean is expected
+    /// (e.g. right after `WHERE `). Reuses [`push_filters`](Self::push_filters) for the query branch
+    /// so a selection filters identically to `GET /pictures`.
+    pub fn push_selection_where(
+        q: &mut sqlx::QueryBuilder<Postgres>,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) {
+        q.push("p.local_user_id = ").push_bind(local_user_id);
+        match &sel.filter {
+            Some(filter) => {
+                q.push(" AND ((TRUE");
+                Self::push_filters(q, filter);
+                q.push(")");
+                if !sel.include_ids.is_empty() {
+                    q.push(" OR p.id = ANY(")
+                        .push_bind(sel.include_ids.clone())
+                        .push("::uuid[])");
+                }
+                q.push(")");
+            }
+            None => {
+                q.push(" AND p.id = ANY(")
+                    .push_bind(sel.include_ids.clone())
+                    .push("::uuid[])");
+            }
+        }
+        if !sel.exclude_ids.is_empty() {
+            q.push(" AND NOT (p.id = ANY(")
+                .push_bind(sel.exclude_ids.clone())
+                .push("::uuid[]))");
+        }
+    }
+
+    /// Count the pictures in the selection.
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn count_selection(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<i64, AppError> {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pictures p WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Count owned pictures in the selection (used by the EXIF dry-run owner/local partition).
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn count_owned_selection(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<i64, AppError> {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*) FROM pictures p WHERE p.remote_picture_id IS NULL AND ",
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Materialise the picture ids in the selection (used by the tags batch, which applies via the
+    /// existing array-based `batch_assign`/`batch_remove`). Resolve inside the caller's transaction.
+    #[tracing::instrument(skip(ex, sel), fields(user_id = %local_user_id))]
+    pub async fn resolve_selection_ids<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<Vec<Uuid>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("SELECT p.id FROM pictures p WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_all(ex)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Materialise the **received** picture ids in the selection (used by the suggest-mode EXIF path,
+    /// which proposes/overrides per picture).
+    #[tracing::instrument(skip(ex, sel), fields(user_id = %local_user_id))]
+    pub async fn resolve_selection_received_ids<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<Vec<Uuid>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT p.id FROM pictures p WHERE p.remote_picture_id IS NOT NULL AND ",
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_all(ex)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Count owned pictures in the selection whose format cannot embed EXIF (the dry-run
+    /// `unsupported` partition). `supported_mimes` is the lower-cased whitelist.
+    #[tracing::instrument(skip(db, sel, supported_mimes), fields(user_id = %local_user_id))]
+    pub async fn count_owned_unsupported_selection(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        supported_mimes: &[String],
+    ) -> Result<i64, AppError> {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*) FROM pictures p WHERE p.remote_picture_id IS NULL \
+             AND (p.mime_type IS NULL OR NOT (lower(p.mime_type) = ANY(",
+        );
+        q.push_bind(supported_mimes.to_vec())
+            .push("::text[]))) AND ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Count received pictures in the selection an active share grants EXIF-edit on (the dry-run
+    /// `suggested` partition; feature 14 §6.1).
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn count_selection_received_suggestable(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<i64, AppError> {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*) FROM pictures p WHERE p.remote_picture_id IS NOT NULL AND EXISTS ( \
+               SELECT 1 FROM tags t JOIN incoming_shares ish ON ish.id = t.source_id \
+               WHERE t.picture_id = p.id AND t.source = 'incoming_share'::tag_source \
+                 AND ish.status = 'active'::share_status AND ish.allow_exif_edit = true) AND ",
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
+    /// Compute the [`SelectionSummary`] (feature 14 §4.1) — all from the `pictures` row (no joins).
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn aggregate_summary(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<SelectionSummary, AppError> {
+        if sel.is_empty() {
+            return Ok(SelectionSummary::default());
+        }
+
+        // Scalar aggregates (one row).
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            r#"SELECT
+                 COUNT(*)::bigint AS count,
+                 COUNT(*) FILTER (WHERE p.remote_picture_id IS NULL)::bigint AS owned_count,
+                 COUNT(*) FILTER (WHERE p.remote_picture_id IS NOT NULL)::bigint AS received_count,
+                 COALESCE(SUM(p.file_size), 0)::bigint AS total_file_size,
+                 COUNT(*) FILTER (WHERE p.deleted_at IS NOT NULL)::bigint AS trashed_count,
+                 COUNT(*) FILTER (WHERE p.owner_deleted_at IS NOT NULL)::bigint AS owner_deleting_count,
+                 COUNT(*) FILTER (WHERE p.thumbnails_generated_at IS NULL)::bigint AS thumbnail_pending_count
+               FROM pictures p WHERE "#,
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        let row = q.build().fetch_one(db).await.map_err(map_sqlx_error)?;
+        use sqlx::Row;
+        let mut summary = SelectionSummary {
+            count: row.try_get("count").map_err(map_sqlx_error)?,
+            owned_count: row.try_get("owned_count").map_err(map_sqlx_error)?,
+            received_count: row.try_get("received_count").map_err(map_sqlx_error)?,
+            total_file_size: row.try_get("total_file_size").map_err(map_sqlx_error)?,
+            trashed_count: row.try_get("trashed_count").map_err(map_sqlx_error)?,
+            owner_deleting_count: row
+                .try_get("owner_deleting_count")
+                .map_err(map_sqlx_error)?,
+            thumbnail_pending_count: row
+                .try_get("thumbnail_pending_count")
+                .map_err(map_sqlx_error)?,
+            ..Default::default()
+        };
+
+        // Duplicate count: pictures sharing a file_hash with another in the selection.
+        let mut dq = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT COALESCE(SUM(c), 0)::bigint FROM (SELECT COUNT(*) AS c FROM pictures p WHERE p.file_hash IS NOT NULL AND ",
+        );
+        Self::push_selection_where(&mut dq, local_user_id, sel);
+        dq.push(" GROUP BY p.file_hash HAVING COUNT(*) > 1) g");
+        summary.duplicate_count = dq
+            .build_query_scalar()
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // exif_sync histogram.
+        let mut hq = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT p.exif_sync_status::text AS status, COUNT(*)::bigint AS cnt FROM pictures p WHERE ",
+        );
+        Self::push_selection_where(&mut hq, local_user_id, sel);
+        hq.push(" GROUP BY p.exif_sync_status");
+        let rows = hq.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+        for r in rows {
+            let label: String = r.try_get("status").map_err(map_sqlx_error)?;
+            let cnt: i64 = r.try_get("cnt").map_err(map_sqlx_error)?;
+            if let Some(status) = parse_exif_sync_status(&label) {
+                summary.exif_sync.push((status, cnt));
+            }
+        }
+
+        // Distinct remote owners of received pictures.
+        let mut oq = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT p.owner_username AS username, p.owner_instance_domain AS instance, COUNT(*)::bigint AS cnt \
+             FROM pictures p WHERE p.remote_picture_id IS NOT NULL AND ",
+        );
+        Self::push_selection_where(&mut oq, local_user_id, sel);
+        oq.push(" GROUP BY p.owner_username, p.owner_instance_domain ORDER BY cnt DESC");
+        let rows = oq.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+        for r in rows {
+            let username: Option<String> = r.try_get("username").map_err(map_sqlx_error)?;
+            let instance: Option<String> = r.try_get("instance").map_err(map_sqlx_error)?;
+            let count: i64 = r.try_get("cnt").map_err(map_sqlx_error)?;
+            summary.owners.push(OwnerCount {
+                username: username.unwrap_or_default(),
+                instance: instance.unwrap_or_default(),
+                count,
+            });
+        }
+
+        Ok(summary)
+    }
+
+    /// Per-field numeric aggregates (min/max/avg/null_count) over the selection, one row per field.
+    /// `fields` is `(field_name, SQL value expression)`; expressions are trusted constants (never
+    /// user input).
+    #[tracing::instrument(skip(db, sel, fields), fields(user_id = %local_user_id))]
+    pub async fn aggregate_numeric(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        fields: &[(&str, &str)],
+    ) -> Result<Vec<(String, NumericAgg)>, AppError> {
+        if sel.is_empty() || fields.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("");
+        for (i, (name, expr)) in fields.iter().enumerate() {
+            if i > 0 {
+                q.push(" UNION ALL ");
+            }
+            q.push("SELECT '")
+                .push(name)
+                .push("' AS field, MIN(v)::float8 AS min_v, MAX(v)::float8 AS max_v, \
+                       AVG(v)::float8 AS avg_v, (COUNT(*) FILTER (WHERE v IS NULL))::bigint AS null_count \
+                       FROM (SELECT ")
+                .push(expr)
+                .push(" AS v FROM pictures p WHERE ");
+            Self::push_selection_where(&mut q, local_user_id, sel);
+            q.push(") s");
+        }
+        let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+        use sqlx::Row;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push((
+                r.try_get::<String, _>("field").map_err(map_sqlx_error)?,
+                NumericAgg {
+                    min: r.try_get("min_v").map_err(map_sqlx_error)?,
+                    max: r.try_get("max_v").map_err(map_sqlx_error)?,
+                    avg: r.try_get("avg_v").map_err(map_sqlx_error)?,
+                    null_count: r.try_get("null_count").map_err(map_sqlx_error)?,
+                },
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Per-field date aggregates (min/max range + avg instant + null_count), one row per field.
+    #[tracing::instrument(skip(db, sel, fields), fields(user_id = %local_user_id))]
+    pub async fn aggregate_dates(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        fields: &[(&str, &str)],
+    ) -> Result<Vec<(String, DateAgg)>, AppError> {
+        if sel.is_empty() || fields.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("");
+        for (i, (name, expr)) in fields.iter().enumerate() {
+            if i > 0 {
+                q.push(" UNION ALL ");
+            }
+            q.push("SELECT '")
+                .push(name)
+                .push(
+                    "' AS field, MIN(v) AS min_v, MAX(v) AS max_v, \
+                       (to_timestamp(AVG(EXTRACT(EPOCH FROM v))) AT TIME ZONE 'utc') AS avg_v, \
+                       (COUNT(*) FILTER (WHERE v IS NULL))::bigint AS null_count \
+                       FROM (SELECT ",
+                )
+                .push(expr)
+                .push(" AS v FROM pictures p WHERE ");
+            Self::push_selection_where(&mut q, local_user_id, sel);
+            q.push(") s");
+        }
+        let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+        use sqlx::Row;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push((
+                r.try_get::<String, _>("field").map_err(map_sqlx_error)?,
+                DateAgg {
+                    min: r.try_get("min_v").map_err(map_sqlx_error)?,
+                    max: r.try_get("max_v").map_err(map_sqlx_error)?,
+                    avg: r.try_get("avg_v").map_err(map_sqlx_error)?,
+                    null_count: r.try_get("null_count").map_err(map_sqlx_error)?,
+                },
+            ));
+        }
+        Ok(out)
+    }
+
+    /// GPS bounding box + centroid over the selection.
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn aggregate_gps(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+    ) -> Result<GpsAgg, AppError> {
+        if sel.is_empty() {
+            return Ok(GpsAgg::default());
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            r#"SELECT MIN(p.gps_lat)::float8 AS lat_min, MAX(p.gps_lat)::float8 AS lat_max,
+                      MIN(p.gps_lng)::float8 AS lng_min, MAX(p.gps_lng)::float8 AS lng_max,
+                      AVG(p.gps_lat)::float8 AS clat, AVG(p.gps_lng)::float8 AS clng,
+                      (COUNT(*) FILTER (WHERE p.gps_lat IS NULL OR p.gps_lng IS NULL))::bigint AS null_count
+               FROM pictures p WHERE "#,
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        let r = q.build().fetch_one(db).await.map_err(map_sqlx_error)?;
+        use sqlx::Row;
+        Ok(GpsAgg {
+            lat_min: r.try_get("lat_min").map_err(map_sqlx_error)?,
+            lat_max: r.try_get("lat_max").map_err(map_sqlx_error)?,
+            lng_min: r.try_get("lng_min").map_err(map_sqlx_error)?,
+            lng_max: r.try_get("lng_max").map_err(map_sqlx_error)?,
+            centroid_lat: r.try_get("clat").map_err(map_sqlx_error)?,
+            centroid_lng: r.try_get("clng").map_err(map_sqlx_error)?,
+            null_count: r.try_get("null_count").map_err(map_sqlx_error)?,
+        })
+    }
+
+    /// Distinct-value histogram of a string/enum field (`expr` is a trusted SQL value expression).
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn aggregate_distinct(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        expr: &str,
+    ) -> Result<DistinctAgg, AppError> {
+        if sel.is_empty() {
+            return Ok(DistinctAgg::default());
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT v AS value, COUNT(*)::bigint AS cnt FROM (SELECT ",
+        );
+        q.push(expr).push(" AS v FROM pictures p WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.push(") s GROUP BY v ORDER BY cnt DESC");
+        let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
+        use sqlx::Row;
+        let mut agg = DistinctAgg::default();
+        for r in rows {
+            let value: Option<String> = r.try_get("value").map_err(map_sqlx_error)?;
+            let cnt: i64 = r.try_get("cnt").map_err(map_sqlx_error)?;
+            match value {
+                Some(v) => agg.values.push((v, cnt)),
+                None => agg.null_count = cnt,
+            }
+        }
+        Ok(agg)
+    }
+
+    /// Batch soft-delete / restore over a selection (feature 14 §6). One set-based UPDATE; resets
+    /// `last_pipeline_run_at` so an owned picture re-announces its owner-deletion lifecycle. Returns
+    /// the number of rows changed.
+    #[tracing::instrument(skip(ex, sel), fields(user_id = %local_user_id, deleted))]
+    pub async fn batch_set_trashed_selection<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        deleted: bool,
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET deleted_at = ");
+        if deleted {
+            q.push("(now() AT TIME ZONE 'utc'), deleted_reason = 'manual'::picture_deleted_reason");
+        } else {
+            q.push("NULL, deleted_reason = NULL");
+        }
+        q.push(", last_pipeline_run_at = NULL WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
+    /// Apply a `set`/`clear` EXIF delta to the **owned** pictures in a selection set-based (feature
+    /// 14 §5). Touches only owned, already-extracted pictures. Stamps `exif_sync_status` =
+    /// `pending_job_creation` when the format embeds EXIF (the drain creates the reconcile job) or
+    /// `unsupported` otherwise. `supported` selects which MIME partition this call targets;
+    /// `supported_mimes` is the lower-cased whitelist. Returns rows changed.
+    #[tracing::instrument(skip(ex, sel, set, clear, supported_mimes), fields(user_id = %local_user_id, supported))]
+    pub async fn batch_apply_exif_owned_selection<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        set: &FullExif,
+        clear: &[crate::domain::job::ExifField],
+        supported: bool,
+        supported_mimes: &[String],
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET ");
+        push_exif_column_assignments(&mut q, set, clear);
+        q.push("exif_sync_status = ");
+        if supported {
+            q.push("'pending_job_creation'::picture_exif_sync_status");
+        } else {
+            q.push("'unsupported'::picture_exif_sync_status");
+        }
+        q.push(", updated_at = (now() AT TIME ZONE 'utc'), last_pipeline_run_at = NULL WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.push(" AND p.remote_picture_id IS NULL AND p.thumbnails_generated_at IS NOT NULL AND ");
+        if supported {
+            q.push("lower(p.mime_type) = ANY(")
+                .push_bind(supported_mimes.to_vec())
+                .push("::text[])");
+        } else {
+            q.push("(p.mime_type IS NULL OR NOT (lower(p.mime_type) = ANY(")
+                .push_bind(supported_mimes.to_vec())
+                .push("::text[])))");
+        }
+        let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
+    /// Apply a recipient-local EXIF override delta to the **received** pictures in a selection,
+    /// set-based (feature 14 §5). Merges `set`/`clear` into `local_exif_overrides`, then
+    /// re-materialises `exif_data` + the promoted columns from `merge(remote_exif_data, overrides)`
+    /// (override wins per field). DB-only; no file job. Returns rows changed.
+    #[tracing::instrument(skip(ex, sel, set_patch, clear_keys), fields(user_id = %local_user_id))]
+    pub async fn batch_apply_exif_received_local_selection<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        set_patch: &serde_json::Value,
+        clear_keys: &[String],
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        // new_ov = (overrides - clear_keys) || set_patch ; merged = remote || new_ov.
+        const NEW_OV: &str =
+            "((COALESCE(p.local_exif_overrides, '{}'::jsonb) - $CLEAR::text[]) || $PATCH::jsonb)";
+        const MERGED: &str = "(COALESCE(p.remote_exif_data, '{}'::jsonb) || NEW_OV)";
+        // Build with real binds; we repeat the bind references, so push them via QueryBuilder.
+        let mut q =
+            sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET local_exif_overrides = ");
+        push_new_ov(&mut q, set_patch, clear_keys);
+        q.push(", exif_data = (");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(" - ARRAY['captured_at','gps_lat','gps_lng','gps_alt','orientation']::text[])");
+        q.push(", captured_at = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'captured_at')::timestamp");
+        q.push(", gps_lat = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'gps_lat')::float8");
+        q.push(", gps_lng = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'gps_lng')::float8");
+        q.push(", gps_alt = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'gps_alt')::int");
+        q.push(", orientation = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'orientation')::smallint");
+        q.push(", last_pipeline_run_at = NULL WHERE ");
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.push(" AND p.remote_picture_id IS NOT NULL");
+        let _ = (NEW_OV, MERGED); // documentation constants
+        let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
+    /// Up to `limit` picture ids stamped `pending_job_creation` with no in-flight `edit_picture`
+    /// job — the deferred-EXIF-job drain's work set (feature 14 §5). Returns `(picture_id, owner)`.
+    #[tracing::instrument(skip(ex))]
+    pub async fn find_pending_job_creation<'e, E>(
+        ex: E,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, Uuid)>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let rows = sqlx::query!(
+            r#"SELECT p.id, p.local_user_id
+               FROM pictures p
+               WHERE p.exif_sync_status = 'pending_job_creation'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM jobs j
+                     WHERE j.picture_id = p.id
+                       AND j.job_type = 'edit_picture'
+                       AND j.status IN ('pending', 'processing')
+                 )
+               ORDER BY p.updated_at
+               LIMIT $1"#,
+            limit,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows.into_iter().map(|r| (r.id, r.local_user_id)).collect())
+    }
+}
+
+/// Parse an `picture_exif_sync_status` text label into the enum (drives the summary histogram).
+fn parse_exif_sync_status(label: &str) -> Option<ExifSyncStatus> {
+    match label {
+        "synced" => Some(ExifSyncStatus::Synced),
+        "pending" => Some(ExifSyncStatus::Pending),
+        "unsupported" => Some(ExifSyncStatus::Unsupported),
+        "pending_job_creation" => Some(ExifSyncStatus::PendingJobCreation),
+        _ => None,
+    }
+}
+
+/// Push the `new_ov` JSONB expression `(overrides - clear) || patch` with fresh binds.
+fn push_new_ov(
+    q: &mut sqlx::QueryBuilder<Postgres>,
+    set_patch: &serde_json::Value,
+    clear_keys: &[String],
+) {
+    q.push("((COALESCE(p.local_exif_overrides, '{}'::jsonb) - ")
+        .push_bind(clear_keys.to_vec())
+        .push("::text[]) || ")
+        .push_bind(set_patch.clone())
+        .push("::jsonb)");
+}
+
+/// Push the `merged` JSONB expression `remote || new_ov` with fresh binds.
+fn push_merged(
+    q: &mut sqlx::QueryBuilder<Postgres>,
+    set_patch: &serde_json::Value,
+    clear_keys: &[String],
+) {
+    q.push("(COALESCE(p.remote_exif_data, '{}'::jsonb) || ");
+    push_new_ov(q, set_patch, clear_keys);
+    q.push(")");
+}
+
+/// The seven camera/lens JSONB keys held in `exif_data`.
+const CAMERA_KEYS: [&str; 7] = [
+    "camera_brand",
+    "camera_model",
+    "focal_length_mm",
+    "f_number",
+    "iso_speed",
+    "exposure_time_num",
+    "exposure_time_den",
+];
+
+/// Push the promoted-column + `exif_data` assignments for an owned-picture EXIF `set`/`clear`,
+/// trailing each with `, ` (the caller appends `exif_sync_status = …`). Only touched fields appear.
+fn push_exif_column_assignments(
+    q: &mut sqlx::QueryBuilder<Postgres>,
+    set: &FullExif,
+    clear: &[crate::domain::job::ExifField],
+) {
+    use crate::domain::job::ExifField;
+    let cleared = |f: ExifField| clear.contains(&f);
+
+    // Promoted columns.
+    if set.captured_at.is_some() {
+        q.push("captured_at = ")
+            .push_bind(set.captured_at)
+            .push(", ");
+    } else if cleared(ExifField::CapturedAt) {
+        q.push("captured_at = NULL, ");
+    }
+    if set.gps_lat.is_some() {
+        q.push("gps_lat = ").push_bind(set.gps_lat).push(", ");
+    } else if cleared(ExifField::GpsLat) {
+        q.push("gps_lat = NULL, ");
+    }
+    if set.gps_lng.is_some() {
+        q.push("gps_lng = ").push_bind(set.gps_lng).push(", ");
+    } else if cleared(ExifField::GpsLng) {
+        q.push("gps_lng = NULL, ");
+    }
+    if set.gps_alt.is_some() {
+        q.push("gps_alt = ").push_bind(set.gps_alt).push(", ");
+    } else if cleared(ExifField::GpsAlt) {
+        q.push("gps_alt = NULL, ");
+    }
+    if set.orientation.is_some() {
+        q.push("orientation = ")
+            .push_bind(set.orientation)
+            .push(", ");
+    } else if cleared(ExifField::Orientation) {
+        q.push("orientation = NULL, ");
+    }
+
+    // Camera/lens JSONB: drop cleared keys, merge the set patch.
+    let clear_camera: Vec<String> = CAMERA_KEYS
+        .iter()
+        .filter(|k| camera_key_cleared(k, clear))
+        .map(|k| k.to_string())
+        .collect();
+    let patch = serde_json::to_value(&set.camera).unwrap_or_else(|_| serde_json::json!({}));
+    let patch_empty = patch.as_object().map(|o| o.is_empty()).unwrap_or(true);
+    if !clear_camera.is_empty() || !patch_empty {
+        q.push("exif_data = (exif_data - ")
+            .push_bind(clear_camera)
+            .push("::text[]) || ")
+            .push_bind(patch)
+            .push("::jsonb, ");
+    }
+}
+
+/// Whether a camera JSONB key is in the `clear` list.
+fn camera_key_cleared(key: &str, clear: &[crate::domain::job::ExifField]) -> bool {
+    use crate::domain::job::ExifField::*;
+    let f = match key {
+        "camera_brand" => CameraBrand,
+        "camera_model" => CameraModel,
+        "focal_length_mm" => FocalLengthMm,
+        "f_number" => FNumber,
+        "iso_speed" => IsoSpeed,
+        "exposure_time_num" => ExposureTimeNum,
+        "exposure_time_den" => ExposureTimeDen,
+        _ => return false,
+    };
+    clear.contains(&f)
 }

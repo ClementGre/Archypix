@@ -4,6 +4,8 @@ use crate::infra::error::AppError;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
 use crate::services;
+use crate::services::jobs::{BatchExifMode, ExifBatchOutcome};
+use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -83,37 +85,76 @@ pub async fn enqueue_edit(
     })))
 }
 
-/// `PATCH /api/authenticated/pictures/exif` — batch EXIF edit (§7.2).
-#[tracing::instrument(skip(auth, state, body), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
+/// Owned pictures take the deferred-job write-through; received pictures take a recipient-local override (or, in `suggest` mode where the share grants it. Convergence is tracked through the `exif_sync` histogram. With `dry_run: true` returns the affected breakdown without mutating.
+#[tracing::instrument(
+    skip(auth, state, body),
+    fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), dry_run = body.dry_run)
+)]
 pub async fn batch_edit_exif(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<BatchExifEditBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let outcome = services::jobs::edit_pictures_exif(
+    let user_id = auth.user_id()?;
+    let sel = selection::resolve_or_explicit(
         &state.db,
-        &state.pipeline_waker,
-        auth.user_id()?,
-        &body.picture_ids,
-        body.set,
-        body.clear,
+        user_id,
+        body.selection.as_ref(),
+        body.picture_ids.clone(),
     )
     .await?;
-    Ok(Json(serde_json::json!({
-        "updated": outcome.updated,
-        "jobs": outcome.jobs,
-        "unsupported": outcome.unsupported,
-    })))
+    let outcome = services::jobs::batch_edit_exif_selection(
+        &state.db,
+        &state.pipeline_waker,
+        &state.exif_drain,
+        state.cache.as_ref(),
+        &state.config,
+        &state.federation,
+        user_id,
+        &auth.claims.sub,
+        &sel,
+        body.set,
+        body.clear,
+        body.mode,
+        body.dry_run,
+    )
+    .await?;
+    Ok(Json(match outcome {
+        ExifBatchOutcome::DryRun(dry) => {
+            serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
+        }
+        ExifBatchOutcome::Applied {
+            affected,
+            edited,
+            suggested,
+            local_override,
+            unsupported,
+        } => serde_json::json!({
+            "affected": affected,
+            "edited": edited,
+            "suggested": suggested,
+            "local_override": local_override,
+            "unsupported": unsupported,
+        }),
+    }))
 }
 
-/// Body for a batch EXIF edit (`PATCH /pictures/exif`).
+/// Body for a batch EXIF edit (`PATCH /pictures/exif`). Accepts the selection descriptor or a legacy
+/// explicit `picture_ids` list.
 #[derive(Debug, Deserialize)]
 pub struct BatchExifEditBody {
+    #[serde(default)]
+    pub selection: Option<PictureSelection>,
+    #[serde(default)]
     pub picture_ids: Vec<Uuid>,
     #[serde(default)]
     pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<ExifField>,
+    #[serde(default)]
+    pub mode: BatchExifMode,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// `POST /api/authenticated/pictures/{id}/exif/resync` — re-enqueue a stuck `pending` picture.

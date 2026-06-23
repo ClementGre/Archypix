@@ -20,7 +20,8 @@
               "Enum": [
                 "synced",
                 "pending",
-                "unsupported"
+                "unsupported",
+                "pending_job_creation"
               ]
             }
           }

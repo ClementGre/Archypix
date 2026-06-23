@@ -71,6 +71,7 @@ pub enum ExifSyncStatus {
     Synced,
     Pending,
     Unsupported,
+    PendingJobCreation,
 }
 
 impl Picture {

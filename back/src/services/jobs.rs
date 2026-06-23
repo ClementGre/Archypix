@@ -1,12 +1,18 @@
+use crate::clients::federation::FederationClient;
 use crate::domain::job::{
     EditPictureConfig, ExifEdit, ExifField, FullExif, GenThumbnailConfig, Job, JobConfig,
 };
 use crate::domain::picture::ExifSyncStatus;
-use crate::infra::error::AppError;
+use crate::infra::config::Config;
+use crate::infra::error::{AppError, map_sqlx_error};
+use crate::infra::exif_drain::ExifDrainWaker;
 use crate::infra::pipeline::PipelineWaker;
+use crate::infra::redis::Cache;
 use crate::repository::job::JobRepository;
-use crate::repository::picture::PictureRepository;
-use archypix_common::mime::supports_exif;
+use crate::repository::picture::{PictureRepository, ResolvedSelection};
+use crate::repository::share::IncomingShareRepository;
+use crate::services::aggregate::DryRun;
+use archypix_common::mime::{MIME_TYPES_EXIF, supports_exif};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
@@ -319,4 +325,229 @@ fn validate_exif_edit(set: &FullExif, clear: Vec<ExifField>) -> Result<Vec<ExifF
         }
     }
     Ok(clear)
+}
+
+/// Whether a batch EXIF edit applies locally or proposes to owners where the share allows (§6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchExifMode {
+    /// Owned → write-through; received → recipient-local override.
+    #[default]
+    Local,
+    /// Owned → write-through; received with an EXIF-edit grant → propose to owner; received without
+    /// the grant → fall back to a local override.
+    Suggest,
+}
+
+/// Result of a batch EXIF edit: the dry-run breakdown, or the applied per-mode counts.
+pub enum ExifBatchOutcome {
+    DryRun(DryRun),
+    Applied {
+        affected: i64,
+        edited: i64,
+        suggested: i64,
+        local_override: i64,
+        unsupported: i64,
+    },
+}
+
+/// The lower-cased MIME whitelist for formats that embed EXIF (feeds the set-based partition).
+fn supported_mimes() -> Vec<String> {
+    MIME_TYPES_EXIF.iter().map(|m| m.to_lowercase()).collect()
+}
+
+/// The flat-JSON key a `FullExif` uses for an `ExifField` (drives the received-override clear set).
+fn exif_field_key(f: ExifField) -> &'static str {
+    match f {
+        ExifField::CapturedAt => "captured_at",
+        ExifField::GpsLat => "gps_lat",
+        ExifField::GpsLng => "gps_lng",
+        ExifField::GpsAlt => "gps_alt",
+        ExifField::Orientation => "orientation",
+        ExifField::CameraBrand => "camera_brand",
+        ExifField::CameraModel => "camera_model",
+        ExifField::FocalLengthMm => "focal_length_mm",
+        ExifField::FNumber => "f_number",
+        ExifField::IsoSpeed => "iso_speed",
+        ExifField::ExposureTimeNum => "exposure_time_num",
+        ExifField::ExposureTimeDen => "exposure_time_den",
+    }
+}
+
+/// Batch EXIF edit over a [`ResolvedSelection`] (feature 14 §5–§6). Owned pictures take the
+/// **deferred-job** write-through (a single set-based UPDATE that stamps `pending_job_creation`; the
+/// drain creates the reconcile jobs). Received pictures take the recipient-local override merge (also
+/// set-based) — or, in `Suggest` mode and where the share grants editing, a propose-to-owner edit.
+///
+/// With `dry_run` the call returns the §6.1 affected breakdown without mutating. The federation
+/// deps are only used by `Suggest`-mode proposals.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, config, federation, sel, set, clear), fields(user_id = %user_id, dry_run))]
+pub async fn batch_edit_exif_selection(
+    db: &PgPool,
+    pipeline_waker: &PipelineWaker,
+    exif_drain: &ExifDrainWaker,
+    cache: &dyn Cache,
+    config: &Config,
+    federation: &FederationClient,
+    user_id: Uuid,
+    requester_username: &str,
+    sel: &ResolvedSelection,
+    set: FullExif,
+    clear: Vec<ExifField>,
+    mode: BatchExifMode,
+    dry_run: bool,
+) -> Result<ExifBatchOutcome, AppError> {
+    let clear = validate_exif_edit(&set, clear)?;
+    let mimes = supported_mimes();
+
+    if dry_run {
+        let affected = PictureRepository::count_selection(db, user_id, sel).await?;
+        let owned_total = PictureRepository::count_owned_selection(db, user_id, sel).await?;
+        let owned_unsupported =
+            PictureRepository::count_owned_unsupported_selection(db, user_id, sel, &mimes).await?;
+        let received_total = affected - owned_total;
+        let suggested = if mode == BatchExifMode::Suggest {
+            PictureRepository::count_selection_received_suggestable(db, user_id, sel).await?
+        } else {
+            0
+        };
+        return Ok(ExifBatchOutcome::DryRun(DryRun {
+            affected,
+            edited: Some(owned_total - owned_unsupported),
+            suggested: Some(suggested),
+            local_override: Some(received_total - suggested),
+            unsupported: Some(owned_unsupported),
+            ..Default::default()
+        }));
+    }
+
+    // ── Owned: deferred write-through, set-based (supported + unsupported partitions) ──
+    let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+    let edited = PictureRepository::batch_apply_exif_owned_selection(
+        &mut *tx, user_id, sel, &set, &clear, true, &mimes,
+    )
+    .await? as i64;
+    let unsupported = PictureRepository::batch_apply_exif_owned_selection(
+        &mut *tx, user_id, sel, &set, &clear, false, &mimes,
+    )
+    .await? as i64;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    if edited > 0 {
+        // New `pending_job_creation` rows → wake the drain to create their reconcile jobs.
+        exif_drain.wake();
+    }
+
+    // ── Received ──
+    let mut suggested = 0i64;
+    let mut local_override = 0i64;
+    match mode {
+        BatchExifMode::Local => {
+            let set_patch = serde_json::to_value(&set)
+                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+            let clear_keys: Vec<String> = clear
+                .iter()
+                .map(|f| exif_field_key(*f).to_string())
+                .collect();
+            local_override = PictureRepository::batch_apply_exif_received_local_selection(
+                db,
+                user_id,
+                sel,
+                &set_patch,
+                &clear_keys,
+            )
+            .await? as i64;
+        }
+        BatchExifMode::Suggest => {
+            let received =
+                PictureRepository::resolve_selection_received_ids(db, user_id, sel).await?;
+            for pic_id in received {
+                let grant = IncomingShareRepository::find_active_exif_editable_for_picture(
+                    db, pic_id, user_id,
+                )
+                .await?
+                .is_some();
+                if grant {
+                    match crate::services::pictures::propose_received_exif(
+                        db,
+                        cache,
+                        config,
+                        federation,
+                        pipeline_waker,
+                        user_id,
+                        requester_username,
+                        pic_id,
+                        set.clone(),
+                        clear.clone(),
+                    )
+                    .await
+                    {
+                        Ok(_) => suggested += 1,
+                        Err(e) => {
+                            tracing::warn!(picture_id = %pic_id, error = ?e, "batch EXIF: propose to owner failed; skipping");
+                        }
+                    }
+                } else {
+                    crate::services::pictures::override_received_exif(
+                        db,
+                        pipeline_waker,
+                        user_id,
+                        pic_id,
+                        set.clone(),
+                        clear.clone(),
+                    )
+                    .await?;
+                    local_override += 1;
+                }
+            }
+        }
+    }
+
+    // A metadata change re-dirties the pictures (date/GPS rules, segments, announcements). Owned and
+    // received-local set-based paths reset `last_pipeline_run_at`; the per-picture received paths
+    // wake on their own. Debounced: a batch produces a burst that should collapse into one run.
+    pipeline_waker.wake_debounced(user_id);
+
+    Ok(ExifBatchOutcome::Applied {
+        affected: edited + unsupported + suggested + local_override,
+        edited,
+        suggested,
+        local_override,
+        unsupported,
+    })
+}
+
+/// Create the deferred `edit_picture` reconcile jobs for up to `limit` pictures stamped
+/// `pending_job_creation` (feature 14 §5). Mirrors the resync no-op edit: the worker rewrites every
+/// editable field from the current DB snapshot. Flips each picture to `pending`. Returns the count
+/// of jobs created.
+#[tracing::instrument(skip(db))]
+pub async fn create_deferred_exif_jobs(db: &PgPool, limit: i64) -> Result<usize, AppError> {
+    let pending = PictureRepository::find_pending_job_creation(db, limit).await?;
+    let mut created = 0usize;
+    for (picture_id, owner_id) in pending {
+        let Some(picture) = PictureRepository::find_by_id(db, picture_id).await? else {
+            continue;
+        };
+        // Bring the file from its (unknown) state to the current DB row: previous = empty, set =
+        // the full snapshot. Identical shape to a manual resync.
+        let snapshot = picture.full_exif();
+        let (set, clear) = FullExif::default().diff_to(&snapshot);
+        let config = JobConfig::EditPicture(EditPictureConfig {
+            picture_id,
+            exif: Some(ExifEdit {
+                set,
+                clear,
+                previous: FullExif::default(),
+            }),
+            visual: None,
+        });
+        let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+        JobRepository::create(&mut *tx, owner_id, Some(picture_id), &config, None).await?;
+        PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Pending)
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        created += 1;
+    }
+    Ok(created)
 }

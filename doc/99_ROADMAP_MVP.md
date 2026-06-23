@@ -76,11 +76,17 @@
   groups, field-condition + GPS-area leaves, drag-to-reorder within a group; rules render as readable
   expressions. Also fixed the segmentation editor crash (empty-string `<Select.Item>` value).
   See `doc/features/13_better_rules.md`.
-- [ ] **Multi-picture edits** — The frontend offers very limited multi-picture viewing and editing support. The idea would be to see all common tags
-  and metadata of selected pictures. See tags not on all pictures also, and show mixed exif data as mixed (maybe with a popup showing the different
-  values if there is not too much). The idea would be to take the current right tab for a single picture, and use about the same interface for when
-  selecting multiple pictures. Endpoints should be added to the API to support batch tag read, batch exif read/write, and other info batch read (file
-  size, ...).
+- [x] **Multi-picture edits** (feature 14) — _Backend_: the `PictureSelection`/`PictureFilter` model
+  (`services::selection`), `POST /pictures/aggregate` (summary/tags/exif sections, ancestor-expanded tag counts with
+  `manual_count`, type-aware field stats), selection-based batch writes (tristate tags, EXIF with `local`/`suggest`
+  modes, batch trash/restore) with `dry_run`, and the deferred-EXIF-job model
+  (`exif_sync_status = 'pending_job_creation'` + `infra::exif_drain`). _Frontend_: the `selection` store now holds the
+  descriptor (query + include/exclude deltas); `⌘/Ctrl+A` / a desktop+mobile **floating action bar** (count, Select-all,
+  Invert, Clear, Batch actions) adopt the view's `PictureFilter` instead of enumerating ids; the **multi-select right
+  panel** (`components/photos/batch/`) reuses the single-picture section layout fed by `useAggregate` (lazy per-section
+  Summary / tristate Tags / type-aware EXIF with the GPS bbox on `MapView`); a `BatchExifDialog` edits EXIF across the
+  selection (local/suggest mode); and every batch write is gated by a **mandatory confirmation popup** hosting the
+  endpoint's `dry_run` preview (`BatchConfirmDialog`). See `doc/features/14_better_batch_editing.md`.
 - [ ] **Dedup pictures at upload time** — When uploading from the frontend, dedup pictures based on the hash, so the user can’t upload a picture
   twice.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.

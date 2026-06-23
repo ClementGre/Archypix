@@ -2,6 +2,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod exif_drain;
 pub mod job_watchdog;
 pub mod observability;
 pub mod pipeline;
