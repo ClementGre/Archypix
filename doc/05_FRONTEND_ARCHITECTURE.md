@@ -102,7 +102,7 @@ right panel.
 | `auth.ts`      | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                     | `archypix_auth`              |
 | `ui.ts`        | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`) | `archypix_ui`                |
 | `theme.ts`     | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                  | `archypix_theme`             |
-| `selection.ts` | `selected: string[], anchor` — gallery multi-select (click / ⌘-toggle / shift-range)                                                                                                                          | none (session only)          |
+| `selection.ts` | `selected: string[], anchor, multiSelect` — gallery multi-select (click / ⌘-toggle / shift-range; `multiSelect` = touch long-press mode, see §9)                                                              | none (session only)          |
 | `upload.ts`    | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                            | none (session only)          |
 
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
@@ -159,7 +159,9 @@ within a label (e.g. `SharedToMe.alice_AT_ex_DOT_com.Photos`). `SharedToMe` is t
 bar:
 brand + nav + sidebar toggles + gallery search/filters + **Upload button** + theme + user; gallery-only controls keyed on `pathname === '/'`. The
 primary
-nav collapses into the user dropdown on mobile (`< md`); **Settings** lives in the user dropdown, not the nav), `StatusBar` (thin footer: placeholder
+nav collapses into the user dropdown on mobile (`< md`); **Settings** lives in the user dropdown, not the nav. On mobile the **theme toggle** also
+moves into the user dropdown and the **right-panel (details) toggle is dropped** — a single tap opens the details drawer and multi-select uses the
+floating bar (§8/§9) — so the bar stays minimal), `StatusBar` (thin footer: placeholder
 storage gauge, tagging-services count, and — on the gallery — current view, selection count, and the thumbnail-size slider), `SidePanel` (resizable
 workspace panel: inline + drag-handle on desktop, overlay drawer + backdrop on mobile; width persisted by the caller), `LeftPanel` (shadcn `Tabs`:
 Tags /
@@ -167,10 +169,19 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 `PagePlaceholder`.
 
 **`photos/`** — `PhotoGrid` (justified flex grid + infinite scroll + selection + renders the Lightbox), `PhotoCard` (`flex-basis`/`flex-grow` from the
-picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop), `OrientedImage`/`OrientedContainImage` (render raw
-thumbnails at their correct EXIF orientation — see §9), `Blurhash`, `FilterControls` (search + sort + filters dropdown — scope folded into Filters —
-rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param; ←/→/Esc; `large` variant; header carries a trash/restore
-action), `SelectionPanel`
+picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop; sits on a **`.bg-checkerboard`** backdrop (see §9) and
+**fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
+(render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
+(loading placeholder only — faded out on load), `FilterControls` (search + sort + filters dropdown — scope folded into Filters,
+**funnel `Filter` icon**; rendered inside `TopBar`. On mobile the search field is hidden from the bar and **relocated into the Filters dropdown**,
+with
+`stopPropagation` on its keydown so the menu's typeahead doesn't eat keystrokes), `Lightbox` (full-screen carousel driven by the `view` param;
+←/→/Esc;
+always the `large` variant; **portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
+on
+top; **click the backdrop outside the image to close** — and closing **selects the viewed picture** (opening the right drawer on mobile) so the user
+lands on its specs; header carries **download-original**, rotate-left/right (auto-committing orientation via `useExifDraft`, same as the
+sidebar), and a trash (`ConfirmDialog`)/restore action), `SelectionPanel`
 (right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
 an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
 tag assignment — see §9).
@@ -295,7 +306,7 @@ mobile) and shown only when its `ui` store toggle is on:
   orientation override), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via `formatDateTime`),
   an **owner-deletion grace banner** (received, when `owner_deleted_at` is set — "disappears on *X*"), a **local-trash banner** (when the picture is
   in
-  the holder's trash, with the owned purge date), and a **Move to trash** (ConfirmDialog) / **Restore** action,
+  the holder's trash, with the owned purge date), a **download-original** button + a **Move to trash** (ConfirmDialog) / **Restore** action,
   then foldable sections — **Tags** (chips; **+** add button and provenance toggle in the section header; provenance mode renders each path as a chip
   with colour-coded per-source mini-tags), **Shared with you** (sender handle + shared subpath, not the raw `SharedToMe.*` path), **Shared by you**,
   **EXIF** (inline-editable — owned pictures write through to the file, received pictures get recipient-local overrides; the badge flips to **modified
@@ -309,8 +320,21 @@ mobile) and shown only when its `ui` store toggle is on:
 
 ## 9. Key behaviours & gotchas
 
-- **Thumbnails:** `usePictures` passes `thumbnail:'medium'` so list items carry presigned URLs — no per-card round-trip. Presigned URLs are cached in
-  Query (`['pictures','url',id,variant]`, ~10 min `staleTime`); the Lightbox uses `large`.
+- **Thumbnails & adaptive sizing:** list items carry a presigned thumbnail URL (no per-card round-trip). The requested variant is **sized to how the
+  picture is displayed** via `variantForSize(cssPx)` (`lib/utils.ts` — maps a **logical** display height to the worker's variant heights small=100 /
+  medium=500 / large=1000, with thresholds `≤150 → small`, `≤350 → medium`, else `large`; **no `devicePixelRatio` multiplier** — slight upscaling on
+  hi-DPI is an accepted trade-off for lighter payloads). The **grid** picks from the zoom (`rowHeight`, so the minimum zoom yields `small`) and
+  threads
+  it into `usePictures`/`useHierarchyBrowse` (variant is in the query key, so crossing a threshold refetches; `placeholderData: keepPreviousData`
+  keeps
+  the grid visible meanwhile); the **sidebar** preview picks from its capped display height (`PREVIEW_MAX_HEIGHT = 208` → `medium`, not the sidebar
+  width); the **Lightbox** always uses `large`. Presigned URLs are cached in Query (`['pictures','url',id,variant]`, ~10 min `staleTime`).
+  `downloadOriginal(id, filename)` (`api/pictures.ts`) fetches the `original` and saves it under the original filename via a blob + `download`
+  attribute
+  (this only sets the name when the cross-origin fetch succeeds; it falls back to opening the presigned URL, which downloads under the S3 key — the
+  only
+  way to force the filename in that case is the backend adding `response-content-disposition` at presign time). Wired to the download buttons in the
+  Lightbox header and the sidebar.
 - **Protected tags:** `TagPicker` hides `SharedToMe.*` unless `allowProtected` is set. It is **off** for manual tagging (SelectionPanel) and
   share-mappings; **on** only for `CreateShareDialog` (sharing) and `RequiresExcludesEditor` (service gates). Protected tags can never be *created*.
 - **Tag removal is manual-only:** `batchEditTags` `remove_tags` only drops `manual` rows. In the provenance table the ✕ appears only on tags with a
@@ -338,6 +362,23 @@ mobile) and shown only when its `ui` store toggle is on:
   for an `incoming_share` source); a "Shared with you" tag → `tag` filter + `panel=incoming` + highlights the matching card in `IncomingSharesList`.
 - **Search:** the API has **no free-text search**; `q` is a client-side filename filter over already-loaded items (it is still kept in the URL for
   future server-side search). The capture-date range filter has a reserved slot in the Filters menu but is not built yet.
+- **Gallery selection (touch vs desktop):** desktop uses click (single) / ⌘-click (toggle) / shift-click (range). Touch has no modifier keys, so
+  `PhotoCard` detects a **long-press** (`450 ms`, cancelled if the finger moves > `10 px` so scrolling still works) that enters
+  `selection.multiSelect` mode via `enterMultiSelect`; while it is on, a plain tap **toggles** a photo (and the selection circle shows on every card)
+  rather than replacing the selection. Deselecting the last photo (or `clear()`) exits the mode. The long-press swallows the synthetic click that
+  follows pointer release so the photo isn't immediately toggled back off. A normal single tap (not in multi-select mode) selects the one photo and,
+  on
+  mobile (`useIsMobile`), opens the right selection drawer (`openMobileDrawer('right')`). **Double-tap-to-open-lightbox is disabled on mobile**
+  (it used to fire select + open at once); full-screen is reached from the sidebar preview instead.
+- **Mobile multi-select bar:** since the top bar drops the right-panel toggle on mobile, `PhotoGrid` renders a **floating selection bar** (fixed,
+  bottom-centre) whenever `isMobile && multiSelect` and the mobile drawer is closed: a count, **Select all** (`setSelection(orderedIds)`), **Batch
+  actions** (opens the right drawer → `MultiSelection`), and **Clear** (`clear()`). It hides while the drawer is open so it doesn't sit under the
+  overlay.
+- **Transparency backdrop:** images render over a **`.bg-checkerboard`** utility (`index.css`, two-tone diagonal-gradient grid using `--checker-1/2`,
+  themed for dark/light) so transparent PNG regions read as transparent. In the grid the blurhash is a load-time placeholder that **fades
+  to `opacity-0`
+  once the thumbnail loads** (`PhotoCard` `loaded` state) — otherwise transparent areas would show the (opaque) blurhash instead of the checkerboard.
+  `OrientedContainImage` paints the checkerboard on the exact image box (so the lightbox keeps a black letterbox around it).
 - **Sensitive actions** (revoke / reject / delete) are gated by `ConfirmDialog`.
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
   full-page drag zone both call `openDialog(files?)`. The dialog batch-presigns all files (`POST /uploads/batch`), uploads to S3 in parallel (max 4

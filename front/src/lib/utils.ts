@@ -1,8 +1,24 @@
 import {type ClassValue, clsx} from "clsx"
 import {twMerge} from "tailwind-merge"
+import type {PictureVariant} from "@/lib/types"
 
 export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs))
+}
+
+// ── Thumbnails ─────────────────────────────────────────────────────────────────
+
+/**
+ * Pick a thumbnail variant (small=100, medium=500, large=1000 px tall — see worker
+ * `THUMBNAIL_VARIANTS`) for an element displayed at `cssPx` CSS pixels tall. Sizing
+ * is by logical pixels (no devicePixelRatio multiplier) to keep payloads light:
+ * slight upscaling on hi-DPI screens is an accepted trade-off. Used by the grid
+ * (zoom/row height) and sidebar; the lightbox always asks for `large`.
+ */
+export function variantForSize(cssPx: number): PictureVariant {
+    if (cssPx <= 80) return 'small'
+    if (cssPx <= 350) return 'medium'
+    return 'large'
 }
 
 // ── Formatting ───────────────────────────────────────────────────────────────

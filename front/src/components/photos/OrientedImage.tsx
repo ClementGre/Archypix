@@ -113,6 +113,8 @@ interface OrientedContainImageProps {
      */
     maxHeight?: number
     className?: string
+    /** Click handler attached to the sized image box only (not the surrounding centring area). */
+    onClick?: React.MouseEventHandler<HTMLDivElement>
 }
 
 /**
@@ -130,6 +132,7 @@ export function OrientedContainImage({
                                          height,
                                          maxHeight,
                                          className,
+                                         onClick,
                                      }: OrientedContainImageProps) {
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
     const aspect = dW && dH ? dW / dH : 1
@@ -170,7 +173,7 @@ export function OrientedContainImage({
             style={flow ? {height: boxH || undefined} : undefined}
         >
             {boxW > 0 && (
-                <div className="relative" style={{width: boxW, height: boxH}}>
+                <div className="relative bg-checkerboard" style={{width: boxW, height: boxH}} onClick={onClick}>
                     <OrientedImage src={src} alt={alt} orientation={orientation} width={width} height={height}/>
                 </div>
             )}

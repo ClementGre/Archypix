@@ -1,18 +1,24 @@
-import {useInfiniteQuery} from '@tanstack/react-query'
+import {keepPreviousData, useInfiniteQuery} from '@tanstack/react-query'
 import {listPictures} from '@/api/pictures'
 import {queryKeys} from '@/lib/constants'
-import type {PictureFilters} from '@/lib/types'
+import type {PictureFilters, PictureVariant} from '@/lib/types'
 
-export function usePictures(filters: PictureFilters, opts?: { enabled?: boolean }) {
+export function usePictures(
+    filters: PictureFilters,
+    opts?: { enabled?: boolean; variant?: PictureVariant },
+) {
+    const variant = opts?.variant ?? 'medium'
     return useInfiniteQuery({
-        queryKey: queryKeys.pictures(filters),
+        queryKey: [...queryKeys.pictures(filters), variant],
         enabled: opts?.enabled ?? true,
+        // Keep the current grid visible while a zoom-change (variant) or filter refetch lands.
+        placeholderData: keepPreviousData,
         initialPageParam: 1,
         queryFn: ({pageParam}) => {
             const params = {
                 page: pageParam as number,
                 page_size: 50,
-                thumbnail: 'medium' as const,
+                thumbnail: variant,
                 ...(filters.sort ? {sort: filters.sort} : {sort: 'ingested_at' as const}),
                 ...(filters.order ? {order: filters.order} : {order: 'desc' as const}),
                 ...(filters.scope === 'owned' ? {owned_only: true} : {}),

@@ -1,12 +1,12 @@
-import {useMemo} from 'react'
+import {useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {AlertTriangle, ArchiveRestore, ImageIcon, List, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
+import {AlertTriangle, ArchiveRestore, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
-import {getPicture, getPictureUrl} from '@/api/pictures'
+import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {listPictureTagsWithSources} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
 import {useBatchEditTags, usePictureTags} from '@/hooks/useTags'
@@ -26,7 +26,7 @@ import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
-import {cn, formatBytes, formatDateTime, TagPath} from '@/lib/utils'
+import {cn, formatBytes, formatDateTime, TagPath, variantForSize} from '@/lib/utils'
 import {deadlineLabel, ownedPurgeAt} from '@/lib/trash'
 import type {IncomingShareResponse, PictureDetail, TagSource} from '@/lib/types'
 
@@ -154,6 +154,9 @@ function TagProvenanceTable({rows, onRemove, onTagClick, onSourceClick}: {
 
 // ── Single picture ────────────────────────────────────────────────────────────
 
+/** Max height (px) of the sidebar preview image; also drives the requested thumbnail variant. */
+const PREVIEW_MAX_HEIGHT = 208
+
 function SinglePicture({id}: { id: string }) {
     const {data: picture, isPending} = useQuery({
         queryKey: queryKeys.picture(id),
@@ -171,11 +174,26 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const [, setSp] = useSearchParams()
     const {update} = useGalleryParams()
 
+    // Size the preview to its capped display height (the preview never exceeds PREVIEW_MAX_HEIGHT,
+    // so the sidebar width doesn't matter); the lightbox always uses `large`.
+    const previewVariant = variantForSize(PREVIEW_MAX_HEIGHT)
     const {data: preview} = useQuery({
-        queryKey: ['pictures', 'url', id, 'medium'],
-        queryFn: () => getPictureUrl(id, 'medium'),
+        queryKey: ['pictures', 'url', id, previewVariant],
+        queryFn: () => getPictureUrl(id, previewVariant),
         staleTime: 10 * 60 * 1000,
     })
+
+    const [downloading, setDownloading] = useState(false)
+    const download = async () => {
+        setDownloading(true)
+        try {
+            await downloadOriginal(id, picture.filename)
+        } catch (e) {
+            toast.error('Could not download', {description: apiErrorMessage(e)})
+        } finally {
+            setDownloading(false)
+        }
+    }
     const {data: plainTags} = usePictureTags(id)
     const {data: outgoing} = useOutgoingShares()
     const {data: incoming} = useIncomingShares()
@@ -299,7 +317,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                         orientation={draftOrientation}
                         width={picture.width}
                         height={picture.height}
-                        maxHeight={208}
+                        maxHeight={PREVIEW_MAX_HEIGHT}
                     />
                 ) : (
                     <div className="flex h-40 items-center justify-center text-muted-foreground">
@@ -380,29 +398,41 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                             .join(' · ')}
                     </p>
                 </div>
-                {!isTrashed && (
-                    <ConfirmDialog
-                        trigger={
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                                title="Move to trash"
-                            >
-                                <Trash2 className="h-4 w-4"/>
-                            </Button>
-                        }
-                        title="Move to trash?"
-                        description={
-                            owned
-                                ? 'This photo will be hidden and permanently deleted after your retention window. Shared recipients see a deletion warning until then.'
-                                : 'This removes the photo from your library locally. The owner\'s copy is unaffected.'
-                        }
-                        confirmLabel="Move to trash"
-                        destructive
-                        onConfirm={() => trash.mutate(id)}
-                    />
-                )}
+                <div className="flex shrink-0 items-center">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        title="Download original"
+                        disabled={downloading}
+                        onClick={download}
+                    >
+                        {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Download className="h-4 w-4"/>}
+                    </Button>
+                    {!isTrashed && (
+                        <ConfirmDialog
+                            trigger={
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                    title="Move to trash"
+                                >
+                                    <Trash2 className="h-4 w-4"/>
+                                </Button>
+                            }
+                            title="Move to trash?"
+                            description={
+                                owned
+                                    ? 'This photo will be hidden and permanently deleted after your retention window. Shared recipients see a deletion warning until then.'
+                                    : 'This removes the photo from your library locally. The owner\'s copy is unaffected.'
+                            }
+                            confirmLabel="Move to trash"
+                            destructive
+                            onConfirm={() => trash.mutate(id)}
+                        />
+                    )}
+                </div>
             </div>
 
             {/* Timestamps above tags */}

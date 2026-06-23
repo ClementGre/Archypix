@@ -24,6 +24,10 @@
     --color-destructive: oklch(0.577 0.245 27.325);
     --color-destructive-foreground: var(--color-zinc-50);
 
+    /* Checkerboard squares (transparency backdrop behind images). */
+    --checker-1: var(--color-zinc-800);
+    --checker-2: var(--color-zinc-900);
+
     /* ── Radius ────────────────────────────────────────────────────────────── */
     --radius-sm: 0.25rem;
     --radius-md: 0.375rem;
@@ -50,6 +54,9 @@
     --color-secondary-foreground: var(--color-zinc-900);
     --color-accent: var(--color-zinc-100);
     --color-accent-foreground: var(--color-zinc-900);
+
+    --checker-1: var(--color-zinc-200);
+    --checker-2: var(--color-zinc-50);
 }
 
 @layer base {
@@ -75,4 +82,15 @@
     input[type='number'] {
         -moz-appearance: textfield;
     }
+}
+
+/* Checkerboard backdrop — placed behind images so transparent (PNG) areas read as
+   transparent rather than picking up a colour/blurhash. Two offset diagonal
+   gradients form the classic two-tone grid. */
+.bg-checkerboard {
+    background-color: var(--checker-2);
+    background-image: linear-gradient(45deg, var(--checker-1) 25%, transparent 25%, transparent 75%, var(--checker-1) 75%),
+    linear-gradient(45deg, var(--checker-1) 25%, transparent 25%, transparent 75%, var(--checker-1) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
 }

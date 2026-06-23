@@ -1,4 +1,4 @@
-import {useInfiniteQuery, useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
+import {keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {
     browseHierarchy,
     createHierarchy,
@@ -12,7 +12,7 @@ import {
     updateHierarchy,
 } from '@/api/hierarchies'
 import {queryKeys} from '@/lib/constants'
-import type {HierarchyConfig, PictureFilters, WebdavResponse} from '@/lib/types'
+import type {HierarchyConfig, PictureFilters, PictureVariant, WebdavResponse} from '@/lib/types'
 
 export function useHierarchies() {
     return useQuery({queryKey: queryKeys.hierarchies(), queryFn: listHierarchies})
@@ -40,18 +40,20 @@ export function useHierarchyBrowse(
     id: string | null,
     path: string,
     filters: PictureFilters,
-    opts?: { enabled?: boolean },
+    opts?: { enabled?: boolean; variant?: PictureVariant },
 ) {
+    const variant = opts?.variant ?? 'medium'
     return useInfiniteQuery({
-        queryKey: queryKeys.hierarchyBrowse(id ?? '', path, filters),
+        queryKey: [...queryKeys.hierarchyBrowse(id ?? '', path, filters), variant],
         enabled: !!id && (opts?.enabled ?? true),
+        placeholderData: keepPreviousData,
         initialPageParam: 1,
         queryFn: ({pageParam}) =>
             browseHierarchy(id!, {
                 path,
                 page: pageParam as number,
                 page_size: 50,
-                thumbnail: 'medium',
+                thumbnail: variant,
                 sort: filters.sort ?? 'ingested_at',
                 order: filters.order ?? 'desc',
                 ...(filters.scope === 'owned' ? {owned_only: true} : {}),

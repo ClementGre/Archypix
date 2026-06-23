@@ -24,7 +24,7 @@ const DEFAULTS: Persisted = {
   tagProvenance: false,
 }
 
-export const ROW_HEIGHT_MIN = 120
+export const ROW_HEIGHT_MIN = 60
 export const ROW_HEIGHT_MAX = 380
 
 export const SIDEBAR_MIN = 200
@@ -58,6 +58,7 @@ interface UIState extends Persisted {
   setRowHeight: (rowHeight: number) => void
   toggleTagProvenance: () => void
   toggleMobileDrawer: (side: 'left' | 'right') => void
+  openMobileDrawer: (side: 'left' | 'right') => void
   closeMobileDrawer: () => void
 }
 
@@ -79,6 +80,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   ...load(),
   mobileDrawer: null,
   toggleMobileDrawer: (side) => set({mobileDrawer: get().mobileDrawer === side ? null : side}),
+  openMobileDrawer: (side) => set({mobileDrawer: side}),
   closeMobileDrawer: () => set({mobileDrawer: null}),
   toggleLeft: () => {
     set({leftSidebarOpen: !get().leftSidebarOpen})

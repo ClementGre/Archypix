@@ -1,13 +1,15 @@
 import {Fragment, type MouseEvent, useEffect, useMemo, useRef} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
+import {AlertCircle, CheckCheck, ChevronRight, FolderOpen, ImageOff, Loader2, SlidersHorizontal, X} from 'lucide-react'
 import {usePictures} from '@/hooks/usePictures'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
+import {useIsMobile} from '@/hooks/useMediaQuery'
 import {apiErrorMessage} from '@/api/client'
-import {cn} from '@/lib/utils'
+import {Button} from '@/components/ui/button'
+import {cn, variantForSize} from '@/lib/utils'
 import {PhotoCard} from './PhotoCard'
 import {Lightbox} from './Lightbox'
 
@@ -50,10 +52,15 @@ export function PhotoGrid() {
     const {filters, params} = useGalleryParams()
     const isBrowsing = !!params.hierarchy
     const rowHeight = useUIStore((s) => s.rowHeight)
+    const openMobileDrawer = useUIStore((s) => s.openMobileDrawer)
+    const mobileDrawer = useUIStore((s) => s.mobileDrawer)
+    const isMobile = useIsMobile()
     const [, setSp] = useSearchParams()
 
-    const picturesQ = usePictures(filters, {enabled: !isBrowsing})
-    const browseQ = useHierarchyBrowse(params.hierarchy, params.hpath, filters, {enabled: isBrowsing})
+    // Request a thumbnail variant sized to the current zoom (row height).
+    const variant = variantForSize(rowHeight)
+    const picturesQ = usePictures(filters, {enabled: !isBrowsing, variant})
+    const browseQ = useHierarchyBrowse(params.hierarchy, params.hpath, filters, {enabled: isBrowsing, variant})
     const active = isBrowsing ? browseQ : picturesQ
     const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage} = active
 
@@ -66,17 +73,31 @@ export function PhotoGrid() {
     const orderedIds = useMemo(() => items.map((i) => i.id), [items])
 
     const selected = useSelectionStore((s) => s.selected)
+    const multiSelect = useSelectionStore((s) => s.multiSelect)
     const select = useSelectionStore((s) => s.select)
     const toggle = useSelectionStore((s) => s.toggle)
     const selectTo = useSelectionStore((s) => s.selectTo)
+    const enterMultiSelect = useSelectionStore((s) => s.enterMultiSelect)
+    const setSelection = useSelectionStore((s) => s.setSelection)
     const clear = useSelectionStore((s) => s.clear)
 
     const handleSelect = (id: string) => (e: MouseEvent) => {
         e.stopPropagation()
         if (e.metaKey || e.ctrlKey) toggle(id)
         else if (e.shiftKey) selectTo(id, orderedIds)
+        else if (multiSelect) toggle(id)
         else if (selected.length === 1 && selected[0] === id) clear()
-        else select(id)
+        else {
+            select(id)
+            // On mobile a single tap surfaces the details/selection drawer.
+            if (isMobile) openMobileDrawer('right')
+        }
+    }
+
+    // Long-press (touch): start multi-select, or extend it if already active.
+    const handleLongPress = (id: string) => () => {
+        if (multiSelect) toggle(id)
+        else enterMultiSelect(id)
     }
 
     const openViewer = (id: string) =>
@@ -135,7 +156,9 @@ export function PhotoGrid() {
                             item={it}
                             rowHeight={rowHeight}
                             selected={selected.includes(it.id)}
+                            multiSelect={multiSelect}
                             onSelect={handleSelect(it.id)}
+                            onLongPress={handleLongPress(it.id)}
                             onOpen={() => openViewer(it.id)}
                         />
                     ))}
@@ -151,13 +174,39 @@ export function PhotoGrid() {
         )
     }
 
-    if (isBrowsing) {
-        return (
-            <div className="flex h-full min-h-0 flex-col">
-                <HierarchyBreadcrumb/>
-                <div className="min-h-0 flex-1">{body}</div>
-            </div>
-        )
-    }
-    return body
+    const content = isBrowsing ? (
+        <div className="flex h-full min-h-0 flex-col">
+            <HierarchyBreadcrumb/>
+            <div className="min-h-0 flex-1">{body}</div>
+        </div>
+    ) : (
+        body
+    )
+
+    // Mobile multi-select has no right-panel toggle in the top bar; this floating bar carries the
+    // batch entry point (opens the selection drawer) plus select-all / clear. Hidden while the
+    // drawer is open so it doesn't sit under the overlay.
+    const showSelectionBar = isMobile && multiSelect && mobileDrawer === null
+
+    return (
+        <>
+            {content}
+            {showSelectionBar && (
+                <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+                    <div className="flex items-center gap-1 rounded-full border border-border bg-card/95 p-1 shadow-lg backdrop-blur">
+                        <span className="px-2 text-sm font-medium tabular-nums">{selected.length}</span>
+                        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setSelection(orderedIds)}>
+                            <CheckCheck className="h-4 w-4"/> Select all
+                        </Button>
+                        <Button size="sm" className="gap-1.5" onClick={() => openMobileDrawer('right')}>
+                            <SlidersHorizontal className="h-4 w-4"/> Batch actions
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clear} aria-label="Clear selection">
+                            <X className="h-4 w-4"/>
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </>
+    )
 }

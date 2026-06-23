@@ -18,7 +18,7 @@ function TrashCard({item, retentionDays}: { item: PictureListItem; retentionDays
 
     return (
         <li className="group relative flex flex-col overflow-hidden rounded-md border border-border bg-card">
-            <div className="relative aspect-square w-full overflow-hidden bg-muted">
+            <div className="relative aspect-square w-full overflow-hidden bg-checkerboard">
                 {item.thumbnail_url ? (
                     <OrientedImage
                         src={item.thumbnail_url}

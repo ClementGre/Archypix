@@ -76,14 +76,16 @@
   groups, field-condition + GPS-area leaves, drag-to-reorder within a group; rules render as readable
   expressions. Also fixed the segmentation editor crash (empty-string `<Select.Item>` value).
   See `doc/features/13_better_rules.md`.
-- [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
-- [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
-  logic, presigned URL caching for remote pictures.
 - [ ] **Multi-picture edits** — The frontend offers very limited multi-picture viewing and editing support. The idea would be to see all common tags
   and metadata of selected pictures. See tags not on all pictures also, and show mixed exif data as mixed (maybe with a popup showing the different
   values if there is not too much). The idea would be to take the current right tab for a single picture, and use about the same interface for when
   selecting multiple pictures. Endpoints should be added to the API to support batch tag read, batch exif read/write, and other info batch read (file
   size, ...).
+- [ ] **Dedup pictures at upload time** — When uploading from the frontend, dedup pictures based on the hash, so the user can’t upload a picture
+  twice.
+- [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
+- [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
+  logic, presigned URL caching for remote pictures.
 
 ## To-do for v1.0
 

@@ -121,7 +121,9 @@ export function TopBar() {
                         <span className="hidden sm:inline">Upload</span>
                     </Button>
                 )}
-                {isGallery && (
+                {/* On mobile a single tap opens the details drawer and multi-select uses the
+                    floating bar, so this toggle is only useful on desktop. */}
+                {isGallery && !isMobile && (
                     <Button
                         variant="ghost"
                         size="icon"
@@ -133,9 +135,12 @@ export function TopBar() {
                     </Button>
                 )}
 
-                <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
-                    {theme === 'dark' ? <Sun className="h-4 w-4"/> : <Moon className="h-4 w-4"/>}
-                </Button>
+                {/* Theme toggle moves into the user menu on mobile to keep the bar minimal. */}
+                {!isMobile && (
+                    <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
+                        {theme === 'dark' ? <Sun className="h-4 w-4"/> : <Moon className="h-4 w-4"/>}
+                    </Button>
+                )}
 
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -158,7 +163,7 @@ export function TopBar() {
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator/>
 
-                        {/* Mobile-only nav (hidden once the in-bar nav is visible). */}
+                        {/* Mobile-only nav + theme toggle (hidden once the in-bar controls are visible). */}
                         <div className="md:hidden">
                             {items.map(({to, label, icon: Icon}) => (
                                 <DropdownMenuItem key={to} onClick={() => navigate(to)}>
@@ -166,6 +171,11 @@ export function TopBar() {
                                     {label}
                                 </DropdownMenuItem>
                             ))}
+                            <DropdownMenuSeparator/>
+                            <DropdownMenuItem onClick={toggleTheme}>
+                                {theme === 'dark' ? <Sun className="mr-2 h-4 w-4"/> : <Moon className="mr-2 h-4 w-4"/>}
+                                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator/>
                         </div>
 

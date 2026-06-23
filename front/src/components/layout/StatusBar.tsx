@@ -67,7 +67,7 @@ export function StatusBar() {
                             step={10}
                             value={rowHeight}
                             onChange={(e) => setRowHeight(Number(e.target.value))}
-                            className="h-1 w-24 cursor-pointer accent-primary"
+                            className="h-1 w-30 cursor-pointer accent-primary"
                             aria-label="Thumbnail size"
                         />
                     </label>

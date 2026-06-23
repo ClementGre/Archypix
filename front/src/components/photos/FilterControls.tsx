@@ -1,20 +1,21 @@
 import {useEffect, useState} from 'react'
-import {ArrowUpDown, Check, Search, SlidersHorizontal, X} from 'lucide-react'
+import {ArrowUpDown, Check, Filter, Search, X} from 'lucide-react'
 import {Input} from '@/components/ui/input'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {type Scope, useGalleryParams} from '@/hooks/useGalleryParams'
 import {useDebouncedValue} from '@/hooks/useDebouncedValue'
+import {useIsMobile} from '@/hooks/useMediaQuery'
 import type {SortField, SortOrder} from '@/lib/types'
 import {cn, TagPath} from '@/lib/utils'
 
@@ -33,6 +34,7 @@ const SORT_FIELDS: { value: SortField; label: string }[] = [
 /** The gallery's search + filter controls, rendered inside the unified top bar. */
 export function FilterControls() {
     const {params, update, hasActiveFilters, clearFilters} = useGalleryParams()
+    const isMobile = useIsMobile()
 
     const [q, setQ] = useState(params.q)
     const debouncedQ = useDebouncedValue(q, 300)
@@ -46,12 +48,22 @@ export function FilterControls() {
         setQ(params.q)
     }, [params.q])
 
+    const searchField = (
+        <div className="relative w-full min-w-0">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"/>
+            <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search filenames…"
+                className="h-8 pl-8"
+            />
+        </div>
+    )
+
     return (
         <>
-          <div className="relative w-full min-w-0 max-w-[16rem]">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"/>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search filenames…" className="h-8 pl-8"/>
-            </div>
+            {/* On mobile the search lives inside the Filters dropdown to keep the bar minimal. */}
+            {!isMobile && <div className="w-full max-w-[16rem]">{searchField}</div>}
 
             {params.tag && (
                 <Badge variant="secondary" className="hidden max-w-[12rem] gap-1 font-normal sm:inline-flex">
@@ -94,11 +106,20 @@ export function FilterControls() {
                           size="sm"
                           className={cn('gap-1.5', hasActiveFilters && 'border-primary/50 text-primary')}
                       >
-                            <SlidersHorizontal className="h-3.5 w-3.5"/>
+                          <Filter className="h-3.5 w-3.5"/>
                         <span className="hidden sm:inline">Filters</span>
                         </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuContent align="end" className="w-56">
+                        {isMobile && (
+                            <>
+                                {/* stopPropagation keeps the menu's typeahead from eating keystrokes. */}
+                                <div className="p-1" onKeyDown={(e) => e.stopPropagation()}>
+                                    {searchField}
+                                </div>
+                                <DropdownMenuSeparator/>
+                            </>
+                        )}
                       <DropdownMenuLabel>Show</DropdownMenuLabel>
                       <DropdownMenuRadioGroup value={params.scope} onValueChange={(v) => update({scope: v as Scope})}>
                         {SCOPES.map((s) => (
