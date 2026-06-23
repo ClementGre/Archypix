@@ -1,5 +1,5 @@
 import {apiClient} from './client'
-import type {PictureTagsWithSources} from '@/lib/types'
+import type {BatchDryRun, PictureSelection, PictureTagsWithSources} from '@/lib/types'
 
 export async function listAllTags(): Promise<string[]> {
     const {data} = await apiClient.get<{ tags: string[] }>('/api/authenticated/tags')
@@ -20,10 +20,24 @@ export async function listPictureTagsWithSources(pictureId: string): Promise<Pic
     return data
 }
 
-export async function batchEditTags(body: {
-    picture_ids: string[]
+/**
+ * Add/remove tags across a **selection** (§6.4). Accepts the selection descriptor or a legacy
+ * explicit `picture_ids` list. Removal only affects `manual` rows. With `dry_run` returns the
+ * §6.1 breakdown (`added`/`removed`); otherwise `{ ok, affected }`.
+ */
+export interface BatchEditTagsBody {
+    selection?: PictureSelection
+    picture_ids?: string[]
     add_tags?: string[]
     remove_tags?: string[]
-}): Promise<void> {
-    await apiClient.patch('/api/authenticated/tags', body)
+    dry_run?: boolean
+}
+
+export async function batchEditTags(body: BatchEditTagsBody & { dry_run: true }): Promise<BatchDryRun>
+export async function batchEditTags(body: BatchEditTagsBody): Promise<{ ok: true; affected: number }>
+export async function batchEditTags(
+    body: BatchEditTagsBody,
+): Promise<{ ok: true; affected: number } | BatchDryRun> {
+    const {data} = await apiClient.patch<{ ok: true; affected: number } | BatchDryRun>('/api/authenticated/tags', body)
+    return data
 }

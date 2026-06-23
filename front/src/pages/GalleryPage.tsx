@@ -28,7 +28,7 @@ export default function GalleryPage() {
         setRightWidth,
     } = useUIStore()
     const isMobile = useIsMobile()
-    const hasSelection = useSelectionStore((s) => s.selected.length > 0)
+    const hasSelection = useSelectionStore((s) => s.query !== null || s.includeIds.length > 0)
     const openUpload = useUploadStore((s) => s.openDialog)
     const {params} = useGalleryParams()
     const editingHierarchy = params.hedit

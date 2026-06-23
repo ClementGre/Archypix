@@ -97,13 +97,13 @@ right panel.
 
 ### Zustand stores (`src/stores/`)
 
-| Store          | Shape                                                                                                                                                                                                         | Persistence (`localStorage`) |
-|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------|
-| `auth.ts`      | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                     | `archypix_auth`              |
-| `ui.ts`        | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`) | `archypix_ui`                |
-| `theme.ts`     | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                  | `archypix_theme`             |
-| `selection.ts` | `selected: string[], anchor, multiSelect` — gallery multi-select (click / ⌘-toggle / shift-range; `multiSelect` = touch long-press mode, see §9)                                                              | none (session only)          |
-| `upload.ts`    | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                            | none (session only)          |
+| Store          | Shape                                                                                                                                                                                                                                                                                                                                                                       | Persistence (`localStorage`) |
+|----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------|
+| `auth.ts`      | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                                                                                                                                                                                   | `archypix_auth`              |
+| `ui.ts`        | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`)                                                                                                                                                               | `archypix_ui`                |
+| `theme.ts`     | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                | `archypix_theme`             |
+| `selection.ts` | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9) | none (session only)          |
+| `upload.ts`    | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                          | none (session only)          |
 
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
@@ -114,7 +114,6 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 
 | Param              | Meaning                                                                              |
 |--------------------|--------------------------------------------------------------------------------------|
-| `q`                | filename search (client-side filter — see §9)                                        |
 | `tag`              | active tag filter (wire form)                                                        |
 | `scope`            | `all` \| `owned` \| `shared`                                                         |
 | `deleted`          | include trashed (`1`)                                                                |
@@ -135,17 +134,18 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 One file per domain under `src/api/` (typed axios wrappers using `apiClient`), with matching hooks under `src/hooks/` (TanStack Query). Types live in
 `src/lib/types.ts`; query keys are centralized in `src/lib/constants.ts` (`queryKeys`).
 
-| Domain      | `api/*`                                                                                                                                                      | `hooks/*`                                                                                                                                     |
-|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                                                               | (imperative; not query-backed)                                                                                                                |
-| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, overrideExif, trashPicture, restorePicture, getJob, beginUploadBatch, completeUpload` | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.{useEditExif, useOverrideExif, useTrashMutations}`                   |
-| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags`                                                                        | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                                                    |
-| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                                                                     | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                                                   |
-| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                                                        | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                           |
-| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect`                                  | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations` |
-| settings    | `settings.ts` — `getSettings, updateSettings` (versioning + `trash_retention_days`)`, updateProfile`                                                         | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                            |
+| Domain      | `api/*`                                                                                                                                                                                                                                                                                            | `hooks/*`                                                                                                                                                                                                                                                                 |
+|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| auth        | `auth.ts` — `login, logout, register, fetchMe`                                                                                                                                                                                                                                                     | (imperative; not query-backed)                                                                                                                                                                                                                                            |
+| pictures    | `pictures.ts` — `listPictures, getPicture, getPictureUrl, editPicture, overrideExif, trashPicture, restorePicture, getJob, beginUploadBatch, completeUpload`; **batch (feature 14)** `aggregatePictures, batchEditExif, batchTrash, batchRestore` (all over a `PictureSelection`, `dry_run`-aware) | `usePictures` (infinite, `thumbnail:'medium'`, page 50), `usePictureEdit.{useEditExif, useOverrideExif, useTrashMutations}`; `useAggregate(selection, sections)` (debounced, lazy sections) + `useSelectionCount`; `useBatch.useBatchMutations` (trash/restore/tags/exif) |
+| tags        | `tags.ts` — `listAllTags, listPictureTags, listPictureTagsWithSources, batchEditTags` (selection + `dry_run`-aware)                                                                                                                                                                                | `useTags` — `useAllTags, usePictureTags, useBatchEditTags`                                                                                                                                                                                                                |
+| shares      | `shares.ts` — `list/accept/reject/revoke/createOutgoing`                                                                                                                                                                                                                                           | `useShares` — `useIncomingShares, useOutgoingShares, useShareMutations`; `useShareMappings`                                                                                                                                                                               |
+| tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                                                                                                                                                                                              | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                                                                                                                                                       |
+| hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect`                                                                                                                                                                        | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations`                                                                                                                             |
+| settings    | `settings.ts` — `getSettings, updateSettings` (versioning + `trash_retention_days`)`, updateProfile`                                                                                                                                                                                               | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                                                                                                                                                        |
 
-`apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` backs the search box.
+`apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` debounces the batch `/aggregate`
+descriptor and EXIF dry-run previews.
 
 **Tag paths** are dot-separated ltree **wire form** (`Photos.Travel.Alps`) on the wire and slash **display form** (`/Photos/Travel/Alps`) in the UI.
 Convert via `lib/utils.ts` → `TagPath`: `toDisplay`, `toWire`, `segments`, `leaf`, `isProtected`. Share identities encode `@`→`_AT_`, `.`→`_DOT_`
@@ -172,10 +172,8 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop; sits on a **`.bg-checkerboard`** backdrop (see §9) and
 **fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
 (render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
-(loading placeholder only — faded out on load), `FilterControls` (search + sort + filters dropdown — scope folded into Filters,
-**funnel `Filter` icon**; rendered inside `TopBar`. On mobile the search field is hidden from the bar and **relocated into the Filters dropdown**,
-with
-`stopPropagation` on its keydown so the menu's typeahead doesn't eat keystrokes), `Lightbox` (full-screen carousel driven by the `view` param;
+(loading placeholder only — faded out on load), `FilterControls` (sort + filters dropdown — scope folded into Filters,
+**funnel `Filter` icon**; rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param;
 ←/→/Esc;
 always the `large` variant; **portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
 on
@@ -185,7 +183,29 @@ sidebar), and a trash (`ConfirmDialog`)/restore action), `SelectionPanel`
 (right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
 an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
 tag assignment — see §9).
-**`photos/detail/`** — `Section` (compact foldable section, collapse persisted per id), `ExifInlineEditor` (presentational inline per-field EXIF
+**`photos/batch/`** (feature 14 multi-select) — `SelectionActionBar` (floating bar on **desktop and mobile** whenever
+more than one picture is selected; the full-width container is `pointer-events-none` so only the pill catches clicks:
+resolved count via `useSelectionCount`, **Select-all** (adopts the view's `PictureFilter`; `⌘/Ctrl+A` does the same),
+**Invert** (`swap(include, exclude)` — adopts the view query when none was set), **Clear**, and **Batch actions** which
+surfaces the right panel — hidden on desktop when the panel is already docked open), `MultiSelectionPanel` (the right
+panel for a multi-selection: header count + Clear, then a **Trash / Restore** button row (same line, wrapping; each
+disabled when it would change nothing) and foldable **Summary** / **Tags** / **Info** / **EXIF** sections fed by
+`useAggregate` with per-section lazy fetch; an EXIF-sync convergence line ticks while a deferred batch edit drains,
+§6.3; every section shows "No …" when the selection resolves to 0). **Tags** are shown one-per-line with `tag_provenance`
+always on, wrapping the per-source mini-tags (carrying each source's cardinality) under the path chip; the chip is a
+tristate (solid on-all vs dashed on-some `count/total`) with a shadcn **tooltip** of the full path, **+** adds via
+`TagPicker`, ✕ (highlighted on hover) removes only where `manual_count > 0`. `BatchMetadataSection` ("Info") holds the
+read-only file aggregates (size / dimensions / type / added / edited). `BatchExifSection` is **inline-editable** and
+mirrors the single-picture EXIF editor's field order (captured, GPS, camera brand/model, focal, aperture, ISO, exposure —
+num/den **merged** into one rational row; orientation hidden); field names are green `FieldLabel` chips, values show the
+common value or amber **Mixed**, a stats sub-row carries the range · avg · `n/total set` and (for strings) the first 10
+distinct values with an **(i)** popover for the rest. Editable fields are click-to-edit into a draft (empty ⇒ clear); a
+**Save** in the section header opens `BatchConfirmDialog` which computes the `dry_run` **only on open** (with a
+local/suggest mode toggle re-running it when received pictures are present); the GPS aggregate renders its bbox on a
+read-only `MapView`. `BatchConfirmDialog` is the mandatory confirmation gate: runs the endpoint's `dry_run` on open
+(re-running when `dryRunKey` changes) before enabling Confirm; trigger-based or programmatically-controlled.
+**`photos/detail/`** — `Section` (compact foldable section, collapse persisted per id — optionally **controlled** via `open`/`onOpenChange` for lazy
+fetching), `ExifInlineEditor` (presentational inline per-field EXIF
 editor:
 blue-dot dirty indicator, per-field reset on hover, save button in section header, exif_sync_status badge, unit-prefixed/suffixed inputs; every
 editable
@@ -283,7 +303,10 @@ naming/safeDeleteMode), `WriteBackEditor` (query-node write-back op-lists with a
 WebDAV), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed), `JsonConfigDialog` (raw `config` textarea; applies to the draft).
 
 **`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions), `MapView` (shared imperative Leaflet map;
-point/bbox/circle modes), `DateRangePicker` (calendar range on the shadcn `Calendar`, **week starts Monday**; `date` mode
+point/bbox/circle modes; custom app-styled zoom ±, **re-center on the selection**, my-location, save-favourite and enlarge
+controls + a basemap switcher; `isolate`d so its z-indexes can't paint over the selection bar/dialogs. `interactive={false}`
+(batch GPS aggregate) still pans/zooms/switches style and shows favourite stars, but drops the draggable shape handles, the
+save-favourite button and the favourites bar), `DateRangePicker` (calendar range on the shadcn `Calendar`, **week starts Monday**; `date` mode
 emits `YYYY-MM-DD` bounds, `datetime` mode emits NaiveDateTime bounds with **optional times** — default first-day 00:00:00 /
 last-day 23:59:59).
 
@@ -313,8 +336,10 @@ mobile) and shown only when its `ui` store toggle is on:
   **
   on unsaved changes, or **overridden** when a received picture has sticky overrides), **Versions**. Clicking
   a
-  tag filters by it and reveals it in the Tags tree (opens the left panel + Tags tab + expands/scrolls the tree). For multi-selection: batch tag-add +
-  batch trash/restore (one request per picture — there is no batch trash endpoint).
+  tag filters by it and reveals it in the Tags tree (opens the left panel + Tags tab + expands/scrolls the tree). For multi-selection the panel
+  renders
+  `MultiSelectionPanel` (feature 14, §7 `photos/batch/`): Summary / tristate Tags / type-aware EXIF aggregates from
+  `POST /pictures/aggregate`, plus selection-based batch tags / EXIF / trash / restore — each gated by a `dry_run` confirmation popup.
 
 ---
 
@@ -360,8 +385,8 @@ mobile) and shown only when its `ui` store toggle is on:
   shares.
 - **Cross-links:** right-panel tag → sets the `tag` filter; a provenance source badge → `/tagging/:source_id` (or `panel=incoming` + `share` highlight
   for an `incoming_share` source); a "Shared with you" tag → `tag` filter + `panel=incoming` + highlights the matching card in `IncomingSharesList`.
-- **Search:** the API has **no free-text search**; `q` is a client-side filename filter over already-loaded items (it is still kept in the URL for
-  future server-side search). The capture-date range filter has a reserved slot in the Filters menu but is not built yet.
+- **Search:** there is **no free-text/filename search** (a client-side filename filter was removed as misleading — it only matched already-loaded
+  items). The capture-date range filter has a reserved slot in the Filters menu but is not built yet.
 - **Gallery selection (touch vs desktop):** desktop uses click (single) / ⌘-click (toggle) / shift-click (range). Touch has no modifier keys, so
   `PhotoCard` detects a **long-press** (`450 ms`, cancelled if the finger moves > `10 px` so scrolling still works) that enters
   `selection.multiSelect` mode via `enterMultiSelect`; while it is on, a plain tap **toggles** a photo (and the selection circle shows on every card)
@@ -370,10 +395,13 @@ mobile) and shown only when its `ui` store toggle is on:
   on
   mobile (`useIsMobile`), opens the right selection drawer (`openMobileDrawer('right')`). **Double-tap-to-open-lightbox is disabled on mobile**
   (it used to fire select + open at once); full-screen is reached from the sidebar preview instead.
-- **Mobile multi-select bar:** since the top bar drops the right-panel toggle on mobile, `PhotoGrid` renders a **floating selection bar** (fixed,
-  bottom-centre) whenever `isMobile && multiSelect` and the mobile drawer is closed: a count, **Select all** (`setSelection(orderedIds)`), **Batch
-  actions** (opens the right drawer → `MultiSelection`), and **Clear** (`clear()`). It hides while the drawer is open so it doesn't sit under the
-  overlay.
+- **Selection descriptor & action bar (feature 14):** the `selection` store is the `PictureSelection` descriptor (query + include/exclude deltas), not
+  a flat id list. A grid card's checkmark is `isMemberSelected(...)` (in select-all mode a visible card is a query member, so selected unless
+  `excludeIds`-listed). `PhotoGrid` renders `SelectionActionBar` (fixed, bottom-centre) on **desktop and mobile** whenever more than one picture is
+  selected (hidden under the mobile drawer): resolved count, **Select-all** (adopts the view `PictureFilter`; `⌘/Ctrl+A` does the same), **Invert**
+  (query mode), **Batch actions** (surfaces the right panel), **Clear**. A select-all is dropped when the gallery filter changes (its membership would
+  no longer match). Batch writes resolve **at apply time** server-side; every one opens a `BatchConfirmDialog` that runs the endpoint's `dry_run` to
+  preview the exact effect, so the previewed count can't diverge from the apply.
 - **Transparency backdrop:** images render over a **`.bg-checkerboard`** utility (`index.css`, two-tone diagonal-gradient grid using `--checker-1/2`,
   themed for dark/light) so transparent PNG regions read as transparent. In the grid the blurhash is a load-time placeholder that **fades
   to `opacity-0`

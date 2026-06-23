@@ -1,6 +1,6 @@
 // Shared domain types — wire shapes match API ref §10 and §6.3/6.6/6.8 exactly.
 
-export type ExifSyncStatus = 'synced' | 'pending' | 'unsupported'
+export type ExifSyncStatus = 'synced' | 'pending' | 'pending_job_creation' | 'unsupported'
 
 export type PictureVariant = 'original' | 'small' | 'medium' | 'large'
 
@@ -576,4 +576,126 @@ export interface OverrideExifResponse {
 export interface TrashResponse {
     id: string
     deleted_at: string | null
+}
+
+// ---------- Batch editing (feature 14) ----------
+
+/**
+ * The homogenized picture filter (§3): the flat gallery or a hierarchy directory. Mirrors the
+ * backend `PictureFilter` enum (tagged on `kind`). Scope/date params are shared by both kinds.
+ */
+export type PictureFilter =
+    | {
+    kind: 'flat'
+    tag?: string
+    include_tags?: string[]
+    exclude_tags?: string[]
+    match?: 'all' | 'any'
+    untagged?: boolean
+    owned_only?: boolean
+    shared_with_me?: boolean
+    include_deleted?: boolean
+    captured_after?: string
+    captured_before?: string
+}
+    | {
+    kind: 'hierarchy'
+    hierarchy_id: string
+    path: string
+    owned_only?: boolean
+    shared_with_me?: boolean
+    include_deleted?: boolean
+    captured_after?: string
+    captured_before?: string
+}
+
+/**
+ * The selection descriptor (§2). Effective set = `(resolve(query) ∪ include_ids) \ exclude_ids`,
+ * always scoped server-side to the caller. `query == null` ⇒ pure explicit set.
+ */
+export interface PictureSelection {
+    query?: PictureFilter | null
+    include_ids?: string[]
+    exclude_ids?: string[]
+}
+
+export type AggregateSection = 'summary' | 'tags' | 'exif'
+
+export interface AggregateRequest {
+    selection: PictureSelection
+    sections?: AggregateSection[]
+    tag_provenance?: boolean
+}
+
+export interface AggregateOwner {
+    username: string
+    instance: string
+    count: number
+}
+
+export interface TagAggregate {
+    path: string
+    /** `count == summary.count` ⇒ on every selected picture; `< count` ⇒ on some. */
+    count: number
+    /** Pictures holding a *manual* row under this path — drives the remove affordance. */
+    manual_count: number
+    sources?: Array<{ source: TagSource; count: number }>
+}
+
+/** A type-aware per-field EXIF aggregate (§4.3). */
+export type FieldAggregate =
+    | {
+    type: 'distinct'
+    common: unknown | null
+    distinct: Array<{ value: unknown; count: number }>
+    distinct_overflow: number
+    null_count: number
+}
+    | { type: 'numeric'; min: number | null; max: number | null; avg: number | null; null_count: number }
+    | { type: 'date'; min: string | null; max: string | null; avg: string | null; null_count: number }
+    | {
+    type: 'gps'
+    bbox: { lat_min: number; lat_max: number; lng_min: number; lng_max: number } | null
+    centroid: { lat: number; lng: number } | null
+    null_count: number
+}
+
+export interface AggregateResponse {
+    count: number
+    owned_count: number
+    received_count: number
+    total_file_size: number
+    trashed_count: number
+    owner_deleting_count: number
+    thumbnail_pending_count: number
+    duplicate_count: number
+    owners: AggregateOwner[]
+    exif_sync: Record<ExifSyncStatus, number>
+    tags?: TagAggregate[]
+    exif?: Record<string, FieldAggregate>
+}
+
+/** Batch EXIF apply mode (§6.1): edit locally, or propose to owners where the share grants it. */
+export type BatchExifMode = 'local' | 'suggest'
+
+/** Dry-run breakdown returned by every batch write when `dry_run: true` (§6.1). */
+export interface BatchDryRun {
+    affected: number
+    // EXIF batch only:
+    edited?: number
+    suggested?: number
+    local_override?: number
+    unsupported?: number
+    // tags batch only:
+    added?: number
+    removed?: number
+}
+
+/** Applied result of a batch EXIF edit. */
+export interface BatchExifResult {
+    affected: number
+    edited: number
+    suggested: number
+    local_override: number
+    unsupported: number
 }

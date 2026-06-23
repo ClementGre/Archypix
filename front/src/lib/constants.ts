@@ -47,6 +47,8 @@ export const queryKeys = {
     pictures: (filters?: unknown) => ['pictures', filters] as const,
     picture: (id: string) => ['pictures', 'detail', id] as const,
     pictureJobs: (id: string) => ['pictures', 'jobs', id] as const,
+    aggregate: (selection: unknown, sections: unknown, provenance: unknown) =>
+        ['pictures', 'aggregate', selection, sections, provenance] as const,
     tags: () => ['tags', 'list'] as const,
     pictureTags: (id: string) => ['tags', 'detail', id] as const,
     taggingServices: () => ['tagging', 'list'] as const,

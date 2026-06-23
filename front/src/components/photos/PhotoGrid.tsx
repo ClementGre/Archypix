@@ -1,17 +1,17 @@
 import {Fragment, type MouseEvent, useEffect, useMemo, useRef} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import {AlertCircle, CheckCheck, ChevronRight, FolderOpen, ImageOff, Loader2, SlidersHorizontal, X} from 'lucide-react'
+import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
 import {usePictures} from '@/hooks/usePictures'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
-import {useSelectionStore} from '@/stores/selection'
+import {isMemberSelected, useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {apiErrorMessage} from '@/api/client'
-import {Button} from '@/components/ui/button'
 import {cn, variantForSize} from '@/lib/utils'
 import {PhotoCard} from './PhotoCard'
 import {Lightbox} from './Lightbox'
+import {SelectionActionBar} from './batch/SelectionActionBar'
 
 /** Breadcrumb for the active hierarchy directory; segments are clickable. */
 function HierarchyBreadcrumb() {
@@ -49,11 +49,10 @@ function HierarchyBreadcrumb() {
 }
 
 export function PhotoGrid() {
-    const {filters, params} = useGalleryParams()
+    const {filters, params, selectionFilter} = useGalleryParams()
     const isBrowsing = !!params.hierarchy
     const rowHeight = useUIStore((s) => s.rowHeight)
     const openMobileDrawer = useUIStore((s) => s.openMobileDrawer)
-    const mobileDrawer = useUIStore((s) => s.mobileDrawer)
     const isMobile = useIsMobile()
     const [, setSp] = useSearchParams()
 
@@ -64,29 +63,49 @@ export function PhotoGrid() {
     const active = isBrowsing ? browseQ : picturesQ
     const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage} = active
 
-    const items = useMemo(() => {
-        const all = data?.pages.flatMap((p) => p.items) ?? []
-        const q = params.q.trim().toLowerCase()
-        return q ? all.filter((it) => (it.filename ?? '').toLowerCase().includes(q)) : all
-    }, [data, params.q])
+    const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
 
     const orderedIds = useMemo(() => items.map((i) => i.id), [items])
 
-    const selected = useSelectionStore((s) => s.selected)
+    const query = useSelectionStore((s) => s.query)
+    const includeIds = useSelectionStore((s) => s.includeIds)
+    const excludeIds = useSelectionStore((s) => s.excludeIds)
     const multiSelect = useSelectionStore((s) => s.multiSelect)
     const select = useSelectionStore((s) => s.select)
     const toggle = useSelectionStore((s) => s.toggle)
     const selectTo = useSelectionStore((s) => s.selectTo)
     const enterMultiSelect = useSelectionStore((s) => s.enterMultiSelect)
-    const setSelection = useSelectionStore((s) => s.setSelection)
+    const selectAll = useSelectionStore((s) => s.selectAll)
     const clear = useSelectionStore((s) => s.clear)
+
+    // ⌘/Ctrl+A selects everything matching the current view (§2.1), unless focus is in a field.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return
+            const t = e.target as HTMLElement | null
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+            e.preventDefault()
+            selectAll(selectionFilter)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectionFilter])
+
+    // A select-all adopts the current view's query; if the view then changes, the membership
+    // checkmarks would be wrong, so drop the selection. Explicit selections are kept across changes.
+    const filterSig = JSON.stringify(selectionFilter)
+    useEffect(() => {
+        if (query !== null) clear()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterSig])
 
     const handleSelect = (id: string) => (e: MouseEvent) => {
         e.stopPropagation()
         if (e.metaKey || e.ctrlKey) toggle(id)
         else if (e.shiftKey) selectTo(id, orderedIds)
         else if (multiSelect) toggle(id)
-        else if (selected.length === 1 && selected[0] === id) clear()
+        else if (query === null && includeIds.length === 1 && includeIds[0] === id) clear()
         else {
             select(id)
             // On mobile a single tap surfaces the details/selection drawer.
@@ -155,7 +174,7 @@ export function PhotoGrid() {
                             key={it.id}
                             item={it}
                             rowHeight={rowHeight}
-                            selected={selected.includes(it.id)}
+                            selected={isMemberSelected(query, includeIds, excludeIds, it.id)}
                             multiSelect={multiSelect}
                             onSelect={handleSelect(it.id)}
                             onLongPress={handleLongPress(it.id)}
@@ -183,30 +202,10 @@ export function PhotoGrid() {
         body
     )
 
-    // Mobile multi-select has no right-panel toggle in the top bar; this floating bar carries the
-    // batch entry point (opens the selection drawer) plus select-all / clear. Hidden while the
-    // drawer is open so it doesn't sit under the overlay.
-    const showSelectionBar = isMobile && multiSelect && mobileDrawer === null
-
     return (
         <>
             {content}
-            {showSelectionBar && (
-                <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
-                    <div className="flex items-center gap-1 rounded-full border border-border bg-card/95 p-1 shadow-lg backdrop-blur">
-                        <span className="px-2 text-sm font-medium tabular-nums">{selected.length}</span>
-                        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setSelection(orderedIds)}>
-                            <CheckCheck className="h-4 w-4"/> Select all
-                        </Button>
-                        <Button size="sm" className="gap-1.5" onClick={() => openMobileDrawer('right')}>
-                            <SlidersHorizontal className="h-4 w-4"/> Batch actions
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clear} aria-label="Clear selection">
-                            <X className="h-4 w-4"/>
-                        </Button>
-                    </div>
-                </div>
-            )}
+            <SelectionActionBar/>
         </>
     )
 }

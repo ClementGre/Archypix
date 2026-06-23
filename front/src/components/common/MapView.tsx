@@ -9,7 +9,7 @@
 // favourite locations (localStorage) shown as star pins you can click to centre on.
 
 import {useEffect, useRef, useState} from 'react'
-import {Check, LocateFixed, Maximize2, Pencil, Star, Trash2, X} from 'lucide-react'
+import {Check, Crosshair, LocateFixed, Maximize2, Minus, Pencil, Plus, Star, Trash2, X} from 'lucide-react'
 import {basemapById, BASEMAPS, type LatLng, type LCircle, type LLayer, type LMap, type LMarker, loadLeaflet, type LRectangle,} from '@/lib/leaflet'
 import {Dialog, DialogContent} from '@/components/ui/dialog'
 import {useMapStyle} from '@/stores/mapStyle'
@@ -39,6 +39,11 @@ interface MapViewProps {
     className?: string
     /** When true (default), show the enlarge button that opens the map in a large dialog. */
     expandable?: boolean
+    /**
+     * When false, the map is a read-only display: no draggable handles, no favourites.
+     * Used by the batch-aggregate GPS preview.
+     */
+    interactive?: boolean
 }
 
 const HANDLE_HTML = (color: string) =>
@@ -47,7 +52,7 @@ const FAV_HTML =
     `<div style="font-size:18px;line-height:14px;color:#f59e0b;text-shadow:0 0 2px rgba(0,0,0,.6),0 0 2px rgba(0,0,0,.6)">★</div>`
 
 export function MapView(props: MapViewProps) {
-    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true} = props
+    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true, interactive = true} = props
     const containerRef = useRef<HTMLDivElement>(null)
     const mapRef = useRef<LMap | null>(null)
     const tileRef = useRef<LLayer | null>(null)
@@ -134,12 +139,31 @@ export function MapView(props: MapViewProps) {
         return [c.lat, c.lng]
     }
 
+    // Re-centre the map on the current point / zone (useful after panning around by hand).
+    const recenter = () => {
+        const map = mapRef.current
+        if (!map) return
+        if (mode === 'point') {
+            const p = latest.current.point
+            if (p?.lat != null && p?.lng != null) map.setView([p.lat, p.lng], 13)
+        } else if (mode === 'bbox') {
+            const b = latest.current.bbox!
+            map.fitBounds(boundsOf(b), {padding: [20, 20], maxZoom: 13})
+        } else {
+            const c = latest.current.circle!
+            map.setView([c.lat, c.lng], zoomForKm(c.km))
+        }
+    }
+
     // Init map + the mode's overlay once Leaflet is ready.
     useEffect(() => {
         let cancelled = false
         loadLeaflet().then((L) => {
             if (cancelled || !containerRef.current || mapRef.current) return
-            const map = L.map(containerRef.current, {zoomControl: true, attributionControl: false})
+            const map = L.map(
+                containerRef.current,
+                {zoomControl: false, attributionControl: false}
+            )
             map.setView([20, 0], 2)
             const bm = basemapById(basemapRef.current)
             tileRef.current = L.tileLayer(bm.url, {subdomains: bm.subdomains ?? 'abc', maxZoom: bm.maxZoom}).addTo(map)
@@ -151,14 +175,15 @@ export function MapView(props: MapViewProps) {
             if (mode === 'point') {
                 const p = latest.current.point
                 if (p?.lat != null && p?.lng != null) {
-                    pin.current = L.marker([p.lat, p.lng], {draggable: true, icon: dot('#10b981')}).addTo(map)
-                    pin.current.on('dragend', () => {
-                        const ll = pin.current!.getLatLng()
-                        cb.current.onPoint?.(round(ll.lat), round(ll.lng))
-                    })
+                    pin.current = L.marker([p.lat, p.lng], {draggable: interactive, icon: dot('#10b981')}).addTo(map)
+                    if (interactive)
+                        pin.current.on('dragend', () => {
+                            const ll = pin.current!.getLatLng()
+                            cb.current.onPoint?.(round(ll.lat), round(ll.lng))
+                        })
                     map.setView([p.lat, p.lng], 13)
                 }
-                map.on('click', (e) => cb.current.onPoint?.(round(e.latlng.lat), round(e.latlng.lng)))
+                if (interactive) map.on('click', (e) => cb.current.onPoint?.(round(e.latlng.lat), round(e.latlng.lng)))
             } else if (mode === 'bbox') {
                 let b = latest.current.bbox!
                 if (degenerate(b)) {
@@ -166,49 +191,54 @@ export function MapView(props: MapViewProps) {
                     cb.current.onBbox?.(b)
                 }
                 rect.current = L.rectangle(boundsOf(b), {color: '#10b981', weight: 2}).addTo(map)
-                const sw = L.marker([b.latMin, b.lonMin], {draggable: true, icon: dot('#10b981')}).addTo(map)
-                const ne = L.marker([b.latMax, b.lonMax], {draggable: true, icon: dot('#10b981')}).addTo(map)
-                const center = L.marker([(b.latMin + b.latMax) / 2, (b.lonMin + b.lonMax) / 2], {
-                    draggable: true,
-                    icon: dot('#0ea5e9'),
-                }).addTo(map)
-                handles.current = [sw, ne, center]
+                if (!interactive) {
+                    handles.current = []
+                    map.fitBounds(boundsOf(b), {padding: [20, 20], maxZoom: 13})
+                } else {
+                    const sw = L.marker([b.latMin, b.lonMin], {draggable: true, icon: dot('#10b981')}).addTo(map)
+                    const ne = L.marker([b.latMax, b.lonMax], {draggable: true, icon: dot('#10b981')}).addTo(map)
+                    const center = L.marker([(b.latMin + b.latMax) / 2, (b.lonMin + b.lonMax) / 2], {
+                        draggable: true,
+                        icon: dot('#0ea5e9'),
+                    }).addTo(map)
+                    handles.current = [sw, ne, center]
 
-                const fromCorners = () => {
-                    const a = sw.getLatLng()
-                    const c = ne.getLatLng()
-                    return {
-                        latMin: Math.min(a.lat, c.lat),
-                        latMax: Math.max(a.lat, c.lat),
-                        lonMin: Math.min(a.lng, c.lng),
-                        lonMax: Math.max(a.lng, c.lng),
+                    const fromCorners = () => {
+                        const a = sw.getLatLng()
+                        const c = ne.getLatLng()
+                        return {
+                            latMin: Math.min(a.lat, c.lat),
+                            latMax: Math.max(a.lat, c.lat),
+                            lonMin: Math.min(a.lng, c.lng),
+                            lonMax: Math.max(a.lng, c.lng),
+                        }
                     }
-                }
-                const syncCornerDrag = () => {
-                    const nb = round4(fromCorners())
-                    rect.current!.setBounds(boundsOf(nb))
-                    center.setLatLng([(nb.latMin + nb.latMax) / 2, (nb.lonMin + nb.lonMax) / 2])
-                    cb.current.onBbox?.(nb)
-                }
-                sw.on('drag', syncCornerDrag)
-                ne.on('drag', syncCornerDrag)
-                center.on('drag', () => {
-                    const cur = latest.current.bbox!
-                    const ll = center.getLatLng()
-                    const halfLat = (cur.latMax - cur.latMin) / 2
-                    const halfLon = (cur.lonMax - cur.lonMin) / 2
-                    const nb = round4({
-                        latMin: ll.lat - halfLat,
-                        latMax: ll.lat + halfLat,
-                        lonMin: ll.lng - halfLon,
-                        lonMax: ll.lng + halfLon,
+                    const syncCornerDrag = () => {
+                        const nb = round4(fromCorners())
+                        rect.current!.setBounds(boundsOf(nb))
+                        center.setLatLng([(nb.latMin + nb.latMax) / 2, (nb.lonMin + nb.lonMax) / 2])
+                        cb.current.onBbox?.(nb)
+                    }
+                    sw.on('drag', syncCornerDrag)
+                    ne.on('drag', syncCornerDrag)
+                    center.on('drag', () => {
+                        const cur = latest.current.bbox!
+                        const ll = center.getLatLng()
+                        const halfLat = (cur.latMax - cur.latMin) / 2
+                        const halfLon = (cur.lonMax - cur.lonMin) / 2
+                        const nb = round4({
+                            latMin: ll.lat - halfLat,
+                            latMax: ll.lat + halfLat,
+                            lonMin: ll.lng - halfLon,
+                            lonMax: ll.lng + halfLon,
+                        })
+                        sw.setLatLng([nb.latMin, nb.lonMin])
+                        ne.setLatLng([nb.latMax, nb.lonMax])
+                        rect.current!.setBounds(boundsOf(nb))
+                        cb.current.onBbox?.(nb)
                     })
-                    sw.setLatLng([nb.latMin, nb.lonMin])
-                    ne.setLatLng([nb.latMax, nb.lonMax])
-                    rect.current!.setBounds(boundsOf(nb))
-                    cb.current.onBbox?.(nb)
-                })
-                map.setView([(b.latMin + b.latMax) / 2, (b.lonMin + b.lonMax) / 2], 9)
+                    map.setView([(b.latMin + b.latMax) / 2, (b.lonMin + b.lonMax) / 2], 9)
+                }
             } else if (mode === 'circle') {
                 let c = latest.current.circle!
                 if (c.lat === 0 && c.lng === 0) {
@@ -320,12 +350,14 @@ export function MapView(props: MapViewProps) {
     const stop = (e: React.SyntheticEvent) => e.stopPropagation()
 
     return (
-        <div className="space-y-1.5">
-            <div className="relative">
+        // `isolate` contains Leaflet's internal z-indexes (panes/controls reach ~1000) within this
+        // wrapper's own stacking context, so the map can't paint above the selection bar or dialogs.
+        <div className="isolate space-y-1.5">
+            <div className="relative mb-0">
                 <div ref={containerRef} className={className ?? 'h-72 w-full'}/>
 
                 {/* Basemap style switcher — top-left. */}
-                <div className="absolute left-2 top-2 z-[1000]" onPointerDown={stop} onMouseDown={stop} onDoubleClick={stop}>
+                <div className="absolute left-2 bottom-2 z-[1000]" onPointerDown={stop} onMouseDown={stop} onDoubleClick={stop}>
                     <select
                         value={basemap}
                         onChange={(e) => setBasemap(e.target.value)}
@@ -349,20 +381,46 @@ export function MapView(props: MapViewProps) {
                 >
                     <button
                         type="button"
+                        onClick={() => mapRef.current?.zoomIn()}
+                        title="Zoom in"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-accent"
+                    >
+                        <Plus className="h-4 w-4"/>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => mapRef.current?.zoomOut()}
+                        title="Zoom out"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-accent"
+                    >
+                        <Minus className="h-4 w-4"/>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={recenter}
+                        title="Re-center on the selection"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-accent"
+                    >
+                        <Crosshair className="h-4 w-4"/>
+                    </button>
+                    <button
+                        type="button"
                         onClick={handleMyLocation}
                         title="Center on my location"
                         className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-accent"
                     >
                         <LocateFixed className="h-4 w-4"/>
                     </button>
-                    <button
-                        type="button"
-                        onClick={handleSaveHere}
-                        title="Save this location to favourites"
-                        className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-amber-500 shadow-sm backdrop-blur hover:bg-accent"
-                    >
-                        <Star className="h-4 w-4"/>
-                    </button>
+                    {interactive && (
+                        <button
+                            type="button"
+                            onClick={handleSaveHere}
+                            title="Save this location to favourites"
+                            className="flex h-7 w-7 items-center justify-center rounded-md border bg-background/90 text-amber-500 shadow-sm backdrop-blur hover:bg-accent"
+                        >
+                            <Star className="h-4 w-4"/>
+                        </button>
+                    )}
                     {expandable && (
                         <button
                             type="button"
@@ -376,24 +434,26 @@ export function MapView(props: MapViewProps) {
                 </div>
             </div>
 
-            <FavoritesStrip
-                favorites={favorites}
-                editingId={editingFav}
-                draftName={draftName}
-                onDraftChange={setDraftName}
-                onApply={(f) => applyRef.current(f.lat, f.lng)}
-                onStartEdit={(f) => {
-                    setDraftName(f.name)
-                    setEditingFav(f.id)
-                }}
-                onCommitEdit={(id) => {
-                    renameFav(id, draftName)
-                    setEditingFav(null)
-                }}
-                onCancelEdit={() => setEditingFav(null)}
-                onRemove={removeFav}
-            />
-            <p className="text-[10px] text-muted-foreground">{basemapById(basemap).attribution}</p>
+            {interactive && (
+                <FavoritesStrip
+                    favorites={favorites}
+                    editingId={editingFav}
+                    draftName={draftName}
+                    onDraftChange={setDraftName}
+                    onApply={(f) => applyRef.current(f.lat, f.lng)}
+                    onStartEdit={(f) => {
+                        setDraftName(f.name)
+                        setEditingFav(f.id)
+                    }}
+                    onCommitEdit={(id) => {
+                        renameFav(id, draftName)
+                        setEditingFav(null)
+                    }}
+                    onCancelEdit={() => setEditingFav(null)}
+                    onRemove={removeFav}
+                />
+            )}
+            <p className="text-[10px] mx-2 text-muted-foreground">{basemapById(basemap).attribution}</p>
 
             {/* Fullscreen: a second, larger map bound to the same value (a fresh Leaflet instance). */}
             {expandable && (

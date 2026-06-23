@@ -23,6 +23,7 @@ import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
+import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
@@ -78,13 +79,19 @@ const SOURCE_COLOR: Record<TagSource, string> = {
 // ── Tag components ────────────────────────────────────────────────────────────
 
 function TagChip({wire, onRemove, onTagClick}: { wire: string; onRemove?: () => void; onTagClick: () => void }) {
+    const display = TagPath.toDisplay(wire)
     return (
         <Badge variant="secondary" className="min-w-0 max-w-full gap-1 font-normal">
-            <button onClick={onTagClick} className="truncate hover:text-primary" title={TagPath.toDisplay(wire)}>
-                {TagPath.toDisplay(wire)}
-            </button>
+            <Tooltip delayDuration={0}>
+                <TooltipTrigger asChild>
+                    <button onClick={onTagClick} className="truncate hover:text-primary">
+                        {display}
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[16rem] break-all text-xs">{display}</TooltipContent>
+            </Tooltip>
             {onRemove && (
-                <button onClick={onRemove} aria-label={`Remove ${wire}`} className="ml-0.5 shrink-0">
+                <button onClick={onRemove} aria-label={`Remove ${wire}`} className="-mr-0.5 ml-0.5 shrink-0 rounded p-0.5 hover:bg-foreground/20">
                     <X className="h-3 w-3"/>
                 </button>
             )}
@@ -119,13 +126,13 @@ function TagProvenanceTable({rows, onRemove, onTagClick, onSourceClick}: {
             {rows.map((row) => {
                 const removable = row.sources.some((s) => s.source === 'manual')
                 return (
-                    <div key={row.path} className="flex items-center justify-between gap-2">
+                    <div key={row.path} className="flex flex-wrap items-center gap-1">
                         <TagChip
                             wire={row.path}
                             onRemove={removable ? () => onRemove(row.path) : undefined}
                             onTagClick={() => onTagClick(row.path)}
                         />
-                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                        <div className="flex flex-wrap items-center gap-1">
                             {row.sources.map((s, i) => {
                                 const clickable = !!s.source_id && s.source !== 'manual'
                                 return (
@@ -584,64 +591,20 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     )
 }
 
-// ── Multi-selection ───────────────────────────────────────────────────────────
-
-function MultiSelection({ids, onClear}: { ids: string[]; onClear: () => void }) {
-    const batch = useBatchEditTags()
-    const {trash, restore} = useTrashMutations()
-    const add = (wire: string) =>
-        batch.mutate(
-            {picture_ids: ids, add_tags: [wire]},
-            {onError: (e) => toast.error('Could not add tag', {description: apiErrorMessage(e)})},
-        )
-
-    // No batch trash/restore endpoint — fire one request per picture.
-    const busy = trash.isPending || restore.isPending
-    const trashAll = () => ids.forEach((pid) => trash.mutate(pid))
-    const restoreAll = () => ids.forEach((pid) => restore.mutate(pid))
-
-    return (
-        <div className="space-y-3 px-3 py-2">
-            <p className="text-sm">
-                <span className="font-medium">{ids.length}</span> photos selected
-            </p>
-            <Section id="multi-tags" title="Tag all selected">
-                <TagPicker onSelect={add} triggerLabel="Add tag to all"/>
-            </Section>
-            <ConfirmDialog
-                trigger={
-                    <Button variant="outline" className="w-full justify-start gap-2 text-destructive" disabled={busy}>
-                        <Trash2 className="h-4 w-4"/> Move to trash
-                    </Button>
-                }
-                title={`Move ${ids.length} photos to trash?`}
-                description="Owned photos are purged after your retention window; received photos are only hidden locally."
-                confirmLabel="Move to trash"
-                destructive
-                onConfirm={trashAll}
-            />
-            <Button variant="outline" className="w-full justify-start gap-2" disabled={busy} onClick={restoreAll}>
-                <ArchiveRestore className="h-4 w-4"/> Restore all
-            </Button>
-            <Button variant="ghost" className="w-full gap-2" onClick={onClear}>
-                <X className="h-4 w-4"/> Clear selection
-            </Button>
-        </div>
-    )
-}
-
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
 export function SelectionPanel() {
-    const selected = useSelectionStore((s) => s.selected)
-    const clear = useSelectionStore((s) => s.clear)
+    const query = useSelectionStore((s) => s.query)
+    const includeIds = useSelectionStore((s) => s.includeIds)
+    const excludeIds = useSelectionStore((s) => s.excludeIds)
 
-    if (selected.length === 0) return null
+    const single = query === null && includeIds.length === 1 && excludeIds.length === 0
+    const hasSelection = query !== null || includeIds.length > 0
+    if (!hasSelection) return null
 
     return (
         <div className="h-full overflow-y-auto">
-            {selected.length === 1 && <SinglePicture id={selected[0]}/>}
-            {selected.length > 1 && <MultiSelection ids={selected} onClear={clear}/>}
+            {single ? <SinglePicture id={includeIds[0]}/> : <MultiSelectionPanel/>}
         </div>
     )
 }

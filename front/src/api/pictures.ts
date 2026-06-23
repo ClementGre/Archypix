@@ -1,5 +1,10 @@
 import {apiClient} from './client'
 import type {
+    AggregateRequest,
+    AggregateResponse,
+    BatchDryRun,
+    BatchExifMode,
+    BatchExifResult,
     EditPictureResponse,
     ExifEditMode,
     ExifField,
@@ -8,6 +13,7 @@ import type {
     OverrideExifResponse,
     PictureDetail,
     PictureListResponse,
+    PictureSelection,
     PictureVariant,
     TrashResponse,
 } from '@/lib/types'
@@ -130,6 +136,47 @@ export async function editReceivedExif(
 ): Promise<ReceivedExifResult> {
     const res = await apiClient.post<OverrideExifResponse>(`/api/authenticated/pictures/${id}/exif`, body)
     return {data: res.data, status: res.status}
+}
+
+// ── Batch operations (feature 14 §6.11) ──────────────────────────────────────
+
+/**
+ * Type-aware aggregation over a selection (§4). Server-side GROUP BY / conditional aggregate,
+ * so a select-all of thousands of pictures is never materialised. `sections` keeps it cheap —
+ * the sidebar fetches `summary` eagerly and `tags`/`exif` only when those sections open.
+ */
+export async function aggregatePictures(body: AggregateRequest): Promise<AggregateResponse> {
+    const {data} = await apiClient.post<AggregateResponse>('/api/authenticated/pictures/aggregate', body)
+    return data
+}
+
+/** Body shared by the batch EXIF edit endpoint (`PATCH /pictures/exif`). */
+export interface BatchExifBody {
+    selection: PictureSelection
+    set?: Partial<ExifOverrides>
+    clear?: ExifField[]
+    mode?: BatchExifMode
+    dry_run?: boolean
+}
+
+/** Batch EXIF edit over a selection (§5–§6). With `dry_run` returns the affected breakdown. */
+export async function batchEditExif(body: BatchExifBody & { dry_run: true }): Promise<BatchDryRun>
+export async function batchEditExif(body: BatchExifBody): Promise<BatchExifResult>
+export async function batchEditExif(body: BatchExifBody): Promise<BatchExifResult | BatchDryRun> {
+    const {data} = await apiClient.patch<BatchExifResult | BatchDryRun>('/api/authenticated/pictures/exif', body)
+    return data
+}
+
+/** Batch soft-delete over a selection (§6). With `dry_run` returns `{ affected }` only. */
+export async function batchTrash(selection: PictureSelection, dryRun = false): Promise<BatchDryRun> {
+    const {data} = await apiClient.post<BatchDryRun>('/api/authenticated/pictures/trash', {selection, dry_run: dryRun})
+    return data
+}
+
+/** Batch restore over a selection (§6). The selection must include the trashed rows. */
+export async function batchRestore(selection: PictureSelection, dryRun = false): Promise<BatchDryRun> {
+    const {data} = await apiClient.post<BatchDryRun>('/api/authenticated/pictures/restore', {selection, dry_run: dryRun})
+    return data
 }
 
 /** Soft-delete a picture the user holds (owned or received). */

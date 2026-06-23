@@ -1,7 +1,7 @@
 import {useLocation, useNavigate} from 'react-router-dom'
 import {HardDrive, Images, LayoutGrid, Wand2} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
-import {useSelectionStore} from '@/stores/selection'
+import {useSelectionCount} from '@/hooks/useAggregate'
 import {useTaggingServices} from '@/hooks/useTaggingServices'
 import {ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, useUIStore} from '@/stores/ui'
 import {formatBytes, TagPath} from '@/lib/utils'
@@ -18,7 +18,7 @@ export function StatusBar() {
     const isGallery = pathname === '/'
 
     const {params} = useGalleryParams()
-    const selectedCount = useSelectionStore((s) => s.selected.length)
+    const {count: selectedCount} = useSelectionCount()
     const rowHeight = useUIStore((s) => s.rowHeight)
     const setRowHeight = useUIStore((s) => s.setRowHeight)
     const {data: services} = useTaggingServices()

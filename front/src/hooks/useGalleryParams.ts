@@ -1,13 +1,12 @@
 import {useCallback, useMemo} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import type {PictureFilters, SortField, SortOrder} from '@/lib/types'
+import type {PictureFilter, PictureFilters, SortField, SortOrder} from '@/lib/types'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
 
 /** Decoded view of the gallery's URL state. */
 export interface GalleryParams {
-    q: string
     tag: string | null
     scope: Scope
     includeDeleted: boolean
@@ -28,7 +27,6 @@ export interface GalleryParams {
 
 /** Patch applied to the URL state; omitted keys are left unchanged. */
 export interface GalleryParamsPatch {
-    q?: string
     tag?: string | null
     scope?: Scope
     includeDeleted?: boolean
@@ -56,7 +54,6 @@ export function useGalleryParams() {
 
     const params: GalleryParams = useMemo(
         () => ({
-            q: sp.get('q') ?? '',
             tag: sp.get('tag'),
             scope: (sp.get('scope') as Scope) || 'all',
             includeDeleted: sp.get('deleted') === '1',
@@ -82,7 +79,6 @@ export function useGalleryParams() {
                         if (value == null || value === '' || isDefault) next.delete(key)
                         else next.set(key, value)
                     }
-                    if ('q' in patch) setOrDelete('q', patch.q, false)
                     if ('tag' in patch) setOrDelete('tag', patch.tag, false)
                     if ('scope' in patch) setOrDelete('scope', patch.scope, patch.scope === 'all')
                     if ('includeDeleted' in patch) setOrDelete('deleted', patch.includeDeleted ? '1' : '', false)
@@ -106,7 +102,6 @@ export function useGalleryParams() {
     const clearFilters = useCallback(() => {
         update(
             {
-                q: '',
                 tag: null,
                 scope: 'all',
                 includeDeleted: false,
@@ -136,9 +131,24 @@ export function useGalleryParams() {
         !!params.tag ||
         params.scope !== 'all' ||
         params.includeDeleted ||
-        !!params.q ||
         !!params.capturedAfter ||
         !!params.capturedBefore
 
-    return {params, filters, update, clearFilters, hasActiveFilters}
+    // The homogenized `PictureFilter` (feature 14 §3) describing the current view, for the
+    // selection descriptor (`Ctrl+A` / "Select all").
+    const selectionFilter: PictureFilter = useMemo(() => {
+        const scope = {
+            owned_only: params.scope === 'owned' || undefined,
+            shared_with_me: params.scope === 'shared' || undefined,
+            include_deleted: params.includeDeleted || undefined,
+            captured_after: params.capturedAfter ?? undefined,
+            captured_before: params.capturedBefore ?? undefined,
+        }
+        if (params.hierarchy) {
+            return {kind: 'hierarchy', hierarchy_id: params.hierarchy, path: params.hpath, ...scope}
+        }
+        return {kind: 'flat', tag: params.tag ?? undefined, ...scope}
+    }, [params])
+
+    return {params, filters, update, clearFilters, hasActiveFilters, selectionFilter}
 }

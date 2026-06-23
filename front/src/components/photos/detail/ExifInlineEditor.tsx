@@ -4,6 +4,7 @@ import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {Section} from './Section'
+import {FieldLabel} from './FieldLabel'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
 import {GpsPickerPopover} from './GpsPickerPopover'
 import {OverwrittenBadge} from './OverwrittenBadge'
@@ -110,7 +111,7 @@ function EditableRow({
     return (
         <div className="group flex min-h-[1.4rem] items-center gap-1">
             <DirtyDot isDirty={isDirty}/>
-            <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
+            <div className="w-24 shrink-0"><FieldLabel>{label}</FieldLabel></div>
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
                 {!editing && badge}
                 {editing ? (
@@ -180,7 +181,7 @@ function ExposureRow({
     return (
         <div className="group flex min-h-[1.4rem] items-center gap-1 text-sm">
             <DirtyDot isDirty={isDirty}/>
-            <span className="w-24 shrink-0 text-xs text-muted-foreground">Exposure</span>
+            <div className="w-24 shrink-0"><FieldLabel>Exposure</FieldLabel></div>
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
                 {!editing && badge}
                 {editing ? (
@@ -354,7 +355,7 @@ export function ExifInlineEditor({
                 {/* Captured at — date/time picker */}
                 <div className="group flex min-h-[1.4rem] items-center gap-1 text-sm">
                     <DirtyDot isDirty={dirty('captured_at')}/>
-                    <span className="w-24 shrink-0 text-xs text-muted-foreground">Captured at</span>
+                    <div className="w-24 shrink-0"><FieldLabel>Captured at</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
                         {overrideBadge('captured_at')}
                         {canEdit ? (
@@ -376,7 +377,7 @@ export function ExifInlineEditor({
                 {/* GPS — map picker */}
                 <div className="group flex min-h-[1.4rem] items-center gap-1">
                     <DirtyDot isDirty={gpsIsDirty}/>
-                    <span className="w-24 shrink-0 text-xs text-muted-foreground">GPS</span>
+                    <div className="w-24 shrink-0"><FieldLabel>GPS</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
                         {overrideBadge('gps_lat', 'gps_lng', 'gps_alt')}
                         {canEdit ? (
@@ -480,7 +481,7 @@ export function ExifInlineEditor({
                 {extraRows.map(([k, v]) => (
                     <div key={k} className="flex min-h-[1.75rem] items-center gap-1 text-sm">
                         <div className="w-3 shrink-0"/>
-                        <span className="w-24 shrink-0 text-xs text-muted-foreground">{k}</span>
+                        <div className="w-24 shrink-0"><FieldLabel>{k}</FieldLabel></div>
                         <span className="flex-1 truncate text-right text-sm">{v}</span>
                         <div className="w-4 shrink-0"/>
                     </div>

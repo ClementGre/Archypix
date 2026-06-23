@@ -23,6 +23,12 @@ export interface LLayer {
 export interface LMap {
     setView(center: [number, number], zoom?: number): LMap
 
+    fitBounds(bounds: [[number, number], [number, number]], options?: { padding?: [number, number]; maxZoom?: number }): LMap
+
+    zoomIn(delta?: number): LMap
+
+    zoomOut(delta?: number): LMap
+
     on(event: string, cb: (e: LeafletMouseEvent) => void): LMap
 
     remove(): void

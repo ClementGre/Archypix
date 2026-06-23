@@ -1,6 +1,4 @@
-import {useEffect, useState} from 'react'
-import {ArrowUpDown, Check, Filter, Search, X} from 'lucide-react'
-import {Input} from '@/components/ui/input'
+import {ArrowUpDown, Check, Filter, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {
@@ -14,8 +12,6 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {type Scope, useGalleryParams} from '@/hooks/useGalleryParams'
-import {useDebouncedValue} from '@/hooks/useDebouncedValue'
-import {useIsMobile} from '@/hooks/useMediaQuery'
 import type {SortField, SortOrder} from '@/lib/types'
 import {cn, TagPath} from '@/lib/utils'
 
@@ -31,40 +27,12 @@ const SORT_FIELDS: { value: SortField; label: string }[] = [
     {value: 'updated_at', label: 'Last modified'},
 ]
 
-/** The gallery's search + filter controls, rendered inside the unified top bar. */
+/** The gallery's sort + filter controls, rendered inside the unified top bar. */
 export function FilterControls() {
     const {params, update, hasActiveFilters, clearFilters} = useGalleryParams()
-    const isMobile = useIsMobile()
-
-    const [q, setQ] = useState(params.q)
-    const debouncedQ = useDebouncedValue(q, 300)
-
-    useEffect(() => {
-        if (debouncedQ !== params.q) update({q: debouncedQ}, {replace: true})
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedQ])
-
-    useEffect(() => {
-        setQ(params.q)
-    }, [params.q])
-
-    const searchField = (
-        <div className="relative w-full min-w-0">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"/>
-            <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search filenames…"
-                className="h-8 pl-8"
-            />
-        </div>
-    )
 
     return (
         <>
-            {/* On mobile the search lives inside the Filters dropdown to keep the bar minimal. */}
-            {!isMobile && <div className="w-full max-w-[16rem]">{searchField}</div>}
-
             {params.tag && (
                 <Badge variant="secondary" className="hidden max-w-[12rem] gap-1 font-normal sm:inline-flex">
                   <span className="truncate">{TagPath.toDisplay(params.tag)}</span>
@@ -111,15 +79,6 @@ export function FilterControls() {
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
-                        {isMobile && (
-                            <>
-                                {/* stopPropagation keeps the menu's typeahead from eating keystrokes. */}
-                                <div className="p-1" onKeyDown={(e) => e.stopPropagation()}>
-                                    {searchField}
-                                </div>
-                                <DropdownMenuSeparator/>
-                            </>
-                        )}
                       <DropdownMenuLabel>Show</DropdownMenuLabel>
                       <DropdownMenuRadioGroup value={params.scope} onValueChange={(v) => update({scope: v as Scope})}>
                         {SCOPES.map((s) => (
