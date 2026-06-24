@@ -20,7 +20,16 @@ import type {
 
 export interface UploadSlot {
     picture_id: string
-    presigned_url: string
+    /** Present for a fresh file (PUT the bytes here); `null` for a deduplicated picture. */
+    presigned_url: string | null
+    /** True when the file's hash already matched an existing owned picture — no upload needed. */
+    duplicate: boolean
+}
+
+/** One file requested in a batch presign: its name and (for dedup) its SHA-256 lowercase hex. */
+export interface BatchUploadFileInput {
+    filename: string
+    file_hash?: string
 }
 
 export interface CompleteUploadBody {
@@ -196,9 +205,30 @@ export async function getJob(id: string): Promise<Job> {
     return data
 }
 
-export async function beginUploadBatch(filenames: string[]): Promise<UploadSlot[]> {
-    const {data} = await apiClient.post<UploadSlot[]>('/api/authenticated/pictures/uploads/batch', {filenames})
-    return data
+const PRESIGN_BATCH_SIZE = 100
+
+/**
+ * Batch-presign upload slots. Each file may carry its SHA-256 (`file_hash`) so the backend can
+ * deduplicate against the user's existing owned pictures — a hit comes back with `duplicate: true`,
+ * a `null` `presigned_url`, and the existing `picture_id`. `initialTags` are assigned to any such
+ * deduplicated pictures server-side (new files get their tags later, on `complete`).
+ *
+ * The backend caps a single request at 100 files, so larger uploads are chunked.
+ */
+export async function beginUploadBatch(
+    files: BatchUploadFileInput[],
+    initialTags?: string[],
+): Promise<UploadSlot[]> {
+    const slots: UploadSlot[] = []
+    for (let i = 0; i < files.length; i += PRESIGN_BATCH_SIZE) {
+        const chunk = files.slice(i, i + PRESIGN_BATCH_SIZE)
+        const {data} = await apiClient.post<UploadSlot[]>('/api/authenticated/pictures/uploads/batch', {
+            files: chunk,
+            initial_tags: initialTags?.length ? initialTags : undefined,
+        })
+        slots.push(...data)
+    }
+    return slots
 }
 
 export async function completeUpload(pictureId: string, body: CompleteUploadBody): Promise<{ id: string }> {

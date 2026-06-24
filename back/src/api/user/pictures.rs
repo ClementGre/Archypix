@@ -4,7 +4,8 @@ use crate::infra::error::AppError;
 use crate::services;
 use crate::services::aggregate::AggregateRequest;
 use crate::services::pictures::{
-    PictureListParams, PictureListResult, PictureVariant, TrashBatchOutcome, UploadMetadata,
+    BatchUploadFile, BatchUploadOutcome, PictureListParams, PictureListResult, PictureVariant,
+    TrashBatchOutcome, UploadMetadata,
 };
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
@@ -46,7 +47,21 @@ pub async fn create_upload(
 
 #[derive(Debug, Deserialize)]
 pub struct BatchCreateUploadRequest {
-    pub filenames: Vec<String>,
+    pub files: Vec<BatchUploadFile>,
+    /// Manual tags assigned atomically to any deduplicated (conflicting) pictures — the upload-time
+    /// equivalent of `complete`'s `initial_tags` for files the user already holds.
+    #[serde(default)]
+    pub initial_tags: Option<Vec<String>>,
+}
+
+/// One requested slot in a batch presign response. For a fresh file `presigned_url` is set and
+/// `duplicate` is `false`; for a dedup hit `presigned_url` is `null`, `duplicate` is `true`, and
+/// `picture_id` is the existing picture the bytes already match.
+#[derive(Debug, Serialize)]
+pub struct BatchUploadSlotResponse {
+    pub picture_id: Uuid,
+    pub presigned_url: Option<String>,
+    pub duplicate: bool,
 }
 
 #[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
@@ -54,21 +69,39 @@ pub async fn batch_create_upload(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(payload): Json<BatchCreateUploadRequest>,
-) -> Result<Json<Vec<CreateUploadResponse>>, AppError> {
+) -> Result<Json<Vec<BatchUploadSlotResponse>>, AppError> {
+    let initial_tags = payload.initial_tags.unwrap_or_default();
+    // The service handles dedup-target side effects (restore trashed targets, tag them) and wakes
+    // the pipeline itself when any of that happened.
     let results = services::pictures::begin_upload_batch(
+        &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
         &state.config,
         auth.user_id()?,
-        &payload.filenames,
+        &payload.files,
+        &initial_tags,
+        &state.pipeline_waker,
     )
     .await?;
+
     Ok(Json(
         results
             .into_iter()
-            .map(|(picture_id, presigned_url)| CreateUploadResponse {
-                picture_id,
-                presigned_url,
+            .map(|r| match r {
+                BatchUploadOutcome::New {
+                    picture_id,
+                    presigned_url,
+                } => BatchUploadSlotResponse {
+                    picture_id,
+                    presigned_url: Some(presigned_url),
+                    duplicate: false,
+                },
+                BatchUploadOutcome::Duplicate { picture_id } => BatchUploadSlotResponse {
+                    picture_id,
+                    presigned_url: None,
+                    duplicate: true,
+                },
             })
             .collect(),
     ))

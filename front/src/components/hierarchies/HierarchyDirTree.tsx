@@ -30,24 +30,33 @@ function DirRow({
     return (
         <div>
             <div
+                onClick={() => update({hierarchy: hierarchyId, hpath: path, hedit: null})}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        update({hierarchy: hierarchyId, hpath: path, hedit: null})
+                    }
+                }}
+                title={entry.writable ? undefined : 'Read-only directory'}
                 className={cn(
-                    'group flex items-center gap-1 rounded-md py-1 pr-2 text-sm',
+                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-2 text-sm',
                     isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted',
                 )}
                 style={{paddingLeft: depth * 12 + 4}}
             >
                 <button
-                    onClick={() => hasChildren && setOpen((o) => !o)}
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        if (hasChildren) setOpen((o) => !o)
+                    }}
                     className={cn('flex h-4 w-4 shrink-0 items-center justify-center', !hasChildren && 'invisible')}
                     aria-label={open ? 'Collapse' : 'Expand'}
                 >
                     <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}/>
                 </button>
-                <button
-                    onClick={() => update({hierarchy: hierarchyId, hpath: path, hedit: null})}
-                    className="flex min-w-0 flex-1 items-center gap-1.5"
-                    title={entry.writable ? undefined : 'Read-only directory'}
-                >
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     {open && hasChildren ? (
                         <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-70"/>
                     ) : (
@@ -60,7 +69,7 @@ function DirRow({
                             {entry.picture_count}
                         </span>
                     )}
-                </button>
+                </div>
             </div>
 
             {open && hasChildren && (

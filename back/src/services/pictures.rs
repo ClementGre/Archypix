@@ -13,7 +13,6 @@ use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -164,29 +163,147 @@ pub struct PictureDetails {
     pub versions: Vec<PictureVersion>,
 }
 
-/// Presign upload slots for a batch of files in one call. Returns one (picture_id, presigned_url)
-/// pair per filename in the same order. Each entry is independent — a failure on one does not
-/// affect the others, but the whole call fails if any presign errors.
-#[tracing::instrument(skip(cache, storage, config), fields(user_id = %user_id, count = filenames.len()))]
+/// One requested upload slot in a batch presign: a filename and, optionally, the client-computed
+/// SHA-256 (lowercase hex) of the bytes about to be uploaded. The hash drives upload-time
+/// deduplication against the user's existing owned pictures.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchUploadFile {
+    pub filename: String,
+    pub file_hash: Option<String>,
+}
+
+/// The outcome of one batch presign slot: either a fresh upload slot (PUT the bytes to
+/// `presigned_url`, then `complete`), or a deduplication hit against an existing owned picture
+/// (no upload needed — `picture_id` is the existing picture).
+pub enum BatchUploadOutcome {
+    New {
+        picture_id: Uuid,
+        presigned_url: String,
+    },
+    Duplicate {
+        picture_id: Uuid,
+    },
+}
+
+/// Presign upload slots for a batch of files in one call. Returns one outcome per file in input
+/// order.
+///
+/// **Deduplication.** A file carrying a `file_hash` that already matches one of the caller's owned
+/// pictures is reported as a [`BatchUploadOutcome::Duplicate`] pointing at that existing picture —
+/// no S3 slot is minted and the client must not upload it. A matched picture that was **trashed** is
+/// restored (un-deleted), so re-uploading a photo the user had deleted brings it back rather than
+/// creating a fresh copy. Any `initial_tags` are assigned (as `manual` tags) to the matched
+/// pictures, so a re-upload still lands the user's intended tags on the picture they already hold.
+/// New (non-duplicate) files get a normal slot and receive their `initial_tags` later, on
+/// `complete`. When a restore or a tag assignment happened, the pipeline is woken (debounced).
+#[tracing::instrument(skip(db, cache, storage, config, files, initial_tags, waker), fields(user_id = %user_id, count = files.len()))]
 pub async fn begin_upload_batch(
+    db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
     config: &Config,
     user_id: Uuid,
-    filenames: &[String],
-) -> Result<Vec<(Uuid, String)>, AppError> {
-    if filenames.is_empty() {
+    files: &[BatchUploadFile],
+    initial_tags: &[String],
+    waker: &crate::infra::pipeline::PipelineWaker,
+) -> Result<Vec<BatchUploadOutcome>, AppError> {
+    if files.is_empty() {
         return Err(AppError::BadRequest("No filenames provided".to_string()));
     }
-    if filenames.len() > 100 {
+    if files.len() > 100 {
         return Err(AppError::BadRequest(
             "Cannot request more than 100 upload slots at once".to_string(),
         ));
     }
-    let futures = filenames
+
+    // Validate any initial tags up front — reject malformed paths and the reserved `SharedToMe`
+    // prefix, matching the `complete`/`PATCH /tags` contract.
+    let initial_tags: Vec<String> = initial_tags
         .iter()
-        .map(|name| begin_upload(cache, storage, config, user_id, name));
-    try_join_all(futures).await
+        .map(|t| {
+            TagPath::parse(t, false)
+                .map(|p| p.as_ltree().to_string())
+                .map_err(AppError::BadRequest)
+        })
+        .collect::<Result<_, _>>()?;
+
+    let mut outcomes = Vec::with_capacity(files.len());
+    let mut duplicate_ids: Vec<Uuid> = Vec::new();
+    // Dedup targets that were trashed and need restoring (un-deleting).
+    let mut restore_ids: Vec<Uuid> = Vec::new();
+    // The canonical target for each hash seen so far in this batch — a DB-existing picture or the
+    // first new slot minted for it — so a second identical file in the *same* batch dedups onto the
+    // first instead of minting a redundant slot (neither is committed yet, so the DB check alone
+    // can't catch it).
+    let mut seen_hashes: HashMap<&str, Uuid> = HashMap::new();
+    for file in files {
+        if let Some(hash) = file.file_hash.as_deref().filter(|h| !h.is_empty()) {
+            // Earlier file in this batch already claimed this hash.
+            if let Some(&picture_id) = seen_hashes.get(hash) {
+                outcomes.push(BatchUploadOutcome::Duplicate { picture_id });
+                continue;
+            }
+            // Already on an existing owned picture (including a trashed one — restore it below).
+            if let Some(existing) =
+                PictureRepository::find_owned_by_hash(db, user_id, hash, true).await?
+            {
+                seen_hashes.insert(hash, existing.id);
+                duplicate_ids.push(existing.id);
+                if existing.deleted_at.is_some() {
+                    restore_ids.push(existing.id);
+                }
+                outcomes.push(BatchUploadOutcome::Duplicate {
+                    picture_id: existing.id,
+                });
+                continue;
+            }
+            // First time we see this hash — mint a slot and remember it as the canonical target.
+            let (picture_id, presigned_url) =
+                begin_upload(cache, storage, config, user_id, &file.filename).await?;
+            seen_hashes.insert(hash, picture_id);
+            outcomes.push(BatchUploadOutcome::New {
+                picture_id,
+                presigned_url,
+            });
+            continue;
+        }
+        // No hash supplied — can't dedup; always a fresh slot.
+        let (picture_id, presigned_url) =
+            begin_upload(cache, storage, config, user_id, &file.filename).await?;
+        outcomes.push(BatchUploadOutcome::New {
+            picture_id,
+            presigned_url,
+        });
+    }
+
+    // Apply the dedup-target mutations atomically: restore trashed targets and land the intended
+    // tags on the pictures the user already holds.
+    let assign_tags = !initial_tags.is_empty() && !duplicate_ids.is_empty();
+    if !restore_ids.is_empty() || assign_tags {
+        use crate::repository::pipeline::PipelineRepository;
+        let mut tx = db
+            .begin()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        for id in &restore_ids {
+            PictureRepository::set_deleted(&mut *tx, user_id, *id, false).await?;
+        }
+        if assign_tags {
+            TagRepository::batch_assign(&mut *tx, user_id, &duplicate_ids, &initial_tags).await?;
+        }
+        // Re-dirty the touched pictures so tagging re-evaluates and any restored owned picture
+        // re-announces its cleared owner-deletion lifecycle (mirrors `restore_picture`).
+        let touched: Vec<Uuid> = if assign_tags {
+            duplicate_ids.clone()
+        } else {
+            restore_ids.clone()
+        };
+        PipelineRepository::invalidate(&mut *tx, &touched).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        waker.wake_debounced(user_id);
+    }
+
+    Ok(outcomes)
 }
 
 #[tracing::instrument(skip(cache, storage, config), fields(user_id = %user_id))]

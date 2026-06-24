@@ -87,8 +87,10 @@
   Summary / tristate Tags / type-aware EXIF with the GPS bbox on `MapView`); a `BatchExifDialog` edits EXIF across the
   selection (local/suggest mode); and every batch write is gated by a **mandatory confirmation popup** hosting the
   endpoint's `dry_run` preview (`BatchConfirmDialog`). See `doc/features/14_better_batch_editing.md`.
-- [ ] **Dedup pictures at upload time** — When uploading from the frontend, dedup pictures based on the hash, so the user can’t upload a picture
-  twice.
+- [x] **Dedup pictures at upload time** — the batch presign (`POST /uploads/batch`) takes each file's SHA-256 and `initial_tags`; a hash already on an
+  owned picture comes back `duplicate: true` (no S3 slot) with the initial tags landed on the existing picture, a trashed match restored, and
+  identical
+  files within one batch collapsed to a single slot. The upload dialog computes the hash up front and shows an amber check for deduplicated files.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
   logic, presigned URL caching for remote pictures.

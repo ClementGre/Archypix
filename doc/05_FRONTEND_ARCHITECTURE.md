@@ -174,7 +174,9 @@ picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row 
 (render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
 (loading placeholder only — faded out on load), `FilterControls` (sort + filters dropdown — scope folded into Filters,
 **funnel `Filter` icon**; rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param;
-←/→/Esc;
+←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
+and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
+instead of closing**, only closing when no picture remains;
 always the `large` variant; **portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
 on
 top; **click the backdrop outside the image to close** — and closing **selects the viewed picture** (opening the right drawer on mobile) so the user
@@ -407,12 +409,21 @@ mobile) and shown only when its `ui` store toggle is on:
   to `opacity-0`
   once the thumbnail loads** (`PhotoCard` `loaded` state) — otherwise transparent areas would show the (opaque) blurhash instead of the checkerboard.
   `OrientedContainImage` paints the checkerboard on the exact image box (so the lightbox keeps a black letterbox around it).
-- **Sensitive actions** (revoke / reject / delete) are gated by `ConfirmDialog`.
+- **Sensitive actions** (revoke / reject / delete) are gated by `ConfirmDialog`, which also accepts **Enter to confirm**
+  regardless of which footer button has focus (Radix defaults focus to Cancel). The single exception is the keyboard
+  trash shortcut: **Delete/⌘+Backspace** on a single selected picture (`SelectionPanel`) or the picture open in the
+  `Lightbox` trashes it directly, skipping the dialog — a deliberate keystroke doesn't need the mouse-click confirm
+  gate. Both shortcuts ignore the keypress while focus is in a text input and no-op on an already-trashed picture.
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
-  full-page drag zone both call `openDialog(files?)`. The dialog batch-presigns all files (`POST /uploads/batch`), uploads to S3 in parallel (max 4
-  concurrent, via `XMLHttpRequest` for per-file progress), and calls `POST /uploads/{id}/complete` immediately per file as its S3 PUT finishes — not
-  after all files. Each file's SHA-256 is computed in parallel with its S3 PUT (`crypto.subtle.digest`, lowercase hex — the same digest the worker
-  produces) and sent as `file_hash`. `initial_tags` set in the dialog are passed on the complete body and assigned atomically server-side. The backend
+  full-page drag zone both call `openDialog(files?)`. Each file's SHA-256 (`crypto.subtle.digest`, lowercase hex — the same digest the worker
+  produces)
+  is computed **up front** so it can be sent on the batch presign (`POST /uploads/batch`, with `initial_tags`) for **upload-time dedup**: a slot that
+  comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check** ("Already in
+  your
+  library") and the backend has already assigned the initial tags to the existing picture. Non-duplicate files upload to S3 in parallel (max 4
+  concurrent, via `XMLHttpRequest` for per-file progress, reusing the up-front hash as `file_hash`) and call `POST /uploads/{id}/complete` immediately
+  per file as its S3 PUT finishes — not after all files; `initial_tags` are passed on the complete body and assigned atomically server-side. The
+  backend
   wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping.
   Gallery and tags queries are invalidated on the first success and again when all uploads settle.
 

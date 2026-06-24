@@ -134,19 +134,41 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
         if (index >= 0 && index < items.length - 1) setView(items[index + 1].id)
     }, [index, items, setView])
 
+    const {trash, restore} = useTrashMutations()
+
+    // Trashing removes the picture from the underlying list (async, on refetch) — jump to the
+    // next picture first (or the previous one if it was last) so the viewer stays open instead
+    // of collapsing to -1 and auto-closing; only close if it was the last picture left.
+    const trashAndAdvance = useCallback(() => {
+        if (!current) return
+        const id = current.id
+        const nextId = index < items.length - 1 ? items[index + 1].id : index > 0 ? items[index - 1].id : null
+        if (nextId) setView(nextId)
+        else close()
+        trash.mutate(id)
+    }, [current, index, items, setView, close, trash])
+
     useEffect(() => {
-        if (!open) return
+        if (!open || !current) return
         const onKey = (e: KeyboardEvent) => {
-            // An open overlay (e.g. the trash confirm dialog) handles Escape first and prevents
-            // default — don't also close the lightbox in that case.
+            // An open overlay (e.g. the trash confirm dialog) handles Escape/Enter first and
+            // prevents default — don't also act on the lightbox in that case.
             if (e.defaultPrevented) return
+            const t = e.target as HTMLElement | null
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
             if (e.key === 'Escape') close()
             else if (e.key === 'ArrowLeft') goPrev()
             else if (e.key === 'ArrowRight') goNext()
+                // Delete / ⌘+Backspace trashes the picture currently in view, no confirmation —
+            // a deliberate keyboard shortcut doesn't need the mouse-click confirm gate.
+            else if (!current.deleted_at && (e.key === 'Delete' || (e.metaKey && e.key === 'Backspace'))) {
+                e.preventDefault()
+                trashAndAdvance()
+            }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [open, close, goPrev, goNext])
+    }, [open, current, close, goPrev, goNext, trashAndAdvance])
 
     // Full screen always requests the `large` variant.
     const {data: url} = useQuery({
@@ -155,8 +177,6 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
         enabled: !!current,
         staleTime: 10 * 60 * 1000,
     })
-
-    const {trash, restore} = useTrashMutations()
 
     const [downloading, setDownloading] = useState(false)
     const download = async () => {
@@ -228,7 +248,7 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
                         }
                         confirmLabel="Move to trash"
                         destructive
-                        onConfirm={() => trash.mutate(current.id)}
+                        onConfirm={trashAndAdvance}
                     />
                 )}
                 <button onClick={close} aria-label="Close" className="rounded p-1 hover:bg-white/10">

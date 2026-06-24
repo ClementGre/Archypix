@@ -1,4 +1,4 @@
-import type {ReactNode} from 'react'
+import {type ReactNode, useRef} from 'react'
 import {
     AlertDialog,
     AlertDialogAction,
@@ -28,10 +28,20 @@ export function ConfirmDialog({
     destructive?: boolean
     onConfirm: () => void
 }) {
+    const actionRef = useRef<HTMLButtonElement>(null)
+
     return (
         <AlertDialog>
             <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
-            <AlertDialogContent>
+            <AlertDialogContent
+                onKeyDown={(e) => {
+                    // Radix focuses Cancel by default (safer default), but Enter should always
+                    // validate the dialog regardless of which button currently has focus.
+                    if (e.key !== 'Enter') return
+                    e.preventDefault()
+                    actionRef.current?.click()
+                }}
+            >
                 <AlertDialogHeader>
                     <AlertDialogTitle>{title}</AlertDialogTitle>
                     {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
@@ -39,6 +49,7 @@ export function ConfirmDialog({
                 <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction
+                        ref={actionRef}
                         onClick={onConfirm}
                         className={cn(destructive && 'bg-destructive text-destructive-foreground hover:bg-destructive/90')}
                     >

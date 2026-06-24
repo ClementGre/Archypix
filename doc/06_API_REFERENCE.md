@@ -304,17 +304,40 @@ combined for all files in a single call.
 
 #### Step 1b (batch): `POST /api/authenticated/pictures/uploads/batch`
 
-Presigns multiple upload slots in one round-trip. Returns results in the same order as the input array. Capped at 100 filenames per call.
+Presigns multiple upload slots in one round-trip. Returns results in the same order as the input array. Capped at 100 files per call.
 
 **Request:**
 
 ```ts
 {
-    filenames: string[];  // 1–100 non-empty filenames
+  files: Array<{
+    filename: string;       // non-empty
+    file_hash?: string;     // SHA-256 lowercase hex of the bytes — enables upload-time dedup
+  }>;                         // 1–100 entries
+  initial_tags ? : string[];    // ltree wire-form paths — assigned (manual) to deduplicated pictures
 }
 ```
 
-**Response `200`:** `Array<{ picture_id: string; presigned_url: string }>`
+**Response `200`:**
+
+```ts
+Array<{
+  picture_id: string;          // new picture (for a fresh file) or the existing one (for a dedup)
+  presigned_url: string | null; // PUT the bytes here; null when duplicate is true
+  duplicate: boolean;          // true ⇒ the hash already matched an existing owned picture
+}>
+```
+
+**Deduplication.** When a file carries a `file_hash` that already matches one of the caller's
+**owned** pictures, that slot comes back with `duplicate: true`, a `null` `presigned_url`, and
+`picture_id` set to the existing picture — the client must **not** upload it. A matched picture that
+was **trashed** is restored (un-deleted), so re-uploading a photo the user had deleted brings it back
+instead of creating a fresh copy. Any `initial_tags` are assigned (as `manual` tags) to those
+existing pictures atomically, so re-uploading a photo still lands the user's intended tags on the
+copy they already hold. The pipeline is woken when a restore or a tag assignment happened. Dedup also
+applies **within a single batch**: two files sharing a hash (even when neither is in the DB yet) mint
+one slot — the later copies come back `duplicate: true` pointing at that first slot's `picture_id`.
+New (non-duplicate) files get a normal slot and receive their `initial_tags` later, on `complete`.
 
 Use this for multi-file uploads to avoid N serial requests before any S3 PUT can begin. The complete step (step 3) is still called individually per
 file as each S3 upload finishes — do not wait for all files to finish before completing any.

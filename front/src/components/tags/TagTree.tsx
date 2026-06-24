@@ -75,23 +75,35 @@ function TreeRow({
         <div>
             <div
                 ref={isActive ? activeRef : undefined}
+                onClick={() => onPick(node.path)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onPick(node.path)
+                    }
+                }}
                 className={cn(
-                    'group flex items-center gap-1 rounded-md py-1 pr-2 text-sm',
+                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-2 text-sm',
                     isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted',
                 )}
                 style={{paddingLeft: depth * 12 + 4}}
             >
                 <button
-                    onClick={() => hasChildren && toggle(node.path)}
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        if (hasChildren) toggle(node.path)
+                    }}
                     className={cn('flex h-4 w-4 shrink-0 items-center justify-center', !hasChildren && 'invisible')}
                     aria-label={isOpen ? 'Collapse' : 'Expand'}
                 >
                     <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90')}/>
                 </button>
-                <button onClick={() => onPick(node.path)} className="flex min-w-0 flex-1 items-center gap-1.5">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     <Hash className="h-3.5 w-3.5 shrink-0 opacity-60"/>
                     <span className="truncate">{node.label}</span>
-                </button>
+                </div>
             </div>
             {hasChildren && isOpen && (
                 <div>

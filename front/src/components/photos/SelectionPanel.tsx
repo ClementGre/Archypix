@@ -1,6 +1,6 @@
-import {useMemo, useState} from 'react'
+import {useEffect, useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
-import {useQuery} from '@tanstack/react-query'
+import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
 import {AlertTriangle, ArchiveRestore, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
@@ -600,6 +600,29 @@ export function SelectionPanel() {
 
     const single = query === null && includeIds.length === 1 && excludeIds.length === 0
     const hasSelection = query !== null || includeIds.length > 0
+
+    const [sp] = useSearchParams()
+    const queryClient = useQueryClient()
+    const {trash} = useTrashMutations()
+
+    // Delete / ⌘+Backspace trashes the single selected picture directly, no confirmation. The
+    // Lightbox handles the same shortcut itself while open, so skip here to avoid double-firing.
+    useEffect(() => {
+        if (!single || sp.has('view')) return
+        const id = includeIds[0]
+        const onKey = (e: KeyboardEvent) => {
+            const t = e.target as HTMLElement | null
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+            if (e.key !== 'Delete' && !(e.metaKey && e.key === 'Backspace')) return
+            const picture = queryClient.getQueryData<PictureDetail>(queryKeys.picture(id))
+            if (picture?.deleted_at) return
+            e.preventDefault()
+            trash.mutate(id)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [single, sp, includeIds, queryClient, trash])
+
     if (!hasSelection) return null
 
     return (

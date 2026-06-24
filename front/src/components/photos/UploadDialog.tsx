@@ -13,7 +13,7 @@ import {apiErrorMessage} from '@/api/client'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type UploadStatus = 'pending' | 'uploading' | 'completing' | 'done' | 'error'
+type UploadStatus = 'pending' | 'uploading' | 'completing' | 'done' | 'deduplicated' | 'error'
 type Phase = 'idle' | 'uploading' | 'complete'
 
 interface UploadItem {
@@ -21,6 +21,8 @@ interface UploadItem {
     file: File
     pictureId: string
     presignedUrl: string
+    /** SHA-256 (lowercase hex) computed up front so the presign step can deduplicate. */
+    hash?: string
     status: UploadStatus
     progress: number
     error?: string
@@ -92,6 +94,8 @@ function FilePreview({file}: { file: File }) {
 
 function StatusIcon({status}: { status: UploadStatus }) {
     if (status === 'done') return <Check className="h-4 w-4 shrink-0 text-emerald-500"/>
+    // A dedup hit: the file already existed, so it was not re-uploaded — orange check.
+    if (status === 'deduplicated') return <Check className="h-4 w-4 shrink-0 text-amber-500"/>
     if (status === 'error') return <AlertCircle className="h-4 w-4 shrink-0 text-destructive"/>
     if (status === 'uploading' || status === 'completing')
         return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary"/>
@@ -158,36 +162,50 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files)
     }
 
-    function patchItem(pictureId: string, patch: Partial<UploadItem>) {
-        setItems((prev) => prev.map((it) => (it.pictureId === pictureId ? {...it, ...patch} : it)))
+    // Patch by the per-file `key`, not `pictureId`: an in-batch duplicate shares the first file's
+    // picture id, so keying on picture id would let one file's progress overwrite the other.
+    function patchItem(key: string, patch: Partial<UploadItem>) {
+        setItems((prev) => prev.map((it) => (it.key === key ? {...it, ...patch} : it)))
     }
 
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
 
-        // Batch-presign all files at once
-        let slots: Array<{ picture_id: string; presigned_url: string }>
+        const pending = files
+        setPhase('uploading')
+
+        // Compute each file's SHA-256 up front: the presign step uses it to deduplicate against the
+        // user's existing pictures, and the per-file `complete` reuses it (no double hashing).
+        const hashes = await Promise.all(pending.map((f) => sha256Hex(f).catch(() => undefined)))
+
+        // Batch-presign all files at once, carrying hashes (for dedup) + tags (assigned to dups).
+        let slots: Awaited<ReturnType<typeof beginUploadBatch>>
         try {
-            slots = await beginUploadBatch(files.map((f) => f.name))
+            slots = await beginUploadBatch(
+                pending.map((f, i) => ({filename: f.name, file_hash: hashes[i]})),
+                tags.length ? tags : undefined,
+            )
         } catch (e) {
             toast.error(apiErrorMessage(e))
+            setPhase('idle')
             return
         }
 
-        const initialItems: UploadItem[] = files.map((file, i) => ({
+        const initialItems: UploadItem[] = pending.map((file, i) => ({
             key: fileKey(file),
             file,
             pictureId: slots[i].picture_id,
-            presignedUrl: slots[i].presigned_url,
-            status: 'pending',
-            progress: 0,
+            presignedUrl: slots[i].presigned_url ?? '',
+            hash: hashes[i],
+            // Dedup hits are already settled server-side (tags assigned) — show them done immediately.
+            status: slots[i].duplicate ? 'deduplicated' : 'pending',
+            progress: 100,
         }))
 
         setItems(initialItems)
-        setPhase('uploading')
 
-        // Upload with max 4 concurrent workers
-        const queue = [...initialItems]
+        // Upload only the non-duplicate files, max 4 concurrent workers.
+        const queue = initialItems.filter((it) => it.status !== 'deduplicated')
         let firstSuccess = false
 
         async function worker() {
@@ -195,35 +213,33 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 const item = queue.shift()
                 if (!item) break
 
-                const {pictureId, presignedUrl, file} = item
+                const {key, pictureId, presignedUrl, file, hash} = item
 
-                patchItem(pictureId, {status: 'uploading'})
+                patchItem(key, {status: 'uploading', progress: 0})
                 try {
-                    // Hash in parallel with the S3 upload so it adds no serial latency.
-                    const hashPromise = sha256Hex(file).catch(() => undefined)
                     await uploadToS3(presignedUrl, file, (pct) =>
-                        patchItem(pictureId, {progress: pct}),
+                        patchItem(key, {progress: pct}),
                     )
 
-                    patchItem(pictureId, {status: 'completing', progress: 97})
+                    patchItem(key, {status: 'completing', progress: 97})
 
                     await completeUpload(pictureId, {
                         mime_type: file.type || undefined,
                         file_size: file.size,
-                        file_hash: await hashPromise,
+                        file_hash: hash,
                         initial_tags: tags.length ? tags : undefined,
                         // The backend debounces the pipeline wake, so per-file completions coalesce
                         // into a single run on their own — no defer + manual wake needed.
                     })
 
-                    patchItem(pictureId, {status: 'done', progress: 100})
+                    patchItem(key, {status: 'done', progress: 100})
 
                     if (!firstSuccess) {
                         firstSuccess = true
                         queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
                     }
                 } catch (e) {
-                    patchItem(pictureId, {
+                    patchItem(key, {
                         status: 'error',
                         error: e instanceof Error ? e.message : 'Upload failed',
                     })
@@ -231,7 +247,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             }
         }
 
-        await Promise.all(Array.from({length: Math.min(4, initialItems.length)}, worker))
+        await Promise.all(Array.from({length: Math.min(4, queue.length)}, worker))
 
         setPhase('complete')
         queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
@@ -246,6 +262,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
     // Derived counts
     const doneCount = items.filter((i) => i.status === 'done').length
+    const dedupCount = items.filter((i) => i.status === 'deduplicated').length
     const errorCount = items.filter((i) => i.status === 'error').length
     const activeCount = items.filter((i) => i.status === 'uploading' || i.status === 'completing').length
     const isUploading = phase === 'uploading'
@@ -349,6 +366,10 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                                     <p className="truncate text-xs text-destructive">
                                                         {item.error}
                                                     </p>
+                                                ) : item.status === 'deduplicated' ? (
+                                                    <p className="truncate text-xs text-amber-500">
+                                                        Already in your library
+                                                    </p>
                                                 ) : (
                                                     <p className="text-xs text-muted-foreground">
                                                         {formatBytes(item.file.size)}
@@ -390,9 +411,11 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
                     {phase === 'uploading' && (
                         <p className="text-sm text-muted-foreground">
-                            {activeCount > 0
-                                ? `Uploading… ${doneCount} of ${items.length} done`
-                                : 'Finishing up…'}
+                            {items.length === 0
+                                ? 'Preparing…'
+                                : activeCount > 0
+                                    ? `Uploading… ${doneCount} of ${items.length} done`
+                                    : 'Finishing up…'}
                         </p>
                     )}
 
@@ -405,12 +428,15 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                             ) : (
                                 <>
                                     {doneCount} uploaded
-                                    {errorCount > 0 && (
-                                        <span className="text-destructive">
-                                            {' '}· {errorCount} failed
-                                        </span>
-                                    )}
+                                    <span className="text-destructive">
+                                        {' '}· {errorCount} failed
+                                    </span>
                                 </>
+                            )}
+                            {dedupCount > 0 && (
+                                <span className="text-amber-500">
+                                    {' '}· {dedupCount} already existed
+                                </span>
                             )}
                         </p>
                     )}
