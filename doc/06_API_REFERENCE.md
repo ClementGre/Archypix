@@ -315,7 +315,7 @@ Presigns multiple upload slots in one round-trip. Returns results in the same or
     file_hash?: string;     // SHA-256 lowercase hex of the bytes — enables upload-time dedup
   }>;                         // 1–100 entries
   initial_tags ? : string[];    // ltree wire-form paths — assigned (manual) to deduplicated pictures
-  upload_label ? : string;      // single ltree label (`Uploaded_YYYY_MM_DD_HH_MM`), fixed per batch
+  upload_label ? : string;      // single ltree label (`Uploaded.YYYY_MM_DD_HH_MM`), fixed per batch
                               // by the front — tags the import (feature 15, see below)
 }
 ```
@@ -372,7 +372,7 @@ the file's MIME type.
     exif_data ? : object;      // arbitrary EXIF key-value pairs
     captured_at ? : string;    // ISO 8601 datetime
     initial_tags ? : string[]; // ltree wire-form paths — assigned as manual tags atomically with picture creation
-    upload_label ? : string;   // single ltree label (`Uploaded_YYYY_MM_DD_HH_MM`) — also assigned as a manual tag (feature 15)
+    upload_label ? : string;   // single ltree label (`Uploaded.YYYY_MM_DD_HH_MM`) — also assigned as a manual tag (feature 15)
   defer_pipeline ? : boolean; // default false — when true, this completion does NOT wake the pipeline
 }
 ```

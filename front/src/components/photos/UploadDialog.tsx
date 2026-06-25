@@ -49,7 +49,7 @@ function fileKey(f: File): string {
  */
 function makeUploadLabel(d = new Date()): string {
     const p = (n: number) => String(n).padStart(2, '0')
-    return `Uploaded_${d.getFullYear()}_${p(d.getMonth() + 1)}_${p(d.getDate())}_${p(d.getHours())}_${p(d.getMinutes())}`
+    return `Uploaded.${d.getFullYear()}_${p(d.getMonth() + 1)}_${p(d.getDate())}_${p(d.getHours())}_${p(d.getMinutes())}`
 }
 
 function formatBytes(bytes: number): string {
@@ -379,7 +379,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const deletedItems = items.filter((i) => i.status === 'deduplicated' && i.wasDeleted)
     const isBusy = phase === 'preparing' || phase === 'uploading'
     const settledCount = doneCount + dedupCount + errorCount
-    const label = uploadLabel.current
+    const label = uploadLabel.current.replaceAll('.', '/')
 
     const undeleteExisting = async () => {
         if (!deletedItems.length || restoring) return

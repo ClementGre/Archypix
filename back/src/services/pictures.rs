@@ -83,7 +83,7 @@ pub struct UploadMetadata {
     pub exif_data: Option<serde_json::Value>,
     pub captured_at: Option<NaiveDateTime>,
     pub initial_tags: Option<Vec<String>>,
-    /// Front-provided import label (`Uploaded_YYYY_MM_DD_HH_MM`, fixed per batch). When set, the
+    /// Front-provided import label (`Uploaded.YYYY_MM_DD_HH_MM`, fixed per batch). When set, the
     /// picture is tagged with it (feature 15). A single ltree label, validated server-side.
     pub upload_label: Option<String>,
     #[serde(default)]
@@ -201,30 +201,13 @@ pub enum BatchUploadOutcome {
 /// Presign upload slots for a batch of files in one call. Returns one outcome per file in input
 /// order.
 ///
-/// **Deduplication.** A file carrying a `file_hash` that already matches one of the caller's owned
-/// pictures is reported as a [`BatchUploadOutcome::Duplicate`] pointing at that existing picture —
-/// no S3 slot is minted and the client must not upload it. A trashed match is **not** un-deleted
-/// (feature 15); instead it is flagged `was_deleted` so the client can offer to restore it.
-///
-/// **Import tagging (feature 15).** When `upload_label` is set (`Uploaded_YYYY_MM_DD_HH_MM`, fixed
-/// by the front for the whole batch), matched duplicates are tagged here: live ones with
-/// `<label>.AlreadyExisting`, trashed ones with `<label>.AlreadyExisting.Deleted` (the latter via the
-/// deleted-inclusive assign so the user can find and restore them). Brand-new files are tagged with
-/// the bare `<label>` later, on `complete`. Any `initial_tags` are also assigned to the matched
-/// pictures. The pipeline is woken (debounced) when anything was tagged.
 /// Validate a front-provided import label and derive the three marker tag paths (wire form):
-/// `(base, base.AlreadyExisting, base.AlreadyExisting.Deleted)`. The label must be a single ltree
-/// label (no `.`), so a client can't smuggle a deep/protected path through it.
+/// `(base, base.AlreadyExisting, base.AlreadyExisting.Deleted)`.
 fn upload_marker_tags(label: &str) -> Result<(String, String, String), AppError> {
     let base = TagPath::parse(label, false)
         .map_err(AppError::BadRequest)?
         .as_ltree()
         .to_string();
-    if base.contains('.') {
-        return Err(AppError::BadRequest(
-            "upload label must be a single tag label".to_string(),
-        ));
-    }
     Ok((
         base.clone(),
         format!("{base}.AlreadyExisting"),
@@ -435,7 +418,7 @@ pub async fn complete_upload(
             .collect::<Result<_, _>>()?,
         None => Vec::new(),
     };
-    // Feature 15: tag a freshly-uploaded picture with the front's import label (`Uploaded_...`).
+    // Feature 15: tag a freshly-uploaded picture with the front's import label (`Uploaded....`).
     if let Some(label) = meta.upload_label.as_deref() {
         let (base, _, _) = upload_marker_tags(label)?;
         initial_tags.push(base);

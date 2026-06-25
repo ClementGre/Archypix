@@ -180,7 +180,7 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
         user,
         &files,
         &[],
-        Some("Uploaded_2026_06_25_14_30"),
+        Some("Uploaded.2026_06_25_14_30"),
         &waker,
     )
     .await
@@ -208,7 +208,7 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
     // It is tagged with the deleted marker so the user can find and restore it.
     assert_eq!(
         picture_tags(&db, trashed).await,
-        vec!["Uploaded_2026_06_25_14_30.AlreadyExisting.Deleted"]
+        vec!["Uploaded.2026_06_25_14_30.AlreadyExisting.Deleted"]
     );
 }
 
@@ -240,7 +240,7 @@ async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
         user,
         &files,
         &[],
-        Some("Uploaded_2026_06_25_14_30"),
+        Some("Uploaded.2026_06_25_14_30"),
         &waker,
     )
     .await
@@ -249,6 +249,6 @@ async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
     // A live (non-deleted) duplicate is tagged AlreadyExisting (not the Deleted marker).
     assert_eq!(
         picture_tags(&db, existing).await,
-        vec!["Uploaded_2026_06_25_14_30.AlreadyExisting"]
+        vec!["Uploaded.2026_06_25_14_30.AlreadyExisting"]
     );
 }

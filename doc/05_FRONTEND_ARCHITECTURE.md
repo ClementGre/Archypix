@@ -453,7 +453,7 @@ mobile) and shown only when its `ui` store toggle is on:
   comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check** ("Already in
   your
   library") and the backend has already assigned the initial tags to the existing picture. The batch also carries a front-fixed import label
-  (`makeUploadLabel()` → `Uploaded_YYYY_MM_DD_HH_MM`, one date for the whole batch): the backend tags new uploads `Uploaded_…` and duplicates
+  (`makeUploadLabel()` → `Uploaded.YYYY_MM_DD_HH_MM`, one date for the whole batch): the backend tags new uploads `Uploaded.…` and duplicates
   `Uploaded_….AlreadyExisting[.Deleted]` (feature 15). Trashed duplicates are **no longer auto-restored** — they come back `was_deleted: true`, and the
   completion screen shows an **import summary** (how many uploaded / already-existed / were-in-trash, each with its tag, plus a total) and a **Restore N
   deleted from trash** button (`restorePicture` per id). Non-duplicate files upload to S3 in parallel (max 4

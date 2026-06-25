@@ -52,7 +52,7 @@ pub struct BatchCreateUploadRequest {
     /// equivalent of `complete`'s `initial_tags` for files the user already holds.
     #[serde(default)]
     pub initial_tags: Option<Vec<String>>,
-    /// Front-provided import label (`Uploaded_YYYY_MM_DD_HH_MM`, fixed per batch). Duplicates are
+    /// Front-provided import label (`Uploaded.YYYY_MM_DD_HH_MM`, fixed per batch). Duplicates are
     /// tagged with the `AlreadyExisting`[`.Deleted`] marker here (feature 15).
     #[serde(default)]
     pub upload_label: Option<String>,
