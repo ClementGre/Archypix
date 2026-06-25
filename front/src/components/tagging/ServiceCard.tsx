@@ -1,5 +1,5 @@
 import {Link} from 'react-router-dom'
-import {ExternalLink, GripVertical} from 'lucide-react'
+import {GripVertical, Pencil} from 'lucide-react'
 import {toast} from 'sonner'
 import {useSortable} from '@dnd-kit/sortable'
 import {CSS} from '@dnd-kit/utilities'
@@ -7,8 +7,6 @@ import {Card, CardContent} from '@/components/ui/card'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
 import {Switch} from '@/components/ui/switch'
-import {Separator} from '@/components/ui/separator'
-import {RequiresExcludesEditor} from './RequiresExcludesEditor'
 import {DeleteServiceDialog} from './DeleteServiceDialog'
 import {ServiceNameEditor} from './ServiceNameEditor'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
@@ -56,13 +54,6 @@ export function ServiceCard({service}: ServiceCardProps) {
     const handleToggle = (enabled: boolean) => {
         update.mutate(
             {id: service.id, body: {enabled}},
-            {onError: (err) => toast.error(apiErrorMessage(err))},
-        )
-    }
-
-    const handleUpdate = (patch: { requires?: string[]; excludes?: string[] }) => {
-        update.mutate(
-            {id: service.id, body: patch},
             {onError: (err) => toast.error(apiErrorMessage(err))},
         )
     }
@@ -122,26 +113,18 @@ export function ServiceCard({service}: ServiceCardProps) {
                             />
                         </div>
 
-                        {/* Edit link */}
-                        <Button variant="ghost" size="sm" asChild className="h-7 gap-1 text-xs">
+                        {/* Edit — primary affordance (gates live on the editor page, not here,
+                            so the list stays short when there are many services). */}
+                        <Button variant="default" size="sm" asChild className="h-7 gap-1 text-xs">
                             <Link to={`/tagging/${service.id}`}>
+                                <Pencil className="h-3 w-3"/>
                                 Edit
-                                <ExternalLink className="h-3 w-3"/>
                             </Link>
                         </Button>
 
                         {/* Delete */}
                         <DeleteServiceDialog onDelete={handleDelete} isPending={remove.isPending}/>
                     </div>
-
-                    {/* Requires/Excludes */}
-                    <Separator className="my-3"/>
-                    <RequiresExcludesEditor
-                        requires={service.requires}
-                        excludes={service.excludes}
-                        onUpdate={handleUpdate}
-                        isPending={update.isPending}
-                    />
                 </CardContent>
             </Card>
         </div>

@@ -60,12 +60,16 @@ export interface OperatorDef {
     label: string
 }
 
+// `is_present` / `is_absent` are two separate operators (not one operator plus a set/not-set
+// dropdown), so the user picks "is set" or "is not set" directly. Both serialize to the
+// backend's `is_present` boolean leaf.
 const NUM_OPS: OperatorDef[] = [
     {op: 'eq', label: 'equals'},
     {op: 'min', label: 'at least'},
     {op: 'max', label: 'at most'},
     {op: 'between', label: 'between'},
     {op: 'is_present', label: 'is set'},
+    {op: 'is_absent', label: 'is not set'},
 ]
 const STR_OPS: OperatorDef[] = [
     {op: 'contains', label: 'contains'},
@@ -75,6 +79,7 @@ const STR_OPS: OperatorDef[] = [
     {op: 'eq_ic', label: 'equals (ignore case)'},
     {op: 'regex', label: 'matches regex'},
     {op: 'is_present', label: 'is set'},
+    {op: 'is_absent', label: 'is not set'},
 ]
 const DATE_OPS: OperatorDef[] = [
     {op: 'year', label: 'in year'},
@@ -83,6 +88,7 @@ const DATE_OPS: OperatorDef[] = [
     {op: 'date_range', label: 'in date range'},
     {op: 'time_range', label: 'in time range'},
     {op: 'is_present', label: 'is set'},
+    {op: 'is_absent', label: 'is not set'},
 ]
 const BOOL_OPS: OperatorDef[] = [{op: 'eq', label: 'is'}]
 
@@ -181,7 +187,10 @@ function condToObject(field: string, cond: CondState, type: FieldType): FieldPre
     const base: FieldPredicate = {field}
     switch (cond.op) {
         case 'is_present':
-            base.is_present = cond.value !== 'false'
+            base.is_present = true
+            break
+        case 'is_absent':
+            base.is_present = false
             break
         case 'eq':
             if (type === 'bool') base.eq = cond.value === 'true'
@@ -284,7 +293,7 @@ function fieldNodeFrom(p: FieldPredicate): BNode {
     const field = fieldDef(p.field) ? p.field : 'camera_brand'
     const s = (v: unknown) => (v == null ? '' : String(v))
     let cond: CondState
-    if ('is_present' in p) cond = {op: 'is_present', value: p.is_present ? 'true' : 'false'}
+    if ('is_present' in p) cond = {op: p.is_present ? 'is_present' : 'is_absent'}
     else if ('min' in p && 'max' in p) cond = {op: 'between', value: s(p.min), value2: s(p.max)}
     else if ('min' in p) cond = {op: 'min', value: s(p.min)}
     else if ('max' in p) cond = {op: 'max', value: s(p.max)}

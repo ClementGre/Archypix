@@ -1,8 +1,10 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
+import {useQueryClient} from '@tanstack/react-query'
 import {ChevronRight, Hash, Images, Loader2} from 'lucide-react'
 import {useAllTags} from '@/hooks/useTags'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
+import {queryKeys} from '@/lib/constants'
 import {cn} from '@/lib/utils'
 
 interface TreeNode {
@@ -128,16 +130,23 @@ function TreeRow({
 export function TagTree() {
     const {data: tags, isPending, isError, error} = useAllTags()
     const {params, update} = useGalleryParams()
+    const queryClient = useQueryClient()
     const tree = useMemo(() => buildTree(tags ?? []), [tags])
 
+    // The tag list can drift as the pipeline assigns/removes tags in the background; refresh it
+    // on interaction so navigating the tree keeps it current.
+    const refreshTags = () => void queryClient.invalidateQueries({queryKey: queryKeys.tags()})
+
     const [expanded, setExpanded] = useState<Set<string>>(() => ancestorsOf(params.tag))
-    const toggle = (path: string) =>
+    const toggle = (path: string) => {
+        refreshTags()
         setExpanded((prev) => {
             const next = new Set(prev)
             if (next.has(path)) next.delete(path)
             else next.add(path)
             return next
         })
+    }
 
     // When the active tag changes (e.g. via a cross-link), expand its ancestors so
     // it becomes visible without collapsing what the user has already opened.
@@ -158,7 +167,10 @@ export function TagTree() {
 
     // Picking a tag exits any active hierarchy view — filtering by a tag inside a
     // hierarchy directory is confusing, so clear the hierarchy params.
-    const pick = (path: string) => update({tag: path, hierarchy: null, hpath: ''})
+    const pick = (path: string) => {
+        refreshTags()
+        update({tag: path, hierarchy: null, hpath: ''})
+    }
 
     return (
         <div className="flex h-full flex-col">

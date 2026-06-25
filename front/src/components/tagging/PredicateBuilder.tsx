@@ -299,7 +299,8 @@ function SortableRow({id, children}: { id: string; children: React.ReactNode }) 
 
 /** A fresh condition state when the operator changes. */
 function condForOp(type: FieldType, op: string): CondState {
-    if (op === 'is_present') return {op, value: 'true'}
+    // is_present / is_absent take no operand — the operator itself is the whole condition.
+    if (op === 'is_present' || op === 'is_absent') return {op}
     if (op === 'between') return {op, value: '', value2: ''}
     if (op === 'date_range') return {op, from: '', to: ''}
     if (op === 'time_range') return {op, from: '', to: ''}
@@ -423,16 +424,10 @@ function CondValue({
     const unitTag = unit && <span className="text-xs text-muted-foreground">{unit}</span>
 
     switch (cond.op) {
+        // is_present / is_absent are self-contained operators (no value field).
         case 'is_present':
-            return (
-                <Select value={cond.value ?? 'true'} onValueChange={(v) => onChange({value: v})}>
-                    <SelectTrigger className="h-7 w-24 text-xs"><SelectValue/></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="true" className="text-xs">is set</SelectItem>
-                        <SelectItem value="false" className="text-xs">is not set</SelectItem>
-                    </SelectContent>
-                </Select>
-            )
+        case 'is_absent':
+            return null
         case 'eq':
             if (type === 'bool') {
                 return (
@@ -473,6 +468,8 @@ function CondValue({
             )
         case 'eq_ic':
         case 'contains':
+        case 'starts_with':
+        case 'ends_with':
         case 'regex':
             return <TextVal value={cond.value} onChange={(v) => onChange({value: v})}/>
         case 'year':

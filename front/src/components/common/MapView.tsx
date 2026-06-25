@@ -219,24 +219,31 @@ export function MapView(props: MapViewProps) {
                         center.setLatLng([(nb.latMin + nb.latMax) / 2, (nb.lonMin + nb.lonMax) / 2])
                         cb.current.onBbox?.(nb)
                     }
-                    sw.on('drag', syncCornerDrag)
-                    ne.on('drag', syncCornerDrag)
-                    center.on('drag', () => {
+                    // Move the box (keeping its size) to a new centre.
+                    const moveBoxCenter = (lat: number, lng: number) => {
                         const cur = latest.current.bbox!
-                        const ll = center.getLatLng()
                         const halfLat = (cur.latMax - cur.latMin) / 2
                         const halfLon = (cur.lonMax - cur.lonMin) / 2
                         const nb = round4({
-                            latMin: ll.lat - halfLat,
-                            latMax: ll.lat + halfLat,
-                            lonMin: ll.lng - halfLon,
-                            lonMax: ll.lng + halfLon,
+                            latMin: lat - halfLat,
+                            latMax: lat + halfLat,
+                            lonMin: lng - halfLon,
+                            lonMax: lng + halfLon,
                         })
                         sw.setLatLng([nb.latMin, nb.lonMin])
                         ne.setLatLng([nb.latMax, nb.lonMax])
+                        center.setLatLng([(nb.latMin + nb.latMax) / 2, (nb.lonMin + nb.lonMax) / 2])
                         rect.current!.setBounds(boundsOf(nb))
                         cb.current.onBbox?.(nb)
+                    }
+                    sw.on('drag', syncCornerDrag)
+                    ne.on('drag', syncCornerDrag)
+                    center.on('drag', () => {
+                        const ll = center.getLatLng()
+                        moveBoxCenter(ll.lat, ll.lng)
                     })
+                    // Clicking the map moves the box centre there.
+                    map.on('click', (e) => moveBoxCenter(e.latlng.lat, e.latlng.lng))
                     map.setView([(b.latMin + b.latMax) / 2, (b.lonMin + b.lonMax) / 2], 9)
                 }
             } else if (mode === 'circle') {
@@ -251,14 +258,21 @@ export function MapView(props: MapViewProps) {
                 const edge = L.marker(edgePoint(c), {draggable: true, icon: dot('#10b981')}).addTo(map)
                 handles.current = [center, edge]
 
-                center.on('drag', () => {
-                    const ll = center.getLatLng()
+                // Move the circle centre, keeping its radius.
+                const moveCircleCenter = (lat: number, lng: number) => {
                     const cur = latest.current.circle!
-                    const nc = {lat: round(ll.lat), lng: round(ll.lng), km: cur.km}
+                    const nc = {lat: round(lat), lng: round(lng), km: cur.km}
                     circ.current!.setLatLng([nc.lat, nc.lng])
+                    center.setLatLng([nc.lat, nc.lng])
                     edge.setLatLng(edgePoint(nc))
                     cb.current.onCircle?.(nc)
+                }
+                center.on('drag', () => {
+                    const ll = center.getLatLng()
+                    moveCircleCenter(ll.lat, ll.lng)
                 })
+                // Clicking the map moves the circle centre there.
+                map.on('click', (e) => moveCircleCenter(e.latlng.lat, e.latlng.lng))
                 edge.on('drag', () => {
                     const cur = latest.current.circle!
                     const meters = map.distance([cur.lat, cur.lng], edge.getLatLng())

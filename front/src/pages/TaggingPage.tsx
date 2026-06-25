@@ -47,9 +47,9 @@ export default function TaggingPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between mb-6">
                     <div>
-                        <h1 className="text-xl font-semibold">Tagging pipeline</h1>
+                        <h1 className="text-xl font-semibold">Tagging services</h1>
                         <p className="mt-0.5 text-sm text-muted-foreground">
-                            Ordered pipeline of services that auto-assign tags to pictures. Drag to reorder.
+                            Services that automatically tag your photos. Drag to reorder how they run.
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -58,7 +58,7 @@ export default function TaggingPage() {
                             size="sm"
                             onClick={() => forceRun.mutate()}
                             disabled={forceRun.isPending}
-                            title="Re-run the tagging pipeline now (useful for debugging)"
+                            title="Re-run tagging now (useful for debugging)"
                         >
                             <Play className="mr-1.5 h-3.5 w-3.5"/>
                             Force run
@@ -92,7 +92,7 @@ export default function TaggingPage() {
                         {/* Pipeline (rule + segmentation), drag-reorderable */}
                         <div>
                             <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">
-                                Pipeline
+                                Rules &amp; segments
                             </h2>
                             <PipelineList services={pipelineServices}/>
                         </div>

@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {AlertCircle, Check, CloudUpload, FileImage, Loader2, Tag as TagIcon, X} from 'lucide-react'
+import {AlertCircle, Check, CloudUpload, FileImage, Loader2, RotateCw, Tag as TagIcon, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {useQueryClient} from '@tanstack/react-query'
 import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/components/ui/dialog'
@@ -14,7 +14,7 @@ import {apiErrorMessage} from '@/api/client'
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type UploadStatus = 'pending' | 'uploading' | 'completing' | 'done' | 'deduplicated' | 'error'
-type Phase = 'idle' | 'uploading' | 'complete'
+type Phase = 'idle' | 'preparing' | 'uploading' | 'complete'
 
 interface UploadItem {
     key: string
@@ -27,6 +27,12 @@ interface UploadItem {
     progress: number
     error?: string
 }
+
+// Upload concurrency, and how many files we hash at once. Hashing buffers the whole file in
+// memory, so a small bound keeps a 1k-photo batch from reading every file at once (which black-
+// screened phones); the presign is batched regardless.
+const UPLOAD_CONCURRENCY = 4
+const HASH_CONCURRENCY = 4
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +60,23 @@ async function sha256Hex(file: File): Promise<string> {
         .join('')
 }
 
+/** Hash all files with bounded concurrency, reporting the number completed so far. */
+async function hashAll(files: File[], onProgress: (done: number) => void): Promise<(string | undefined)[]> {
+    const hashes = new Array<string | undefined>(files.length)
+    let next = 0
+    let done = 0
+    async function worker() {
+        while (true) {
+            const i = next++
+            if (i >= files.length) break
+            hashes[i] = await sha256Hex(files[i]).catch(() => undefined)
+            onProgress(++done)
+        }
+    }
+    await Promise.all(Array.from({length: Math.min(HASH_CONCURRENCY, files.length)}, worker))
+    return hashes
+}
+
 function uploadToS3(url: string, file: File, onProgress: (pct: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest()
@@ -73,23 +96,44 @@ function uploadToS3(url: string, file: File, onProgress: (pct: number) => void):
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
+/**
+ * Thumbnail that only materialises its object URL once the row scrolls near the viewport —
+ * creating 1k object URLs + <img> decodes up front froze phones in big batches.
+ */
 function FilePreview({file}: { file: File }) {
     const [url, setUrl] = useState<string | null>(null)
+    const ref = useRef<HTMLDivElement>(null)
     useEffect(() => {
         if (!file.type.startsWith('image/')) return
-        const u = URL.createObjectURL(file)
-        setUrl(u)
-        return () => URL.revokeObjectURL(u)
+        const el = ref.current
+        if (!el) return
+        let objectUrl: string | null = null
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting) {
+                    objectUrl = URL.createObjectURL(file)
+                    setUrl(objectUrl)
+                    io.disconnect()
+                }
+            },
+            {rootMargin: '200px'},
+        )
+        io.observe(el)
+        return () => {
+            io.disconnect()
+            if (objectUrl) URL.revokeObjectURL(objectUrl)
+        }
     }, [file])
 
-    if (!url) {
-        return (
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted">
+    return (
+        <div ref={ref} className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
+            {url ? (
+                <img src={url} alt="" className="h-10 w-10 object-cover"/>
+            ) : (
                 <FileImage className="h-5 w-5 text-muted-foreground"/>
-            </div>
-        )
-    }
-    return <img src={url} alt="" className="h-10 w-10 shrink-0 rounded object-cover"/>
+            )}
+        </div>
+    )
 }
 
 function StatusIcon({status}: { status: UploadStatus }) {
@@ -100,6 +144,18 @@ function StatusIcon({status}: { status: UploadStatus }) {
     if (status === 'uploading' || status === 'completing')
         return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary"/>
     return <div className="h-4 w-4 shrink-0"/>
+}
+
+/** A slim progress bar (0–100). */
+function ProgressBar({pct, className}: { pct: number; className?: string }) {
+    return (
+        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+                className={cn('h-full rounded-full bg-primary transition-all duration-200', className)}
+                style={{width: `${Math.max(0, Math.min(100, pct))}%`}}
+            />
+        </div>
+    )
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -119,7 +175,9 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const [tags, setTags] = useState<string[]>([])
     const [phase, setPhase] = useState<Phase>('idle')
     const [items, setItems] = useState<UploadItem[]>([])
+    const [prepared, setPrepared] = useState(0)
     const [dropActive, setDropActive] = useState(false)
+    const firstSuccess = useRef(false)
 
     // Seed files from parent (gallery drop zone)
     useEffect(() => {
@@ -137,6 +195,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             setTags([])
             setPhase('idle')
             setItems([])
+            setPrepared(0)
         }
     }, [open])
 
@@ -164,19 +223,58 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
     // Patch by the per-file `key`, not `pictureId`: an in-batch duplicate shares the first file's
     // picture id, so keying on picture id would let one file's progress overwrite the other.
-    function patchItem(key: string, patch: Partial<UploadItem>) {
+    const patchItem = useCallback((key: string, patch: Partial<UploadItem>) => {
         setItems((prev) => prev.map((it) => (it.key === key ? {...it, ...patch} : it)))
-    }
+    }, [])
+
+    // Upload one slot (S3 PUT + complete). Reused by the initial run and the per-item retry.
+    const runItem = useCallback(
+        async (item: UploadItem): Promise<boolean> => {
+            const {key, pictureId, presignedUrl, file, hash} = item
+            patchItem(key, {status: 'uploading', progress: 0, error: undefined})
+            try {
+                await uploadToS3(presignedUrl, file, (pct) => patchItem(key, {progress: pct}))
+                patchItem(key, {status: 'completing', progress: 97})
+                await completeUpload(pictureId, {
+                    mime_type: file.type || undefined,
+                    file_size: file.size,
+                    file_hash: hash,
+                    initial_tags: tags.length ? tags : undefined,
+                })
+                patchItem(key, {status: 'done', progress: 100})
+                if (!firstSuccess.current) {
+                    firstSuccess.current = true
+                    queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
+                }
+                return true
+            } catch (e) {
+                patchItem(key, {status: 'error', error: e instanceof Error ? e.message : 'Upload failed'})
+                return false
+            }
+        },
+        [patchItem, tags, queryClient],
+    )
+
+    const invalidateAll = useCallback(() => {
+        queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
+        queryClient.invalidateQueries({queryKey: queryKeys.tags()})
+        setTimeout(() => {
+            queryClient.invalidateQueries({queryKey: queryKeys.tags()})
+            queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
+        }, 1500)
+    }, [queryClient])
 
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
 
         const pending = files
-        setPhase('uploading')
+        firstSuccess.current = false
+        setPrepared(0)
+        setPhase('preparing')
 
-        // Compute each file's SHA-256 up front: the presign step uses it to deduplicate against the
-        // user's existing pictures, and the per-file `complete` reuses it (no double hashing).
-        const hashes = await Promise.all(pending.map((f) => sha256Hex(f).catch(() => undefined)))
+        // Compute each file's SHA-256 (bounded concurrency) up front: the presign step uses it to
+        // deduplicate, and the per-file `complete` reuses it (no double hashing).
+        const hashes = await hashAll(pending, setPrepared)
 
         // Batch-presign all files at once, carrying hashes (for dedup) + tags (assigned to dups).
         let slots: Awaited<ReturnType<typeof beginUploadBatch>>
@@ -203,61 +301,49 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         }))
 
         setItems(initialItems)
+        setPhase('uploading')
 
-        // Upload only the non-duplicate files, max 4 concurrent workers.
+        // Upload only the non-duplicate files, bounded concurrency.
         const queue = initialItems.filter((it) => it.status !== 'deduplicated')
-        let firstSuccess = false
 
         async function worker() {
             while (true) {
                 const item = queue.shift()
                 if (!item) break
-
-                const {key, pictureId, presignedUrl, file, hash} = item
-
-                patchItem(key, {status: 'uploading', progress: 0})
-                try {
-                    await uploadToS3(presignedUrl, file, (pct) =>
-                        patchItem(key, {progress: pct}),
-                    )
-
-                    patchItem(key, {status: 'completing', progress: 97})
-
-                    await completeUpload(pictureId, {
-                        mime_type: file.type || undefined,
-                        file_size: file.size,
-                        file_hash: hash,
-                        initial_tags: tags.length ? tags : undefined,
-                        // The backend debounces the pipeline wake, so per-file completions coalesce
-                        // into a single run on their own — no defer + manual wake needed.
-                    })
-
-                    patchItem(key, {status: 'done', progress: 100})
-
-                    if (!firstSuccess) {
-                        firstSuccess = true
-                        queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
-                    }
-                } catch (e) {
-                    patchItem(key, {
-                        status: 'error',
-                        error: e instanceof Error ? e.message : 'Upload failed',
-                    })
-                }
+                await runItem(item)
             }
         }
 
-        await Promise.all(Array.from({length: Math.min(4, queue.length)}, worker))
+        await Promise.all(Array.from({length: Math.min(UPLOAD_CONCURRENCY, queue.length)}, worker))
 
         setPhase('complete')
-        queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
-        if (tags.length) queryClient.invalidateQueries({queryKey: queryKeys.tags()})
+        // The backend debounces the pipeline wake, so per-file completions coalesce on their own;
+        // refresh pictures + tags (uploads may pick up pipeline tags), then again once converged.
+        invalidateAll()
     }
+
+    // Retry a batch of failed items (single retry passes a one-element list).
+    const retryItems = useCallback(
+        async (toRetry: UploadItem[]) => {
+            const queue = [...toRetry]
+            async function worker() {
+                while (true) {
+                    const item = queue.shift()
+                    if (!item) break
+                    await runItem(item)
+                }
+            }
+            await Promise.all(Array.from({length: Math.min(UPLOAD_CONCURRENCY, queue.length)}, worker))
+            invalidateAll()
+        },
+        [runItem, invalidateAll],
+    )
 
     function resetForMore() {
         setFiles([])
         setItems([])
         setPhase('idle')
+        setPrepared(0)
     }
 
     // Derived counts
@@ -265,27 +351,83 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const dedupCount = items.filter((i) => i.status === 'deduplicated').length
     const errorCount = items.filter((i) => i.status === 'error').length
     const activeCount = items.filter((i) => i.status === 'uploading' || i.status === 'completing').length
-    const isUploading = phase === 'uploading'
+    const failedItems = items.filter((i) => i.status === 'error')
+    const isBusy = phase === 'preparing' || phase === 'uploading'
+    const settledCount = doneCount + dedupCount + errorCount
+
+    const overallPct =
+        phase === 'preparing'
+            ? files.length
+                ? Math.round((prepared / files.length) * 100)
+                : 0
+            : items.length
+                ? Math.round((settledCount / items.length) * 100)
+                : 0
 
     return (
         <Dialog
             open={open}
             onOpenChange={(o) => {
-                if (!o && isUploading) return
+                if (!o && isBusy) return
                 onOpenChange(o)
             }}
         >
             <DialogContent
                 className="flex max-h-[90vh] max-w-2xl flex-col gap-0 overflow-hidden p-0"
                 onInteractOutside={(e) => {
-                    if (isUploading) e.preventDefault()
+                    if (isBusy) e.preventDefault()
                 }}
             >
                 <DialogHeader className="px-6 pt-6 pb-4">
                     <DialogTitle>Upload photos</DialogTitle>
                 </DialogHeader>
 
-                <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-2">
+                {/* ── Overall progress (outside the scrollable list, always visible) ── */}
+                {phase !== 'idle' && (
+                    <div className="space-y-1.5 border-b border-border px-6 pb-4">
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">
+                                {phase === 'preparing' && `Preparing… ${prepared} of ${files.length}`}
+                                {phase === 'uploading' &&
+                                    (activeCount > 0
+                                        ? `Uploading… ${doneCount} of ${items.length} done`
+                                        : 'Finishing up…')}
+                                {phase === 'complete' && (
+                                    errorCount === 0 ? (
+                                        <span className="text-emerald-500">
+                                            {doneCount} photo{doneCount !== 1 ? 's' : ''} uploaded
+                                        </span>
+                                    ) : (
+                                        <span>
+                                            {doneCount} uploaded
+                                            <span className="text-destructive"> · {errorCount} failed</span>
+                                        </span>
+                                    )
+                                )}
+                                {phase === 'complete' && dedupCount > 0 && (
+                                    <span className="text-amber-500"> · {dedupCount} already existed</span>
+                                )}
+                            </span>
+                            <span className="tabular-nums text-xs text-muted-foreground">{overallPct}%</span>
+                        </div>
+                        <ProgressBar pct={overallPct}/>
+                        {phase === 'complete' && errorCount > 0 && (
+                            <div className="pt-1">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1.5 text-xs"
+                                    onClick={() => retryItems(failedItems)}
+                                >
+                                    <RotateCw className="h-3.5 w-3.5"/>
+                                    Retry {errorCount} failed
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4">
                     {/* ── Dropzone / file list ─────────────────────────────── */}
                     <div
                         ref={dropzoneRef}
@@ -354,7 +496,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         )}
 
                         {/* File list — uploading / complete phase */}
-                        {phase !== 'idle' && (
+                        {phase !== 'idle' && items.length > 0 && (
                             <div className="rounded-lg border border-border">
                                 <div className="divide-y divide-border">
                                     {items.map((item) => (
@@ -385,6 +527,17 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                                     </div>
                                                 )}
                                             </div>
+                                            {item.status === 'error' && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                                    title="Retry"
+                                                    onClick={() => retryItems([item])}
+                                                >
+                                                    <RotateCw className="h-3.5 w-3.5"/>
+                                                </Button>
+                                            )}
                                             <StatusIcon status={item.status}/>
                                         </div>
                                     ))}
@@ -393,7 +546,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         )}
                     </div>
 
-                    {/* ── Add more / status summary ────────────────────────── */}
+                    {/* ── Add more (idle only) ─────────────────────────────── */}
                     {phase === 'idle' && files.length > 0 && (
                         <div className="flex items-center gap-3">
                             <button
@@ -407,38 +560,6 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                 {files.length} file{files.length !== 1 ? 's' : ''} selected
                             </span>
                         </div>
-                    )}
-
-                    {phase === 'uploading' && (
-                        <p className="text-sm text-muted-foreground">
-                            {items.length === 0
-                                ? 'Preparing…'
-                                : activeCount > 0
-                                    ? `Uploading… ${doneCount} of ${items.length} done`
-                                    : 'Finishing up…'}
-                        </p>
-                    )}
-
-                    {phase === 'complete' && (
-                        <p className="text-sm">
-                            {errorCount === 0 ? (
-                                <span className="text-emerald-500">
-                                    {doneCount} photo{doneCount !== 1 ? 's' : ''} uploaded successfully.
-                                </span>
-                            ) : (
-                                <>
-                                    {doneCount} uploaded
-                                    <span className="text-destructive">
-                                        {' '}· {errorCount} failed
-                                    </span>
-                                </>
-                            )}
-                            {dedupCount > 0 && (
-                                <span className="text-amber-500">
-                                    {' '}· {dedupCount} already existed
-                                </span>
-                            )}
-                        </p>
                     )}
 
                     {/* ── Tag section (idle only) ──────────────────────────── */}
@@ -497,18 +618,18 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                             <Button
                                 variant="outline"
                                 onClick={() => onOpenChange(false)}
-                                disabled={isUploading}
+                                disabled={isBusy}
                             >
                                 Cancel
                             </Button>
                             <Button
                                 onClick={startUpload}
-                                disabled={files.length === 0 || isUploading}
+                                disabled={files.length === 0 || isBusy}
                             >
-                                {isUploading ? (
+                                {isBusy ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
-                                        Uploading…
+                                        {phase === 'preparing' ? 'Preparing…' : 'Uploading…'}
                                     </>
                                 ) : (
                                     <>

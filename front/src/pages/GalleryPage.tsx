@@ -6,7 +6,6 @@ import {PhotoGrid} from '@/components/photos/PhotoGrid'
 import {SelectionPanel} from '@/components/photos/SelectionPanel'
 import {HierarchyEditor} from '@/components/hierarchies/HierarchyEditor'
 import {useUIStore} from '@/stores/ui'
-import {useSelectionStore} from '@/stores/selection'
 import {useUploadStore} from '@/stores/upload'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useIsMobile} from '@/hooks/useMediaQuery'
@@ -28,7 +27,6 @@ export default function GalleryPage() {
         setRightWidth,
     } = useUIStore()
     const isMobile = useIsMobile()
-    const hasSelection = useSelectionStore((s) => s.query !== null || s.includeIds.length > 0)
     const openUpload = useUploadStore((s) => s.openDialog)
     const {params} = useGalleryParams()
     const editingHierarchy = params.hedit
@@ -91,7 +89,10 @@ export default function GalleryPage() {
                 {editingHierarchy ? <HierarchyEditor id={editingHierarchy}/> : <PhotoGrid/>}
             </div>
 
-            {!editingHierarchy && hasSelection && (
+            {/* Details panel: presence follows only its open/close toggle (decoupled from
+                selection) so the grid never shifts; it shows an empty placeholder when nothing
+                is selected. SidePanel renders nothing while `open` is false. */}
+            {!editingHierarchy && (
                 <SidePanel
                     side="right"
                     width={rightSidebarWidth}

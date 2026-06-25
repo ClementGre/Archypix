@@ -41,6 +41,13 @@ export function useTaggingMutations() {
         void qc.invalidateQueries({queryKey: ['tagging']})
         void qc.invalidateQueries({queryKey: ['tags']})
         void qc.invalidateQueries({queryKey: ['pictures']})
+        // The backend re-evaluates tags asynchronously, so the assignments converge a moment
+        // after this mutation returns. Re-invalidate tags + pictures shortly after so the new
+        // tags appear without the user having to refresh.
+        setTimeout(() => {
+            void qc.invalidateQueries({queryKey: ['tags']})
+            void qc.invalidateQueries({queryKey: ['pictures']})
+        }, 1500)
     }
 
     return {

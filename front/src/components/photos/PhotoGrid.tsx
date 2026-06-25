@@ -92,11 +92,12 @@ export function PhotoGrid() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectionFilter])
 
-    // A select-all adopts the current view's query; if the view then changes, the membership
-    // checkmarks would be wrong, so drop the selection. Explicit selections are kept across changes.
+    // Any view change (tag / scope / sort / hierarchy dir) clears the selection: a select-all's
+    // membership would no longer match, and keeping an explicit selection across an unrelated view
+    // is inconsistent. The cleared-on-mount run is a harmless no-op (selection already empty).
     const filterSig = JSON.stringify(selectionFilter)
     useEffect(() => {
-        if (query !== null) clear()
+        clear()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filterSig])
 
@@ -168,7 +169,8 @@ export function PhotoGrid() {
     } else {
         body = (
             <div className="h-full overflow-y-auto p-3" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
-                <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0">
+                {/* select-none: shift-click range selection otherwise highlights the cards as text. */}
+                <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0 select-none">
                     {items.map((it) => (
                         <PhotoCard
                             key={it.id}

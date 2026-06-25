@@ -41,7 +41,7 @@ export function StatusBar() {
             <button
                 onClick={() => navigate('/tagging')}
                 className="hidden items-center gap-1 transition-colors hover:text-foreground sm:flex"
-                title="Tagging pipeline"
+                title="Tagging services"
             >
                 <Wand2 className="h-3 w-3"/>
                 <span className="tabular-nums">{services?.length ?? 0}</span> services

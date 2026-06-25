@@ -78,7 +78,7 @@ so a user can authenticate or register against any instance. The chosen instance
 | `/register`    | `RegisterPage`      | public     | instance switcher (defaults to global domain) + CORS warning on a custom instance, then auto-logs in |
 | `/`            | `GalleryPage`       | required   | the main three-pane workspace                                                                        |
 | `/tags`        | `TagsPage`          | required   | placeholder (tag tree lives in the gallery panel)                                                    |
-| `/tagging`     | `TaggingPage`       | required   | tagging-pipeline editor                                                                              |
+| `/tagging`     | `TaggingPage`       | required   | tagging-services editor                                                                              |
 | `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                                                                        |
 | `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel)                                                    |
 | `/settings`    | `SettingsPage`      | required   | profile + versioning mode + trash retention (reached via user menu)                                  |
@@ -219,7 +219,8 @@ in WebDAV, which serves the owner's file directly; the ✕ drops the override so
 
 + time input, auto-applies on change → `NaiveDateTime` string
 `YYYY-MM-DDTHH:MM:SS`, **no timezone**; Clear resets and closes the popover), `GpsPickerPopover` (interactive map + manual lat/lng/alt inputs +
-"current location" + Clear). The draft state is owned by `hooks/useExifDraft.ts` (shared between the editor and the preview's rotate buttons; re-seeds
+"current location"; a real **close** (✕) button sits in the header corner and **Clear** lives at the bottom — so the corner button isn't mistaken
+for a clear). The draft state is owned by `hooks/useExifDraft.ts` (shared between the editor and the preview's rotate buttons; re-seeds
 from server
   state on the picture's `id`+`updated_at` signature, exposes `set/setGps/reset/resetGps/rotate/save`, and — for received pictures — `owned`,
   `overriddenKeys`, and `removeOverride(...fields)`; it routes saves through `useEditExif` for owned pictures and `useOverrideExif` (DB-only, no job
@@ -246,19 +247,26 @@ filters the flat gallery rather than the current hierarchy directory; auto-expan
 into
 view when it changes externally), `TagPicker` (autocomplete over existing tags + create-new; `allowProtected` prop — see §9; optional `trigger` prop
 to
-render a custom trigger, e.g. the small **+** button in the details-panel Tags section header).
+render a custom trigger, e.g. the small **+** button in the details-panel Tags section header. Each list row carries a **›** button (and **Tab**
+autocompletes the highlighted tag) that fills the field with `<tag>/` so the user can append a child without retyping — e.g. autocomplete `/Event`
+then type `Birthday`. Input is **sanitized live**: accents stripped, spaces/`-` → `_`, `.`/`\` → `/` with an **amber** note of what was replaced, and a
+**red** warning for a reserved `SharedToMe` prefix or any still-invalid character).
 
-**`tagging/`** — `TaggingPage` (header has a **Force run** button — `POST /pictures/pipeline/wake` — for debugging) composes `SharedMappingSection`
+**`tagging/`** — `TaggingPage` (titled **"Tagging services"**; header has a **Force run** button — `POST /pictures/pipeline/wake` — for debugging)
+composes `SharedMappingSection`
 (shared-tag-mapping services in a **collapsed-by-default accordion, always first**)
 then
-`PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s.
+`PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s (a compact row —
+type badge, name, item count, enabled switch, a prominent **Edit** button and delete; the requires/excludes **gates are not on the card**, only on the
+editor page, so the list stays short with many services).
 `RequiresExcludesEditor`
-(gates as a **local draft committed on Save**), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
+(gates as a **local draft committed on Save**, on the editor page), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
 `NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
 AND/OR/NOT block composer where **a single root @dnd-kit `DndContext` lets you drag a block between levels** (out of a
 group, into a sibling group) as well as reorder within one; field-condition leaves pick a field via a **grouped,
 searchable `FieldPicker`** (Dates / Camera / Location / File / Ownership) + a type-aware operator/value (numbers use the
-`NumberInput` stepper component), date conditions use the shared `DateRangePicker` (datetime), and GPS leaves open
+`NumberInput` stepper component; **is set** / **is not set** are two distinct operators with no value field — both serialize to the `is_present`
+leaf), date conditions use the shared `DateRangePicker` (datetime), and GPS leaves open
 `MapZonePopover` (rectangle/circle on a real map). Existing rules are **editable inline** (hydrated via
 `lib/predicate.ts:deserialize`) and **drag-reorderable** (persisted via `POST …/rules/reorder`). Predicate model +
 serialize/deserialize/describe + tree-move helpers live in `lib/predicate.ts`. **Every service (rule / segmentation /
@@ -305,7 +313,7 @@ naming/safeDeleteMode), `WriteBackEditor` (query-node write-back op-lists with a
 WebDAV), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed), `JsonConfigDialog` (raw `config` textarea; applies to the draft).
 
 **`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions), `MapView` (shared imperative Leaflet map;
-point/bbox/circle modes; custom app-styled zoom ±, **re-center on the selection**, my-location, save-favourite and enlarge
+point/bbox/circle modes — in every mode **clicking the map moves the pin / rect / circle centre** there; custom app-styled zoom ±, **re-center on the selection**, my-location, save-favourite and enlarge
 controls + a basemap switcher; `isolate`d so its z-indexes can't paint over the selection bar/dialogs. `interactive={false}`
 (batch GPS aggregate) still pans/zooms/switches style and shows favourite stars, but drops the draggable shape handles, the
 save-favourite button and the favourites bar), `DateRangePicker` (calendar range on the shadcn `Calendar`, **week starts Monday**; `date` mode
@@ -325,8 +333,9 @@ mobile) and shown only when its `ui` store toggle is on:
   is active it browses that directory (via `useHierarchyBrowse`) with a clickable path breadcrumb instead of the flat picture list; when `hedit` is
   set
   the `HierarchyEditor` takes over the center (the right selection panel is suppressed while editing).
-- **Right** (`SelectionPanel`): only mounted when a selection exists (returns `null` otherwise — its `SidePanel` wrapper additionally honours the
-  `rightSidebarOpen` toggle). For a single selection: borderless thumbnail (click opens lightbox; received pictures get an `@owner:instance` label
+- **Right** (`SelectionPanel`): **presence follows only the `rightSidebarOpen` toggle** (default open), decoupled from the selection so the grid never
+  shifts; with nothing selected it shows an unobtrusive **empty placeholder** ("No photo selected"). Selecting a photo no longer force-opens the panel
+  on desktop (on mobile a tap still opens the right drawer). For a single selection: borderless thumbnail (click opens lightbox; received pictures get an `@owner:instance` label
   overlaid on the preview — **red with a tooltip when the owner has trashed the picture**; rotate overlays now also apply to received pictures, as an
   orientation override), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via `formatDateTime`),
   an **owner-deletion grace banner** (received, when `owner_deleted_at` is set — "disappears on *X*"), a **local-trash banner** (when the picture is
@@ -366,9 +375,10 @@ mobile) and shown only when its `ui` store toggle is on:
   share-mappings; **on** only for `CreateShareDialog` (sharing) and `RequiresExcludesEditor` (service gates). Protected tags can never be *created*.
 - **Tag removal is manual-only:** `batchEditTags` `remove_tags` only drops `manual` rows. In the provenance table the ✕ appears only on tags with a
   manual source; pipeline/share tags reappear after re-evaluation.
-- **Pipeline is async:** tagging-service mutations invalidate `['tagging']`/`['tags']`/`['pictures']`, but the backend re-evaluates tags in the
-  background — assignments converge after a short delay, not synchronously. Service *state* (enabled/gates) does update immediately on refetch; the
-  pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
+- **Pipeline is async:** tagging-service mutations invalidate `['tagging']`/`['tags']`/`['pictures']` immediately **and again ~1.5 s later** (the
+  backend re-evaluates tags in the background, so the converged tags/pictures show up without a manual refresh). Service *state* (enabled/gates) does
+  update immediately on refetch; the pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
+  Navigating the **`TagTree`** (picking or expanding/collapsing a tag) also invalidates `['tags']` so the tree keeps up with background tag changes.
 - **EXIF editing:** owned pictures (`picture.owner_username == null`) edit through `useEditExif`, which POSTs the diff (`set`/`clear`) then polls
   `getJob` (1/2/4/8/15 s) while `exif_sync_status === 'pending'`. **Received pictures** edit through `useOverrideExif` →
   `POST /pictures/{id}/exif/override`
@@ -401,9 +411,11 @@ mobile) and shown only when its `ui` store toggle is on:
   a flat id list. A grid card's checkmark is `isMemberSelected(...)` (in select-all mode a visible card is a query member, so selected unless
   `excludeIds`-listed). `PhotoGrid` renders `SelectionActionBar` (fixed, bottom-centre) on **desktop and mobile** whenever more than one picture is
   selected (hidden under the mobile drawer): resolved count, **Select-all** (adopts the view `PictureFilter`; `⌘/Ctrl+A` does the same), **Invert**
-  (query mode), **Batch actions** (surfaces the right panel), **Clear**. A select-all is dropped when the gallery filter changes (its membership would
-  no longer match). Batch writes resolve **at apply time** server-side; every one opens a `BatchConfirmDialog` that runs the endpoint's `dry_run` to
-  preview the exact effect, so the previewed count can't diverge from the apply.
+  (query mode), **Batch actions** (surfaces the right panel), **Clear**. **Any gallery view change** (tag / scope / sort / hierarchy dir) clears the
+  selection — `PhotoGrid` clears on the `selectionFilter` signature — so a select-all's membership can't go stale and an explicit selection never
+  lingers on an unrelated view. Batch writes resolve **at apply time** server-side; every one opens a `BatchConfirmDialog` that runs the endpoint's
+  `dry_run` to preview the exact effect, so the previewed count can't diverge from the apply. (The grid `ul` is `select-none` so a shift-click range
+  doesn't highlight the cards as text.)
 - **Transparency backdrop:** images render over a **`.bg-checkerboard`** utility (`index.css`, two-tone diagonal-gradient grid using `--checker-1/2`,
   themed for dark/light) so transparent PNG regions read as transparent. In the grid the blurhash is a load-time placeholder that **fades
   to `opacity-0`
@@ -415,17 +427,21 @@ mobile) and shown only when its `ui` store toggle is on:
   `Lightbox` trashes it directly, skipping the dialog — a deliberate keystroke doesn't need the mouse-click confirm
   gate. Both shortcuts ignore the keypress while focus is in a text input and no-op on an already-trashed picture.
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
-  full-page drag zone both call `openDialog(files?)`. Each file's SHA-256 (`crypto.subtle.digest`, lowercase hex — the same digest the worker
-  produces)
-  is computed **up front** so it can be sent on the batch presign (`POST /uploads/batch`, with `initial_tags`) for **upload-time dedup**: a slot that
+  full-page drag zone both call `openDialog(files?)`. On submit the dialog enters a **`preparing`** phase that hashes each file's SHA-256
+  (`crypto.subtle.digest`, lowercase hex — the same digest the worker produces) with **bounded concurrency** (`HASH_CONCURRENCY = 4`, not all at once —
+  hashing buffers the whole file, and a 1k-photo batch read at once black-screened phones); the row previews are **lazy** (an `IntersectionObserver`
+  only mints each `object URL` when its row nears the viewport) for the same reason. Hashes are sent on the batch presign (`POST /uploads/batch`, with
+  `initial_tags`) for **upload-time dedup**: a slot that
   comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check** ("Already in
   your
   library") and the backend has already assigned the initial tags to the existing picture. Non-duplicate files upload to S3 in parallel (max 4
   concurrent, via `XMLHttpRequest` for per-file progress, reusing the up-front hash as `file_hash`) and call `POST /uploads/{id}/complete` immediately
   per file as its S3 PUT finishes — not after all files; `initial_tags` are passed on the complete body and assigned atomically server-side. The
   backend
-  wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping.
-  Gallery and tags queries are invalidated on the first success and again when all uploads settle.
+  wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping. An
+  **overall progress bar + status line sit above the scrollable file list** (always visible, no scrolling to find them); failed (network-errored) items
+  carry a per-row **Retry** and the completion summary offers **Retry N failed** (both reuse the same per-slot run). Pictures **and tags** queries are
+  invalidated when uploads settle, then **again ~1.5 s later** (uploaded pictures may pick up pipeline tags that land asynchronously).
 
 ---
 

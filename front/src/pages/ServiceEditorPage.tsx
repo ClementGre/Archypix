@@ -54,7 +54,7 @@ export default function ServiceEditorPage() {
                 <Button variant="ghost" size="sm" asChild className="mb-4 -ml-2 gap-1.5 text-muted-foreground">
                     <Link to="/tagging">
                         <ArrowLeft className="h-4 w-4"/>
-                        Tagging pipeline
+                        Tagging services
                     </Link>
                 </Button>
 

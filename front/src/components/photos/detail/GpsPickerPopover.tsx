@@ -1,6 +1,6 @@
 import type {ReactNode} from 'react'
 import {useState} from 'react'
-import {X} from 'lucide-react'
+import {Trash2, X} from 'lucide-react'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Button} from '@/components/ui/button'
 import {NumberInput} from '@/components/ui/number-input'
@@ -27,6 +27,11 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
     const lat = value.lat !== '' && !isNaN(parseFloat(value.lat)) ? parseFloat(value.lat) : null
     const lng = value.lng !== '' && !isNaN(parseFloat(value.lng)) ? parseFloat(value.lng) : null
 
+    const clear = () => {
+        onChange({lat: '', lng: '', alt: ''})
+        setOpen(false)
+    }
+
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>{children}</PopoverTrigger>
@@ -35,15 +40,12 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
                     <p className="text-sm font-medium">GPS location</p>
                     <Button
                         variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1 text-xs"
-                        onClick={() => {
-                            onChange({lat: '', lng: '', alt: ''})
-                            setOpen(false)
-                        }}
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => setOpen(false)}
+                        aria-label="Close"
                     >
-                        <X className="h-3 w-3"/>
-                        Clear
+                        <X className="h-4 w-4"/>
                     </Button>
                 </div>
 
@@ -92,6 +94,19 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
                         onChange={(e) => onChange({...value, alt: e.target.value})}
                         className="h-8"
                     />
+                </div>
+
+                {/* Clear lives at the bottom (not the corner) so it isn't mistaken for "close". */}
+                <div className="flex justify-end border-t border-border pt-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 text-xs text-muted-foreground hover:text-destructive"
+                        onClick={clear}
+                    >
+                        <Trash2 className="h-3 w-3"/>
+                        Clear location
+                    </Button>
                 </div>
             </PopoverContent>
         </Popover>

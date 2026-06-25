@@ -623,7 +623,17 @@ export function SelectionPanel() {
         return () => window.removeEventListener('keydown', onKey)
     }, [single, sp, includeIds, queryClient, trash])
 
-    if (!hasSelection) return null
+    // The panel is now toggle-driven (it stays mounted with nothing selected so the grid never
+    // shifts); render an unobtrusive placeholder rather than collapsing the layout.
+    if (!hasSelection) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
+                <ImageIcon className="h-8 w-8 opacity-40"/>
+                <p className="text-sm">No photo selected</p>
+                <p className="text-xs text-muted-foreground/70">Select a photo to see its details here.</p>
+            </div>
+        )
+    }
 
     return (
         <div className="h-full overflow-y-auto">

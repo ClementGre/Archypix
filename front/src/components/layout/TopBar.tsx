@@ -29,7 +29,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
     {to: '/', label: 'Gallery', icon: Images, end: true},
-    {to: '/tagging', label: 'Tagging pipeline', icon: Wand2},
+    {to: '/tagging', label: 'Tagging services', icon: Wand2},
     {to: '/trash', label: 'Trash', icon: Trash2},
     {to: '/admin', label: 'Admin', icon: Shield, adminOnly: true},
 ]
