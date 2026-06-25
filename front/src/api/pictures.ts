@@ -24,6 +24,8 @@ export interface UploadSlot {
     presigned_url: string | null
     /** True when the file's hash already matched an existing owned picture — no upload needed. */
     duplicate: boolean
+    /** True when the matched existing picture is in the trash (it is NOT auto-restored). */
+    was_deleted: boolean
 }
 
 /** One file requested in a batch presign: its name and (for dedup) its SHA-256 lowercase hex. */
@@ -41,6 +43,8 @@ export interface CompleteUploadBody {
     height?: number
     captured_at?: string
     initial_tags?: string[]
+    /** Front-fixed import label (`Uploaded_YYYY_MM_DD_HH_MM`) — tags the new picture (feature 15). */
+    upload_label?: string
     defer_pipeline?: boolean
 }
 
@@ -49,7 +53,13 @@ export interface ListPicturesParams {
     page_size: number
     sort?: string
     order?: string
-    tag?: string
+    /** Comma-separated ltree paths (inclusive), combined per `match`. */
+    include_tags?: string
+    exclude_tags?: string
+    /** Comma-separated ltree paths matched exactly (strict tag navigation). */
+    exact?: string
+    match?: 'all' | 'any'
+    untagged?: boolean
     owned_only?: boolean
     shared_with_me?: boolean
     include_deleted?: boolean
@@ -78,8 +88,10 @@ export async function getPicture(id: string): Promise<PictureDetail> {
 export async function getPictureUrl(
     id: string,
     variant: PictureVariant,
-): Promise<{ url: string; variant: PictureVariant }> {
-    const {data} = await apiClient.get<{ url: string; variant: PictureVariant }>(
+): Promise<{ url: string | null; variant: PictureVariant }> {
+    // `url` is null when the requested variant has no object — a thumbnail variant on a picture with
+    // no generated thumbnail (pending, or a non-thumbnailable format). The `original` always exists.
+    const {data} = await apiClient.get<{ url: string | null; variant: PictureVariant }>(
         `/api/authenticated/pictures/${id}/url`,
         {params: {variant}},
     )
@@ -94,6 +106,7 @@ export async function getPictureUrl(
  */
 export async function downloadOriginal(id: string, filename?: string | null): Promise<void> {
     const {url} = await getPictureUrl(id, 'original')
+    if (!url) throw new Error('No download URL available')
     try {
         const res = await fetch(url)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -218,6 +231,7 @@ const PRESIGN_BATCH_SIZE = 100
 export async function beginUploadBatch(
     files: BatchUploadFileInput[],
     initialTags?: string[],
+    uploadLabel?: string,
 ): Promise<UploadSlot[]> {
     const slots: UploadSlot[] = []
     for (let i = 0; i < files.length; i += PRESIGN_BATCH_SIZE) {
@@ -225,6 +239,7 @@ export async function beginUploadBatch(
         const {data} = await apiClient.post<UploadSlot[]>('/api/authenticated/pictures/uploads/batch', {
             files: chunk,
             initial_tags: initialTags?.length ? initialTags : undefined,
+            upload_label: uploadLabel,
         })
         slots.push(...data)
     }

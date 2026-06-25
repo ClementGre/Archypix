@@ -71,16 +71,19 @@ const NUM_OPS: OperatorDef[] = [
     {op: 'is_present', label: 'is set'},
     {op: 'is_absent', label: 'is not set'},
 ]
+// `eq_ic` is gone — case sensitivity is the per-leaf `ignore_case` checkbox (feature 15).
 const STR_OPS: OperatorDef[] = [
     {op: 'contains', label: 'contains'},
     {op: 'starts_with', label: 'starts with'},
     {op: 'ends_with', label: 'ends with'},
     {op: 'eq', label: 'equals'},
-    {op: 'eq_ic', label: 'equals (ignore case)'},
     {op: 'regex', label: 'matches regex'},
     {op: 'is_present', label: 'is set'},
     {op: 'is_absent', label: 'is not set'},
 ]
+
+/** String operators that honour the `ignore_case` flag (all comparisons; not presence). */
+export const IGNORE_CASE_OPS = new Set(['contains', 'starts_with', 'ends_with', 'eq', 'regex'])
 const DATE_OPS: OperatorDef[] = [
     {op: 'year', label: 'in year'},
     {op: 'month', label: 'in month'},
@@ -127,6 +130,8 @@ export interface CondState {
     from?: string
     /** Range upper bound (date_range.to / time_range.to). */
     to?: string
+    /** Case-insensitive matching for string comparisons (serialized as the `ignore_case` flag). */
+    ignoreCase?: boolean
 }
 
 export interface GroupNode {
@@ -207,9 +212,6 @@ function condToObject(field: string, cond: CondState, type: FieldType): FieldPre
             base.min = num(cond.value)
             base.max = num(cond.value2)
             break
-        case 'eq_ic':
-            base.eq_ic = cond.value ?? ''
-            break
         case 'contains':
             base.contains = cond.value ?? ''
             break
@@ -237,6 +239,10 @@ function condToObject(field: string, cond: CondState, type: FieldType): FieldPre
         case 'time_range':
             base.time_range = {from: cond.from ?? '', to: cond.to ?? ''}
             break
+    }
+    // Case-insensitivity is a sibling flag on string comparisons.
+    if (type === 'str' && cond.ignoreCase && IGNORE_CASE_OPS.has(cond.op)) {
+        base.ignore_case = true
     }
     return base
 }
@@ -298,7 +304,8 @@ function fieldNodeFrom(p: FieldPredicate): BNode {
     else if ('min' in p) cond = {op: 'min', value: s(p.min)}
     else if ('max' in p) cond = {op: 'max', value: s(p.max)}
     else if ('eq' in p) cond = {op: 'eq', value: typeof p.eq === 'boolean' ? (p.eq ? 'true' : 'false') : s(p.eq)}
-    else if ('eq_ic' in p) cond = {op: 'eq_ic', value: s(p.eq_ic)}
+    // Legacy `eq_ic` (pre-feature-15) maps to eq + ignore_case for any un-migrated predicate.
+    else if ('eq_ic' in p) cond = {op: 'eq', value: s(p.eq_ic), ignoreCase: true}
     else if ('contains' in p) cond = {op: 'contains', value: s(p.contains)}
     else if ('starts_with' in p) cond = {op: 'starts_with', value: s(p.starts_with)}
     else if ('ends_with' in p) cond = {op: 'ends_with', value: s(p.ends_with)}
@@ -314,6 +321,10 @@ function fieldNodeFrom(p: FieldPredicate): BNode {
         cond = {op: 'time_range', from: r.from, to: r.to}
     } else {
         cond = defaultCond(fieldDef(field)!.type)
+    }
+    // Carry the explicit `ignore_case` flag (sibling key) onto string comparisons.
+    if ((p as Record<string, unknown>).ignore_case === true && IGNORE_CASE_OPS.has(cond.op)) {
+        cond.ignoreCase = true
     }
     return {id: newId(), kind: 'field', field, cond}
 }
@@ -447,13 +458,15 @@ function wrap(s: string): string {
 
 function describeField(p: FieldPredicate): string {
     const label = fieldLabel(p.field)
+    // Appended to string comparisons that fold case (the `ignore_case` sibling flag).
+    const ic = (p as Record<string, unknown>).ignore_case === true ? ' (ignore case)' : ''
     if ('is_present' in p) return p.is_present ? `${label} is set` : `${label} is not set`
-    if ('eq' in p) return `${label} = ${fmt(p.eq)}`
+    if ('eq' in p) return typeof p.eq === 'string' ? `${label} = "${p.eq}"${ic}` : `${label} = ${fmt(p.eq)}`
     if ('eq_ic' in p) return `${label} ≈ ${fmt(p.eq_ic)}`
-    if ('contains' in p) return `${label} contains "${p.contains}"`
-    if ('starts_with' in p) return `${label} starts with "${p.starts_with}"`
-    if ('ends_with' in p) return `${label} ends with "${p.ends_with}"`
-    if ('regex' in p) return `${label} matches /${p.regex}/`
+    if ('contains' in p) return `${label} contains "${p.contains}"${ic}`
+    if ('starts_with' in p) return `${label} starts with "${p.starts_with}"${ic}`
+    if ('ends_with' in p) return `${label} ends with "${p.ends_with}"${ic}`
+    if ('regex' in p) return `${label} matches /${p.regex}/${ic}`
     if ('min' in p && 'max' in p) return `${label} ∈ [${fmt(p.min)}, ${fmt(p.max)}]`
     if ('min' in p) return `${label} ≥ ${fmt(p.min)}`
     if ('max' in p) return `${label} ≤ ${fmt(p.max)}`

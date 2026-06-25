@@ -9,6 +9,7 @@ import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {apiErrorMessage} from '@/api/client'
 import {cn, variantForSize} from '@/lib/utils'
+import {TagFilterBar} from '@/components/tags/TagFilterBar'
 import {PhotoCard} from './PhotoCard'
 import {Lightbox} from './Lightbox'
 import {SelectionActionBar} from './batch/SelectionActionBar'
@@ -63,7 +64,13 @@ export function PhotoGrid() {
     const active = isBrowsing ? browseQ : picturesQ
     const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage} = active
 
-    const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+    // Dedup by id: as new pictures shift pagination, consecutive pages can overlap and re-emit an
+    // already-seen item — which would render a duplicate card (and, if selected, look doubly selected).
+    const items = useMemo(() => {
+        const flat = data?.pages.flatMap((p) => p.items) ?? []
+        const seen = new Set<string>()
+        return flat.filter((it) => (seen.has(it.id) ? false : (seen.add(it.id), true)))
+    }, [data])
 
     const orderedIds = useMemo(() => items.map((i) => i.id), [items])
 
@@ -201,7 +208,12 @@ export function PhotoGrid() {
             <div className="min-h-0 flex-1">{body}</div>
         </div>
     ) : (
-        body
+        // Flat view: a tag-filter breadcrumb (active include/exact/exclude) tops the grid, mirroring
+        // the hierarchy breadcrumb. It renders nothing when no tag filter is active.
+        <div className="flex h-full min-h-0 flex-col">
+            <TagFilterBar/>
+            <div className="min-h-0 flex-1">{body}</div>
+        </div>
     )
 
     return (

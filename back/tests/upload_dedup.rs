@@ -2,7 +2,8 @@
 //!
 //! A file whose client-computed SHA-256 already matches one of the caller's owned pictures is
 //! reported as a duplicate (no S3 slot minted); any `initial_tags` are landed on the existing
-//! picture and a trashed match is restored. New files still get a normal slot.
+//! picture. A trashed match is flagged `was_deleted` (no longer auto-restored — feature 15) and,
+//! with an import label, tagged `<label>.AlreadyExisting.Deleted`. New files still get a slot.
 
 mod common;
 
@@ -69,6 +70,7 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
         user,
         &files,
         &tags,
+        None,
         &waker,
     )
     .await
@@ -76,7 +78,13 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
 
     assert_eq!(outcomes.len(), 2);
     match &outcomes[0] {
-        BatchUploadOutcome::Duplicate { picture_id } => assert_eq!(*picture_id, existing),
+        BatchUploadOutcome::Duplicate {
+            picture_id,
+            was_deleted,
+        } => {
+            assert_eq!(*picture_id, existing);
+            assert!(!was_deleted, "live duplicate is not deleted");
+        }
         _ => panic!("first file should dedup to the existing picture"),
     }
     match &outcomes[1] {
@@ -124,6 +132,7 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
         user,
         &files,
         &[],
+        None,
         &waker,
     )
     .await
@@ -135,13 +144,13 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
     };
     // The second identical file dedups onto the first's (not-yet-created) picture.
     match &outcomes[1] {
-        BatchUploadOutcome::Duplicate { picture_id } => assert_eq!(*picture_id, first_id),
+        BatchUploadOutcome::Duplicate { picture_id, .. } => assert_eq!(*picture_id, first_id),
         _ => panic!("second identical file should dedup within the batch"),
     }
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn batch_presign_restores_trashed_duplicate(db: PgPool) {
+async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: PgPool) {
     let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
@@ -171,22 +180,75 @@ async fn batch_presign_restores_trashed_duplicate(db: PgPool) {
         user,
         &files,
         &[],
+        Some("Uploaded_2026_06_25_14_30"),
         &waker,
     )
     .await
     .unwrap();
 
-    // Re-uploading a trashed photo dedups onto it and brings it back from the trash.
+    // Re-uploading a trashed photo dedups onto it, flags it deleted, but does NOT restore it.
     match &outcomes[0] {
-        BatchUploadOutcome::Duplicate { picture_id } => assert_eq!(*picture_id, trashed),
+        BatchUploadOutcome::Duplicate {
+            picture_id,
+            was_deleted,
+        } => {
+            assert_eq!(*picture_id, trashed);
+            assert!(was_deleted, "the matched picture is in the trash");
+        }
         _ => panic!("re-uploading a trashed photo should dedup onto it"),
     }
-    let restored = PictureRepository::find_by_id(&db, trashed)
+    let still = PictureRepository::find_by_id(&db, trashed)
         .await
         .unwrap()
         .unwrap();
     assert!(
-        restored.deleted_at.is_none(),
-        "the trashed duplicate should be restored"
+        still.deleted_at.is_some(),
+        "the trashed duplicate must stay trashed (no auto-restore)"
+    );
+    // It is tagged with the deleted marker so the user can find and restore it.
+    assert_eq!(
+        picture_tags(&db, trashed).await,
+        vec!["Uploaded_2026_06_25_14_30.AlreadyExisting.Deleted"]
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
+    let cfg = config();
+    let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
+    let storage = MockStorage::new();
+    let waker = PipelineWaker::disconnected();
+
+    let user = common::seed_user(&db, "dave", "pw").await;
+
+    let existing = common::seed_picture(&db, user).await;
+    let hash = "e".repeat(64);
+    PictureRepository::set_file_hash(&db, existing, &hash, Some(77))
+        .await
+        .unwrap();
+
+    let files = vec![BatchUploadFile {
+        filename: "again.jpg".to_string(),
+        file_hash: Some(hash),
+    }];
+
+    begin_upload_batch(
+        &db,
+        cache.as_ref(),
+        &storage,
+        &cfg,
+        user,
+        &files,
+        &[],
+        Some("Uploaded_2026_06_25_14_30"),
+        &waker,
+    )
+    .await
+    .unwrap();
+
+    // A live (non-deleted) duplicate is tagged AlreadyExisting (not the Deleted marker).
+    assert_eq!(
+        picture_tags(&db, existing).await,
+        vec!["Uploaded_2026_06_25_14_30.AlreadyExisting"]
     );
 }

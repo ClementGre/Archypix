@@ -5,6 +5,7 @@ import {useIsMobile} from '@/hooks/useMediaQuery'
 import {cn} from '@/lib/utils'
 import {countdown} from '@/lib/trash'
 import {Blurhash} from './Blurhash'
+import {FileTypeIcon} from './FileTypeIcon'
 import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
 
 interface PhotoCardProps {
@@ -122,7 +123,7 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
                 />
             )}
 
-            {item.thumbnail_url && (
+            {item.thumbnail_url ? (
                 <OrientedImage
                     src={item.thumbnail_url}
                     alt={item.filename ?? ''}
@@ -132,6 +133,12 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
                     className={cn('transition-opacity duration-200', loaded ? 'opacity-100' : 'opacity-0')}
                     onLoad={() => setLoaded(true)}
                 />
+            ) : (
+                // No thumbnail (pending, or a non-thumbnailable format like a PDF) — file-type icon.
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-2 text-center text-muted-foreground">
+                    <FileTypeIcon filename={item.filename} className="h-[38%] w-[38%] max-h-16 max-w-16 opacity-70"/>
+                    {item.filename && <span className="max-w-full truncate text-[10px] leading-tight">{item.filename}</span>}
+                </div>
             )}
 
             <div

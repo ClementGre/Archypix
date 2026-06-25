@@ -204,6 +204,7 @@ impl<'a> Vfs<'a> {
         // Cross-instance received pictures always redirect (the bytes live on the owner's S3).
         if self.use_redirect || pic.remote_picture_id.is_some() {
             trace!("vfs read: redirect to presigned url");
+            // `Original` always has a URL (no thumbnail-skipping); `None` would only mean missing.
             let url = pictures::presign_picture_variant(
                 &self.state.db,
                 self.state.cache.as_ref(),
@@ -214,7 +215,8 @@ impl<'a> Vfs<'a> {
                 pid,
                 PictureVariant::Original,
             )
-            .await?;
+            .await?
+            .ok_or(AppError::NotFound)?;
             Ok(ReadTarget::Redirect(url))
         } else {
             trace!("vfs read: proxy bytes from S3");
@@ -331,16 +333,18 @@ impl<'a> Vfs<'a> {
         // synthesized mirror auto-tag assign).
         let on_add = self.on_add_ops(&target)?;
 
-        // Dedupe: a relocate/copy a dumb client expressed as a fresh upload (§8).
+        // Dedupe: a relocate/copy a dumb client expressed as a fresh upload (§8). If the picture
+        // gains the directory's tag (it wasn't already here) it's a genuine new resource for this
+        // path → 201 Created; if it already had the tag the PUT is a true no-op → 204 No Content.
         if let Some(p) =
             PictureRepository::find_owned_by_hash(&self.state.db, self.user_id, hash, false).await?
         {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
             trace!("vfs put: hash matched live picture — retag instead of new upload");
-            self.apply_add_ops(&on_add, p.id).await?;
+            let added = self.apply_add_ops(&on_add, p.id).await?;
             self.clear_pending_dir(parent).await;
             self.state.pipeline_waker.wake_debounced(self.user_id);
-            return Ok(false);
+            return Ok(added);
         }
         // Un-delete a recently trashed match (naive rename under fullDelete, §8).
         if let Some(p) =
@@ -467,6 +471,17 @@ impl<'a> Vfs<'a> {
             self.clear_pending_dir(segments).await;
             return Ok(());
         }
+        // Deleting a real directory: accept it if the directory is empty.
+        if self.dir(segments).is_some() {
+            if self.list_dir(segments).await?.is_empty() {
+                trace!("vfs delete: empty directory — no-op success");
+                self.clear_pending_dir(segments).await;
+                return Ok(());
+            }
+            return Err(AppError::Conflict(
+                "cannot delete a non-empty directory".into(),
+            ));
+        }
         let entry = self.file_entry(segments).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
         tracing::Span::current().record("picture_id", tracing::field::display(pid));
@@ -578,20 +593,23 @@ impl<'a> Vfs<'a> {
 
     // `user_id`/`picture_id` are already on the calling span (put_file/move_/copy record
     // `picture_id` before reaching here) — no fields of our own to add.
+    /// Returns whether the picture actually gained a tag (≥1 row inserted)
     #[tracing::instrument(skip_all)]
-    async fn apply_add_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<(), AppError> {
+    async fn apply_add_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<bool, AppError> {
         let (assigns, removes) = split_ops(ops);
         // Case-insensitive write-side reuse (§10c): fold each assigned tag onto an existing
         // case-variant sibling so a case-insensitive client never mints a case-only duplicate.
         let assigns = self.fold_case(assigns).await?;
         trace!(?assigns, ?removes, "vfs: apply onAdd ops");
+        let mut inserted = 0u64;
         if !assigns.is_empty() {
-            TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
+            inserted =
+                TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
         }
         if !removes.is_empty() {
             TagRepository::batch_remove(&self.state.db, self.user_id, &[pid], &removes).await?;
         }
-        Ok(())
+        Ok(inserted > 0)
     }
 
     /// Fold assigned tag paths onto existing case-variant tags (06_webdav.md §10c). Loads the

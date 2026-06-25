@@ -14,6 +14,8 @@ pub enum PictureSortField {
     #[default]
     IngestedAt,
     UpdatedAt,
+    FileSize,
+    Filename,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -30,9 +32,8 @@ pub struct PictureListFilter {
     pub page_size: i64,
     pub sort: PictureSortField,
     pub order: SortOrder,
-    pub tag: Option<String>,
-    /// Generalised tag-set predicate (hierarchy `browse`, public `include_tags`/`exclude_tags`/
-    /// `match`/`untagged`). Rendered in addition to `tag` (callers set at most one).
+    /// Generalised tag-set predicate: the flat gallery (`include`/`exclude`/`exact`/`match`/
+    /// `untagged`) and hierarchy `browse` both lower to this. `None` ⇒ no tag constraint.
     pub predicate: Option<TagPredicate>,
     pub owned_only: bool,
     pub shared_with_me: bool,
@@ -754,6 +755,8 @@ impl PictureRepository {
             PictureSortField::CapturedAt => "p.captured_at",
             PictureSortField::IngestedAt => "p.ingested_at",
             PictureSortField::UpdatedAt => "p.updated_at",
+            PictureSortField::FileSize => "p.file_size",
+            PictureSortField::Filename => "p.filename",
         };
         let sort_dir = match filter.order {
             SortOrder::Asc => "ASC",
@@ -787,7 +790,12 @@ impl PictureRepository {
             );
             q.push_bind(local_user_id);
             Self::push_filters(&mut q, filter);
-            q.push(format!(" ORDER BY {} {} LIMIT ", sort_col, sort_dir));
+            // `NULLS LAST` keeps undated/sizeless pictures out of the way; the `p.id` tiebreaker
+            // makes ordering total so pagination is stable (no rows shifting between pages).
+            q.push(format!(
+                " ORDER BY {} {} NULLS LAST, p.id {} LIMIT ",
+                sort_col, sort_dir, sort_dir
+            ));
             q.push_bind(filter.page_size);
             q.push(" OFFSET ");
             q.push_bind(offset);
@@ -834,13 +842,6 @@ impl PictureRepository {
         }
         if let Some(v) = filter.captured_before {
             q.push(" AND p.captured_at <= ").push_bind(v);
-        }
-        if let Some(ref tag) = filter.tag {
-            q.push(
-                " AND EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ ",
-            )
-            .push_bind(tag.clone())
-            .push("::ltree)");
         }
         if let Some(ref predicate) = filter.predicate {
             q.push(" AND ");

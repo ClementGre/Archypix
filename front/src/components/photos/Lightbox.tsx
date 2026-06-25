@@ -15,10 +15,11 @@ import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {Button} from '@/components/ui/button'
+import {FileTypeIcon} from './FileTypeIcon'
 import {OrientedContainImage} from './OrientedImage'
 
 /** Image + rotate controls for the current picture. Rotation auto-commits (see `useExifDraft`). */
-function LightboxImageWithDraft({picture, url}: { picture: PictureDetail; url: string }) {
+function LightboxImageWithDraft({picture, url, blurhash}: { picture: PictureDetail; url: string; blurhash?: string | null }) {
     const exif = useExifDraft(picture)
     const draftOrientation = exif.draft.orientation ? Number(exif.draft.orientation) : 1
 
@@ -26,6 +27,7 @@ function LightboxImageWithDraft({picture, url}: { picture: PictureDetail; url: s
         <>
             <OrientedContainImage
                 src={url}
+                blurhash={blurhash}
                 alt={picture.filename ?? ''}
                 orientation={draftOrientation}
                 width={picture.width}
@@ -58,33 +60,39 @@ function LightboxImageWithDraft({picture, url}: { picture: PictureDetail; url: s
 }
 
 /** Resolves the picture detail (for rotate) and renders the fitted image. */
-function LightboxImage({item, url}: { item: PictureListItem; url?: string }) {
+function LightboxImage({item, url, loading}: { item: PictureListItem; url: string | null; loading: boolean }) {
     const {data: detail} = useQuery({
         queryKey: queryKeys.picture(item.id),
         queryFn: () => getPicture(item.id),
     })
 
-    if (!url) {
+    // Resolved with no viewable image (a non-thumbnailable format like a PDF) — file icon + hint;
+    // the header's Download button still works on the original.
+    if (!loading && !url) {
         return (
-            <div className="flex h-full w-full items-center justify-center">
-                <Loader2 className="h-8 w-8 animate-spin text-white/70"/>
+            <div className="flex flex-col items-center justify-center gap-3 text-white/70" onClick={(e) => e.stopPropagation()}>
+                <FileTypeIcon mime={detail?.mime_type} filename={item.filename} className="h-20 w-20"/>
+                <p className="text-sm">No preview available. Use Download to get the original.</p>
             </div>
         )
     }
-    // Detail not loaded yet — show the image at its stored orientation; rotate appears once loaded.
-    if (!detail) {
-        return (
-            <OrientedContainImage
-                src={url}
-                alt={item.filename ?? ''}
-                orientation={item.orientation}
-                width={item.width}
-                height={item.height}
-                onClick={(e) => e.stopPropagation()}
-            />
-        )
+    // Once detail is loaded, render with rotate controls. Otherwise (URL still resolving, or detail
+    // not loaded yet) render the image box with the blurhash placeholder — which shows immediately,
+    // before the large image (and even its URL) arrives, then fades out on load.
+    if (detail && url) {
+        return <LightboxImageWithDraft picture={detail} url={url} blurhash={item.blurhash}/>
     }
-    return <LightboxImageWithDraft picture={detail} url={url}/>
+    return (
+        <OrientedContainImage
+            src={url ?? undefined}
+            blurhash={item.blurhash}
+            alt={item.filename ?? ''}
+            orientation={item.orientation}
+            width={item.width}
+            height={item.height}
+            onClick={(e) => e.stopPropagation()}
+        />
+    )
 }
 
 /**
@@ -170,8 +178,9 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
         return () => window.removeEventListener('keydown', onKey)
     }, [open, current, close, goPrev, goNext, trashAndAdvance])
 
-    // Full screen always requests the `large` variant.
-    const {data: url} = useQuery({
+    // Full screen always requests the `large` variant. `urlData.url` is null for non-thumbnailable
+    // formats; `urlData === undefined` means the request is still in flight.
+    const {data: urlData} = useQuery({
         queryKey: ['pictures', 'url', current?.id, 'large'],
         queryFn: () => getPictureUrl(current!.id, 'large'),
         enabled: !!current,
@@ -269,7 +278,7 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
                     <ChevronLeft className="h-6 w-6"/>
                 </button>
 
-                <LightboxImage item={current} url={url?.url}/>
+                <LightboxImage item={current} url={urlData?.url ?? null} loading={urlData === undefined}/>
 
                 <button
                     onClick={(e) => {

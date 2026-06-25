@@ -17,6 +17,7 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {NumberInput} from '@/components/ui/number-input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
+import {Checkbox} from '@/components/ui/checkbox'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList} from '@/components/ui/command'
 import {DateRangePicker} from '@/components/common/DateRangePicker'
@@ -29,6 +30,7 @@ import {
     fieldDef,
     fieldsByGroup,
     type FieldType,
+    IGNORE_CASE_OPS,
     insertInto,
     isWithin,
     locate,
@@ -390,6 +392,18 @@ function FieldView({node, onChange, onRemove}: NodeViewProps) {
             </Select>
 
             <CondValue type={def.type} cond={cond} unit={def.unit} onChange={setCond}/>
+
+            {/* Case-insensitivity for string comparisons (feature 15) — not presence checks. */}
+            {def.type === 'str' && IGNORE_CASE_OPS.has(cond.op) && (
+                <label className="flex select-none items-center gap-1 text-xs text-muted-foreground">
+                    <Checkbox
+                        checked={!!cond.ignoreCase}
+                        onCheckedChange={(v) => setCond({ignoreCase: v === true})}
+                        className="h-3.5 w-3.5"
+                    />
+                    ignore case
+                </label>
+            )}
 
             <div className="flex-1"/>
             {onRemove && (

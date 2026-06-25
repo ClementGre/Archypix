@@ -22,6 +22,7 @@ import {Section} from '@/components/photos/detail/Section'
 import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
+import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
 import {useExifDraft} from '@/hooks/useExifDraft'
@@ -258,7 +259,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // Clicking a tag filters by it and reveals it in the Tags tree (opens the left panel + tab).
     const onTagClick = (wire: string) => {
         revealLeftPanel()
-        update({tag: wire, panel: 'tags'})
+        update({tag: wire, include: [], exclude: [], exact: [], panel: 'tags'})
     }
     const onSourceClick = (source: TagSource, sourceId: string | null) => {
         if (!sourceId) return
@@ -269,7 +270,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     }
     const onSharedTagClick = (wire: string) => {
         revealLeftPanel()
-        update({tag: wire, panel: 'incoming', share: incomingShareIdForTag(wire, incoming ?? [])})
+        update({tag: wire, include: [], exclude: [], exact: [], panel: 'incoming', share: incomingShareIdForTag(wire, incoming ?? [])})
     }
 
     const openLightbox = () =>
@@ -317,7 +318,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                 onClick={openLightbox}
                 title="Open full screen"
             >
-                {preview ? (
+                {preview?.url ? (
                     <OrientedContainImage
                         src={preview.url}
                         alt={picture.filename ?? ''}
@@ -327,8 +328,9 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                         maxHeight={PREVIEW_MAX_HEIGHT}
                     />
                 ) : (
+                    // No thumbnail (pending, or a non-thumbnailable format) — show a file-type icon.
                     <div className="flex h-40 items-center justify-center text-muted-foreground">
-                        <ImageIcon className="h-8 w-8"/>
+                        <FileTypeIcon mime={picture.mime_type} filename={picture.filename} className="h-12 w-12 opacity-70"/>
                     </div>
                 )}
 
@@ -557,7 +559,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                     key={s.id}
                                     onClick={() => {
                                         revealLeftPanel()
-                                        update({tag: s.tag_path, panel: 'outgoing'})
+                                        update({tag: s.tag_path, include: [], exclude: [], exact: [], panel: 'outgoing'})
                                     }}
                                     className="flex w-full items-center justify-between gap-2 text-xs hover:text-primary"
                                 >

@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react'
 import {cn} from '@/lib/utils'
+import {Blurhash} from './Blurhash'
 
 /**
  * Decompose an EXIF orientation value (1–8) into the CSS rotation needed to
@@ -99,9 +100,15 @@ export function OrientedImage({src, alt, orientation, width, height, className, 
 }
 
 interface OrientedContainImageProps {
-    src: string
+    /** The image to show. Omit while the URL is still resolving — the `blurhash` placeholder shows. */
+    src?: string
     alt: string
     orientation?: number | null
+    /**
+     * BlurHash placeholder shown behind the image (in the same sized box) until it loads, then
+     * faded out. Also shown on its own while `src` is absent (URL still resolving).
+     */
+    blurhash?: string | null
     /** Raw (pre-orientation) pixel dimensions — used to derive the display aspect ratio. */
     width?: number | null
     height?: number | null
@@ -128,6 +135,7 @@ export function OrientedContainImage({
                                          src,
                                          alt,
                                          orientation,
+                                         blurhash,
                                          width,
                                          height,
                                          maxHeight,
@@ -137,11 +145,20 @@ export function OrientedContainImage({
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
     const aspect = dW && dH ? dW / dH : 1
 
+    // Blurhash placeholder behind the image, faded out once it loads. Reset when `src` changes
+    // (e.g. navigating the lightbox) so the next picture shows its own placeholder first.
+    const [loaded, setLoaded] = useState(false)
+    useEffect(() => setLoaded(false), [src])
+    const cover = orientedCoverStyle(orientation, width, height)
+
     const ref = useRef<HTMLDivElement>(null)
+    // Seed with the element's current width so the first paint is already sized (avoids a flash and a
+    // brief mis-size on wide/16:9 previews before the observer's first tick).
     const [avail, setAvail] = useState({w: 0, h: 0})
     useEffect(() => {
         const el = ref.current
         if (!el) return
+        setAvail({w: el.clientWidth, h: el.clientHeight})
         const ro = new ResizeObserver((entries) => {
             const r = entries[0].contentRect
             setAvail({w: r.width, h: r.height})
@@ -164,17 +181,45 @@ export function OrientedContainImage({
             boxW = availW
             boxH = availW / aspect
         }
+        // Never exceed the available box in either axis (guards against a stale measurement
+        // letting a wide 16:9 preview overflow its container).
+        if (boxW > availW) {
+            boxW = availW
+            boxH = availW / aspect
+        }
+        if (boxH > availH) {
+            boxH = availH
+            boxW = availH * aspect
+        }
     }
 
     return (
         <div
             ref={ref}
-            className={cn(flow ? 'flex w-full justify-center' : 'absolute inset-0 flex items-center justify-center', className)}
+            className={cn(flow ? 'flex w-full justify-center overflow-hidden' : 'absolute inset-0 flex items-center justify-center', className)}
             style={flow ? {height: boxH || undefined} : undefined}
         >
             {boxW > 0 && (
-                <div className="relative bg-checkerboard" style={{width: boxW, height: boxH}} onClick={onClick}>
-                    <OrientedImage src={src} alt={alt} orientation={orientation} width={width} height={height}/>
+                <div className="relative max-w-full overflow-hidden bg-checkerboard" style={{width: boxW, height: boxH}} onClick={onClick}>
+                    {blurhash && (
+                        <Blurhash
+                            hash={blurhash}
+                            className={cn(cover.className, 'transition-opacity duration-300', loaded && 'opacity-0')}
+                            style={cover.style}
+                        />
+                    )}
+                    {src && (
+                        <OrientedImage
+                            src={src}
+                            alt={alt}
+                            orientation={orientation}
+                            width={width}
+                            height={height}
+                            // Only gate visibility on load when there's a placeholder to fade from.
+                            className={blurhash ? cn('transition-opacity duration-300', loaded ? 'opacity-100' : 'opacity-0') : undefined}
+                            onLoad={blurhash ? () => setLoaded(true) : undefined}
+                        />
+                    )}
                 </div>
             )}
         </div>

@@ -39,12 +39,13 @@ pub struct ScopeParams {
 /// body) rather than the comma-strings the query-string list endpoint uses.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct FlatFilter {
-    /// Convenience alias for a single `include_tags` entry.
-    pub tag: Option<String>,
     #[serde(default)]
     pub include_tags: Vec<String>,
     #[serde(default)]
     pub exclude_tags: Vec<String>,
+    /// Exactly-matched ltree paths
+    #[serde(default)]
+    pub exact: Vec<String>,
     /// `all` (AND) | `any` (OR) over `include_tags`. Default `all`.
     #[serde(rename = "match")]
     pub match_mode: Option<String>,
@@ -106,9 +107,6 @@ fn parse_path(s: &str) -> Result<TagPath, AppError> {
 /// fields are irrelevant to a set and left at defaults.
 fn flat_to_filter(f: &FlatFilter) -> Result<PictureListFilter, AppError> {
     let mut include: Vec<TagPath> = Vec::new();
-    if let Some(t) = f.tag.as_deref().filter(|s| !s.trim().is_empty()) {
-        include.push(parse_path(t)?);
-    }
     for t in &f.include_tags {
         if !t.trim().is_empty() {
             include.push(parse_path(t)?);
@@ -120,10 +118,16 @@ fn flat_to_filter(f: &FlatFilter) -> Result<PictureListFilter, AppError> {
         .filter(|s| !s.trim().is_empty())
         .map(|s| parse_path(s))
         .collect::<Result<_, _>>()?;
+    let exact: Vec<TagPath> = f
+        .exact
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| parse_path(s))
+        .collect::<Result<_, _>>()?;
 
-    if f.untagged && (!include.is_empty() || !exclude.is_empty()) {
+    if f.untagged && (!include.is_empty() || !exclude.is_empty() || !exact.is_empty()) {
         return Err(AppError::BadRequest(
-            "untagged is mutually exclusive with include_tags/exclude_tags".to_string(),
+            "untagged is mutually exclusive with include_tags/exclude_tags/exact".to_string(),
         ));
     }
 
@@ -134,6 +138,7 @@ fn flat_to_filter(f: &FlatFilter) -> Result<PictureListFilter, AppError> {
         include,
         match_all: match_all_of(f.match_mode.as_deref())?,
         exclude,
+        exact,
         untagged: f.untagged,
         ..TagPredicate::all()
     });
@@ -164,7 +169,6 @@ fn filter_from(predicate: Option<TagPredicate>, scope: &ScopeParams) -> PictureL
         page_size: 1,
         sort: PictureSortField::default(),
         order: SortOrder::default(),
-        tag: None,
         predicate,
         owned_only: scope.owned_only,
         shared_with_me: scope.shared_with_me,

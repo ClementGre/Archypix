@@ -4,7 +4,7 @@ export type ExifSyncStatus = 'synced' | 'pending' | 'pending_job_creation' | 'un
 
 export type PictureVariant = 'original' | 'small' | 'medium' | 'large'
 
-export type SortField = 'captured_at' | 'ingested_at' | 'updated_at'
+export type SortField = 'captured_at' | 'ingested_at' | 'updated_at' | 'file_size' | 'filename'
 
 export type SortOrder = 'asc' | 'desc'
 
@@ -153,6 +153,12 @@ export interface IncomingShareResponse {
 
 export interface PictureFilters {
     tag?: string | null
+    /** Additional include tags (wire form) layered on top of `tag` via the sidebar menu. */
+    include?: string[]
+    /** Exclude tags (wire form). */
+    exclude?: string[]
+    /** Exact (strict, no-descendant) include tags (wire form). */
+    exact?: string[]
     scope?: 'all' | 'owned' | 'shared'
     includeDeleted?: boolean
     sort?: SortField
@@ -587,9 +593,10 @@ export interface TrashResponse {
 export type PictureFilter =
     | {
     kind: 'flat'
-    tag?: string
     include_tags?: string[]
     exclude_tags?: string[]
+    /** Exact (strict, no-descendant) include tags — feature 15 strict tag navigation. */
+    exact?: string[]
     match?: 'all' | 'any'
     untagged?: boolean
     owned_only?: boolean

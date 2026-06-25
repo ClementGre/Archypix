@@ -48,6 +48,13 @@ impl PictureVariant {
             Self::Large => "large",
         }
     }
+
+    /// A generated-thumbnail variant (small/medium/large). These only exist once the worker has
+    /// generated thumbnails (`pictures.thumbnails_generated_at`), which it skips for
+    /// non-thumbnailable formats (PDFs, some videos, …). The `original` always exists.
+    pub fn is_thumbnail(&self) -> bool {
+        !matches!(self, PictureVariant::Original)
+    }
 }
 
 impl FromStr for PictureVariant {
@@ -76,6 +83,9 @@ pub struct UploadMetadata {
     pub exif_data: Option<serde_json::Value>,
     pub captured_at: Option<NaiveDateTime>,
     pub initial_tags: Option<Vec<String>>,
+    /// Front-provided import label (`Uploaded_YYYY_MM_DD_HH_MM`, fixed per batch). When set, the
+    /// picture is tagged with it (feature 15). A single ltree label, validated server-side.
+    pub upload_label: Option<String>,
     #[serde(default)]
     pub defer_pipeline: bool,
 }
@@ -97,10 +107,12 @@ pub struct PictureListParams {
     pub sort: PictureSortField,
     #[serde(default)]
     pub order: SortOrder,
-    pub tag: Option<String>,
     /// Flat tag-set filter (§6.3). Comma-separated ltree paths; combined per `match`.
     pub include_tags: Option<String>,
     pub exclude_tags: Option<String>,
+    /// Comma-separated ltree paths matched **exactly** (`tag_path = p`, no descendants) — strict
+    /// tag navigation (feature 15). Combined with `include`/`exclude` per `match`.
+    pub exact: Option<String>,
     /// `all` (AND) | `any` (OR) over `include_tags`. Default `all`.
     #[serde(rename = "match")]
     pub match_mode: Option<String>,
@@ -182,6 +194,7 @@ pub enum BatchUploadOutcome {
     },
     Duplicate {
         picture_id: Uuid,
+        was_deleted: bool,
     },
 }
 
@@ -190,12 +203,35 @@ pub enum BatchUploadOutcome {
 ///
 /// **Deduplication.** A file carrying a `file_hash` that already matches one of the caller's owned
 /// pictures is reported as a [`BatchUploadOutcome::Duplicate`] pointing at that existing picture —
-/// no S3 slot is minted and the client must not upload it. A matched picture that was **trashed** is
-/// restored (un-deleted), so re-uploading a photo the user had deleted brings it back rather than
-/// creating a fresh copy. Any `initial_tags` are assigned (as `manual` tags) to the matched
-/// pictures, so a re-upload still lands the user's intended tags on the picture they already hold.
-/// New (non-duplicate) files get a normal slot and receive their `initial_tags` later, on
-/// `complete`. When a restore or a tag assignment happened, the pipeline is woken (debounced).
+/// no S3 slot is minted and the client must not upload it. A trashed match is **not** un-deleted
+/// (feature 15); instead it is flagged `was_deleted` so the client can offer to restore it.
+///
+/// **Import tagging (feature 15).** When `upload_label` is set (`Uploaded_YYYY_MM_DD_HH_MM`, fixed
+/// by the front for the whole batch), matched duplicates are tagged here: live ones with
+/// `<label>.AlreadyExisting`, trashed ones with `<label>.AlreadyExisting.Deleted` (the latter via the
+/// deleted-inclusive assign so the user can find and restore them). Brand-new files are tagged with
+/// the bare `<label>` later, on `complete`. Any `initial_tags` are also assigned to the matched
+/// pictures. The pipeline is woken (debounced) when anything was tagged.
+/// Validate a front-provided import label and derive the three marker tag paths (wire form):
+/// `(base, base.AlreadyExisting, base.AlreadyExisting.Deleted)`. The label must be a single ltree
+/// label (no `.`), so a client can't smuggle a deep/protected path through it.
+fn upload_marker_tags(label: &str) -> Result<(String, String, String), AppError> {
+    let base = TagPath::parse(label, false)
+        .map_err(AppError::BadRequest)?
+        .as_ltree()
+        .to_string();
+    if base.contains('.') {
+        return Err(AppError::BadRequest(
+            "upload label must be a single tag label".to_string(),
+        ));
+    }
+    Ok((
+        base.clone(),
+        format!("{base}.AlreadyExisting"),
+        format!("{base}.AlreadyExisting.Deleted"),
+    ))
+}
+
 #[tracing::instrument(skip(db, cache, storage, config, files, initial_tags, waker), fields(user_id = %user_id, count = files.len()))]
 pub async fn begin_upload_batch(
     db: &PgPool,
@@ -205,6 +241,7 @@ pub async fn begin_upload_batch(
     user_id: Uuid,
     files: &[BatchUploadFile],
     initial_tags: &[String],
+    upload_label: Option<&str>,
     waker: &crate::infra::pipeline::PipelineWaker,
 ) -> Result<Vec<BatchUploadOutcome>, AppError> {
     if files.is_empty() {
@@ -227,40 +264,52 @@ pub async fn begin_upload_batch(
         })
         .collect::<Result<_, _>>()?;
 
+    // Marker tags derived from the import label (validated once up front).
+    let markers = match upload_label {
+        Some(label) => Some(upload_marker_tags(label)?),
+        None => None,
+    };
+
     let mut outcomes = Vec::with_capacity(files.len());
-    let mut duplicate_ids: Vec<Uuid> = Vec::new();
-    // Dedup targets that were trashed and need restoring (un-deleting).
-    let mut restore_ids: Vec<Uuid> = Vec::new();
+    // Live (non-deleted) and trashed existing duplicates, tagged differently below.
+    let mut existing_live: Vec<Uuid> = Vec::new();
+    let mut existing_deleted: Vec<Uuid> = Vec::new();
     // The canonical target for each hash seen so far in this batch — a DB-existing picture or the
     // first new slot minted for it — so a second identical file in the *same* batch dedups onto the
     // first instead of minting a redundant slot (neither is committed yet, so the DB check alone
-    // can't catch it).
-    let mut seen_hashes: HashMap<&str, Uuid> = HashMap::new();
+    // can't catch it). The bool carries whether that target was trashed.
+    let mut seen_hashes: HashMap<&str, (Uuid, bool)> = HashMap::new();
     for file in files {
         if let Some(hash) = file.file_hash.as_deref().filter(|h| !h.is_empty()) {
             // Earlier file in this batch already claimed this hash.
-            if let Some(&picture_id) = seen_hashes.get(hash) {
-                outcomes.push(BatchUploadOutcome::Duplicate { picture_id });
+            if let Some(&(picture_id, was_deleted)) = seen_hashes.get(hash) {
+                outcomes.push(BatchUploadOutcome::Duplicate {
+                    picture_id,
+                    was_deleted,
+                });
                 continue;
             }
-            // Already on an existing owned picture (including a trashed one — restore it below).
+            // Already on an existing owned picture (including a trashed one — flagged, not restored).
             if let Some(existing) =
                 PictureRepository::find_owned_by_hash(db, user_id, hash, true).await?
             {
-                seen_hashes.insert(hash, existing.id);
-                duplicate_ids.push(existing.id);
-                if existing.deleted_at.is_some() {
-                    restore_ids.push(existing.id);
+                let was_deleted = existing.deleted_at.is_some();
+                seen_hashes.insert(hash, (existing.id, was_deleted));
+                if was_deleted {
+                    existing_deleted.push(existing.id);
+                } else {
+                    existing_live.push(existing.id);
                 }
                 outcomes.push(BatchUploadOutcome::Duplicate {
                     picture_id: existing.id,
+                    was_deleted,
                 });
                 continue;
             }
             // First time we see this hash — mint a slot and remember it as the canonical target.
             let (picture_id, presigned_url) =
                 begin_upload(cache, storage, config, user_id, &file.filename).await?;
-            seen_hashes.insert(hash, picture_id);
+            seen_hashes.insert(hash, (picture_id, false));
             outcomes.push(BatchUploadOutcome::New {
                 picture_id,
                 presigned_url,
@@ -276,29 +325,40 @@ pub async fn begin_upload_batch(
         });
     }
 
-    // Apply the dedup-target mutations atomically: restore trashed targets and land the intended
-    // tags on the pictures the user already holds.
-    let assign_tags = !initial_tags.is_empty() && !duplicate_ids.is_empty();
-    if !restore_ids.is_empty() || assign_tags {
+    // Tags to land on each duplicate class: the user's `initial_tags` plus the import marker.
+    let live_tags: Vec<String> = initial_tags
+        .iter()
+        .cloned()
+        .chain(markers.as_ref().map(|(_, already, _)| already.clone()))
+        .collect();
+    let deleted_tags: Vec<String> = initial_tags
+        .iter()
+        .cloned()
+        .chain(markers.as_ref().map(|(_, _, deleted)| deleted.clone()))
+        .collect();
+
+    let tag_live = !existing_live.is_empty() && !live_tags.is_empty();
+    let tag_deleted = !existing_deleted.is_empty() && !deleted_tags.is_empty();
+    if tag_live || tag_deleted {
         use crate::repository::pipeline::PipelineRepository;
         let mut tx = db
             .begin()
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-        for id in &restore_ids {
-            PictureRepository::set_deleted(&mut *tx, user_id, *id, false).await?;
+        if tag_live {
+            TagRepository::batch_assign(&mut *tx, user_id, &existing_live, &live_tags).await?;
+            // Re-dirty so tagging re-evaluates the (live) pictures the user already holds.
+            PipelineRepository::invalidate(&mut *tx, &existing_live).await?;
         }
-        if assign_tags {
-            TagRepository::batch_assign(&mut *tx, user_id, &duplicate_ids, &initial_tags).await?;
+        if tag_deleted {
+            TagRepository::batch_assign_including_deleted(
+                &mut *tx,
+                user_id,
+                &existing_deleted,
+                &deleted_tags,
+            )
+            .await?;
         }
-        // Re-dirty the touched pictures so tagging re-evaluates and any restored owned picture
-        // re-announces its cleared owner-deletion lifecycle (mirrors `restore_picture`).
-        let touched: Vec<Uuid> = if assign_tags {
-            duplicate_ids.clone()
-        } else {
-            restore_ids.clone()
-        };
-        PipelineRepository::invalidate(&mut *tx, &touched).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         waker.wake_debounced(user_id);
     }
@@ -364,7 +424,7 @@ pub async fn complete_upload(
 
     // Validate any initial tags up front (before touching S3) — reject malformed paths and the
     // reserved `SharedToMe` prefix, matching the `PATCH /tags` contract (07_security_audit.md §2.5).
-    let initial_tags: Vec<String> = match meta.initial_tags.as_ref() {
+    let mut initial_tags: Vec<String> = match meta.initial_tags.as_ref() {
         Some(tags) => tags
             .iter()
             .map(|t| {
@@ -375,6 +435,11 @@ pub async fn complete_upload(
             .collect::<Result<_, _>>()?,
         None => Vec::new(),
     };
+    // Feature 15: tag a freshly-uploaded picture with the front's import label (`Uploaded_...`).
+    if let Some(label) = meta.upload_label.as_deref() {
+        let (base, _, _) = upload_marker_tags(label)?;
+        initial_tags.push(base);
+    }
 
     // S3: copy staging → pictures, then delete staging (S3 ops can't be in a DB tx)
     let pictures_key = s3::picture_key(user_id, picture_id);
@@ -851,13 +916,14 @@ fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicat
 
     let include = split_parse(&params.include_tags)?;
     let exclude = split_parse(&params.exclude_tags)?;
+    let exact = split_parse(&params.exact)?;
 
-    if params.untagged && (!include.is_empty() || !exclude.is_empty()) {
+    if params.untagged && (!include.is_empty() || !exclude.is_empty() || !exact.is_empty()) {
         return Err(AppError::BadRequest(
-            "untagged is mutually exclusive with include_tags/exclude_tags".to_string(),
+            "untagged is mutually exclusive with include_tags/exclude_tags/exact".to_string(),
         ));
     }
-    if !params.untagged && include.is_empty() && exclude.is_empty() {
+    if !params.untagged && include.is_empty() && exclude.is_empty() && exact.is_empty() {
         return Ok(None);
     }
 
@@ -876,7 +942,7 @@ fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicat
         match_all,
         exclude,
         untagged: params.untagged,
-        exact: vec![],
+        exact,
         and_terms: vec![],
         minus_children: vec![],
     }))
@@ -905,7 +971,6 @@ pub async fn list_pictures(
         page_size: params.page_size as i64,
         sort: params.sort,
         order: params.order,
-        tag: params.tag,
         predicate,
         owned_only: params.owned_only,
         shared_with_me: params.shared_with_me,
@@ -1018,8 +1083,13 @@ async fn presign_for_picture_list(
     let mut urls: HashMap<Uuid, String> = HashMap::new();
     let mut misses: Vec<&Picture> = Vec::new();
 
-    // Step 1: cache check
+    // Step 1: cache check. A thumbnail variant on a picture with no generated thumbnail (pending,
+    // or a non-thumbnailable format like a PDF) gets no URL — left absent so the client renders a
+    // file-type placeholder instead of a broken image.
     for pic in pictures {
+        if variant.is_thumbnail() && pic.thumbnails_generated_at.is_none() {
+            continue;
+        }
         match cache
             .get_str(RedisKey::PictureUrl(pic.id, variant.as_str()))
             .await?
@@ -1135,7 +1205,7 @@ pub async fn presign_picture_variant(
     local_user_id: Uuid,
     picture_id: Uuid,
     variant: PictureVariant,
-) -> Result<String, AppError> {
+) -> Result<Option<String>, AppError> {
     let pic = PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -1144,13 +1214,19 @@ pub async fn presign_picture_variant(
         return Err(AppError::NotFound);
     }
 
+    // No thumbnail to presign (pending, or a non-thumbnailable format) → `None` so the client shows
+    // a file-type placeholder. The `original` always exists.
+    if variant.is_thumbnail() && pic.thumbnails_generated_at.is_none() {
+        return Ok(None);
+    }
+
     // Single cache check for all picture types (owned, same-backend share, cross-instance share).
     if let Some(cached) = cache
         .get_str(RedisKey::PictureUrl(pic.id, variant.as_str()))
         .await?
     {
         trace!("presign cache hit");
-        return Ok(cached);
+        return Ok(Some(cached));
     }
 
     let url = if pic.is_owned() {
@@ -1212,5 +1288,5 @@ pub async fn presign_picture_variant(
             .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)
             .await?;
     }
-    Ok(url)
+    Ok(Some(url))
 }

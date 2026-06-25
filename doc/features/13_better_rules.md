@@ -83,11 +83,16 @@ at creation time rejects conditions that don't match the field's declared type.
 **str:**
 
 ```jsonc
-{"field": "mime_type",     "eq":       "image/heic"}   // exact, case-sensitive
-{"field": "camera_brand",  "eq_ic":    "fujifilm"}      // exact, case-insensitive
-{"field": "camera_brand",  "contains": "Canon"}         // substring, case-insensitive
-{"field": "filename",      "regex":    "IMG_\\d{4}"}    // RE2 syntax, case-sensitive
+{"field": "mime_type",     "eq":       "image/heic"}                       // exact, case-sensitive
+{"field": "camera_brand",  "eq":       "fujifilm", "ignore_case": true}    // exact, case-insensitive
+{"field": "camera_brand",  "contains": "Canon"}                            // substring, case-sensitive
+{"field": "camera_brand",  "contains": "canon",   "ignore_case": true}     // substring, case-insensitive
+{"field": "filename",      "regex":    "IMG_\\d{4}"}                       // RE2 syntax, case-sensitive
 ```
+
+String comparisons (`eq`, `contains`, `starts_with`, `ends_with`, `regex`) are **case-sensitive by
+default**; add a sibling `ignore_case: true` on the leaf to fold case (feature 15 — this replaced the
+old `eq_ic` operator and the previously-always-on case-insensitivity of the substring operators).
 
 **date:**
 

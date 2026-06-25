@@ -315,6 +315,8 @@ Presigns multiple upload slots in one round-trip. Returns results in the same or
     file_hash?: string;     // SHA-256 lowercase hex of the bytes — enables upload-time dedup
   }>;                         // 1–100 entries
   initial_tags ? : string[];    // ltree wire-form paths — assigned (manual) to deduplicated pictures
+  upload_label ? : string;      // single ltree label (`Uploaded_YYYY_MM_DD_HH_MM`), fixed per batch
+                              // by the front — tags the import (feature 15, see below)
 }
 ```
 
@@ -325,19 +327,26 @@ Array<{
   picture_id: string;          // new picture (for a fresh file) or the existing one (for a dedup)
   presigned_url: string | null; // PUT the bytes here; null when duplicate is true
   duplicate: boolean;          // true ⇒ the hash already matched an existing owned picture
+  was_deleted: boolean;        // true ⇒ the matched picture is in the trash (NOT auto-restored)
 }>
 ```
 
 **Deduplication.** When a file carries a `file_hash` that already matches one of the caller's
 **owned** pictures, that slot comes back with `duplicate: true`, a `null` `presigned_url`, and
 `picture_id` set to the existing picture — the client must **not** upload it. A matched picture that
-was **trashed** is restored (un-deleted), so re-uploading a photo the user had deleted brings it back
-instead of creating a fresh copy. Any `initial_tags` are assigned (as `manual` tags) to those
+was **trashed** comes back with `was_deleted: true` and is **not** un-deleted (feature 15); the client
+surfaces these and offers to restore them. Any `initial_tags` are assigned (as `manual` tags) to those
 existing pictures atomically, so re-uploading a photo still lands the user's intended tags on the
-copy they already hold. The pipeline is woken when a restore or a tag assignment happened. Dedup also
+copy they already hold. The pipeline is woken when a tag assignment happened. Dedup also
 applies **within a single batch**: two files sharing a hash (even when neither is in the DB yet) mint
 one slot — the later copies come back `duplicate: true` pointing at that first slot's `picture_id`.
 New (non-duplicate) files get a normal slot and receive their `initial_tags` later, on `complete`.
+
+**Import tagging (feature 15).** When `upload_label` is set, duplicates are tagged here:
+`<label>.AlreadyExisting` (live) or `<label>.AlreadyExisting.Deleted` (trashed). Brand-new files are
+tagged with the bare `<label>` on `complete`. The label must be a single ltree label (no `.`); the
+front fixes it once per batch so the whole import shares one date. The `<label>.AlreadyExisting.Deleted`
+tag is assigned even though the picture stays trashed, so the user can find and restore that subset.
 
 Use this for multi-file uploads to avoid N serial requests before any S3 PUT can begin. The complete step (step 3) is still called individually per
 file as each S3 upload finishes — do not wait for all files to finish before completing any.
@@ -363,6 +372,7 @@ the file's MIME type.
     exif_data ? : object;      // arbitrary EXIF key-value pairs
     captured_at ? : string;    // ISO 8601 datetime
     initial_tags ? : string[]; // ltree wire-form paths — assigned as manual tags atomically with picture creation
+    upload_label ? : string;   // single ltree label (`Uploaded_YYYY_MM_DD_HH_MM`) — also assigned as a manual tag (feature 15)
   defer_pipeline ? : boolean; // default false — when true, this completion does NOT wake the pipeline
 }
 ```
@@ -411,13 +421,13 @@ Paginated picture list.
 |---|---|---|---|
 | `page` | `number` | `1` | Page number (1-indexed) |
 | `page_size` | `number` | `50` | Items per page |
-| `sort` | `"captured_at" \| "ingested_at" \| "updated_at"` | `"ingested_at"` | Sort field |
+| `sort` | `"captured_at" \| "ingested_at" \| "updated_at" \| "file_size" \| "filename"` | `"ingested_at"` | Sort field. Ordering is stable (`NULLS LAST`, `id` tiebreaker) |
 | `order` | `"asc" \| "desc"` | `"desc"` | Sort direction |
-| `tag` | `string` | — | Filter by a single ltree tag path (dot-separated); convenience alias for one `include_tags` entry |
-| `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match` |
+| `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match`. For a single tag, pass one entry |
 | `exclude_tags` | `string` | — | Comma-separated ltree paths; reject the picture if it has any (inclusive) |
-| `match` | `"all" \| "any"` | `"all"` | Combinator over `include_tags` (`all` = AND, `any` = OR) |
-| `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. Mutually exclusive with `include_tags`/`exclude_tags` |
+| `exact` | `string` | — | Comma-separated ltree paths matched **exactly** (`tag_path = p`, no descendants) — strict tag navigation; combined with `include`/`exclude` per `match` |
+| `match` | `"all" \| "any"` | `"all"` | Combinator over `include_tags`/`exact` (`all` = AND, `any` = OR) |
+| `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. Mutually exclusive with `include_tags`/`exclude_tags`/`exact` |
 | `owned_only` | `boolean` | `false` | Only show pictures owned by this user |
 | `shared_with_me` | `boolean` | `false` | Only show pictures received via incoming shares |
 | `include_deleted` | `boolean` | `false` | Include soft-deleted pictures (trash view) |
@@ -444,7 +454,9 @@ interface PictureListItem {
     ingested_at: string;
     blurhash: string | null;
     orientation: number | null;    // EXIF orientation (1–8); thumbnails are raw pixels — the client rotates them
-    thumbnail_url: string | null;  // only when thumbnail query param is set
+    thumbnail_url: string | null;  // presigned URL for the `thumbnail` variant; null when that param
+                                   // is unset OR the picture has no generated thumbnail (pending, or
+                                   // a non-thumbnailable format like a PDF) — render a file-type icon
     owned: boolean;                // false for received (shared-to-me) pictures
     owner_username: string | null; // set when owned=false
     owner_instance: string | null; // global domain of the owning instance
@@ -527,7 +539,9 @@ Get a presigned download URL for a picture variant.
 
 ```ts
 {
-    url: string;
+    url: string | null;   // null for a thumbnail variant (small/medium/large) when the picture has
+                          // no generated thumbnail (pending, or non-thumbnailable). `original` is
+                          // always a URL.
     variant: PictureVariant;
 }
 ```
@@ -944,15 +958,17 @@ Fields: `captured_at` / `ingested_at` / `updated_at` (date), `gps_lat`/`gps_lng`
 Conditions by base type:
 
 - **int/float** — `eq`, `min`, `max` (combine `min`+`max` for a range)
-- **str** — `eq`, `eq_ic` (case-insensitive), `contains`, `starts_with`, `ends_with` (all
-  case-insensitive), `regex` (RE2, case-sensitive)
+- **str** — `eq`, `contains`, `starts_with`, `ends_with`, `regex` (RE2). All string comparisons are
+  **case-sensitive by default**; add a sibling `ignore_case: true` on the leaf to fold case (feature
+  15 — replaces the old `eq_ic` operator and the previously-implicit case-insensitivity of
+  `contains`/`starts_with`/`ends_with`)
 - **date** — `year`, `month` (1–12), `season` (`spring|summer|autumn|winter`),
   `date_range: {from, to}` (each bound `YYYY-MM-DD` for a full day, or `YYYY-MM-DDTHH:MM:SS` for a
   precise instant), `time_range: {from, to}` (`HH:MM`, may cross midnight)
 - **bool** — `eq`
 - **any nullable field** — `is_present: boolean`
 
-Example: `{"and": [{"field": "camera_brand", "eq_ic": "fujifilm"}, {"field": "iso_speed", "min": 100, "max": 800}]}`.
+Example: `{"and": [{"field": "camera_brand", "eq": "fujifilm", "ignore_case": true}, {"field": "iso_speed", "min": 100, "max": 800}]}`.
 
 ---
 
@@ -1581,7 +1597,8 @@ interface PictureSelection {
 
 ```ts
 type PictureFilter =
-  | { kind: "flat"; tag?: string; include_tags?: string[]; exclude_tags?: string[];
+  | { kind: "flat"; include_tags?: string[]; exclude_tags?: string[];
+      exact?: string[];  // exactly-matched paths (strict tag nav)
       match?: "all" | "any"; untagged?: boolean;
       // shared scope/date params:
       owned_only?: boolean; shared_with_me?: boolean; include_deleted?: boolean;

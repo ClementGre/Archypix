@@ -1,12 +1,12 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {AlertCircle, Check, CloudUpload, FileImage, Loader2, RotateCw, Tag as TagIcon, X} from 'lucide-react'
+import {AlertCircle, ArchiveRestore, Check, CloudUpload, FileImage, Loader2, RotateCw, Tag as TagIcon, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {useQueryClient} from '@tanstack/react-query'
 import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/components/ui/dialog'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {beginUploadBatch, completeUpload} from '@/api/pictures'
+import {beginUploadBatch, completeUpload, restorePicture} from '@/api/pictures'
 import {queryKeys} from '@/lib/constants'
 import {cn, TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
@@ -26,6 +26,8 @@ interface UploadItem {
     status: UploadStatus
     progress: number
     error?: string
+    /** Dedup hit on a trashed picture — surfaced so the user can restore them (feature 15). */
+    wasDeleted?: boolean
 }
 
 // Upload concurrency, and how many files we hash at once. Hashing buffers the whole file in
@@ -38,6 +40,16 @@ const HASH_CONCURRENCY = 4
 
 function fileKey(f: File): string {
     return `${f.name}:${f.size}:${f.lastModified}`
+}
+
+/**
+ * The per-batch import label (`Uploaded_YYYY_MM_DD_HH_MM`, local time) — fixed by the front so the
+ * whole batch shares one date (not the presign/complete time). The backend tags new uploads with it
+ * and already-existing duplicates with `<label>.AlreadyExisting[.Deleted]` (feature 15).
+ */
+function makeUploadLabel(d = new Date()): string {
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `Uploaded_${d.getFullYear()}_${p(d.getMonth() + 1)}_${p(d.getDate())}_${p(d.getHours())}_${p(d.getMinutes())}`
 }
 
 function formatBytes(bytes: number): string {
@@ -177,7 +189,11 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const [items, setItems] = useState<UploadItem[]>([])
     const [prepared, setPrepared] = useState(0)
     const [dropActive, setDropActive] = useState(false)
+    const [restoring, setRestoring] = useState(false)
+    const [restored, setRestored] = useState(false)
     const firstSuccess = useRef(false)
+    // The import label for the in-flight batch — fixed once at upload start so retries reuse it.
+    const uploadLabel = useRef('')
 
     // Seed files from parent (gallery drop zone)
     useEffect(() => {
@@ -196,6 +212,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             setPhase('idle')
             setItems([])
             setPrepared(0)
+            setRestored(false)
         }
     }, [open])
 
@@ -240,6 +257,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                     file_size: file.size,
                     file_hash: hash,
                     initial_tags: tags.length ? tags : undefined,
+                    upload_label: uploadLabel.current || undefined,
                 })
                 patchItem(key, {status: 'done', progress: 100})
                 if (!firstSuccess.current) {
@@ -269,6 +287,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
         const pending = files
         firstSuccess.current = false
+        uploadLabel.current = makeUploadLabel()
         setPrepared(0)
         setPhase('preparing')
 
@@ -276,12 +295,14 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         // deduplicate, and the per-file `complete` reuses it (no double hashing).
         const hashes = await hashAll(pending, setPrepared)
 
-        // Batch-presign all files at once, carrying hashes (for dedup) + tags (assigned to dups).
+        // Batch-presign all files at once, carrying hashes (for dedup) + tags (assigned to dups) +
+        // the import label (tags the duplicates AlreadyExisting[.Deleted]).
         let slots: Awaited<ReturnType<typeof beginUploadBatch>>
         try {
             slots = await beginUploadBatch(
                 pending.map((f, i) => ({filename: f.name, file_hash: hashes[i]})),
                 tags.length ? tags : undefined,
+                uploadLabel.current,
             )
         } catch (e) {
             toast.error(apiErrorMessage(e))
@@ -297,6 +318,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             hash: hashes[i],
             // Dedup hits are already settled server-side (tags assigned) — show them done immediately.
             status: slots[i].duplicate ? 'deduplicated' : 'pending',
+            wasDeleted: slots[i].was_deleted,
             progress: 100,
         }))
 
@@ -352,8 +374,26 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const errorCount = items.filter((i) => i.status === 'error').length
     const activeCount = items.filter((i) => i.status === 'uploading' || i.status === 'completing').length
     const failedItems = items.filter((i) => i.status === 'error')
+    // Already-existing duplicates, split into live vs trashed (the latter can be restored).
+    const existingCount = items.filter((i) => i.status === 'deduplicated' && !i.wasDeleted).length
+    const deletedItems = items.filter((i) => i.status === 'deduplicated' && i.wasDeleted)
     const isBusy = phase === 'preparing' || phase === 'uploading'
     const settledCount = doneCount + dedupCount + errorCount
+    const label = uploadLabel.current
+
+    const undeleteExisting = async () => {
+        if (!deletedItems.length || restoring) return
+        setRestoring(true)
+        try {
+            await Promise.all(deletedItems.map((it) => restorePicture(it.pictureId)))
+            setRestored(true)
+            invalidateAll()
+        } catch (e) {
+            toast.error(apiErrorMessage(e))
+        } finally {
+            setRestoring(false)
+        }
+    }
 
     const overallPct =
         phase === 'preparing'
@@ -422,6 +462,48 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                     <RotateCw className="h-3.5 w-3.5"/>
                                     Retry {errorCount} failed
                                 </Button>
+                            </div>
+                        )}
+
+                        {/* Import summary — what was tagged with the batch label (feature 15). */}
+                        {phase === 'complete' && (doneCount > 0 || dedupCount > 0) && (
+                            <div className="mt-2 space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                                {label && (
+                                    <p className="text-muted-foreground">
+                                        Tagged this import <span className="font-medium text-foreground">{TagPath.toDisplay(label)}</span>
+                                    </p>
+                                )}
+                                <ul className="space-y-0.5 text-muted-foreground">
+                                    {doneCount > 0 && (
+                                        <li>· {doneCount} uploaded → <span className="font-mono">{label}</span></li>
+                                    )}
+                                    {existingCount > 0 && (
+                                        <li>· {existingCount} already existed → <span className="font-mono">{label}/AlreadyExisting</span></li>
+                                    )}
+                                    {deletedItems.length > 0 && (
+                                        <li>· {deletedItems.length} of those were in the trash → <span className="font-mono">{label}/AlreadyExisting/Deleted</span></li>
+                                    )}
+                                    <li className="text-foreground">· {doneCount + dedupCount} total</li>
+                                </ul>
+                                {deletedItems.length > 0 && (
+                                    restored ? (
+                                        <p className="flex items-center gap-1 text-emerald-500">
+                                            <Check className="h-3.5 w-3.5"/>
+                                            Restored {deletedItems.length} from trash
+                                        </p>
+                                    ) : (
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="mt-1 h-7 gap-1.5 text-xs"
+                                            disabled={restoring}
+                                            onClick={undeleteExisting}
+                                        >
+                                            {restoring ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <ArchiveRestore className="h-3.5 w-3.5"/>}
+                                            Restore {deletedItems.length} deleted from trash
+                                        </Button>
+                                    )
+                                )}
                             </div>
                         )}
                     </div>

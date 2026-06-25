@@ -258,11 +258,11 @@ enum Condition {
     NumEq(f64),
     NumMin(f64),
     NumMax(f64),
-    StrEq(String),
-    StrEqIc(String),
-    StrContains(String),
-    StrStartsWith(String),
-    StrEndsWith(String),
+    // String conditions carry an `ignore_case` boolean
+    StrEq(String, bool),
+    StrContains(String, bool),
+    StrStartsWith(String, bool),
+    StrEndsWith(String, bool),
     StrRegex(regex::Regex),
     Year(i32),
     Month(u32),
@@ -276,6 +276,35 @@ enum Condition {
         to: NaiveTime,
     },
     BoolEq(bool),
+}
+
+/// String comparison kind, for the case-aware [`str_op`] helper.
+#[derive(Clone, Copy)]
+enum StrOp {
+    Eq,
+    Contains,
+    Starts,
+    Ends,
+}
+
+/// Apply a string comparison, optionally case-insensitively (Unicode lowercase fold).
+fn str_op(value: &str, needle: &str, ignore_case: bool, op: StrOp) -> bool {
+    if ignore_case {
+        let (v, n) = (value.to_lowercase(), needle.to_lowercase());
+        match op {
+            StrOp::Eq => v == n,
+            StrOp::Contains => v.contains(&n),
+            StrOp::Starts => v.starts_with(&n),
+            StrOp::Ends => v.ends_with(&n),
+        }
+    } else {
+        match op {
+            StrOp::Eq => value == needle,
+            StrOp::Contains => value.contains(needle),
+            StrOp::Starts => value.starts_with(needle),
+            StrOp::Ends => value.ends_with(needle),
+        }
+    }
 }
 
 impl Condition {
@@ -293,22 +322,18 @@ impl Condition {
             Condition::NumEq(n) => value.as_f64().map_or(false, |v| v == *n),
             Condition::NumMin(n) => value.as_f64().map_or(false, |v| v >= *n),
             Condition::NumMax(n) => value.as_f64().map_or(false, |v| v <= *n),
-            Condition::StrEq(s) => matches!(value, FieldValue::Str(Some(v)) if v == s),
-            Condition::StrEqIc(s) => {
-                matches!(value, FieldValue::Str(Some(v)) if v.eq_ignore_ascii_case(s))
+            Condition::StrEq(s, ic) => {
+                matches!(value, FieldValue::Str(Some(v)) if str_op(v, s, *ic, StrOp::Eq))
             }
-            Condition::StrContains(s) => matches!(
-                value,
-                FieldValue::Str(Some(v)) if v.to_lowercase().contains(&s.to_lowercase())
-            ),
-            Condition::StrStartsWith(s) => matches!(
-                value,
-                FieldValue::Str(Some(v)) if v.to_lowercase().starts_with(&s.to_lowercase())
-            ),
-            Condition::StrEndsWith(s) => matches!(
-                value,
-                FieldValue::Str(Some(v)) if v.to_lowercase().ends_with(&s.to_lowercase())
-            ),
+            Condition::StrContains(s, ic) => {
+                matches!(value, FieldValue::Str(Some(v)) if str_op(v, s, *ic, StrOp::Contains))
+            }
+            Condition::StrStartsWith(s, ic) => {
+                matches!(value, FieldValue::Str(Some(v)) if str_op(v, s, *ic, StrOp::Starts))
+            }
+            Condition::StrEndsWith(s, ic) => {
+                matches!(value, FieldValue::Str(Some(v)) if str_op(v, s, *ic, StrOp::Ends))
+            }
             Condition::StrRegex(re) => matches!(value, FieldValue::Str(Some(v)) if re.is_match(v)),
             Condition::Year(y) => matches!(value, FieldValue::Date(Some(d)) if d.year() == *y),
             Condition::Month(m) => matches!(value, FieldValue::Date(Some(d)) if d.month() == *m),
@@ -506,12 +531,20 @@ fn parse_field(
         Field::parse(name).ok_or_else(|| format!("{}: unknown field '{name}'", at(path)))?;
     let bt = field.base_type();
 
+    // `ignore_case` is a sibling flag (not a condition), applied to string conditions on this field.
+    let ignore_case = match obj.get("ignore_case") {
+        None => false,
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| format!("{}: 'ignore_case' must be a boolean", at(path)))?,
+    };
+
     let mut conds: Vec<Condition> = Vec::new();
     for (key, v) in obj {
-        if key == "field" {
+        if key == "field" || key == "ignore_case" {
             continue;
         }
-        let cond = parse_condition(field, bt, key, v, name, path)?;
+        let cond = parse_condition(field, bt, key, v, name, path, ignore_case)?;
         conds.push(cond);
     }
     if conds.is_empty() {
@@ -527,6 +560,7 @@ fn parse_condition(
     v: &Value,
     field_name: &str,
     path: &str,
+    ignore_case: bool,
 ) -> Result<Condition, String> {
     let unsupported = || {
         format!(
@@ -556,17 +590,24 @@ fn parse_condition(
         "max" if matches!(bt, BaseType::Int | BaseType::Float) => {
             Ok(Condition::NumMax(num_value(v, key, path)?))
         }
-        "eq" if bt == BaseType::Str => Ok(Condition::StrEq(str_value(v, key, path)?)),
-        "eq_ic" if bt == BaseType::Str => Ok(Condition::StrEqIc(str_value(v, key, path)?)),
-        "contains" if bt == BaseType::Str => Ok(Condition::StrContains(str_value(v, key, path)?)),
-        "starts_with" if bt == BaseType::Str => {
-            Ok(Condition::StrStartsWith(str_value(v, key, path)?))
+        "eq" if bt == BaseType::Str => {
+            Ok(Condition::StrEq(str_value(v, key, path)?, ignore_case))
         }
-        "ends_with" if bt == BaseType::Str => Ok(Condition::StrEndsWith(str_value(v, key, path)?)),
+        "contains" if bt == BaseType::Str => {
+            Ok(Condition::StrContains(str_value(v, key, path)?, ignore_case))
+        }
+        "starts_with" if bt == BaseType::Str => {
+            Ok(Condition::StrStartsWith(str_value(v, key, path)?, ignore_case))
+        }
+        "ends_with" if bt == BaseType::Str => {
+            Ok(Condition::StrEndsWith(str_value(v, key, path)?, ignore_case))
+        }
         "regex" if bt == BaseType::Str => {
             let pat = str_value(v, key, path)?;
-            let re =
-                regex::Regex::new(&pat).map_err(|e| format!("{}: invalid regex: {e}", at(path)))?;
+            let re = regex::RegexBuilder::new(&pat)
+                .case_insensitive(ignore_case)
+                .build()
+                .map_err(|e| format!("{}: invalid regex: {e}", at(path)))?;
             Ok(Condition::StrRegex(re))
         }
         "year" if bt == BaseType::Date => Ok(Condition::Year(int_value(v, key, path)? as i32)),
@@ -984,7 +1025,7 @@ mod tests {
             "and": [
                 {"field": "iso_speed", "min": 100, "max": 800},
                 {"or": [
-                    {"field": "camera_brand", "eq_ic": "fujifilm"},
+                    {"field": "camera_brand", "eq": "fujifilm", "ignore_case": true},
                     {"field": "camera_brand", "eq": "Canon"}
                 ]},
                 {"not": {"field": "is_owned", "eq": false}}
@@ -1081,13 +1122,25 @@ mod tests {
         );
 
         inp.camera_brand = Some("FUJIFILM".to_string());
+        // `ignore_case` flag folds case for any string condition (replaces the old `eq_ic`).
         assert!(
-            Predicate::parse(&json!({"field": "camera_brand", "eq_ic": "fujifilm"}))
+            Predicate::parse(&json!({"field": "camera_brand", "eq": "fujifilm", "ignore_case": true}))
+                .unwrap()
+                .matches(&inp)
+        );
+        // Case-sensitive by default now: lowercase needle does not match the uppercase value.
+        assert!(
+            !Predicate::parse(&json!({"field": "camera_brand", "contains": "fuji"}))
                 .unwrap()
                 .matches(&inp)
         );
         assert!(
-            Predicate::parse(&json!({"field": "camera_brand", "contains": "fuji"}))
+            Predicate::parse(&json!({"field": "camera_brand", "contains": "fuji", "ignore_case": true}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            Predicate::parse(&json!({"field": "camera_brand", "contains": "FUJI"}))
                 .unwrap()
                 .matches(&inp)
         );
@@ -1110,8 +1163,19 @@ mod tests {
     fn starts_with_ends_with() {
         let mut inp = blank_input();
         inp.filename = Some("IMG_0421.HEIC".to_string());
+        // Case-sensitive by default; `ignore_case` opts into folding.
         assert!(
-            Predicate::parse(&json!({"field": "filename", "starts_with": "img_"}))
+            !Predicate::parse(&json!({"field": "filename", "starts_with": "img_"}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            Predicate::parse(&json!({"field": "filename", "starts_with": "img_", "ignore_case": true}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            Predicate::parse(&json!({"field": "filename", "starts_with": "IMG_"}))
                 .unwrap()
                 .matches(&inp)
         );
@@ -1121,7 +1185,7 @@ mod tests {
                 .matches(&inp)
         );
         assert!(
-            Predicate::parse(&json!({"field": "filename", "ends_with": ".heic"}))
+            Predicate::parse(&json!({"field": "filename", "ends_with": ".heic", "ignore_case": true}))
                 .unwrap()
                 .matches(&inp)
         );

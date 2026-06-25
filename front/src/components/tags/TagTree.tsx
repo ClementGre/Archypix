@@ -1,6 +1,12 @@
-import {useEffect, useMemo, useRef, useState} from 'react'
+import {type MouseEvent, useEffect, useMemo, useRef, useState} from 'react'
 import {useQueryClient} from '@tanstack/react-query'
-import {ChevronRight, Hash, Images, Loader2} from 'lucide-react'
+import {Ban, Check, ChevronRight, Equal, Hash, Images, Loader2, MoreHorizontal, Plus} from 'lucide-react'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {useAllTags} from '@/hooks/useTags'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
@@ -11,6 +17,13 @@ interface TreeNode {
     label: string
     path: string // wire form
     children: TreeNode[]
+}
+
+/** Membership of a tag in the current compound filter. */
+interface TagState {
+    included: boolean
+    exact: boolean
+    excluded: boolean
 }
 
 function decodeLabel(label: string): string {
@@ -52,6 +65,55 @@ function ancestorsOf(path: string | null): Set<string> {
     return set
 }
 
+/** Per-tag include / include-exactly / exclude controls in a `…` menu (each a toggle). */
+function TagMenu({state, actions, path}: {
+    state: TagState
+    actions: TagActions
+    path: string
+}) {
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <button
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                    aria-label="Tag filter options"
+                >
+                    <MoreHorizontal className="h-3.5 w-3.5"/>
+                </button>
+            </DropdownMenuTrigger>
+            {/* The content is portaled but stays in the React tree under the row's onClick, so item
+                clicks would otherwise bubble to `pick` and reset the filter — stop them here. */}
+            <DropdownMenuContent align="start" className="w-44" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={() => actions.toggleInclude(path)}>
+                    <Plus className="mr-2 h-3.5 w-3.5"/>
+                    {state.included ? 'Remove include' : 'Include'}
+                    {state.included && <Check className="ml-auto h-3.5 w-3.5"/>}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => actions.toggleExact(path)}>
+                    <Equal className="mr-2 h-3.5 w-3.5"/>
+                    {state.exact ? 'Remove exact' : 'Include exactly'}
+                    {state.exact && <Check className="ml-auto h-3.5 w-3.5"/>}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => actions.toggleExclude(path)}>
+                    <Ban className="mr-2 h-3.5 w-3.5"/>
+                    {state.excluded ? 'Remove exclude' : 'Exclude'}
+                    {state.excluded && <Check className="ml-auto h-3.5 w-3.5"/>}
+                </DropdownMenuItem>
+            </DropdownMenuContent>
+        </DropdownMenu>
+    )
+}
+
+interface TagActions {
+    pick: (path: string) => void
+    quickToggleInclude: (path: string) => void
+    toggleInclude: (path: string) => void
+    toggleExact: (path: string) => void
+    toggleExclude: (path: string) => void
+    remove: (path: string) => void
+}
+
 function TreeRow({
                      node,
                      depth,
@@ -59,7 +121,8 @@ function TreeRow({
                      activeRef,
                      expanded,
                      toggle,
-                     onPick,
+                     stateOf,
+                     actions,
                  }: {
     node: TreeNode
     depth: number
@@ -67,28 +130,38 @@ function TreeRow({
     activeRef: (el: HTMLDivElement | null) => void
     expanded: Set<string>
     toggle: (path: string) => void
-    onPick: (path: string) => void
+    stateOf: (path: string) => TagState
+    actions: TagActions
 }) {
     const hasChildren = node.children.length > 0
     const isOpen = expanded.has(node.path)
     const isActive = activeTag === node.path
+    const st = stateOf(node.path)
 
     return (
         <div>
             <div
                 ref={isActive ? activeRef : undefined}
-                onClick={() => onPick(node.path)}
+                onClick={(e: MouseEvent) => {
+                    // ⌘/Ctrl-click quick-toggles this tag in the include set (build "X and Y" fast).
+                    if (e.metaKey || e.ctrlKey) actions.quickToggleInclude(node.path)
+                    else actions.pick(node.path)
+                }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        onPick(node.path)
+                        actions.pick(node.path)
                     }
                 }}
                 className={cn(
-                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-2 text-sm',
-                    isActive ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted',
+                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-1 text-sm',
+                    st.excluded
+                        ? 'text-destructive/80 line-through'
+                        : st.included || st.exact
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-foreground hover:bg-muted',
                 )}
                 style={{paddingLeft: depth * 12 + 4}}
             >
@@ -103,9 +176,16 @@ function TreeRow({
                     <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90')}/>
                 </button>
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                    <Hash className="h-3.5 w-3.5 shrink-0 opacity-60"/>
+                    {st.exact ? (
+                        <Equal className="h-3.5 w-3.5 shrink-0 opacity-70" aria-label="exact"/>
+                    ) : st.excluded ? (
+                        <Ban className="h-3.5 w-3.5 shrink-0 opacity-70" aria-label="excluded"/>
+                    ) : (
+                        <Hash className="h-3.5 w-3.5 shrink-0 opacity-60"/>
+                    )}
                     <span className="truncate">{node.label}</span>
                 </div>
+                <TagMenu state={st} actions={actions} path={node.path}/>
             </div>
             {hasChildren && isOpen && (
                 <div>
@@ -118,7 +198,8 @@ function TreeRow({
                             activeRef={activeRef}
                             expanded={expanded}
                             toggle={toggle}
-                            onPick={onPick}
+                            stateOf={stateOf}
+                            actions={actions}
                         />
                     ))}
                 </div>
@@ -165,20 +246,77 @@ export function TagTree() {
         if (params.tag) activeRowRef.current?.scrollIntoView({block: 'nearest'})
     }, [params.tag, expanded])
 
-    // Picking a tag exits any active hierarchy view — filtering by a tag inside a
-    // hierarchy directory is confusing, so clear the hierarchy params.
-    const pick = (path: string) => {
-        refreshTags()
-        update({tag: path, hierarchy: null, hpath: ''})
+    const without = (arr: string[], p: string) => arr.filter((x) => x !== p)
+
+    const stateOf = (path: string): TagState => ({
+        included: params.tag === path || params.include.includes(path),
+        exact: params.exact.includes(path),
+        excluded: params.exclude.includes(path),
+    })
+
+    const actions: TagActions = {
+        // Plain click filters by this tag alone (replaces any compound filter), exiting hierarchies.
+        pick: (path) => {
+            refreshTags()
+            update({tag: path, include: [], exclude: [], exact: [], hierarchy: null, hpath: ''})
+        },
+        quickToggleInclude: (path) => {
+            const {included} = stateOf(path)
+            if (included) actions.remove(path)
+            else actions.toggleInclude(path)
+        },
+        toggleInclude: (path) => {
+            refreshTags()
+            const {included, exact} = stateOf(path)
+            if (included && !exact) return actions.remove(path)
+            // Adopt as an extra include; the primary `tag` stays as-is.
+            if (params.tag === path) return
+            update({
+                include: [...new Set([...params.include, path])],
+                exact: without(params.exact, path),
+                exclude: without(params.exclude, path),
+            })
+        },
+        toggleExact: (path) => {
+            refreshTags()
+            if (params.exact.includes(path)) return actions.remove(path)
+            update({
+                tag: params.tag === path ? null : params.tag,
+                exact: [...new Set([...params.exact, path])],
+                include: without(params.include, path),
+                exclude: without(params.exclude, path),
+            })
+        },
+        toggleExclude: (path) => {
+            refreshTags()
+            if (params.exclude.includes(path)) return actions.remove(path)
+            update({
+                tag: params.tag === path ? null : params.tag,
+                exclude: [...new Set([...params.exclude, path])],
+                include: without(params.include, path),
+                exact: without(params.exact, path),
+            })
+        },
+        remove: (path) => {
+            refreshTags()
+            update({
+                tag: params.tag === path ? null : params.tag,
+                include: without(params.include, path),
+                exclude: without(params.exclude, path),
+                exact: without(params.exact, path),
+            })
+        },
     }
+
+    const noFilter = !params.tag && !params.include.length && !params.exact.length && !params.exclude.length
 
     return (
         <div className="flex h-full flex-col">
             <button
-                onClick={() => update({tag: null, hierarchy: null, hpath: ''})}
+                onClick={() => update({tag: null, include: [], exclude: [], exact: [], hierarchy: null, hpath: ''})}
                 className={cn(
                     'mx-2 mt-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
-                    !params.tag ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',
+                    noFilter ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',
                 )}
             >
                 <Images className="h-4 w-4"/>
@@ -204,7 +342,8 @@ export function TagTree() {
                         activeRef={(el) => (activeRowRef.current = el)}
                         expanded={expanded}
                         toggle={toggle}
-                        onPick={pick}
+                        stateOf={stateOf}
+                        actions={actions}
                     />
                 ))}
             </div>

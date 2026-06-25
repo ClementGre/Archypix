@@ -99,23 +99,55 @@ impl TagRepository {
     ///
     /// Must be called within a transaction together with `batch_remove` so that the overall
     /// remove-then-add is atomic.
-    #[tracing::instrument(skip(ex, picture_ids, tags), fields(user_id = %local_user_id))]
     pub async fn batch_assign<'e, E>(
         ex: E,
         local_user_id: Uuid,
         picture_ids: &[Uuid],
         tags: &[String],
-    ) -> Result<(), AppError>
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        Self::assign_inner(ex, local_user_id, picture_ids, tags, false).await
+    }
+
+    /// Like [`batch_assign`](Self::batch_assign) but also tags soft-deleted (trashed) pictures.
+    /// Used by the upload flow to tag already-existing-and-deleted duplicates (feature 15) so the
+    /// user can find and restore them.
+    #[tracing::instrument(skip(ex, picture_ids, tags), fields(user_id = %local_user_id))]
+    pub async fn batch_assign_including_deleted<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        picture_ids: &[Uuid],
+        tags: &[String],
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        Self::assign_inner(ex, local_user_id, picture_ids, tags, true).await
+    }
+
+    /// Shared implementation. Returns the number of tag rows actually inserted (0 ⇒ every tag was
+    /// already present), which callers use to tell "newly tagged" from a no-op (e.g. WebDAV PUT).
+    #[tracing::instrument(skip(ex, picture_ids, tags), fields(user_id = %local_user_id))]
+    async fn assign_inner<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        picture_ids: &[Uuid],
+        tags: &[String],
+        include_deleted: bool,
+    ) -> Result<u64, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
         if tags.is_empty() || picture_ids.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         // Data-modifying CTE: cleanup (remove proper ancestors) + insert (only deepest).
         // `tag_path @> t AND tag_path <> t` = strict ancestor of t → remove it (redundant).
         // NOT EXISTS (deeper descendant) = this tag is the deepest in the input list.
-        sqlx::query!(
+        // `$4` lets the upload flow also tag soft-deleted pictures.
+        let res = sqlx::query!(
             r#"WITH cleanup AS (
                  DELETE FROM tags
                  WHERE picture_id = ANY($1::uuid[])
@@ -123,14 +155,15 @@ impl TagRepository {
                    AND NOT (tag_path = ANY($3::ltree[]))
                    AND source = 'manual'::tag_source
                    AND picture_id IN (
-                     SELECT id FROM pictures WHERE local_user_id = $2 AND deleted_at IS NULL
+                     SELECT id FROM pictures
+                     WHERE local_user_id = $2 AND ($4 OR deleted_at IS NULL)
                    )
                )
                INSERT INTO tags (picture_id, tag_path, source)
                SELECT p.id, filtered.tag::ltree, 'manual'::tag_source
                FROM (
                  SELECT id FROM pictures
-                 WHERE id = ANY($1::uuid[]) AND local_user_id = $2 AND deleted_at IS NULL
+                 WHERE id = ANY($1::uuid[]) AND local_user_id = $2 AND ($4 OR deleted_at IS NULL)
                ) AS p
                CROSS JOIN (
                  SELECT t AS tag FROM unnest($3::text[]) AS t
@@ -150,11 +183,12 @@ impl TagRepository {
             picture_ids as &[Uuid],
             local_user_id,
             tags as &[String],
+            include_deleted,
         )
         .execute(ex)
         .await
         .map_err(map_sqlx_error)?;
-        Ok(())
+        Ok(res.rows_affected())
     }
 
     /// Remove tags (and all their subtags) from all pictures in the batch.

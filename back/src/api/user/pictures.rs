@@ -52,16 +52,22 @@ pub struct BatchCreateUploadRequest {
     /// equivalent of `complete`'s `initial_tags` for files the user already holds.
     #[serde(default)]
     pub initial_tags: Option<Vec<String>>,
+    /// Front-provided import label (`Uploaded_YYYY_MM_DD_HH_MM`, fixed per batch). Duplicates are
+    /// tagged with the `AlreadyExisting`[`.Deleted`] marker here (feature 15).
+    #[serde(default)]
+    pub upload_label: Option<String>,
 }
 
 /// One requested slot in a batch presign response. For a fresh file `presigned_url` is set and
 /// `duplicate` is `false`; for a dedup hit `presigned_url` is `null`, `duplicate` is `true`, and
-/// `picture_id` is the existing picture the bytes already match.
+/// `picture_id` is the existing picture the bytes already match. `was_deleted` is `true` when the
+/// matched picture is in the user's trash (it is **not** auto-restored — feature 15).
 #[derive(Debug, Serialize)]
 pub struct BatchUploadSlotResponse {
     pub picture_id: Uuid,
     pub presigned_url: Option<String>,
     pub duplicate: bool,
+    pub was_deleted: bool,
 }
 
 #[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
@@ -71,8 +77,8 @@ pub async fn batch_create_upload(
     Json(payload): Json<BatchCreateUploadRequest>,
 ) -> Result<Json<Vec<BatchUploadSlotResponse>>, AppError> {
     let initial_tags = payload.initial_tags.unwrap_or_default();
-    // The service handles dedup-target side effects (restore trashed targets, tag them) and wakes
-    // the pipeline itself when any of that happened.
+    // The service handles dedup-target side effects (tag existing/deleted duplicates) and wakes the
+    // pipeline itself when any of that happened.
     let results = services::pictures::begin_upload_batch(
         &state.db,
         state.cache.as_ref(),
@@ -81,6 +87,7 @@ pub async fn batch_create_upload(
         auth.user_id()?,
         &payload.files,
         &initial_tags,
+        payload.upload_label.as_deref(),
         &state.pipeline_waker,
     )
     .await?;
@@ -96,11 +103,16 @@ pub async fn batch_create_upload(
                     picture_id,
                     presigned_url: Some(presigned_url),
                     duplicate: false,
+                    was_deleted: false,
                 },
-                BatchUploadOutcome::Duplicate { picture_id } => BatchUploadSlotResponse {
+                BatchUploadOutcome::Duplicate {
+                    picture_id,
+                    was_deleted,
+                } => BatchUploadSlotResponse {
                     picture_id,
                     presigned_url: None,
                     duplicate: true,
+                    was_deleted,
                 },
             })
             .collect(),

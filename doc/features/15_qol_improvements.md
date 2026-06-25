@@ -28,6 +28,12 @@
 
 
 ## Frontend UX that affects a bit of the back
+> **Status (2026-06-25): implemented.** Decisions taken: per-tag include / include-exactly / exclude
+> via a `…` menu (+ ⌘/Ctrl-click quick include); strict navigation is the per-tag "Include exactly"
+> action only (no separate global toggle); the import auto-tag applies to every upload as specced and
+> the trashed duplicates are no longer auto-restored (the front offers a restore button). The rule
+> `eq_ic` operator is replaced by a per-string-condition `ignore_case` flag (migrated via 0004).
+
 - Tags navigation features:
   - Add strict tag navigation : add a button on tags or a toggle or grouped buttons or something in the sidebar allowing to switch to a strict tag navigation : requiring tag Event requires to have only the tag even and not any descendant. This would require to add the `pub exact: Vec<TagPath>,` param to the list endpoint and insert in to the predicate.
   - mmore features in the tag sidebar: When one tag is selected, when hovering others tags in the sidebar (or an equivalent for mobile), there should appear buttons for requiring and excluding these tags. Then we can easily request to view all pictures with tag x that do not have the tag y, or pictures with tag x and y, etc.
@@ -36,15 +42,19 @@
 - In Query tagging rules, instead of having equals and equals ignore case, add all comparaison types with no case (starts with, ends with, contains, equals), and insert a checkbox at the end "ignore case". This will require back to update the data model of rules.
 
 ## Strange edge cases that do not occur always
+> **Status (2026-06-25): implemented.** Grid dedups infinite-scroll pages by id; the sidebar preview
+> clamps + clips its box so 16:9 images can't overflow; WebDAV PUT returns `201 Created` when an
+> existing picture is newly added to a directory (gains the tag) and `204 No Content` only on a true
+> no-op.
+
 - When scrolling for a long time, some already-seen photos reappears. If they were selected on top, their duplicate is selected too.
 - The sidebar image preview is broken on 16:9 images : they take full height and their right part overflows left (not visible).
 - Existing picture added in directory behaves strangely (foldersync error) while new uploads are ok. This might be due to the fact of returning StatusCode::NO_CONTENT. When the picture already existed but had not the tag yet (was not in this dir), we should maybe tell the client that is was a normal upload.
 
 ## New complex features
 - Auto year tagging
-- Navigation between tags and hierarchy is messy
 - Hierarchies :
   - When the write back master switch is off, all queries should have writeback blocked at off. Writeback option should be available in the advanced features for each node. For queries, it should have all the currently configurable options. For static, it should be disabled with a hover message explaining that static can’t be written into (if subnodes inherit their writeback from the static and not from the root, it could remain configurable), and mirror should have it too, and drop directories should have it on, non-desactivable.   
   - Write back on Untagged pictures query: untagged pictures queries should be able to have writeback enabled
   - Drop directory as a specific node: a dir that accepts any upload but that returns no content in its propfind.
-  - Don’t refuse the deletion of a directory if this directory is empty or if it is a drop directory node: some webdav clients delete empty dirs and it should not fail.
+  - Don't refuse the deletion of a directory if this directory is empty or if it is a drop directory node: some webdav clients delete empty dirs and it should not fail. **(Done 2026-06-25:** `Vfs::delete` accepts an empty directory as a no-op success — a hierarchy dir is virtual, so there's nothing to remove — and refuses a non-empty one with `409 Conflict`. A drop-directory node lists empty by design, so the same check will cover it once that node type lands.**)**

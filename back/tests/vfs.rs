@@ -519,8 +519,8 @@ async fn put_dedupe_existing_hash_retags_without_new_picture(db: PgPool) {
     .await
     .unwrap();
     assert!(
-        !created,
-        "hash hit on a live picture is a retag, not a new resource"
+        created,
+        "hash hit on a live picture is a retag, but is a new resource for the webdav client"
     );
 
     let after: i64 = sqlx::query_scalar!(
@@ -788,6 +788,42 @@ async fn delete_single_branch_conflicts_on_non_manual_tag(db: PgPool) {
     assert!(
         matches!(err, archypix_back::infra::error::AppError::Conflict(_)),
         "expected 409 when a service still asserts the tag, got {err:?}"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn delete_empty_directory_is_noop_but_nonempty_conflicts(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    // A picture under Photos/Travel makes the mirror's `Photos` directory non-empty.
+    seed_full_picture(
+        &state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"bytes",
+        "Photos.Travel",
+    )
+    .await;
+    let cfg = serde_json::json!({
+        "safeDeleteMode": "singleBranch",
+        "nodes": [
+            {"id": "n1", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true},
+            {"id": "n2", "kind": "static", "name": "Empty"}
+        ]
+    });
+    let h = make_hierarchy(&state.db, user, cfg).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    // An empty (static) directory deletes as a no-op — sync clients clean up empty dirs and that
+    // must not fail (it stores nothing of its own).
+    vfs.delete(&seg(&["Empty"])).await.unwrap();
+
+    // A non-empty directory (Photos has the Travel child) is refused with 409.
+    let err = vfs.delete(&seg(&["Photos"])).await.unwrap_err();
+    assert!(
+        matches!(err, archypix_back::infra::error::AppError::Conflict(_)),
+        "non-empty directory delete should 409, got {err:?}"
     );
 }
 

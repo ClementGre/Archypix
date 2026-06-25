@@ -189,7 +189,7 @@ async fn pipeline_evaluates_composed_exif_predicate(db: PgPool) {
     // (Fujifilm, case-insensitive) AND ISO in [100, 800] AND summer AND exposure ≥ 0.5 s.
     let predicate = serde_json::json!({
         "and": [
-            {"field": "camera_brand", "eq_ic": "fujifilm"},
+            {"field": "camera_brand", "eq": "fujifilm", "ignore_case": true},
             {"field": "iso_speed", "min": 100, "max": 800},
             {"field": "captured_at", "season": "summer"},
             {"field": "exposure_time", "min": 0.5}

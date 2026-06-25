@@ -8,6 +8,12 @@ export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
 /** Decoded view of the gallery's URL state. */
 export interface GalleryParams {
     tag: string | null
+    /** Additional include tags (wire form) layered on `tag` via the sidebar menu (`inc`). */
+    include: string[]
+    /** Exclude tags (wire form) (`exc`). */
+    exclude: string[]
+    /** Exact / strict include tags (wire form), no descendants (`exa`). */
+    exact: string[]
     scope: Scope
     includeDeleted: boolean
     sort: SortField
@@ -28,6 +34,9 @@ export interface GalleryParams {
 /** Patch applied to the URL state; omitted keys are left unchanged. */
 export interface GalleryParamsPatch {
     tag?: string | null
+    include?: string[]
+    exclude?: string[]
+    exact?: string[]
     scope?: Scope
     includeDeleted?: boolean
     sort?: SortField
@@ -41,8 +50,14 @@ export interface GalleryParamsPatch {
     hedit?: string | null
 }
 
-const DEFAULT_SORT: SortField = 'ingested_at'
+const DEFAULT_SORT: SortField = 'captured_at'
 const DEFAULT_ORDER: SortOrder = 'desc'
+
+/** Decode a comma-separated URL list into a trimmed, non-empty array. */
+const splitList = (raw: string | null): string[] =>
+    raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []
+/** Encode an array back to a comma list (or `null` to drop the param when empty). */
+const joinList = (xs: string[] | undefined): string | null => (xs && xs.length ? xs.join(',') : null)
 
 /**
  * Single source of truth for the gallery view: all filters, sort, search query
@@ -55,6 +70,9 @@ export function useGalleryParams() {
     const params: GalleryParams = useMemo(
         () => ({
             tag: sp.get('tag'),
+            include: splitList(sp.get('inc')),
+            exclude: splitList(sp.get('exc')),
+            exact: splitList(sp.get('exa')),
             scope: (sp.get('scope') as Scope) || 'all',
             includeDeleted: sp.get('deleted') === '1',
             sort: (sp.get('sort') as SortField) || DEFAULT_SORT,
@@ -80,6 +98,9 @@ export function useGalleryParams() {
                         else next.set(key, value)
                     }
                     if ('tag' in patch) setOrDelete('tag', patch.tag, false)
+                    if ('include' in patch) setOrDelete('inc', joinList(patch.include), false)
+                    if ('exclude' in patch) setOrDelete('exc', joinList(patch.exclude), false)
+                    if ('exact' in patch) setOrDelete('exa', joinList(patch.exact), false)
                     if ('scope' in patch) setOrDelete('scope', patch.scope, patch.scope === 'all')
                     if ('includeDeleted' in patch) setOrDelete('deleted', patch.includeDeleted ? '1' : '', false)
                     if ('sort' in patch) setOrDelete('sort', patch.sort, patch.sort === DEFAULT_SORT)
@@ -103,6 +124,9 @@ export function useGalleryParams() {
         update(
             {
                 tag: null,
+                include: [],
+                exclude: [],
+                exact: [],
                 scope: 'all',
                 includeDeleted: false,
                 sort: DEFAULT_SORT,
@@ -117,6 +141,9 @@ export function useGalleryParams() {
     const filters: PictureFilters = useMemo(
         () => ({
             tag: params.tag,
+            include: params.include,
+            exclude: params.exclude,
+            exact: params.exact,
             scope: params.scope,
             includeDeleted: params.includeDeleted,
             sort: params.sort,
@@ -129,6 +156,9 @@ export function useGalleryParams() {
 
     const hasActiveFilters =
         !!params.tag ||
+        params.include.length > 0 ||
+        params.exclude.length > 0 ||
+        params.exact.length > 0 ||
         params.scope !== 'all' ||
         params.includeDeleted ||
         !!params.capturedAfter ||
@@ -147,7 +177,16 @@ export function useGalleryParams() {
         if (params.hierarchy) {
             return {kind: 'hierarchy', hierarchy_id: params.hierarchy, path: params.hpath, ...scope}
         }
-        return {kind: 'flat', tag: params.tag ?? undefined, ...scope}
+        // `tag` is the primary include; the sidebar menu layers extra include/exclude/exact tags.
+        const include = [...(params.tag ? [params.tag] : []), ...params.include]
+        return {
+            kind: 'flat',
+            include_tags: include.length ? include : undefined,
+            exclude_tags: params.exclude.length ? params.exclude : undefined,
+            exact: params.exact.length ? params.exact : undefined,
+            match: 'all',
+            ...scope,
+        }
     }, [params])
 
     return {params, filters, update, clearFilters, hasActiveFilters, selectionFilter}

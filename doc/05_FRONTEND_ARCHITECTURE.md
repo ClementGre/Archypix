@@ -114,10 +114,11 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 
 | Param              | Meaning                                                                              |
 |--------------------|--------------------------------------------------------------------------------------|
-| `tag`              | active tag filter (wire form)                                                        |
+| `tag`              | active (primary) tag filter (wire form) — set by a plain tag click                   |
+| `inc` / `exc` / `exa` | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu |
 | `scope`            | `all` \| `owned` \| `shared`                                                         |
 | `deleted`          | include trashed (`1`)                                                                |
-| `sort`             | `ingested_at` \| `captured_at` \| `updated_at`                                       |
+| `sort`             | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` |
 | `order`            | `asc` \| `desc`                                                                      |
 | `after` / `before` | capture-date bounds (ISO)                                                            |
 | `panel`            | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                 |
@@ -172,8 +173,11 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop; sits on a **`.bg-checkerboard`** backdrop (see §9) and
 **fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
 (render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
-(loading placeholder only — faded out on load), `FilterControls` (sort + filters dropdown — scope folded into Filters,
-**funnel `Filter` icon**; rendered inside `TopBar`), `Lightbox` (full-screen carousel driven by the `view` param;
+(loading placeholder only — faded out on load), `FilterControls` (**Sort** + **Filters** dropdowns; rendered inside `TopBar`.
+Sort offers Date taken / added / modified, File size, Name — default **Date taken** (`captured_at`); Filters folds in scope, Include-trashed,
+and a **capture-date range** using the shared `DateRangePicker` calendar — no tag chips here, those live in the centre `TagFilterBar`),
+`TagFilterBar` (`components/tags/`, a breadcrumb-style bar atop the flat grid showing the active include / `=`-exact / `⦸`-exclude tags as chips,
+each with a switch-include↔exact control + remove, plus Clear), `Lightbox` (full-screen carousel driven by the `view` param;
 ←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
 instead of closing**, only closing when no picture remains;
@@ -242,10 +246,12 @@ in a large modal `Dialog`), and **favourite locations** — saved points (localS
 shown as star pins (click to centre the pin/rect/circle on them), saved via the ★ control and renamed inline (default
 name = coordinates).
 
-**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; click sets the `tag` filter and **clears any active `hierarchy`/`hpath`** so the tag
-filters the flat gallery rather than the current hierarchy directory; auto-expands ancestors of the active tag and scrolls it
-into
-view when it changes externally), `TagPicker` (autocomplete over existing tags + create-new; `allowProtected` prop — see §9; optional `trigger` prop
+**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; a plain click sets the `tag` filter as the sole include and **clears any compound
+filter + active `hierarchy`/`hpath`**; auto-expands ancestors of the active tag and scrolls it into view when it changes externally. Each row has a
+**`…` menu** with toggle actions **Include / Include exactly / Exclude** (writing the `inc`/`exa`/`exc` params), and **⌘/Ctrl-click** quick-toggles a
+tag in the include set to build "X and Y" fast; "Include exactly" is the strict/no-descendant mode (backend `exact`). The tree only **highlights**
+rows by state — emerald (included/exact, `=` icon) or struck-through red (excluded, `⦸` icon); the active filter itself is surfaced in the centre
+`TagFilterBar` breadcrumb (not in the tree)), `TagPicker` (autocomplete over existing tags + create-new; `allowProtected` prop — see §9; optional `trigger` prop
 to
 render a custom trigger, e.g. the small **+** button in the details-panel Tags section header. Each list row carries a **›** button (and **Tab**
 autocompletes the highlighted tag) that fills the field with `<tag>/` so the user can append a child without retyping — e.g. autocomplete `/Event`
@@ -266,7 +272,7 @@ AND/OR/NOT block composer where **a single root @dnd-kit `DndContext` lets you d
 group, into a sibling group) as well as reorder within one; field-condition leaves pick a field via a **grouped,
 searchable `FieldPicker`** (Dates / Camera / Location / File / Ownership) + a type-aware operator/value (numbers use the
 `NumberInput` stepper component; **is set** / **is not set** are two distinct operators with no value field — both serialize to the `is_present`
-leaf), date conditions use the shared `DateRangePicker` (datetime), and GPS leaves open
+leaf; string comparisons carry an **ignore case** checkbox → the `ignore_case` sibling flag, replacing the old `eq_ic` operator), date conditions use the shared `DateRangePicker` (datetime), and GPS leaves open
 `MapZonePopover` (rectangle/circle on a real map). Existing rules are **editable inline** (hydrated via
 `lib/predicate.ts:deserialize`) and **drag-reorderable** (persisted via `POST …/rules/reorder`). Predicate model +
 serialize/deserialize/describe + tree-move helpers live in `lib/predicate.ts`. **Every service (rule / segmentation /
@@ -356,6 +362,10 @@ mobile) and shown only when its `ui` store toggle is on:
 
 ## 9. Key behaviours & gotchas
 
+- **No-thumbnail fallback:** the backend returns `thumbnail_url` / the `/url` `url` as **`null`** for a thumbnail variant when the picture has no
+  generated thumbnail (pending, or a non-thumbnailable format like a PDF/video) — never a fake/404 URL. The client renders a **`FileTypeIcon`**
+  (`components/photos/`, a lucide icon picked from MIME or filename extension) instead: in the grid (`PhotoCard`), the sidebar preview, and the
+  `Lightbox` ("No preview available — use Download"). `getPictureUrl` returns `url: string | null` accordingly (`original` is always a URL).
 - **Thumbnails & adaptive sizing:** list items carry a presigned thumbnail URL (no per-card round-trip). The requested variant is **sized to how the
   picture is displayed** via `variantForSize(cssPx)` (`lib/utils.ts` — maps a **logical** display height to the worker's variant heights small=100 /
   medium=500 / large=1000, with thresholds `≤150 → small`, `≤350 → medium`, else `large`; **no `devicePixelRatio` multiplier** — slight upscaling on
@@ -391,14 +401,22 @@ mobile) and shown only when its `ui` store toggle is on:
   `/trash` page fetches `include_deleted` and client-filters to `deleted_at != null`.
 - **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates at display time using
   `orientedCoverStyle` (absolute positioning + CSS transform; sets `max-w-none` to escape Tailwind's `img { max-width: 100% }` which otherwise
-  collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container. The sidebar preview uses the live draft
-  orientation for instant feedback on rotate clicks.
+  collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container — it measures its box (seeding from
+  `clientWidth` on mount, then a `ResizeObserver`), **clamps the computed image box to the available width/height**, and clips (`overflow-hidden`) so a
+  wide (16:9) sidebar preview can never overflow its panel. The sidebar preview uses the live draft
+  orientation for instant feedback on rotate clicks. It also takes an optional **`blurhash`** placeholder
+  rendered behind the image (faded out on load) and shown on its own while `src` is still absent — the
+  **Lightbox** passes the picture's blurhash so it shows immediately, before the `large` URL and image
+  arrive, instead of a blank/spinner.
+- **Infinite-scroll dedup:** `PhotoGrid` dedups the flattened pages by `id` before rendering — as new pictures shift pagination, consecutive pages can
+  re-emit an already-seen item, which would otherwise render a duplicate card (and look doubly-selected if it was selected).
 - **Single mapping per share:** `useShareMappings.addMapping` deletes any existing mapping first; the tagging `MappingEditor` hides already-mapped
   shares.
 - **Cross-links:** right-panel tag → sets the `tag` filter; a provenance source badge → `/tagging/:source_id` (or `panel=incoming` + `share` highlight
   for an `incoming_share` source); a "Shared with you" tag → `tag` filter + `panel=incoming` + highlights the matching card in `IncomingSharesList`.
 - **Search:** there is **no free-text/filename search** (a client-side filename filter was removed as misleading — it only matched already-loaded
-  items). The capture-date range filter has a reserved slot in the Filters menu but is not built yet.
+  items). The **capture-date range** filter lives in the Filters menu (shared `DateRangePicker`, `date` mode); the picker works in `YYYY-MM-DD` and
+  `FilterControls` maps the bounds to RFC3339 UTC (`T00:00:00Z` / `T23:59:59Z`) for the `captured_after`/`captured_before` wire params.
 - **Gallery selection (touch vs desktop):** desktop uses click (single) / ⌘-click (toggle) / shift-click (range). Touch has no modifier keys, so
   `PhotoCard` detects a **long-press** (`450 ms`, cancelled if the finger moves > `10 px` so scrolling still works) that enters
   `selection.multiSelect` mode via `enterMultiSelect`; while it is on, a plain tap **toggles** a photo (and the selection circle shows on every card)
@@ -434,13 +452,17 @@ mobile) and shown only when its `ui` store toggle is on:
   `initial_tags`) for **upload-time dedup**: a slot that
   comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check** ("Already in
   your
-  library") and the backend has already assigned the initial tags to the existing picture. Non-duplicate files upload to S3 in parallel (max 4
+  library") and the backend has already assigned the initial tags to the existing picture. The batch also carries a front-fixed import label
+  (`makeUploadLabel()` → `Uploaded_YYYY_MM_DD_HH_MM`, one date for the whole batch): the backend tags new uploads `Uploaded_…` and duplicates
+  `Uploaded_….AlreadyExisting[.Deleted]` (feature 15). Trashed duplicates are **no longer auto-restored** — they come back `was_deleted: true`, and the
+  completion screen shows an **import summary** (how many uploaded / already-existed / were-in-trash, each with its tag, plus a total) and a **Restore N
+  deleted from trash** button (`restorePicture` per id). Non-duplicate files upload to S3 in parallel (max 4
   concurrent, via `XMLHttpRequest` for per-file progress, reusing the up-front hash as `file_hash`) and call `POST /uploads/{id}/complete` immediately
-  per file as its S3 PUT finishes — not after all files; `initial_tags` are passed on the complete body and assigned atomically server-side. The
-  backend
+  per file as its S3 PUT finishes — not after all files; `initial_tags` + `upload_label` are passed on the complete body and assigned atomically
+  server-side. The backend
   wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping. An
   **overall progress bar + status line sit above the scrollable file list** (always visible, no scrolling to find them); failed (network-errored) items
-  carry a per-row **Retry** and the completion summary offers **Retry N failed** (both reuse the same per-slot run). Pictures **and tags** queries are
+  carry a per-row **Retry** and the completion summary offers **Retry N failed** (both reuse the same per-slot run, and the fixed import label). Pictures **and tags** queries are
   invalidated when uploads settle, then **again ~1.5 s later** (uploaded pictures may pick up pipeline tags that land asynchronously).
 
 ---

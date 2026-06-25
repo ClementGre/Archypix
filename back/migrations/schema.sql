@@ -522,6 +522,10 @@ CREATE INDEX idx_pictures_pipeline ON public.pictures USING btree (local_user_id
 
 CREATE INDEX idx_pictures_remote_owner ON public.pictures USING btree (owner_username, owner_instance_domain) WHERE (owner_username IS NOT NULL);
 
+CREATE INDEX idx_pictures_user_file_size ON public.pictures USING btree (local_user_id, file_size);
+
+CREATE INDEX idx_pictures_user_filename ON public.pictures USING btree (local_user_id, filename);
+
 CREATE INDEX idx_refresh_tokens_expires ON public.refresh_tokens USING btree (expires_at);
 
 CREATE INDEX idx_refresh_tokens_user ON public.refresh_tokens USING btree (user_id);
