@@ -29,7 +29,7 @@ impl ResolverClient {
     /// Sends `back_domain`, `use_https`, and `internal_url` so the resolver can:
     /// - Return the correct public URL in WebFinger responses.
     /// - Use the internal URL to forward user registration requests.
-    #[tracing::instrument(skip(self), fields(back_domain = %self.config.back_domain, resolver_url))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", back_domain = %self.config.back_domain, resolver_url))]
     pub async fn self_register(&self) -> Result<(), AppError> {
         if !self.config.use_resolver {
             debug!("resolver: use_resolver=false, skipping self-registration");
@@ -84,7 +84,7 @@ impl ResolverClient {
 
     /// Register or update the username→backend mapping in the resolver.
     /// No-op when `use_resolver=false`.
-    #[tracing::instrument(skip(self), fields(username = %username, back_domain = %self.config.back_domain))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", username = %username, back_domain = %self.config.back_domain))]
     pub async fn update_mapping(&self, username: &str) -> Result<(), AppError> {
         if !self.config.use_resolver {
             return Ok(());

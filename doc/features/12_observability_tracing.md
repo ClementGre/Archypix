@@ -143,24 +143,65 @@ let request_id = req
 .and_then( | v | v.to_str().ok())
 .unwrap_or("unknown")
 .to_owned();
+// The Jaeger operation name (`otel.name`) is the *matched route template*, not the concrete
+// URI path — see "Operation naming & cardinality" below.
+let route = req.extensions().get::< axum::extract::MatchedPath > ().map( | m | m.as_str());
+let otel_name = match route {
+Some(route) => format ! ("{} {}", req.method(), route),
+None => format ! ("{} <unmatched>", req.method()),
+};
+// Field names follow the OTel HTTP semantic conventions (semconv) so Jaeger and the SpanMetrics
+// connector consume them without per-tool remapping. `otel.kind = "server"` marks the inbound span.
+// `client.address` (peer IP from `ConnectInfo`) attributes a burst of `<unmatched>` 404s to one
+// scanning source; the concrete path stays searchable via `url.path`.
 tracing::info_span ! (
 "http_request",
-method = % req.method(),
-path = % req.uri().path(),
+"otel.name" = otel_name,
+"otel.kind" = "server",
+"http.request.method" = % req.method(),
+"http.route" = route.unwrap_or("<unmatched>"),
+"url.path" = % req.uri().path(),
+"client.address" = % client_addr,
+"server.address" = % server_addr,
 request_id = % request_id,
-// reserved, filled by handlers/middleware once known:
-user_id = tracing::field::Empty,
-status = tracing::field::Empty,
+// reserved, filled later: status by `on_response`, enduser.id by auth middleware:
+"http.response.status_code" = tracing::field::Empty,
+"otel.status_code" = tracing::field::Empty,
+"enduser.id" = tracing::field::Empty,
 )
-}),
+})
+// `on_response` stamps the status and sets the OTel span status to ERROR on 5xx so Jaeger flags
+// failed traces (4xx stay Unset — a client error is not a server fault).
+.on_response(record_response),
 )
 .layer(SetRequestIdLayer::new(REQUEST_ID.clone(), MakeRequestUuid)) // generate id first
 ```
 
 Order matters: `SetRequestIdLayer` must run **before** `TraceLayer` so the header exists when
-`make_span_with` reads it. Auth middleware that resolves the user should record it onto the
-current span: `tracing::Span::current().record("user_id", tracing::field::display(user.id));`
-(matches the existing `user`/`token_type` field convention).
+`make_span_with` reads it. Auth middleware that resolves the user records it onto the current span:
+`tracing::Span::current().record("enduser.id", tracing::field::display(uid));`.
+
+> **Field-name syntax:** `info_span!` accepts quoted dotted names (`"otel.kind" = …`);
+> `#[tracing::instrument(fields(…))]` does **not** — there the same fields are bare dotted idents
+> (`otel.kind = "client"`). Both forms produce identical OTel attributes.
+
+#### Operation naming & cardinality
+
+`otel.name` becomes the Jaeger **operation name** — the primary axis Jaeger groups traces by. It
+must be **low-cardinality**, so it is derived from the matched route, never the raw path:
+
+- The concrete path (`/api/authenticated/pictures/3f8c…`, WebDAV URIs) would mint a *new* operation
+  per id, and 404-scanning bots would mint one per random path they probe — quickly polluting the
+  operation list and Jaeger's index.
+- `MatchedPath` (populated by axum's router, available here because the layer wraps the routed
+  `Router`) collapses every parametrised request to its template (`/api/authenticated/pictures/{id}`).
+  Requests that match no route (bot 404s, unknown paths) carry no `MatchedPath`, so they all fold
+  into a single `{METHOD} <unmatched>` operation. The concrete path is still searchable via the
+  `path` span attribute.
+
+The worker applies the same principle: its job root span sets `otel.name = job_type`
+(`gen_thumbnail` / `edit_picture`), grouping by kind of work rather than collapsing all jobs into a
+generic `job` operation.
 
 ### 3.3 Instrumenting the workflow layer
 
@@ -254,6 +295,8 @@ let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
 opentelemetry_sdk::Resource::builder()
 .with_attributes([
 opentelemetry::KeyValue::new("service.name", service_name),       // archypix-back | archypix-worker
+opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")), // per-binary crate version
+opentelemetry::KeyValue::new("deployment.environment", environment),       // DEPLOYMENT_ENVIRONMENT, default "development"
 opentelemetry::KeyValue::new("instance.domain", global_domain),   // back: config.global_domain; worker: worker_id
 ])
 .build())
@@ -268,7 +311,20 @@ Add `.with(otel_layer)` to the registry from §3.1 (use `Option`'s `Layer` impl,
 
 - **Resource attributes** distinguish instances in Jaeger: `service.name` per crate, plus
   `instance.domain` = the backend's global domain (so `backend1`/`backend2` traces are
-  separable). For the worker use `worker_id`.
+  separable). For the worker use `worker_id`. `service.version` (the crate version) and
+  `deployment.environment` (`DEPLOYMENT_ENVIRONMENT`, default `development`) let you filter
+  dev/staging/prod and tie a regression to a release.
+- **Service granularity** — one `service.name` per *deployable process* (`archypix-back`,
+  `archypix-worker`, `archypix-resolver`), never one per code layer. `service.name` drives Jaeger's
+  service list and dependency graph, so splitting `repository`/`services`/`infra` into services
+  would fragment a single request's trace and pollute the graph with intra-process edges. Slice by
+  layer with span attributes / tracer (scope) names instead.
+- **Client spans** — outbound calls are marked `otel.kind = "client"`: every federation HTTP call
+  (`clients/federation/*`, `clients/resolver.rs`) and every *networked* S3 op (`infra/s3.rs`
+  get/put/head/copy/delete — not the local `presign_*` signing). S3 ops also carry
+  `peer.service = "s3"` so Jaeger draws an edge to MinIO even though it emits no spans of its own.
+  Federation calls need no `peer.service`: the peer backend is itself instrumented and (for trusted
+  peers, §4.5) continues the same trace.
 - **Shutdown flush:** the batch exporter buffers spans; return the `provider` inside
   `ObservabilityGuard` and call `provider.shutdown()` on drop / before `main` returns, else the
   last spans are lost. Both `main.rs` must hold the guard for the whole process.

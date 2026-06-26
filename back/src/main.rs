@@ -17,6 +17,20 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
+/// `TraceLayer` `on_response` hook: records the status and marks 5xx as an OTel error.
+/// See `doc/features/12_observability_tracing.md` §3.2.
+fn record_response<B>(
+    response: &http::Response<B>,
+    _latency: std::time::Duration,
+    span: &tracing::Span,
+) {
+    let status = response.status();
+    span.record("http.response.status_code", status.as_u16());
+    if status.is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
@@ -155,31 +169,57 @@ async fn main() -> anyhow::Result<()> {
 
     let app = api::routes(&config)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID.clone()))
-        .layer(TraceLayer::new_for_http().make_span_with(
-            |req: &http::Request<_>| -> tracing::Span {
-                let request_id = req
-                    .headers()
-                    .get("x-request-id")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                if req.uri().path() == "/health" {
-                    return tracing::Span::none();
-                }
-                // otel.name overrides the Jaeger operation name (tracing-opentelemetry reads it).
-                // Without it every trace appears as "http_request" in the trace list.
-                let otel_name = format!("{} {}", req.method(), req.uri().path());
-                tracing::info_span!(
-                    "http_request",
-                    "otel.name" = otel_name,
-                    method = %req.method(),
-                    path = %req.uri().path(),
-                    request_id = %request_id,
-                    user_id = tracing::field::Empty,
-                    status = tracing::field::Empty,
-                )
-            },
-        ))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &http::Request<_>| -> tracing::Span {
+                    let request_id = req
+                        .headers()
+                        .get("x-request-id")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    if req.uri().path() == "/health" {
+                        return tracing::Span::none();
+                    }
+                    // Operation name is the matched route (not the concrete path) to bound
+                    // cardinality; unmatched requests fold into `{METHOD} <unmatched>`. Field names
+                    // are OTel HTTP semconv. Rationale in doc/features/12_observability_tracing.md §3.2.
+                    let route = req
+                        .extensions()
+                        .get::<axum::extract::MatchedPath>()
+                        .map(|m| m.as_str());
+                    let otel_name = match route {
+                        Some(route) => format!("{} {}", req.method(), route),
+                        None => format!("{} <unmatched>", req.method()),
+                    };
+                    let client_addr = req
+                        .extensions()
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        .map(|c| c.0.ip().to_string())
+                        .unwrap_or_default();
+                    let server_addr = req
+                        .headers()
+                        .get(http::header::HOST)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_owned();
+                    tracing::info_span!(
+                        "http_request",
+                        "otel.name" = otel_name,
+                        "otel.kind" = "server",
+                        "http.request.method" = %req.method(),
+                        "http.route" = route.unwrap_or("<unmatched>"),
+                        "url.path" = %req.uri().path(),
+                        "client.address" = %client_addr,
+                        "server.address" = %server_addr,
+                        "http.response.status_code" = tracing::field::Empty,
+                        "otel.status_code" = tracing::field::Empty,
+                        "enduser.id" = tracing::field::Empty,
+                        request_id = %request_id,
+                    )
+                })
+                .on_response(record_response),
+        )
         .layer(SetRequestIdLayer::new(REQUEST_ID.clone(), MakeRequestUuid))
         .with_state(state);
 

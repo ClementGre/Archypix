@@ -13,7 +13,7 @@ impl FederationClient {
     /// API calls are built directly from this URL — no separate scheme config needed.
     ///
     /// Result is cached under `FederationBackend(username, global_domain)`.
-    #[tracing::instrument(skip(self), fields(username = %username, global_domain = %global_domain))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", username = %username, global_domain = %global_domain))]
     pub async fn resolve_backend_url(
         &self,
         username: &str,

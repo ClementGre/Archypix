@@ -16,7 +16,7 @@ impl FederationClient {
     /// are self-resolving on the owner's side. Returns a map of `picture_token → url`.
     #[tracing::instrument(
         skip(self, pictures),
-        fields(owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_count = pictures.len())
+        fields(otel.kind = "client", owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_count = pictures.len())
     )]
     pub async fn presign_remote_pictures(
         &self,
@@ -66,7 +66,7 @@ impl FederationClient {
     /// without Alice needing to know Bob's internal IDs.
     #[tracing::instrument(
         skip(self),
-        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, %outgoing_share_id
+        fields(otel.kind = "client", sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, %outgoing_share_id
         )
     )]
     pub async fn send_revocation(
@@ -113,7 +113,8 @@ impl FederationClient {
     /// `03_BACKEND_ARCHITECTURE.md`).
     #[tracing::instrument(
         skip(self, token, announcement),
-        fields(recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, tag_path = %announcement.tag_path)
+        fields(otel.kind = "client", recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, tag_path = %announcement.tag_path
+        )
     )]
     pub async fn announce_share(
         &self,
@@ -154,7 +155,7 @@ impl FederationClient {
     /// respond by announcing all current pictures under the shared tag.
     #[tracing::instrument(
         skip(self),
-        fields(acceptor_username = %acceptor_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
+        fields(otel.kind = "client", acceptor_username = %acceptor_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
         )
     )]
     pub async fn send_share_accept(
@@ -194,7 +195,7 @@ impl FederationClient {
     /// tombstone her OutgoingShare so it no longer appears as pending/active on her side.
     #[tracing::instrument(
         skip(self),
-        fields(rejector_username = %rejector_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
+        fields(otel.kind = "client", rejector_username = %rejector_username, sender_username = %sender_username, sender_global_domain = %sender_global_domain, %outgoing_share_id
         )
     )]
     pub async fn send_share_reject(
@@ -233,7 +234,7 @@ impl FederationClient {
     /// Called by the sender (Alice) to push all pictures currently under the shared tag to Bob.
     #[tracing::instrument(
         skip(self, payload),
-        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.pictures.len()
+        fields(otel.kind = "client", sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.pictures.len()
         )
     )]
     pub async fn announce_pictures_to_backend(
@@ -277,7 +278,7 @@ impl FederationClient {
     /// processing) surfaces as an error the caller can relay to the recipient.
     #[tracing::instrument(
         skip(self, payload),
-        fields(requester_username = %requester_username, owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_id = %payload.picture_id
+        fields(otel.kind = "client", requester_username = %requester_username, owner_username = %owner_username, owner_global_domain = %owner_global_domain, picture_id = %payload.picture_id
         )
     )]
     pub async fn send_picture_edit_request(
@@ -315,7 +316,7 @@ impl FederationClient {
     /// coverage while the share remains active).
     #[tracing::instrument(
         skip(self, payload),
-        fields(sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.picture_ids.len()
+        fields(otel.kind = "client", sender_username = %sender_username, recipient_username = %recipient_username, recipient_global_domain = %recipient_global_domain, picture_count = payload.picture_ids.len()
         )
     )]
     pub async fn unannounce_pictures_to_backend(

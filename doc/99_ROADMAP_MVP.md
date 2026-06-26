@@ -65,7 +65,11 @@
   - [x] Span-tracing & Otel compatibility.
   - [x] Webdav/VFS proper span tracing.
   - [x] Federation/Clients proper span tracing and linkage between instances.
+  - [x] Bounded operation-name cardinality (matched route, not raw path), HTTP semconv attributes,
+    response/error status, client span kinds, richer resource attributes.
   - [x] Doc and best practices update.
+  - [ ] Trace sampling + OpenTelemetry Collector (tail sampling, SpanMetrics RED metrics) —
+    deployment hardening, not yet implemented. See `doc/features/16_trace_sampling_and_collector.md`.
 - [x] **Better Rules** — Replaced text predicates with a structured JSONB predicate tree supporting
   arbitrary AND/OR/NOT composition; extended field coverage to all EXIF/file/ownership attributes
   (camera brand/model, ISO, f-number, focal length, exposure time, mime type, file size, dimensions,

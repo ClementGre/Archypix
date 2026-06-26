@@ -73,10 +73,17 @@ fn build_otel_tracer(
         }
     };
 
+    // `deployment.environment` lets Jaeger separate dev/staging/prod traces; `service.version`
+    // (the crate version, resolved per-binary at compile time) ties a regression to a release.
+    // Both are standard OTel resource attributes.
+    let environment =
+        std::env::var("DEPLOYMENT_ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
     let provider = opentelemetry_sdk::trace::TracerProvider::builder()
         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
         .with_resource(opentelemetry_sdk::Resource::new([
             opentelemetry::KeyValue::new("service.name", service_name),
+            opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+            opentelemetry::KeyValue::new("deployment.environment", environment),
             opentelemetry::KeyValue::new("instance.domain", instance_id),
         ]))
         .build();

@@ -12,7 +12,7 @@ impl FederationClient {
     /// Request a federation token from the remote instance, if not already cached.
     /// Returns `Some(token)` on cache hit, `None` when the async grant is still in flight.
     /// `sender_username` is required so the backend B can resolve back the backend domain of A
-    #[tracing::instrument(skip(self), fields(sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
     pub async fn ensure_federation_token(
         &self,
         sender_username: &str,
@@ -74,7 +74,7 @@ impl FederationClient {
 
     /// Get a valid federation token for `recipient_global_domain`, polling the cache until the
     /// grant callback arrives if the token is not already cached.
-    #[tracing::instrument(skip(self), fields(sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", sender = %sender_username, recipient_global_domain = %recipient_global_domain))]
     pub async fn get_or_wait_federation_token(
         &self,
         sender_username: &str,
@@ -115,7 +115,7 @@ impl FederationClient {
 
     /// Store a federation token received via the `/api/federation/auth/grant` callback.
     /// Verifies the grant's `nonce` against the one persisted.
-    #[tracing::instrument(skip(self, token, nonce), fields(issuer_global_domain = %issuer_global_domain, ttl_secs = ttl_secs))]
+    #[tracing::instrument(skip(self, token, nonce), fields(otel.kind = "client", issuer_global_domain = %issuer_global_domain, ttl_secs = ttl_secs))]
     pub async fn store_federation_token(
         &self,
         issuer_global_domain: &str,
@@ -174,7 +174,7 @@ impl FederationClient {
     }
 
     /// Send the federation token grant to the requester's backend.
-    #[tracing::instrument(skip(self, grant), fields(username = %username, requester_global_domain = %requester_global_domain))]
+    #[tracing::instrument(skip(self, grant), fields(otel.kind = "client", username = %username, requester_global_domain = %requester_global_domain))]
     pub async fn send_auth_grant(
         &self,
         username: &str,

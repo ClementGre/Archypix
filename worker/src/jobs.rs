@@ -75,8 +75,12 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     let trace_context = job.trace_context.clone();
 
     // Create a root span for this job and link it back to the enqueueing trace context.
+    // `otel.name` sets the Jaeger operation name. Use the job type (e.g. `gen_thumbnail`,
+    // `edit_picture`) so operations group by kind of work — bounded cardinality — rather than all
+    // collapsing into a single generic `job` operation.
     let job_span = tracing::info_span!(
         "job",
+        "otel.name" = %job_type,
         job_id = %job_id,
         job_type = %job_type,
         picture_id = ?job.picture_id,

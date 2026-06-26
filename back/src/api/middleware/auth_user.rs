@@ -48,7 +48,8 @@ impl FromRequestParts<AppState> for AuthUser {
         }
 
         if let Some(uid) = &claims.uid {
-            tracing::Span::current().record("user_id", tracing::field::display(uid));
+            // `enduser.id` is the OTel semantic-convention field reserved on the `http_request` span.
+            tracing::Span::current().record("enduser.id", tracing::field::display(uid));
         }
 
         Ok(AuthUser { claims })

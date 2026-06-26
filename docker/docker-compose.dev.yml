@@ -288,6 +288,8 @@ services:
     container_name: archypix-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+    volumes:
+      - jaeger_data:/tmp
     ports:
       - "16686:16686"   # Jaeger UI
       - "4318:4318"     # OTLP/HTTP (OTEL_EXPORTER_OTLP_ENDPOINT)
@@ -304,7 +306,7 @@ services:
       POSTGRES_USER: archypix
       POSTGRES_PASSWORD: archypix
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - archypix
@@ -359,6 +361,7 @@ networks:
 
 volumes:
   # Cargo build caches — pre-seeded from image on first start, persist across restarts.
+  jaeger_data:
   resolver_target:
   back_target:
   worker_target:

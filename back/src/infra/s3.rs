@@ -117,7 +117,7 @@ impl StorageClient {
         presign_put_with(&self.worker_presign_client, bucket, key, self.presign_ttl).await
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn copy_object(
         &self,
         src_bucket: &str,
@@ -136,7 +136,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), AppError> {
         self.client
             .delete_object()
@@ -148,7 +148,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<Vec<u8>, AppError> {
         let out = self
             .client
@@ -169,7 +169,7 @@ impl StorageClient {
     /// `HEAD` an object and return its size in bytes. Errors if the object is missing or the
     /// store does not report a content length.
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn object_size(&self, bucket: &str, key: &str) -> Result<i64, AppError> {
         let out = self
             .client
@@ -186,7 +186,7 @@ impl StorageClient {
         })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -209,7 +209,7 @@ impl StorageClient {
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
     pub async fn put_object_file(
         &self,
         bucket: &str,

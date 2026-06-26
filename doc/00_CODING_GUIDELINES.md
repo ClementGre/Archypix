@@ -66,6 +66,8 @@ For things involving the archypix-worker crate, run in `nix develop`.
 
 When making changes to the codebase:
 
+- Don’t over-comment in the code: keep comments concise and only where necessary. Detail important concepts in the doc instead, and don’t repeat them
+  in detail in the comments.
 - Keep documentation up to date. Match the level of detail already present — do not add overly specific descriptions of what was changed beyond what
   the rest of the doc covers.
 - When editing the api, update `06_API_REFERENCE.md`.
