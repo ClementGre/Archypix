@@ -235,6 +235,7 @@ export interface PictureCopy {
     owned: boolean
     owner_username: string | null
     owner_instance: string | null
+    owner_deleted_at: string | null
     copy_source_owner_username: string | null
     copy_source_owner_instance: string | null
     copy_source_picture_id: string | null

@@ -1070,6 +1070,7 @@ pub async fn picture_copies(
         is_owned: picture.is_owned(),
         owner_username: picture.owner_username.clone(),
         owner_instance_domain: picture.owner_instance_domain.clone(),
+        owner_deleted_at: picture.owner_deleted_at.clone(),
         copy_source_owner_username: picture.copy_source_owner_username.clone(),
         copy_source_owner_instance: picture.copy_source_owner_instance.clone(),
         copy_source_picture_id: picture.copy_source_picture_id.clone(),

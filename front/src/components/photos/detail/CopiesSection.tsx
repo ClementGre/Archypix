@@ -119,7 +119,11 @@ export function CopiesSection({pictureId}: { pictureId: string }) {
                                 </div>
                                 <div className="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
                                     <span>
-                                        {formatDateTime(c.updated_at)}
+                                        {c.owner_deleted_at ?
+                                            <span className="text-destructive">Owner deleted {formatDateTime(c.owner_deleted_at)}</span>
+                                            :
+                                            <span>Last edited {formatDateTime(c.updated_at)}</span>
+                                        }
                                         {diff && <span className="ml-1.5">· {diff}</span>}
                                     </span>
                                     {isShown ? (

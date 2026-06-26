@@ -332,6 +332,7 @@ pub async fn copies(
                 "owned": r.is_owned,
                 "owner_username": r.owner_username,
                 "owner_instance": r.owner_instance_domain,
+                "owner_deleted_at": r.owner_deleted_at,
                 "copy_source_owner_username": r.copy_source_owner_username,
                 "copy_source_owner_instance": r.copy_source_owner_instance,
                 "copy_source_picture_id": r.copy_source_picture_id,
