@@ -15,7 +15,10 @@ fn init_magick() {
 
 /// Named thumbnail variants and their target heights in pixels.
 pub const THUMBNAIL_VARIANTS: &[(&str, usize)] =
-    &[("small", 100), ("medium", 500), ("large", 1000)];
+    &[("small", 150), ("medium", 500), ("large", 1000)];
+
+/// WebP compression quality for generated thumbnails (libwebp default is 75).
+const THUMBNAIL_QUALITY: usize = 68;
 pub const THUMBNAIL_SMALLER_VARIANT: &str = "small";
 /// Read the raw decoded pixel dimensions `(width, height)` of the image at `src`.
 ///
@@ -64,6 +67,8 @@ pub fn generate_thumbnail(src: &Path, dest: &Path, target_height: usize) -> Resu
 
     wand.set_image_format("webp")
         .map_err(|e| WorkerError::Imaging(format!("set format: {e}")))?;
+    wand.set_image_compression_quality(THUMBNAIL_QUALITY)
+        .map_err(|e| WorkerError::Imaging(format!("set quality: {e}")))?;
 
     wand.write_image(dest.to_str().unwrap())
         .map_err(|e| WorkerError::Imaging(format!("write: {e}")))?;

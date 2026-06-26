@@ -350,7 +350,9 @@ current context is empty, so inject yields an empty map → treat as "no context
 ### 4.4 Hop A — backend → worker (job queue)
 
 The enqueuing request and the worker that runs the job are decoupled in time, so use a **span
-link**, not parent-child.
+link**, not parent-child: a job may be claimed long after enqueue, and may be claimed more than once
+(watchdog reset → re-claim), so it is genuinely not the same trace. The link is visible from the
+worker's job span (its `References`/`Links`), pointing back to the originating enqueue trace.
 
 **Schema.** Add a nullable `trace_context JSONB` column to the `jobs` table. Per the coding
 guidelines (`doc/00_CODING_GUIDELINES.md` §"Database migrations"), edit the single
@@ -384,11 +386,12 @@ Populate it in both `ClaimJobResponse` constructions in
 [`back/src/api/worker/handlers.rs`](../../back/src/api/worker/handlers.rs) (lines ~53 and ~175)
 from the claimed job row.
 
-**Worker (link).** In `dispatch(job)` ([`worker/src/jobs.rs:64`](../../worker/src/jobs.rs)),
-after creating the `info_span!("job", …)` from §3.4, if `job.trace_context` is present extract a
-`Context` from it and `job_span.add_link(remote_cx.span().span_context().clone())`. The job span
-is a **new root** in the worker's trace, linked back to the enqueuing trace — bounded, and
-correct for the async boundary.
+**Worker (link).** In `dispatch(job)` ([`worker/src/jobs.rs`](../../worker/src/jobs.rs)), after
+creating the `info_span!("job", …)` from §3.4, if `job.trace_context` is present extract a `Context`
+from it and `job_span.add_link(remote_cx.span().span_context().clone())`. The job span is a **new
+root** in the worker's trace, linked back to the enqueuing trace — bounded, and correct for the async
+boundary. The content-hash/EXIF/hash `spawn_blocking` tasks enter the current job span so their work
+is attributed to it.
 
 **Completion (parent-child).** The worker→backend `complete`/`fail` calls *are* synchronous, so
 trace them parent-child:
@@ -496,8 +499,8 @@ and list each other in `TRACE_PROPAGATION_PEERS` to see federation traces joined
 - `back/src/repository/job.rs` — capture/store context on enqueue.
 - `back/src/api/worker/handlers.rs` — populate `trace_context` on claim; `set_parent` on
   complete/fail.
-- `worker/src/jobs.rs` — `add_link` from job span; `worker/src/backend.rs` — inject context on
-  complete/fail.
+- `worker/src/jobs.rs` — `add_link` from the job span (back to the enqueue trace);
+  `worker/src/backend.rs` — inject context on complete/fail.
 - `back/src/clients/federation/{shares,handshake}.rs` — allowlist-gated inject.
 - `back/src/api/federation/handlers.rs` — `maybe_set_remote_parent` at handler tops.
 - `back/src/infra/config.rs` — `trace_propagation_peers`.

@@ -48,6 +48,8 @@ repository/
   hierarchy.rs    # hierarchy CRUD SQL (load/store config JSONB)
   share.rs / auth.rs / job.rs / tagging.rs
   pipeline.rs     # dirty-picture queries, atomic per-source pipeline tag reconcile
+  dedup.rs        # feature 11: content-dedup group queries (candidate keys, group rows, survivor/
+                  # promote/boomerang mutations)
 
 clients/
   federation/
@@ -87,6 +89,8 @@ infra/
   exif_drain.rs      # feature 14: deferred-EXIF-job drain (event-driven loop + ExifDrainWaker, poll fallback)
   pipeline/
     evaluation.rs    # per-user tag service evaluation + reconciliation, then announcement
+    dedup.rs         # feature 11: content-dedup reconciler (serial per user) — survivor selection,
+                     # rescue-promotion, arrival classification (boomerang guard)
     announcement.rs  # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
   job_watchdog.rs    # JobWatchdogTask (reset stale jobs) + JobCleanupTask (prune terminal jobs)
   purge_sweep.rs     # PurgeSweepTask (RecurringTask): physically purge owned, retention-expired
@@ -188,6 +192,36 @@ deferred-job drain (`infra::exif_drain`, mirroring the pipeline's dirty-then-dra
 fallback) creates the reconcile jobs and flips them to `pending`. Received pictures take the
 set-based local-override merge (or a propose-to-owner edit in `suggest` mode). Convergence is tracked
 through the `exif_sync` histogram, not per-picture job ids. See `doc/features/14_better_batch_editing.md`.
+
+**Physical copy & content dedup (11)** — `POST /pictures/{id}/copy` copies a received (or owned)
+picture's bytes into the caller's library as a new owned identity with root-resolved `copy_source_*`
+provenance (same-/cross-instance byte paths), then enqueues `gen_thumbnail`. The worker computes a
+metadata-stripped `content_hash` (stable across EXIF edits, changes on visual re-encode), forwarded in
+`AnnouncedPicture` so recipients group across owners. The **dedup reconciler** runs **serial per user
+in the pipeline** (`infra::pipeline::dedup`). Each `content_hash` group (or `file_hash` fallback) is
+**Live** (no rejection → one live survivor, rest `content_dedupe`) or **Rejected** (≥1
+`manual`/`boomerang` → exactly one `manual` trash representative, rest `boomerang`). The reconciler is
+**stable**: a correct single-live group is never reshuffled, so whichever copy is live — including one
+the user chose via `POST /pictures/{id}/copies/keep` — stays live; survivor selection (§5.1) only runs
+to *collapse* a transient multi-live group or *promote* when none is live (rescue-on-purge). For a
+**Rejected** group the representative is the **best/priority** copy (`best()` over the whole group —
+prefer not-owner-deleted, then **owned/local**, then original, then lowest id), so deleting content
+the user also holds a local copy of trashes the **owned** copy as the representative (correct
+owned-deletion trash messaging, not a misleading "owner's copy untouched" while a local copy hides as a
+boomerang). Hidden rows (`content_dedupe`/`boomerang`) are excluded from **all** list/trash views
+(`push_filters` shows live + `manual` only), so the trash shows one recoverable entry per rejected
+group, not a pile of duplicates; the `GET /pictures/{id}/copies` endpoint is the one read that surfaces
+the whole group. Lifecycle triggers maintain the invariant: **manual delete** (`reject_content_group`)
+rejects the whole group — the priority copy → `manual`, the rest → `boomerang`, applied at delete time
+with the same `best()` so the reconcile never replaces it; **restore** flips the `boomerang` siblings
+back to `content_dedupe` (rejection lifted, rescue re-enabled); when a `manual` representative
+disappears a `boomerang` is promoted to the new representative; and a copy **arriving** into a Rejected
+group is itself `boomerang`'d (`classify_arrival`) — closing the gap the owner-match loop prevention
+(§6.6) can't, since a copy launders the owner identity.
+The recovery sweep re-wakes users whose groups need a promotion/collapse. An admin
+`POST /admin/pictures/regenerate-thumbnails` bulk-(re)enqueues `gen_thumbnail` (which recomputes
+`content_hash`) for missing-thumbnail or all owned pictures. See
+`doc/features/11_physical_copy_and_dedup.md`.
 
 ## F) API Conventions
 

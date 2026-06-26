@@ -36,6 +36,8 @@ pub async fn register_received_pictures(
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
+    // Picture rows registered/refreshed this batch — classified for the boomerang guard after commit.
+    let mut registered_ids: Vec<Uuid> = Vec::new();
     for pic in pictures {
         // The announced owner snapshot (typed FullExif) is stored verbatim in remote_exif_data; the
         // merged exif_data + promoted columns are re-materialised below, preserving any existing
@@ -53,6 +55,7 @@ pub async fn register_received_pictures(
             pic.height,
             pic.blurhash.as_ref(),
             pic.file_hash.as_deref(),
+            pic.content_hash.as_deref(),
             pic.thumbnails_generated_at,
             &pic.exif,
             pic.owner_deleted_at,
@@ -87,6 +90,8 @@ pub async fn register_received_pictures(
             pic.picture_token,
         )
         .await?;
+
+        registered_ids.push(received.id);
     }
 
     // Stamp the announcement and refresh the advisory shared-tag path (reflects a sender-side
@@ -99,6 +104,14 @@ pub async fn register_received_pictures(
     .await?;
 
     tx.commit().await.map_err(map_sqlx_error)?;
+
+    // Boomerang guard (feature 11 §5.4): a copy of content the recipient deleted lands in trash.
+    for id in registered_ids {
+        if let Err(e) = crate::infra::pipeline::dedup::classify_arrival(db, recipient_id, id).await
+        {
+            tracing::warn!(picture_id = %id, error = ?e, "dedup: classify_arrival failed for received picture");
+        }
+    }
 
     Ok(pictures.len())
 }

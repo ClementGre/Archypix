@@ -9,19 +9,21 @@ import {TagPicker} from '@/components/tags/TagPicker'
 import {beginUploadBatch, completeUpload, restorePicture} from '@/api/pictures'
 import {invalidatePictures, invalidatePicturesAndTags} from '@/lib/invalidation'
 import {cn, TagPath} from '@/lib/utils'
+import {filesFromDataTransfer, isHiddenFile} from '@/lib/uploadFiles'
 import {apiErrorMessage} from '@/api/client'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type UploadStatus = 'pending' | 'uploading' | 'completing' | 'done' | 'deduplicated' | 'error'
-type Phase = 'idle' | 'preparing' | 'uploading' | 'complete'
+type UploadStatus = 'pending' | 'preparing' | 'uploading' | 'completing' | 'done' | 'deduplicated' | 'error'
+type Phase = 'idle' | 'uploading' | 'complete'
 
 interface UploadItem {
     key: string
     file: File
     pictureId: string
     presignedUrl: string
-    /** SHA-256 (lowercase hex) computed up front so the presign step can deduplicate. */
+    /** SHA-256 (lowercase hex), computed lazily when the slot is about to upload. Kept so a retry
+     *  reuses it (only the presign is re-requested). */
     hash?: string
     status: UploadStatus
     progress: number
@@ -30,11 +32,10 @@ interface UploadItem {
     wasDeleted?: boolean
 }
 
-// Upload concurrency, and how many files we hash at once. Hashing buffers the whole file in
-// memory, so a small bound keeps a 1k-photo batch from reading every file at once (which black-
-// screened phones); the presign is batched regardless.
+// How many slots run concurrently. Each slot hashes (buffers the whole file in memory), re-presigns
+// just-in-time, then uploads — a small bound keeps a 1k-photo batch from reading every file at once
+// (which black-screened phones).
 const UPLOAD_CONCURRENCY = 4
-const HASH_CONCURRENCY = 4
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,23 +71,6 @@ async function sha256Hex(file: File): Promise<string> {
     return Array.from(new Uint8Array(digest))
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('')
-}
-
-/** Hash all files with bounded concurrency, reporting the number completed so far. */
-async function hashAll(files: File[], onProgress: (done: number) => void): Promise<(string | undefined)[]> {
-    const hashes = new Array<string | undefined>(files.length)
-    let next = 0
-    let done = 0
-    async function worker() {
-        while (true) {
-            const i = next++
-            if (i >= files.length) break
-            hashes[i] = await sha256Hex(files[i]).catch(() => undefined)
-            onProgress(++done)
-        }
-    }
-    await Promise.all(Array.from({length: Math.min(HASH_CONCURRENCY, files.length)}, worker))
-    return hashes
 }
 
 function uploadToS3(url: string, file: File, onProgress: (pct: number) => void): Promise<void> {
@@ -153,7 +137,7 @@ function StatusIcon({status}: { status: UploadStatus }) {
     // A dedup hit: the file already existed, so it was not re-uploaded — orange check.
     if (status === 'deduplicated') return <Check className="h-4 w-4 shrink-0 text-amber-500"/>
     if (status === 'error') return <AlertCircle className="h-4 w-4 shrink-0 text-destructive"/>
-    if (status === 'uploading' || status === 'completing')
+    if (status === 'preparing' || status === 'uploading' || status === 'completing')
         return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary"/>
     return <div className="h-4 w-4 shrink-0"/>
 }
@@ -181,13 +165,13 @@ export interface UploadDialogProps {
 export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogProps) {
     const queryClient = useQueryClient()
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const folderInputRef = useRef<HTMLInputElement>(null)
     const dropzoneRef = useRef<HTMLDivElement>(null)
 
     const [files, setFiles] = useState<File[]>([])
     const [tags, setTags] = useState<string[]>([])
     const [phase, setPhase] = useState<Phase>('idle')
     const [items, setItems] = useState<UploadItem[]>([])
-    const [prepared, setPrepared] = useState(0)
     const [dropActive, setDropActive] = useState(false)
     const [restoring, setRestoring] = useState(false)
     const [restored, setRestored] = useState(false)
@@ -211,7 +195,6 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             setTags([])
             setPhase('idle')
             setItems([])
-            setPrepared(0)
             setRestored(false)
         }
     }, [open])
@@ -235,7 +218,11 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const onDrop = (e: React.DragEvent) => {
         e.preventDefault()
         setDropActive(false)
-        if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files)
+        // Recurse into dropped directories (excluding hidden files) — must read the entries here,
+        // synchronously, before the DataTransfer is cleared.
+        void filesFromDataTransfer(e.dataTransfer).then((fs) => {
+            if (fs.length) addFiles(fs)
+        })
     }
 
     // Patch by the per-file `key`, not `pictureId`: an in-batch duplicate shares the first file's
@@ -244,11 +231,54 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         setItems((prev) => prev.map((it) => (it.key === key ? {...it, ...patch} : it)))
     }, [])
 
-    // Upload one slot (S3 PUT + complete). Reused by the initial run and the per-item retry.
-    const runItem = useCallback(
+    // Run one slot end-to-end: hash (lazily, reused on retry) → fresh presign → S3 PUT + complete.
+    // The presign is requested **just before** the upload so it can't expire while earlier files in
+    // the batch are still transferring, and a retry always mints a brand-new URL.
+    const processItem = useCallback(
         async (item: UploadItem): Promise<boolean> => {
-            const {key, pictureId, presignedUrl, file, hash} = item
-            patchItem(key, {status: 'uploading', progress: 0, error: undefined})
+            const {key, file} = item
+            patchItem(key, {status: 'preparing', progress: 0, error: undefined})
+
+            // Hash the file (reuse a value computed on an earlier attempt; only the presign is fresh).
+            let hash = item.hash
+            if (!hash) {
+                hash = await sha256Hex(file).catch(() => undefined)
+                patchItem(key, {hash})
+            }
+
+            // Fresh presign for this single file: carries the hash (upload-time dedup) + tags (assigned
+            // to a dedup hit) + the import label (tags duplicates AlreadyExisting[.Deleted]).
+            let slot: Awaited<ReturnType<typeof beginUploadBatch>>[number] | undefined
+            try {
+                slot = (
+                    await beginUploadBatch(
+                        [{filename: file.name, file_hash: hash}],
+                        tags.length ? tags : undefined,
+                        uploadLabel.current || undefined,
+                    )
+                )[0]
+            } catch (e) {
+                patchItem(key, {status: 'error', error: apiErrorMessage(e)})
+                return false
+            }
+            if (!slot) {
+                patchItem(key, {status: 'error', error: 'No upload slot returned'})
+                return false
+            }
+            if (slot.duplicate) {
+                // Already in the library — settled server-side (tags assigned); nothing to upload.
+                patchItem(key, {
+                    status: 'deduplicated',
+                    pictureId: slot.picture_id,
+                    wasDeleted: slot.was_deleted,
+                    progress: 100,
+                })
+                return true
+            }
+
+            const pictureId = slot.picture_id
+            const presignedUrl = slot.presigned_url ?? ''
+            patchItem(key, {status: 'uploading', pictureId, presignedUrl, progress: 0})
             try {
                 await uploadToS3(presignedUrl, file, (pct) => patchItem(key, {progress: pct}))
                 patchItem(key, {status: 'completing', progress: 97})
@@ -273,6 +303,24 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         [patchItem, tags, queryClient],
     )
 
+    // Drain a list of slots through bounded-concurrency workers.
+    const runQueue = useCallback(
+        async (queue: UploadItem[]) => {
+            const work = [...queue]
+
+            async function worker() {
+                while (true) {
+                    const item = work.shift()
+                    if (!item) break
+                    await processItem(item)
+                }
+            }
+
+            await Promise.all(Array.from({length: Math.min(UPLOAD_CONCURRENCY, work.length)}, worker))
+        },
+        [processItem],
+    )
+
     // Uploads can dedup onto existing pictures (re-tagging them) and trigger background re-tagging,
     // so refresh pictures + tags broadly — `['tags']` also refreshes per-picture tag caches (e.g. an
     // already-existing picture open in the sidebar), which the old narrow keys missed.
@@ -281,58 +329,21 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
 
-        const pending = files
         firstSuccess.current = false
         uploadLabel.current = makeUploadLabel()
-        setPrepared(0)
-        setPhase('preparing')
 
-        // Compute each file's SHA-256 (bounded concurrency) up front: the presign step uses it to
-        // deduplicate, and the per-file `complete` reuses it (no double hashing).
-        const hashes = await hashAll(pending, setPrepared)
-
-        // Batch-presign all files at once, carrying hashes (for dedup) + tags (assigned to dups) +
-        // the import label (tags the duplicates AlreadyExisting[.Deleted]).
-        let slots: Awaited<ReturnType<typeof beginUploadBatch>>
-        try {
-            slots = await beginUploadBatch(
-                pending.map((f, i) => ({filename: f.name, file_hash: hashes[i]})),
-                tags.length ? tags : undefined,
-                uploadLabel.current,
-            )
-        } catch (e) {
-            toast.error(apiErrorMessage(e))
-            setPhase('idle')
-            return
-        }
-
-        const initialItems: UploadItem[] = pending.map((file, i) => ({
+        const initialItems: UploadItem[] = files.map((file) => ({
             key: fileKey(file),
             file,
-            pictureId: slots[i].picture_id,
-            presignedUrl: slots[i].presigned_url ?? '',
-            hash: hashes[i],
-            // Dedup hits are already settled server-side (tags assigned) — show them done immediately.
-            status: slots[i].duplicate ? 'deduplicated' : 'pending',
-            wasDeleted: slots[i].was_deleted,
-            progress: 100,
+            pictureId: '',
+            presignedUrl: '',
+            status: 'pending',
+            progress: 0,
         }))
-
         setItems(initialItems)
         setPhase('uploading')
 
-        // Upload only the non-duplicate files, bounded concurrency.
-        const queue = initialItems.filter((it) => it.status !== 'deduplicated')
-
-        async function worker() {
-            while (true) {
-                const item = queue.shift()
-                if (!item) break
-                await runItem(item)
-            }
-        }
-
-        await Promise.all(Array.from({length: Math.min(UPLOAD_CONCURRENCY, queue.length)}, worker))
+        await runQueue(initialItems)
 
         setPhase('complete')
         // The backend debounces the pipeline wake, so per-file completions coalesce on their own;
@@ -340,40 +351,41 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         invalidateAll()
     }
 
-    // Retry a batch of failed items (single retry passes a one-element list).
+    // Retry a batch of failed items (single retry passes a one-element list). Reset them to `pending`
+    // first so the error count drops to 0 and the retry buttons hide — it really looks like the
+    // upload restarted with only the errored files. Each retried slot re-presigns (fresh URL).
     const retryItems = useCallback(
         async (toRetry: UploadItem[]) => {
-            const queue = [...toRetry]
-            async function worker() {
-                while (true) {
-                    const item = queue.shift()
-                    if (!item) break
-                    await runItem(item)
-                }
-            }
-            await Promise.all(Array.from({length: Math.min(UPLOAD_CONCURRENCY, queue.length)}, worker))
+            if (!toRetry.length) return
+            const keys = new Set(toRetry.map((i) => i.key))
+            setItems((prev) =>
+                prev.map((it) =>
+                    keys.has(it.key) ? {...it, status: 'pending', progress: 0, error: undefined} : it,
+                ),
+            )
+            setPhase('uploading')
+            await runQueue(toRetry)
+            setPhase('complete')
             invalidateAll()
         },
-        [runItem, invalidateAll],
+        [runQueue, invalidateAll],
     )
 
     function resetForMore() {
         setFiles([])
         setItems([])
         setPhase('idle')
-        setPrepared(0)
     }
 
     // Derived counts
     const doneCount = items.filter((i) => i.status === 'done').length
     const dedupCount = items.filter((i) => i.status === 'deduplicated').length
     const errorCount = items.filter((i) => i.status === 'error').length
-    const activeCount = items.filter((i) => i.status === 'uploading' || i.status === 'completing').length
     const failedItems = items.filter((i) => i.status === 'error')
     // Already-existing duplicates, split into live vs trashed (the latter can be restored).
     const existingCount = items.filter((i) => i.status === 'deduplicated' && !i.wasDeleted).length
     const deletedItems = items.filter((i) => i.status === 'deduplicated' && i.wasDeleted)
-    const isBusy = phase === 'preparing' || phase === 'uploading'
+    const isBusy = phase === 'uploading'
     const settledCount = doneCount + dedupCount + errorCount
     const label = uploadLabel.current.replaceAll('.', '/')
 
@@ -391,14 +403,20 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         }
     }
 
-    const overallPct =
-        phase === 'preparing'
-            ? files.length
-                ? Math.round((prepared / files.length) * 100)
-                : 0
-            : items.length
-                ? Math.round((settledCount / items.length) * 100)
-                : 0
+    // Overall advancement: average of each slot's progress (settled = 100, in-flight = its S3 %),
+    // floored to one decimal so a near-complete batch reads e.g. 99.5% rather than jumping to 100.
+    const overallPct = items.length
+        ? Math.floor(
+        (items.reduce((sum, it) => {
+                if (it.status === 'done' || it.status === 'deduplicated' || it.status === 'error')
+                    return sum + 100
+                if (it.status === 'uploading' || it.status === 'completing') return sum + it.progress
+                return sum
+            }, 0) /
+            (items.length * 100)) *
+        1000,
+    ) / 10
+        : 0
 
     return (
         <Dialog
@@ -423,10 +441,9 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                     <div className="space-y-1.5 border-b border-border px-6 pb-4">
                         <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">
-                                {phase === 'preparing' && `Preparing… ${prepared} of ${files.length}`}
                                 {phase === 'uploading' &&
-                                    (activeCount > 0
-                                        ? `Uploading… ${doneCount} of ${items.length} done`
+                                    (settledCount < items.length
+                                        ? `Uploading… ${settledCount} of ${items.length}`
                                         : 'Finishing up…')}
                                 {phase === 'complete' && (
                                     errorCount === 0 ? (
@@ -444,7 +461,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                     <span className="text-amber-500"> · {dedupCount} already existed</span>
                                 )}
                             </span>
-                            <span className="tabular-nums text-xs text-muted-foreground">{overallPct}%</span>
+                            <span className="tabular-nums text-xs text-muted-foreground">{overallPct.toFixed(1)}%</span>
                         </div>
                         <ProgressBar pct={overallPct}/>
                         {phase === 'complete' && errorCount > 0 && (
@@ -514,29 +531,40 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         onDrop={phase === 'idle' ? onDrop : undefined}
                     >
                         {phase === 'idle' && files.length === 0 && (
-                            <button
-                                type="button"
-                                className={cn(
-                                    'flex w-full flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed py-12 transition-colors',
-                                    dropActive
-                                        ? 'border-primary bg-primary/5'
-                                        : 'border-border hover:border-primary/40 hover:bg-muted/40',
-                                )}
-                                onClick={() => fileInputRef.current?.click()}
-                            >
-                                <CloudUpload
+                            <>
+                                <button
+                                    type="button"
                                     className={cn(
-                                        'h-10 w-10 transition-colors',
-                                        dropActive ? 'text-primary' : 'text-muted-foreground',
+                                        'flex w-full flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed py-12 transition-colors',
+                                        dropActive
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-border hover:border-primary/40 hover:bg-muted/40',
                                     )}
-                                />
-                                <div className="text-center">
-                                    <p className="text-sm font-medium">Drop photos here</p>
-                                    <p className="mt-0.5 text-xs text-muted-foreground">
-                                        or click to browse your files
-                                    </p>
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <CloudUpload
+                                        className={cn(
+                                            'h-10 w-10 transition-colors',
+                                            dropActive ? 'text-primary' : 'text-muted-foreground',
+                                        )}
+                                    />
+                                    <div className="text-center">
+                                        <p className="text-sm font-medium">Drop photos or folders here</p>
+                                        <p className="mt-0.5 text-xs text-muted-foreground">
+                                            or click to browse your files
+                                        </p>
+                                    </div>
+                                </button>
+                                <div className="mt-2 text-center">
+                                    <button
+                                        type="button"
+                                        className="text-xs text-primary hover:underline"
+                                        onClick={() => folderInputRef.current?.click()}
+                                    >
+                                        or select an entire folder
+                                    </button>
                                 </div>
-                            </button>
+                            </>
                         )}
 
                         {/* File list — idle phase */}
@@ -590,6 +618,8 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                                     <p className="truncate text-xs text-amber-500">
                                                         Already in your library
                                                     </p>
+                                                ) : item.status === 'preparing' ? (
+                                                    <p className="text-xs text-muted-foreground">Preparing…</p>
                                                 ) : (
                                                     <p className="text-xs text-muted-foreground">
                                                         {formatBytes(item.file.size)}
@@ -633,6 +663,13 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                 onClick={() => fileInputRef.current?.click()}
                             >
                                 + Add more photos
+                            </button>
+                            <button
+                                type="button"
+                                className="text-xs text-primary hover:underline"
+                                onClick={() => folderInputRef.current?.click()}
+                            >
+                                + Add folder
                             </button>
                             <span className="text-xs text-muted-foreground">
                                 {files.length} file{files.length !== 1 ? 's' : ''} selected
@@ -707,7 +744,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                 {isBusy ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
-                                        {phase === 'preparing' ? 'Preparing…' : 'Uploading…'}
+                                        Uploading…
                                     </>
                                 ) : (
                                     <>
@@ -731,7 +768,28 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 className="hidden"
                 onChange={(e) => {
                     if (e.target.files) {
-                        addFiles(e.target.files)
+                        addFiles(Array.from(e.target.files).filter((f) => !isHiddenFile(f)))
+                        e.target.value = ''
+                    }
+                }}
+            />
+            {/* Folder picker: `webkitdirectory` selects a directory; we take every file recursively,
+                excluding hidden ones (dotfiles / dot-dirs). Attributes are set imperatively since
+                they aren't typed on React's input props. */}
+            <input
+                ref={(el) => {
+                    folderInputRef.current = el
+                    if (el) {
+                        el.setAttribute('webkitdirectory', '')
+                        el.setAttribute('directory', '')
+                    }
+                }}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                    if (e.target.files) {
+                        addFiles(Array.from(e.target.files).filter((f) => !isHiddenFile(f)))
                         e.target.value = ''
                     }
                 }}

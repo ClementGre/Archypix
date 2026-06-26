@@ -252,7 +252,7 @@ impl Season {
 /// A single typed condition applied to one field's value. A field predicate holds one or more of
 /// these (e.g. `min` + `max`); all must match (AND).
 #[derive(Debug, Clone)]
-enum Condition {
+pub enum Condition {
     /// Presence check — valid on any field. `true` ⇒ value must be present.
     IsPresent(bool),
     NumEq(f64),
@@ -590,18 +590,19 @@ fn parse_condition(
         "max" if matches!(bt, BaseType::Int | BaseType::Float) => {
             Ok(Condition::NumMax(num_value(v, key, path)?))
         }
-        "eq" if bt == BaseType::Str => {
-            Ok(Condition::StrEq(str_value(v, key, path)?, ignore_case))
-        }
-        "contains" if bt == BaseType::Str => {
-            Ok(Condition::StrContains(str_value(v, key, path)?, ignore_case))
-        }
-        "starts_with" if bt == BaseType::Str => {
-            Ok(Condition::StrStartsWith(str_value(v, key, path)?, ignore_case))
-        }
-        "ends_with" if bt == BaseType::Str => {
-            Ok(Condition::StrEndsWith(str_value(v, key, path)?, ignore_case))
-        }
+        "eq" if bt == BaseType::Str => Ok(Condition::StrEq(str_value(v, key, path)?, ignore_case)),
+        "contains" if bt == BaseType::Str => Ok(Condition::StrContains(
+            str_value(v, key, path)?,
+            ignore_case,
+        )),
+        "starts_with" if bt == BaseType::Str => Ok(Condition::StrStartsWith(
+            str_value(v, key, path)?,
+            ignore_case,
+        )),
+        "ends_with" if bt == BaseType::Str => Ok(Condition::StrEndsWith(
+            str_value(v, key, path)?,
+            ignore_case,
+        )),
         "regex" if bt == BaseType::Str => {
             let pat = str_value(v, key, path)?;
             let re = regex::RegexBuilder::new(&pat)
@@ -1124,9 +1125,11 @@ mod tests {
         inp.camera_brand = Some("FUJIFILM".to_string());
         // `ignore_case` flag folds case for any string condition (replaces the old `eq_ic`).
         assert!(
-            Predicate::parse(&json!({"field": "camera_brand", "eq": "fujifilm", "ignore_case": true}))
-                .unwrap()
-                .matches(&inp)
+            Predicate::parse(
+                &json!({"field": "camera_brand", "eq": "fujifilm", "ignore_case": true})
+            )
+            .unwrap()
+            .matches(&inp)
         );
         // Case-sensitive by default now: lowercase needle does not match the uppercase value.
         assert!(
@@ -1135,9 +1138,11 @@ mod tests {
                 .matches(&inp)
         );
         assert!(
-            Predicate::parse(&json!({"field": "camera_brand", "contains": "fuji", "ignore_case": true}))
-                .unwrap()
-                .matches(&inp)
+            Predicate::parse(
+                &json!({"field": "camera_brand", "contains": "fuji", "ignore_case": true})
+            )
+            .unwrap()
+            .matches(&inp)
         );
         assert!(
             Predicate::parse(&json!({"field": "camera_brand", "contains": "FUJI"}))
@@ -1170,9 +1175,11 @@ mod tests {
                 .matches(&inp)
         );
         assert!(
-            Predicate::parse(&json!({"field": "filename", "starts_with": "img_", "ignore_case": true}))
-                .unwrap()
-                .matches(&inp)
+            Predicate::parse(
+                &json!({"field": "filename", "starts_with": "img_", "ignore_case": true})
+            )
+            .unwrap()
+            .matches(&inp)
         );
         assert!(
             Predicate::parse(&json!({"field": "filename", "starts_with": "IMG_"}))
@@ -1185,9 +1192,11 @@ mod tests {
                 .matches(&inp)
         );
         assert!(
-            Predicate::parse(&json!({"field": "filename", "ends_with": ".heic", "ignore_case": true}))
-                .unwrap()
-                .matches(&inp)
+            Predicate::parse(
+                &json!({"field": "filename", "ends_with": ".heic", "ignore_case": true})
+            )
+            .unwrap()
+            .matches(&inp)
         );
         assert!(
             !Predicate::parse(&json!({"field": "filename", "ends_with": ".jpg"}))

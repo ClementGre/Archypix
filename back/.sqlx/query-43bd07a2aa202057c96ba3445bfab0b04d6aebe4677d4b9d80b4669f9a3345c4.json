@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH grp AS (\n                 SELECT p.id\n                 FROM pictures p, pictures src\n                 WHERE src.id = $2 AND src.local_user_id = $1\n                   AND p.local_user_id = $1\n                   AND COALESCE(p.content_hash, 'fh:' || p.file_hash)\n                       = COALESCE(src.content_hash, 'fh:' || src.file_hash)\n               ),\n               rep AS (\n                 SELECT p.id\n                 FROM pictures p JOIN grp ON grp.id = p.id\n                 ORDER BY (p.owner_deleted_at IS NOT NULL),\n                          (p.remote_picture_id IS NOT NULL),\n                          (p.copy_source_picture_id IS NOT NULL),\n                          p.id\n                 LIMIT 1\n               )\n               UPDATE pictures p\n               SET deleted_at = COALESCE(p.deleted_at, now() AT TIME ZONE 'utc'),\n                   deleted_reason = CASE WHEN p.id = (SELECT id FROM rep)\n                                         THEN 'manual'::picture_deleted_reason\n                                         ELSE 'boomerang'::picture_deleted_reason END,\n                   last_pipeline_run_at = NULL\n               WHERE p.id IN (SELECT id FROM grp)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "43bd07a2aa202057c96ba3445bfab0b04d6aebe4677d4b9d80b4669f9a3345c4"
+}

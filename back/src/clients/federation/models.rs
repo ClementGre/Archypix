@@ -92,6 +92,10 @@ pub struct AnnouncedPicture {
     /// received picture. `None` until the owner's worker has hashed it.
     #[serde(default)]
     pub file_hash: Option<String>,
+    /// Metadata-stripped content hash (feature 11 §4), forwarded downstream so recipients can group
+    /// byte-identical copies across owners. `None` for a not-yet-hashed or unstrippable picture.
+    #[serde(default)]
+    pub content_hash: Option<String>,
     /// When the owner generated thumbnails, so the recipient knows a thumbnail variant is fetchable
     /// before requesting a presign. `None` ⇒ only the original is available.
     #[serde(default)]
@@ -221,6 +225,7 @@ impl AnnouncedPicture {
             mime_type: picture.mime_type.clone(),
             file_size: picture.file_size,
             file_hash: picture.file_hash.clone(),
+            content_hash: picture.content_hash.clone(),
             thumbnails_generated_at: picture.thumbnails_generated_at,
             width: picture.width,
             height: picture.height,

@@ -530,7 +530,7 @@ Get a presigned download URL for a picture variant.
 
 `PictureVariant`: `"original" | "small" | "medium" | "large"`
 
-- `small` — WebP thumbnail, ~100px height
+- `small` — WebP thumbnail, ~150px height
 - `medium` — WebP thumbnail, ~500px height
 - `large` — WebP thumbnail, ~1000px height
 - `original` — original uploaded file at full resolution
@@ -739,6 +739,68 @@ Batch soft-delete / restore over a **selection** (feature 14 §6). One set-based
 loop). See [§6.11](#611-batch-operations-feature-14) for the request/response shape. Restore must
 target a selection that includes the trashed rows (e.g. the trash view's `include_deleted` query, or
 explicit ids).
+
+#### `POST /api/authenticated/pictures/{id}/copy`
+
+Copy ("rescue") a received (or owned) picture into the caller's library as a **new, independent owned
+picture** (feature 11 §3). The new picture never reuses the source id; its `copy_source_*` records
+the provenance **root** (the genuine original's owner identity, resolved across copy chains). Bytes
+are copied server-side — within S3 when the source file lives on this backend (owned or same-backend
+received), or fetched via the source's per-picture presign for a cross-instance owner (which must be
+reachable). EXIF is seeded from the source's *effective* values at copy time (a copy is a snapshot);
+`gen_thumbnail` then fills `content_hash`/`file_hash`/thumbnails and the dedup reconciler runs.
+
+**Path params:** `id: string` — a picture the caller holds.
+
+**Response `200`:** `{ id: string }` — the new owned picture's id.
+
+**Errors:** `404` if the caller holds no such picture; `401`/`5xx` if a cross-instance owner is
+unreachable. Once owned, the copy behaves like any owned picture (shareable, editable, versioned).
+
+#### `GET /api/authenticated/pictures/{id}/copies`
+
+The picture's **content-dedup group** (feature 11 §5.5): the visible survivor plus its hidden
+siblings (duplicates, trashed, rejected). Each row carries both hashes so the client can tell
+"same image, EXIF-only difference" (same `content_hash`, different `file_hash`) from "different
+image".
+
+**Response `200`:**
+
+```ts
+{
+  copies: Array<{
+    id: string;
+    filename: string | null;
+    content_hash: string | null;
+    file_hash: string | null;
+    state: "live" | "manual" | "boomerang" | "content_dedupe" | "deleted";
+    updated_at: string;            // last edit
+    owned: boolean;
+    owner_username: string | null; // received rows
+    owner_instance: string | null;
+    copy_source_owner_username: string | null;  // a physical copy's provenance root
+    copy_source_owner_instance: string | null;
+    copy_source_picture_id: string | null;
+  }>;
+}
+```
+
+`live` = the shown survivor; `manual` = the single recoverable trash representative; `content_dedupe`
+/ `boomerang` = hidden (a dedup duplicate, or a rejected copy of content the user deleted).
+
+#### `POST /api/authenticated/pictures/{id}/copies/keep`
+
+Make this picture the **kept (live) survivor** of its content-dedup group, hiding the others as
+`content_dedupe` (lifting any rejection). The reconciler leaves a correct single-live group
+untouched, so the choice sticks. **Response `200`:** `{ kept: string }`. `404` if not held.
+
+The picture-detail response (`GET /pictures/{id}`) additionally carries `content_hash`,
+`copy_source_owner_username`, `copy_source_owner_instance`, and `copy_source_picture_id` (all `null`
+for a normal upload/received row). **Content dedup** is automatic and transparent: byte-identical
+copies are grouped by `content_hash` (or `file_hash` for unstrippable formats), one live survivor is
+kept and the rest hidden, and a copy matching content the user previously **manually** deleted is
+routed straight to (recoverable) trash. None of this needs a client call — hidden rows are simply
+excluded from every default view. See `doc/features/11_physical_copy_and_dedup.md`.
 
 ---
 
@@ -1981,6 +2043,35 @@ Permanently fail a job (admin force-cancel). Sets `status = "failed"`.
 **Response `200`:** `AdminJobResponse` (updated row).
 
 **Errors:** 404 if not found or already in a terminal state.
+
+---
+
+### `POST /api/admin/pictures/regenerate-thumbnails`
+
+Bulk (re)enqueue `gen_thumbnail` jobs — which also (re)compute the metadata-stripped `content_hash`
+(feature 11). Useful to repair pictures whose thumbnail job failed, or to backfill `content_hash`
+across the library.
+
+**Request:**
+
+```ts
+{
+  scope?: "missing" | "all";   // default "missing"
+  reextract_exif?: boolean;    // default false
+  limit?: number;              // 1–100000, default 10000
+}
+```
+
+- `scope: "missing"` — owned pictures with a **thumbnailable** MIME, no thumbnail, older than
+  30 minutes (failed/never-run jobs). Non-thumbnailable formats are skipped so they aren't
+  re-enqueued forever.
+- `scope: "all"` — every owned picture (e.g. to recompute `content_hash` library-wide).
+- `reextract_exif: true` also re-extracts EXIF from the file (`is_initial`); the default recomputes
+  thumbnails/hashes/`content_hash` only, leaving stored EXIF untouched.
+
+Pictures with an in-flight `gen_thumbnail` job are skipped. Received pictures are never included.
+
+**Response `200`:** `{ enqueued: number }`
 
 ---
 

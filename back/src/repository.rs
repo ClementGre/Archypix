@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod dedup;
 pub mod hierarchy;
 pub mod job;
 pub mod picture;

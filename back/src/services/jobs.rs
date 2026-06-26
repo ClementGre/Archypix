@@ -49,6 +49,46 @@ where
     .await
 }
 
+/// Admin: (re)enqueue `gen_thumbnail` jobs for owned pictures (feature 11 helper).
+///
+/// `only_missing` restricts to pictures with a thumbnailable MIME, no thumbnail, and older than
+/// 30 minutes (failed/never-run jobs); `false` targets the whole owned library (e.g. to recompute
+/// `content_hash`). `reextract_exif` controls whether the job re-extracts EXIF (`is_initial`): keep
+/// it `false` to recompute only thumbnails/hashes/`content_hash` without touching stored EXIF, or
+/// `true` to also re-extract EXIF from the file. Pictures with an in-flight `gen_thumbnail` job are
+/// skipped. Returns the number of jobs enqueued.
+#[tracing::instrument(skip(db))]
+pub async fn regenerate_thumbnails(
+    db: &PgPool,
+    only_missing: bool,
+    reextract_exif: bool,
+    limit: i64,
+) -> Result<usize, AppError> {
+    let thumbnailable: Vec<String> = archypix_common::mime::MIME_TYPES_THUMBNAIL
+        .iter()
+        .map(|m| m.to_lowercase())
+        .collect();
+    let targets =
+        PictureRepository::find_for_thumbnail_regen(db, only_missing, &thumbnailable, limit)
+            .await?;
+    let mut enqueued = 0usize;
+    for (picture_id, owner_id) in targets {
+        // No idempotency key (the initial-upload key may already exist); the in-flight guard in the
+        // query prevents duplicate concurrent jobs.
+        let config = JobConfig::GenThumbnail(GenThumbnailConfig {
+            picture_id,
+            is_initial: reextract_exif,
+        });
+        if JobRepository::create(db, owner_id, Some(picture_id), &config, None)
+            .await
+            .is_ok()
+        {
+            enqueued += 1;
+        }
+    }
+    Ok(enqueued)
+}
+
 #[tracing::instrument(skip(db), fields(user_id = %user_id, job_id = %job_id))]
 pub async fn get_job(db: &PgPool, job_id: Uuid, user_id: Uuid) -> Result<Job, AppError> {
     let job = JobRepository::find_by_id(db, job_id)

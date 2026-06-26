@@ -1,6 +1,8 @@
 import {useState} from 'react'
-import {AlertTriangle, RotateCcw, XCircle} from 'lucide-react'
+import {useMutation} from '@tanstack/react-query'
+import {AlertTriangle, Loader2, RefreshCw, RotateCcw, XCircle} from 'lucide-react'
 import {toast} from 'sonner'
+import {regenerateThumbnails} from '@/api/admin'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
@@ -210,19 +212,75 @@ function StaleJobsView() {
     )
 }
 
+/** Bulk thumbnail / content-hash regeneration (feature 11). */
+function RegenPanel() {
+    const [reextract, setReextract] = useState(false)
+    const regen = useMutation({
+        mutationFn: regenerateThumbnails,
+        onSuccess: (r) => toast.success(`Enqueued ${r.enqueued} thumbnail job${r.enqueued !== 1 ? 's' : ''}`),
+        onError: (e: unknown) => toast.error('Could not enqueue', {description: apiErrorMessage(e)}),
+    })
+    return (
+        <div className="space-y-3 rounded-md border border-border p-4">
+            <div>
+                <h3 className="text-sm font-medium">Thumbnail &amp; content-hash regeneration</h3>
+                <p className="text-xs text-muted-foreground">
+                    Re-runs <code>gen_thumbnail</code> (which also computes the content hash). “Missing” covers owned
+                    pictures with a thumbnailable type, no thumbnail, older than 30&nbsp;min; “All” re-runs the whole
+                    owned library. Pictures with an in-flight job are skipped.
+                </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                    type="checkbox"
+                    checked={reextract}
+                    onChange={(e) => setReextract(e.target.checked)}
+                />
+                Also re-extract EXIF from the file (otherwise stored EXIF is kept)
+            </label>
+            <div className="flex flex-wrap gap-2">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={regen.isPending}
+                    onClick={() => regen.mutate({scope: 'missing', reextract_exif: reextract})}
+                >
+                    {regen.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <RefreshCw className="h-3.5 w-3.5"/>}
+                    Regenerate missing
+                </Button>
+                <ConfirmDialog
+                    trigger={
+                        <Button variant="outline" size="sm" className="gap-1.5" disabled={regen.isPending}>
+                            <RefreshCw className="h-3.5 w-3.5"/> Recompute all
+                        </Button>
+                    }
+                    title="Recompute all thumbnails?"
+                    description="This enqueues a gen_thumbnail job for every owned picture (up to 100000). Use it when content hashes need to be (re)computed library-wide."
+                    confirmLabel="Recompute all"
+                    onConfirm={() => regen.mutate({scope: 'all', reextract_exif: reextract})}
+                />
+            </div>
+        </div>
+    )
+}
+
 export function JobsTab() {
     return (
-        <Tabs defaultValue="all">
-            <TabsList>
-                <TabsTrigger value="all">All jobs</TabsTrigger>
-                <TabsTrigger value="stale">Stale / stuck</TabsTrigger>
-            </TabsList>
-            <TabsContent value="all" className="mt-4">
-                <FilteredJobsView/>
-            </TabsContent>
-            <TabsContent value="stale" className="mt-4">
-                <StaleJobsView/>
-            </TabsContent>
-        </Tabs>
+        <div className="space-y-4">
+            <RegenPanel/>
+            <Tabs defaultValue="all">
+                <TabsList>
+                    <TabsTrigger value="all">All jobs</TabsTrigger>
+                    <TabsTrigger value="stale">Stale / stuck</TabsTrigger>
+                </TabsList>
+                <TabsContent value="all" className="mt-4">
+                    <FilteredJobsView/>
+                </TabsContent>
+                <TabsContent value="stale" className="mt-4">
+                    <StaleJobsView/>
+                </TabsContent>
+            </Tabs>
+        </div>
     )
 }

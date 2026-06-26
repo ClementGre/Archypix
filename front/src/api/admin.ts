@@ -111,3 +111,16 @@ export async function listFederationInstances(): Promise<FederationInstanceRespo
     const {data} = await apiClient.get('/api/admin/federation/instances')
     return data
 }
+
+/**
+ * Bulk (re)enqueue `gen_thumbnail` jobs (feature 11). `scope: 'missing'` targets owned pictures with
+ * a thumbnailable MIME, no thumbnail, older than 30 min (failed/never-run jobs); `'all'` targets the
+ * whole owned library (e.g. to recompute `content_hash`). `reextract_exif` also re-extracts EXIF.
+ */
+export async function regenerateThumbnails(body: {
+    scope: 'missing' | 'all'
+    reextract_exif?: boolean
+}): Promise<{ enqueued: number }> {
+    const {data} = await apiClient.post('/api/admin/pictures/regenerate-thumbnails', body)
+    return data
+}

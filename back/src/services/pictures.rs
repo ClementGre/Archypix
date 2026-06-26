@@ -6,6 +6,7 @@ use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::s3::{self, Storage};
+use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
     PictureListFilter, PictureRepository, PictureSortField, SortOrder,
 };
@@ -493,6 +494,163 @@ pub async fn complete_upload(
     Ok(picture)
 }
 
+/// Copy a received (or owned) picture into the caller's library as a new, independent owned picture
+/// (feature 11 §3): a fresh id, `copy_source_*` provenance root, server-side byte copy (S3 copy for a
+/// local source, presign+fetch for a cross-instance owner), seeded effective EXIF, and a
+/// `gen_thumbnail` enqueue. See doc/features/11 §3.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, storage, config, federation, waker), fields(user_id = %user_id, source_id = %source_picture_id))]
+pub async fn copy_picture(
+    db: &PgPool,
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    config: &Config,
+    federation: &FederationClient,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    caller_username: &str,
+    source_picture_id: Uuid,
+) -> Result<Picture, AppError> {
+    let source = PictureRepository::find_by_id(db, source_picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if source.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+
+    let new_id = Uuid::new_v4();
+    let new_key = s3::picture_key(user_id, new_id);
+
+    // ── Copy the bytes into the caller's pictures object ──────────────────────
+    if source.is_owned() {
+        storage
+            .copy_object(
+                &config.s3_bucket_pictures,
+                &s3::picture_key(user_id, source.id),
+                &config.s3_bucket_pictures,
+                &new_key,
+            )
+            .await?;
+    } else {
+        let owner_username = source.owner_username.as_deref().unwrap_or_default();
+        let owner_instance = source.owner_instance_domain.as_deref().unwrap_or_default();
+        let remote_id: Uuid = source
+            .remote_picture_id
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| {
+                AppError::InternalServerError("received picture missing remote_picture_id".into())
+            })?;
+        if let Some(owner_id) =
+            find_local_user_id(cache, db, config, owner_username, owner_instance).await?
+        {
+            storage
+                .copy_object(
+                    &config.s3_bucket_pictures,
+                    &s3::picture_key(owner_id, remote_id),
+                    &config.s3_bucket_pictures,
+                    &new_key,
+                )
+                .await?;
+        } else {
+            // Cross-instance: the owner must be reachable. Presign the original via the picture's
+            // own token, download the bytes, and upload them under the caller's key.
+            let token = TagRepository::find_active_picture_token(db, source.id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Unauthorized(format!(
+                        "no active presign token for picture {}",
+                        source.id
+                    ))
+                })?;
+            let mut urls = federation
+                .presign_remote_pictures(owner_username, owner_instance, &[(token, "original")])
+                .await?;
+            let url = urls.remove(&token).ok_or_else(|| {
+                AppError::InternalServerError("owner backend returned no presigned URL".into())
+            })?;
+            let resp = reqwest::get(&url)
+                .await
+                .map_err(|e| AppError::InternalServerError(format!("copy fetch failed: {e}")))?
+                .error_for_status()
+                .map_err(|e| AppError::InternalServerError(format!("copy fetch status: {e}")))?;
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| AppError::InternalServerError(format!("copy read failed: {e}")))?
+                .to_vec();
+            storage
+                .put_object(
+                    &config.s3_bucket_pictures,
+                    &new_key,
+                    bytes,
+                    source.mime_type.as_deref(),
+                )
+                .await?;
+        }
+    }
+
+    // ── Provenance root (§3 / §7.1): point at the genuine original, not the intermediary ─────
+    let (cs_user, cs_instance, cs_pic) = if source.copy_source_picture_id.is_some() {
+        (
+            source.copy_source_owner_username.clone(),
+            source.copy_source_owner_instance.clone(),
+            source.copy_source_picture_id.clone(),
+        )
+    } else if source.is_owned() {
+        (
+            Some(caller_username.to_string()),
+            Some(config.global_domain.clone()),
+            Some(source.id.to_string()),
+        )
+    } else {
+        (
+            source.owner_username.clone(),
+            source.owner_instance_domain.clone(),
+            source.remote_picture_id.clone(),
+        )
+    };
+
+    // ── New owned row, seeded from the source's effective EXIF ────────────────
+    let eff = source.full_exif();
+    let camera_json = serde_json::to_value(&eff.camera).unwrap_or_else(|_| serde_json::json!({}));
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let copy = PictureRepository::create_copy(
+        &mut *tx,
+        new_id,
+        user_id,
+        source.filename.as_deref(),
+        source.mime_type.as_deref(),
+        source.file_size,
+        source.width,
+        source.height,
+        camera_json,
+        eff.captured_at,
+        eff.gps_lat,
+        eff.gps_lng,
+        eff.gps_alt,
+        eff.orientation,
+        cs_user.as_deref(),
+        cs_instance.as_deref(),
+        cs_pic.as_deref(),
+    )
+    .await?;
+    // `is_initial = false`: keep the seeded effective EXIF (don't re-extract the owner's embedded
+    // EXIF), but still compute file_size/hash, content_hash, dimensions and thumbnails.
+    crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, new_id, false).await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+
+    // Wake the pipeline so the new owned picture is tagged; the dedup reconcile runs again once
+    // `gen_thumbnail` lands its `content_hash` (that completion wakes the pipeline too).
+    waker.wake_debounced(user_id);
+
+    Ok(copy)
+}
+
 /// Snapshot a picture's current original bytes as a new `picture_version` before a WebDAV
 /// overwrite, per the user's `versioning_mode` (06_webdav.md §7.3):
 ///
@@ -611,6 +769,13 @@ pub async fn batch_set_trashed_selection(
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
     let affected =
         PictureRepository::batch_set_trashed_selection(&mut *tx, user_id, sel, deleted).await?;
+    if deleted {
+        // Reject the touched groups; the reconcile picks each representative (feature 11 §5.3).
+        DedupRepository::boomerang_dedupe_in_manual_groups(&mut *tx, user_id).await?;
+    } else {
+        // Restore lifts the rejection (boomerang → content_dedupe), before the reconcile runs.
+        DedupRepository::dedupe_boomerang_in_live_groups(&mut *tx, user_id).await?;
+    }
     tx.commit().await.map_err(map_sqlx_error)?;
     waker.wake(user_id);
     Ok(TrashBatchOutcome::Applied {
@@ -634,6 +799,13 @@ async fn set_trashed(
     let ok = PictureRepository::set_deleted(&mut *tx, user_id, picture_id, deleted).await?;
     if !ok {
         return Err(AppError::NotFound);
+    }
+    // Content-dedup rejection lifecycle (feature 11 §5.3): delete rejects the whole group (priority
+    // copy → manual representative, rest → boomerang); restore lifts it (boomerangs → content_dedupe).
+    if deleted {
+        DedupRepository::reject_content_group(&mut *tx, user_id, picture_id).await?;
+    } else {
+        DedupRepository::dedupe_boomerang_siblings(&mut *tx, user_id, picture_id).await?;
     }
     // Re-dirty so the announcement reconcile re-delivers the lifecycle change (owned) and tagging
     // re-evaluates; harmless for received rows.
@@ -865,6 +1037,69 @@ pub async fn propose_received_exif(
     PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+/// List the content-dedup group of a picture the caller holds (feature 11 §5.5) — the survivor plus
+/// its hidden `content_dedupe`/`boomerang`/`manual` siblings. The caller must hold the picture.
+#[tracing::instrument(skip(db), fields(user_id = %user_id, picture_id = %picture_id))]
+pub async fn picture_copies(
+    db: &PgPool,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<Vec<crate::repository::dedup::CopyRow>, AppError> {
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+    let group =
+        crate::repository::dedup::DedupRepository::list_content_group(db, user_id, picture_id)
+            .await?;
+    if !group.is_empty() {
+        return Ok(group);
+    }
+    // No content/file hash yet (still processing) → the group is just this picture.
+    Ok(vec![crate::repository::dedup::CopyRow {
+        id: picture.id,
+        content_hash: picture.content_hash.clone(),
+        file_hash: picture.file_hash.clone(),
+        deleted_reason: picture.deleted_reason,
+        deleted_at: picture.deleted_at,
+        updated_at: picture.updated_at,
+        is_owned: picture.is_owned(),
+        owner_username: picture.owner_username.clone(),
+        owner_instance_domain: picture.owner_instance_domain.clone(),
+        copy_source_owner_username: picture.copy_source_owner_username.clone(),
+        copy_source_owner_instance: picture.copy_source_owner_instance.clone(),
+        copy_source_picture_id: picture.copy_source_picture_id.clone(),
+        filename: picture.filename.clone(),
+    }])
+}
+
+/// Make `picture_id` the live survivor of its content-dedup group (feature 11 §5.5), hiding every
+/// sibling as `content_dedupe`. Because the reconciler leaves a correct single-live group untouched,
+/// this user choice sticks without a pin flag. The caller must hold the picture.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+pub async fn set_picture_survivor(
+    db: &PgPool,
+    waker: &crate::infra::pipeline::PipelineWaker,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<(), AppError> {
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let ok = crate::repository::dedup::DedupRepository::set_survivor(&mut *tx, user_id, picture_id)
+        .await?;
+    if !ok {
+        return Err(AppError::NotFound);
+    }
+    tx.commit().await.map_err(map_sqlx_error)?;
+    // Re-announce / re-tag the now-live picture and let the reconciler confirm consistency.
+    waker.wake(user_id);
+    Ok(())
 }
 
 #[tracing::instrument(skip(db), fields(user_id = %user_id, picture_id = %picture_id))]

@@ -101,10 +101,16 @@
 
 ## To-do for v1.0
 
-- [ ] **Physical copy & content dedup** — "rescue" copy of a received picture into your own library
-  (new distinct identity); `content_hash`-based dedup of identical copies (one live survivor,
-  reversible `content_dedupe` hiding, rescue-on-purge), and the deleted-content `boomerang` guard.
-  Schema already in 001 (via the trash migration). See `doc/features/11_physical_copy_and_dedup.md`.
+- [x] **Physical copy & content dedup** — "rescue" copy of a received picture into your own library
+  (`POST /pictures/{id}/copy`, new distinct owned identity with root-resolved `copy_source_*`
+  provenance; same-/cross-instance byte paths). Worker computes a metadata-stripped `content_hash`
+  (`AnnouncedPicture` carries it); a serial-per-user pipeline reconciler (`infra::pipeline::dedup`)
+  keeps one live survivor per group and hides the rest as `content_dedupe`, with rescue-on-purge
+  promotion. The deleted-content `boomerang` guard at the announce-receive path, plus the
+  user-clarified manual-delete→boomerang of `content_dedupe` siblings (sticky rejection that outlives
+  the manual twin). Schema already in 001 (via the trash migration). **Frontend:** copy/"rescue"
+  action in the selection panel + lightbox, owner-deleting grace-banner rescue button, copy-of
+  provenance line. See `doc/features/11_physical_copy_and_dedup.md`.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions. Frontend viewing and editing versions.

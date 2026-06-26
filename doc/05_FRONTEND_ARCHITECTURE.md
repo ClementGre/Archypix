@@ -346,12 +346,17 @@ mobile) and shown only when its `ui` store toggle is on:
   orientation override), filename + size/dimensions/mime inline, ingested/updated timestamps (formatted in the local timezone via `formatDateTime`),
   an **owner-deletion grace banner** (received, when `owner_deleted_at` is set — "disappears on *X*"), a **local-trash banner** (when the picture is
   in
-  the holder's trash, with the owned purge date), a **download-original** button + a **Move to trash** (ConfirmDialog) / **Restore** action,
+  the holder's trash, with the owned purge date), a **download-original** button, a **Copy to my library** ("rescue", feature 11) action for received
+  pictures (also a prominent button inside the owner-deletion grace banner, and a copy-of provenance line when an owned picture is a copy), + a **Move
+  to trash** (ConfirmDialog) / **Restore** action,
   then foldable sections — **Tags** (chips; **+** add button and provenance toggle in the section header; provenance mode renders each path as a chip
   with colour-coded per-source mini-tags), **Shared with you** (sender handle + shared subpath, not the raw `SharedToMe.*` path), **Shared by you**,
   **EXIF** (inline-editable — owned pictures write through to the file, received pictures get recipient-local overrides; the badge flips to **modified
   **
-  on unsaved changes, or **overridden** when a received picture has sticky overrides), **Versions**. Clicking
+  on unsaved changes, or **overridden** when a received picture has sticky overrides), **Versions**, and **Copies**
+  (`CopiesSection`, feature 11 — lazily lists the picture's content-dedup group: each physical copy's state
+  shown/in-trash/duplicate/rejected, owner, last-edit, a same-image-vs-EXIF-only-vs-different-content diff, and a
+  "Keep this" control to choose the kept survivor). Clicking
   a
   tag filters by it and reveals it in the Tags tree (opens the left panel + Tags tab + expands/scrolls the tree). For multi-selection the panel
   renders
@@ -445,25 +450,31 @@ mobile) and shown only when its `ui` store toggle is on:
   `Lightbox` trashes it directly, skipping the dialog — a deliberate keystroke doesn't need the mouse-click confirm
   gate. Both shortcuts ignore the keypress while focus is in a text input and no-op on an already-trashed picture.
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
-  full-page drag zone both call `openDialog(files?)`. On submit the dialog enters a **`preparing`** phase that hashes each file's SHA-256
-  (`crypto.subtle.digest`, lowercase hex — the same digest the worker produces) with **bounded concurrency** (`HASH_CONCURRENCY = 4`, not all at once —
-  hashing buffers the whole file, and a 1k-photo batch read at once black-screened phones); the row previews are **lazy** (an `IntersectionObserver`
-  only mints each `object URL` when its row nears the viewport) for the same reason. Hashes are sent on the batch presign (`POST /uploads/batch`, with
-  `initial_tags`) for **upload-time dedup**: a slot that
-  comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check** ("Already in
-  your
-  library") and the backend has already assigned the initial tags to the existing picture. The batch also carries a front-fixed import label
-  (`makeUploadLabel()` → `Uploaded.YYYY_MM_DD_HH_MM`, one date for the whole batch): the backend tags new uploads `Uploaded.…` and duplicates
+  full-page drag zone both call `openDialog(files?)`. **Files and directories** can be dropped or picked — dropped dirs are walked recursively via the
+  `webkitGetAsEntry` filesystem-entries API and the folder picker uses a `webkitdirectory` input; in both cases **hidden files/dirs (dotfiles) are
+  excluded** (`lib/uploadFiles.ts` — `filesFromDataTransfer`/`isHiddenFile`, shared with the gallery drop zone). The row previews are **lazy** (an
+  `IntersectionObserver` only mints each `object URL` when its row nears the viewport — creating 1k object URLs up front froze phones). On submit each
+  slot runs an **end-to-end per-file pipeline** with **bounded concurrency** (`UPLOAD_CONCURRENCY = 4`): it hashes the file's SHA-256
+  (`crypto.subtle.digest`, lowercase hex — the same digest the worker produces; buffered in memory, hence the small bound), then **re-presigns
+  just-in-time** (`POST /uploads/batch`, one file per call, with `initial_tags` + the import label) **right before** uploading — so a presign can't
+  expire while earlier files in the batch are still transferring, and a **retry mints a brand-new URL** (the hash is reused, only the presign is
+  fresh).
+  A slot that comes back `duplicate: true` (the hash already matched an existing owned picture) is **not** uploaded — it shows an **amber check**
+  ("Already in your library") and the backend has already assigned the initial tags to the existing picture. The per-call import label
+  (`makeUploadLabel()` → `Uploaded.YYYY_MM_DD_HH_MM`, fixed once per batch so retries reuse it): the backend tags new uploads `Uploaded.…` and
+  duplicates
   `Uploaded_….AlreadyExisting[.Deleted]` (feature 15). Trashed duplicates are **no longer auto-restored** — they come back `was_deleted: true`, and the
   completion screen shows an **import summary** (how many uploaded / already-existed / were-in-trash, each with its tag, plus a total) and a **Restore N
-  deleted from trash** button (`restorePicture` per id). Non-duplicate files upload to S3 in parallel (max 4
-  concurrent, via `XMLHttpRequest` for per-file progress, reusing the up-front hash as `file_hash`) and call `POST /uploads/{id}/complete` immediately
-  per file as its S3 PUT finishes — not after all files; `initial_tags` + `upload_label` are passed on the complete body and assigned atomically
-  server-side. The backend
-  wakes the pipeline through its debounced window, so per-file completions coalesce into a single run with no client-side defer/wake bookkeeping. An
-  **overall progress bar + status line sit above the scrollable file list** (always visible, no scrolling to find them); failed (network-errored) items
-  carry a per-row **Retry** and the completion summary offers **Retry N failed** (both reuse the same per-slot run, and the fixed import label). Pictures **and tags** queries are
-  invalidated when uploads settle, then **again ~1.5 s later** (uploaded pictures may pick up pipeline tags that land asynchronously).
+  deleted from trash** button (`restorePicture` per id). Non-duplicate files upload to S3 (via `XMLHttpRequest` for per-file progress) and call
+  `POST /uploads/{id}/complete` immediately per file as its S3 PUT finishes — not after all files; `initial_tags` + `upload_label` are passed on the
+  complete body and assigned atomically server-side. The backend wakes the pipeline through its debounced window, so per-file completions coalesce
+  into a
+  single run with no client-side defer/wake bookkeeping. An **overall progress bar + status line sit above the scrollable file list** (always
+  visible);
+  the percentage averages every slot's progress (settled = 100, in-flight = its S3 %) and is **floored to one decimal** (e.g. `99.5%`). Failed
+  (network-errored) items carry a per-row **Retry** and the completion summary offers **Retry N failed**; a retry resets those slots to `pending` (the
+  error count drops to 0 and the retry buttons hide while it reruns) so it reads like a fresh restart of only the failed files. Pictures **and tags**
+  queries are invalidated when uploads settle, then **again ~1.5 s later** (uploaded pictures may pick up pipeline tags that land asynchronously).
 
 ---
 

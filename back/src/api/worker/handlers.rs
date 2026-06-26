@@ -244,11 +244,12 @@ pub async fn complete_job(
             camera_patch,
             body.file_size,
             body.file_hash.as_deref(),
+            body.content_hash.as_deref(),
         )
         .await?;
     } else if let Some(pid) = picture_id {
         // No EXIF (edit_picture or non-initial gen_thumbnail): still update
-        // thumbnails_generated_at, blurhash, file_size, file_hash, and decoded dimensions.
+        // thumbnails_generated_at, blurhash, file_size, file_hash, content_hash, and decoded dims.
         PictureRepository::update_after_processing(
             &mut *tx,
             pid,
@@ -256,6 +257,7 @@ pub async fn complete_job(
             body.blurhash.as_deref(),
             body.file_size,
             body.file_hash.as_deref(),
+            body.content_hash.as_deref(),
             body.width,
             body.height,
         )
@@ -284,13 +286,16 @@ pub async fn complete_job(
     // has bumped the row past its recorded `announced_updated_at`, so re-marking it dirty makes the
     // pipeline's delta deliver the refreshed metadata. Gated on tracking-table membership: a picture
     // that was never announced has nothing to refresh.
+    // A `gen_thumbnail` completion is also where `content_hash` first lands, so wake the owner's
+    // pipeline (feature 11) to run the dedup reconciler — a freshly-ingested picture may dedupe
+    // against an existing copy. Done for every gen_thumbnail completion, not only tracked ones.
     let mut reannounce_owner: Option<Uuid> = None;
     if job.job_type == JobType::GenThumbnail {
         if let Some(pid) = picture_id {
             if ShareAnnouncementRepository::is_picture_tracked(&mut *tx, pid).await? {
                 PipelineRepository::invalidate(&mut *tx, &[pid]).await?;
-                reannounce_owner = Some(job.owner_id);
             }
+            reannounce_owner = Some(job.owner_id);
         }
     }
 

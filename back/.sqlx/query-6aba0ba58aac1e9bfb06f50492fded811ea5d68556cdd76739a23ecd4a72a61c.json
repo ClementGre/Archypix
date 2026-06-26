@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET deleted_at = COALESCE(deleted_at, now() AT TIME ZONE 'utc'),\n                   deleted_reason = 'manual'::picture_deleted_reason,\n                   last_pipeline_run_at = NULL\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6aba0ba58aac1e9bfb06f50492fded811ea5d68556cdd76739a23ecd4a72a61c"
+}

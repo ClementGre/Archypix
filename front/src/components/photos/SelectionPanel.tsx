@@ -2,7 +2,7 @@ import {useEffect, useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {AlertTriangle, ArchiveRestore, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
+import {AlertTriangle, ArchiveRestore, Copy, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
@@ -10,7 +10,7 @@ import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {listPictureTagsWithSources} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
 import {useBatchEditTags, usePictureTags} from '@/hooks/useTags'
-import {useTrashMutations} from '@/hooks/usePictureEdit'
+import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
 import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
@@ -19,6 +19,7 @@ import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
+import {CopiesSection} from '@/components/photos/detail/CopiesSection'
 import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
@@ -242,6 +243,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     })
 
     const {trash, restore} = useTrashMutations()
+    const copy = useCopyPicture()
     const {data: settings} = useSettings()
 
     const batch = useBatchEditTags()
@@ -418,6 +420,19 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     >
                         {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Download className="h-4 w-4"/>}
                     </Button>
+                    {/* Copy ("rescue") a received picture into your own library (feature 11). */}
+                    {!owned && (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            title="Copy to my library"
+                            disabled={copy.isPending}
+                            onClick={() => copy.mutate(id)}
+                        >
+                            {copy.isPending ? <Loader2 className="h-4 w-4 animate-spin"/> : <Copy className="h-4 w-4"/>}
+                        </Button>
+                    )}
                     {!isTrashed && (
                         <ConfirmDialog
                             trigger={
@@ -455,9 +470,34 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                 <div
                     className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
+                    <div className="flex flex-col gap-1.5">
+                        <span>
+                            The owner deleted this picture. It will disappear
+                            {ownerPurgeLabel ? <> on <span
+                                className="font-medium">{ownerPurgeLabel}</span></> : ' after their retention window'} unless they restore it.
+                        </span>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1.5 self-start"
+                            disabled={copy.isPending}
+                            onClick={() => copy.mutate(id)}
+                            title="Keep a permanent copy in your own library"
+                        >
+                            {copy.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Copy className="h-3.5 w-3.5"/>}
+                            Rescue to my library
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {/* Copy provenance — shown when this owned picture is a physical copy (feature 11). */}
+            {owned && picture.copy_source_owner_username && (
+                <div className="mx-3 mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Copy className="h-3.5 w-3.5 shrink-0"/>
                     <span>
-                        The owner deleted this picture. It will disappear
-                        {ownerPurgeLabel ? <> on <span className="font-medium">{ownerPurgeLabel}</span></> : ' after their retention window'} unless they restore it.
+                        Copy of @{picture.copy_source_owner_username}
+                        {picture.copy_source_owner_instance ? `:${picture.copy_source_owner_instance}` : ''}
                     </span>
                 </div>
             )}
@@ -588,6 +628,9 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                         <span className="text-xs text-muted-foreground">No previous versions.</span>
                     )}
                 </Section>
+
+                {/* Physical copies / content-dedup group (feature 11 §5.5). */}
+                <CopiesSection pictureId={picture.id}/>
             </div>
         </div>
     )

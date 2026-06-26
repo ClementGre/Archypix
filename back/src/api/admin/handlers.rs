@@ -209,6 +209,48 @@ pub async fn wake_user_pipeline(
     Ok(Json(serde_json::json!({ "woken": true })))
 }
 
+// ── Bulk thumbnail / content-hash regeneration ─────────────────────────────────
+
+/// Request body for `POST /api/admin/pictures/regenerate-thumbnails`.
+#[derive(Debug, serde::Deserialize)]
+pub struct RegenerateThumbnailsRequest {
+    /// `"missing"` (default) — only owned pictures with a thumbnailable MIME, no thumbnail, older
+    /// than 30 minutes (failed/never-run jobs). `"all"` — every owned picture (e.g. to recompute
+    /// `content_hash` library-wide).
+    #[serde(default)]
+    pub scope: RegenScope,
+    /// When `true`, the job also re-extracts EXIF from the file (`is_initial`); default `false` —
+    /// recompute thumbnails/hashes/`content_hash` only, leaving stored EXIF untouched.
+    #[serde(default)]
+    pub reextract_exif: bool,
+    /// Safety cap on how many jobs to enqueue in one call (1–100000, default 10000).
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegenScope {
+    #[default]
+    Missing,
+    All,
+}
+
+#[tracing::instrument(skip(_auth, state, body), fields(user = %_auth.claims.sub))]
+pub async fn regenerate_thumbnails(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+    Json(body): Json<RegenerateThumbnailsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let only_missing = matches!(body.scope, RegenScope::Missing);
+    let limit = body.limit.unwrap_or(10_000).clamp(1, 100_000);
+    let enqueued =
+        services::jobs::regenerate_thumbnails(&state.db, only_missing, body.reextract_exif, limit)
+            .await?;
+    // The jobs are owned per-picture; workers will pick them up by polling. No pipeline wake needed
+    // (gen_thumbnail completion wakes the owner's pipeline for dedup/announce on its own).
+    Ok(Json(serde_json::json!({ "enqueued": enqueued })))
+}
+
 // ── Job list ──────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(skip(_auth, state, query), fields(user = %_auth.claims.sub))]

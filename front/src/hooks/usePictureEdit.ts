@@ -1,7 +1,7 @@
 import {useState} from 'react'
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
+import {copyPicture, editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {invalidatePictures, invalidatePicturesAndTags, invalidateTags} from '@/lib/invalidation'
 import type {EditPictureResponse, ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
@@ -114,4 +114,24 @@ export function useTrashMutations() {
     })
 
     return {trash, restore}
+}
+
+/**
+ * Copy ("rescue") a picture into the caller's library as a new owned picture (feature 11). The new
+ * picture and its pipeline tags land asynchronously, so we invalidate pictures + tags immediately
+ * and again shortly after (mirroring the upload flow).
+ */
+export function useCopyPicture() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: copyPicture,
+        onSuccess: () => {
+            invalidatePicturesAndTags(queryClient)
+            setTimeout(() => invalidatePicturesAndTags(queryClient), 1500)
+            toast.success('Copied to your library', {
+                description: 'A thumbnail will appear once processing finishes.',
+            })
+        },
+        onError: (error: unknown) => toast.error('Could not copy', {description: apiErrorMessage(error)}),
+    })
 }

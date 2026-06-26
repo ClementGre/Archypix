@@ -9,7 +9,7 @@ export function cn(...inputs: ClassValue[]) {
 // ── Thumbnails ─────────────────────────────────────────────────────────────────
 
 /**
- * Pick a thumbnail variant (small=100, medium=500, large=1000 px tall — see worker
+ * Pick a thumbnail variant (small=150, medium=500, large=1000 px tall — see worker
  * `THUMBNAIL_VARIANTS`) for an element displayed at `cssPx` CSS pixels tall. Sizing
  * is by logical pixels (no devicePixelRatio multiplier) to keep payloads light:
  * slight upscaling on hi-DPI screens is an accepted trade-off. Used by the grid

@@ -238,6 +238,11 @@ pub async fn details(
         "owner_purge_at": d.picture.owner_purge_at,
         // Recipient EXIF overrides (received pictures only).
         "local_exif_overrides": d.picture.local_exif_overrides,
+        // Physical-copy provenance & content-dedup grouping key (feature 11).
+        "content_hash": d.picture.content_hash,
+        "copy_source_owner_username": d.picture.copy_source_owner_username,
+        "copy_source_owner_instance": d.picture.copy_source_owner_instance,
+        "copy_source_picture_id": d.picture.copy_source_picture_id,
         "versions": d.versions,
     })))
 }
@@ -270,6 +275,88 @@ pub async fn aggregate(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let result = services::aggregate::aggregate(&state.db, auth.user_id()?, body).await?;
     Ok(Json(result))
+}
+
+/// `POST /api/authenticated/pictures/{id}/copy` — copy a received (or owned) picture into the
+/// caller's library as a new, independent owned picture (feature 11 §3).
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn copy(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let picture = services::pictures::copy_picture(
+        &state.db,
+        state.cache.as_ref(),
+        state.storage.as_ref(),
+        &state.config,
+        &state.federation,
+        &state.pipeline_waker,
+        auth.user_id()?,
+        &auth.claims.sub,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "id": picture.id })))
+}
+
+/// `GET /api/authenticated/pictures/{id}/copies` — the content-dedup group of a picture (feature 11
+/// §5.5): the live survivor plus its hidden siblings, each with both hashes (so the client can show
+/// "same content / EXIF-only difference" vs "different content"), state, last-edit time, and owner.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn copies(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let rows = services::pictures::picture_copies(&state.db, auth.user_id()?, picture_id).await?;
+    let items: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            let state = match (r.deleted_at, r.deleted_reason) {
+                (None, _) => "live",
+                (Some(_), Some(crate::domain::picture::DeletedReason::Manual)) => "manual",
+                (Some(_), Some(crate::domain::picture::DeletedReason::Boomerang)) => "boomerang",
+                (Some(_), Some(crate::domain::picture::DeletedReason::ContentDedupe)) => {
+                    "content_dedupe"
+                }
+                (Some(_), None) => "deleted",
+            };
+            serde_json::json!({
+                "id": r.id,
+                "filename": r.filename,
+                "content_hash": r.content_hash,
+                "file_hash": r.file_hash,
+                "state": state,
+                "updated_at": r.updated_at,
+                "owned": r.is_owned,
+                "owner_username": r.owner_username,
+                "owner_instance": r.owner_instance_domain,
+                "copy_source_owner_username": r.copy_source_owner_username,
+                "copy_source_owner_instance": r.copy_source_owner_instance,
+                "copy_source_picture_id": r.copy_source_picture_id,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "copies": items })))
+}
+
+/// `POST /api/authenticated/pictures/{id}/copies/keep` — make this picture the live survivor of its
+/// content-dedup group (feature 11 §5.5), hiding the others as `content_dedupe`.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn keep_copy(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    services::pictures::set_picture_survivor(
+        &state.db,
+        &state.pipeline_waker,
+        auth.user_id()?,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "kept": picture_id })))
 }
 
 /// Body for a batch trash/restore over a selection (feature 14 §6). Accepts the selection descriptor

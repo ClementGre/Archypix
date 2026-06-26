@@ -4,7 +4,7 @@ use crate::domain::pipeline::{self, PipelineInput};
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceType;
 use crate::infra::error::AppError;
-use crate::infra::pipeline::{PipelineRun, announcement};
+use crate::infra::pipeline::{PipelineRun, announcement, dedup};
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::{
@@ -20,6 +20,13 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
     let db = run.db;
     let config = run.config;
     let run_at = Utc::now().naive_utc();
+
+    // ── Content dedup reconcile (feature 11 §5) ─────────────────────────────────
+    // Serial-per-user (this loop guarantees it): keep one live survivor per content-hash group,
+    // hiding the rest as `content_dedupe`, and rescue-promote when a survivor disappears. Runs first
+    // so any visibility change re-dirties the affected rows (set `last_pipeline_run_at = NULL`) and
+    // they flow through the tagging + announcement steps below in the same pass.
+    dedup::reconcile_for_user(run, user_id).await?;
 
     // ── Initial / recovery announcements ────────────────────────────────────────
     // Reconcile any `pending_first_announcement` / `errored` share's full coverage (deliver inline,

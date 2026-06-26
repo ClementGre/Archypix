@@ -1,0 +1,179 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id,\n                      g.content_hash,\n                      g.file_hash,\n                      g.deleted_reason as \"deleted_reason: DeletedReason\",\n                      g.deleted_at,\n                      g.updated_at,\n                      (g.remote_picture_id IS NULL) as \"is_owned!\",\n                      g.owner_username,\n                      g.owner_instance_domain,\n                      g.copy_source_owner_username,\n                      g.copy_source_owner_instance,\n                      g.copy_source_picture_id,\n                      g.filename\n               FROM pictures g\n               WHERE g.local_user_id = $1\n                 AND COALESCE(g.content_hash, 'fh:' || g.file_hash) = (\n                     SELECT COALESCE(content_hash, 'fh:' || file_hash)\n                     FROM pictures WHERE id = $2 AND local_user_id = $1\n                 )\n               ORDER BY g.deleted_at NULLS FIRST, g.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "content_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "file_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "file_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "deleted_reason: DeletedReason",
+        "type_info": {
+          "Custom": {
+            "name": "picture_deleted_reason",
+            "kind": {
+              "Enum": [
+                "manual",
+                "boomerang",
+                "content_dedupe"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "deleted_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "deleted_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "is_owned!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "owner_instance_domain",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_instance_domain"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "copy_source_owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "copy_source_owner_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "copy_source_picture_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_picture_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "filename",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "filename"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ee34335f0552fe38e7ed7f80abbf063b618fad964a675ed4f9f06e7578316238"
+}

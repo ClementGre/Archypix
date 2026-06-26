@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET deleted_at = NULL,\n                   deleted_reason = NULL,\n                   last_pipeline_run_at = NULL\n               WHERE id = $1 AND deleted_reason = 'content_dedupe'::picture_deleted_reason",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a81cdabacf9a5cd76b536bcaa262ba68c19267131cbe06deecfca8e16c61bac"
+}

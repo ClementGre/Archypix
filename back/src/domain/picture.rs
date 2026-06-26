@@ -49,6 +49,14 @@ pub struct Picture {
     pub file_hash: Option<String>,
     /// Convergence of the S3 original's embedded EXIF versus this row (the source of truth).
     pub exif_sync_status: ExifSyncStatus,
+    /// Hash stable across EXIF edits, changes on a visual re-encode. `None` for a format the worker cannot strip (dedup then groups by `file_hash`).
+    pub content_hash: Option<String>,
+    /// Provenance of a physical copy (feature 11 §3) — the **original owner identity** the copy was
+    /// rescued from (root-resolved across copy chains), for display and survivor selection. All
+    /// `None` for a normal upload/received row; set together on a copy.
+    pub copy_source_owner_username: Option<String>,
+    pub copy_source_owner_instance: Option<String>,
+    pub copy_source_picture_id: Option<String>,
 }
 
 /// Why a picture was soft-deleted (set with `deleted_at`). Feature 09 only produces `Manual`; the

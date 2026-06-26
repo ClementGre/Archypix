@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT g.local_user_id AS \"id!\"\n               FROM (\n                 SELECT local_user_id,\n                        COUNT(*) FILTER (WHERE deleted_at IS NULL) AS live,\n                        COUNT(*) FILTER (WHERE deleted_reason = 'content_dedupe'::picture_deleted_reason) AS dedupe,\n                        COUNT(*) FILTER (WHERE deleted_reason = 'boomerang'::picture_deleted_reason) AS boomerang,\n                        COUNT(*) FILTER (WHERE deleted_reason = 'manual'::picture_deleted_reason) AS manual,\n                        bool_or(deleted_reason IN ('manual'::picture_deleted_reason,\n                                                   'boomerang'::picture_deleted_reason)) AS blocked\n                 FROM pictures\n                 WHERE content_hash IS NOT NULL OR file_hash IS NOT NULL\n                 GROUP BY local_user_id, COALESCE(content_hash, 'fh:' || file_hash)\n               ) g\n               WHERE g.live > 1\n                  OR (g.live = 0 AND g.dedupe > 0 AND NOT g.blocked)\n                  OR (g.live = 0 AND g.boomerang > 0 AND g.manual = 0)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "266f5113f9eaaaffcb1b75dfaccf44aef35f90fac98909c40d14288c60330999"
+}

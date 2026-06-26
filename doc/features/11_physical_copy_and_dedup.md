@@ -125,11 +125,48 @@ For a newly-received (or newly-copied) row, by its `content_hash` group's state:
 | no live, only `content_dedupe` rows         | **live** (it is the rescue/promotion case)                                 |
 | has a `manual` or `boomerang` row (no live) | **`boomerang`**, flagged "you previously deleted this; shared by *sender*" |
 
-### 5.5 Consumers
+### 5.5 Trash representative, restore & a stable survivor (implemented refinements)
 
-- **WebDAV and default views** show only the live (non-deleted) survivor — no special grouping logic.
-- **The frontend** *may* surface a survivor's `content_dedupe`-deleted siblings (same `content_hash`)
-  to show "also from B, C" provenance; this is the one read that opts into the hidden rows.
+A content group is **Live** (no rejection) or **Rejected** (≥1 `manual`/`boomerang` row). Beyond the
+base rules above, the implementation maintains:
+
+- **One representative per state.** Hidden rows (`content_dedupe`/`boomerang`) never appear in any
+  list — `push_filters` shows live + `manual` only. So a Live group shows its one live survivor and a
+  Rejected group shows its **one `manual` trash representative**, never a pile of duplicates.
+- **Delete rejects the whole content group, by priority.** A manual delete (`reject_content_group`)
+  trashes every copy: the **best** one (priority §5.1 — prefer not-owner-deleted, then **owned/local**,
+  then original, then lowest id) becomes the single `manual` representative, the rest `boomerang`. The
+  priority is applied **at delete time** (not just by the reconciler), so the local/owned copy is
+  deleted first and shown as the representative immediately — the trash never shows a received
+  "owner's copy untouched" entry while a local copy hides as a boomerang — and the next reconcile,
+  which picks the same `best()`, never replaces it. When the representative later disappears
+  (purge/unannounce/permanent-delete) the best `boomerang` is promoted to `manual` so the rejected
+  content still shows one recoverable trash entry.
+- **Restore lifts the rejection:** restoring the manual representative flips its `boomerang` siblings
+  back to `content_dedupe`, so a later disappearance of the restored row rescue-promotes a copy
+  instead of leaving only boomerangs.
+- **A stable survivor.** The reconciler never reshuffles a correct single-live group — survivor
+  selection only *collapses* a transient multi-live group or *promotes* when none is live. So whichever
+  copy is live stays live, and a user can pick one without a "pinned" column.
+
+> **Future — permanent delete.** When the permanent-delete feature lands, emptying a rejected group's
+> `manual` representative should **also permanently delete its `boomerang` siblings** (they are copies
+> of content the user rejected). The reconciler already promotes a `boomerang` to `manual` when the
+> representative disappears, so until that feature exists a rejected group always keeps one visible
+> trash entry; but a permanent delete that removes only the `manual` row would leave `boomerang` rows
+> (and, if any is a *local* owned file, real bytes) behind — permanent delete must sweep the whole
+> group.
+
+### 5.6 Consumers
+
+- **WebDAV and default views** show only the live (non-deleted) survivor / the manual trash
+  representative — no special grouping logic.
+- **`GET /pictures/{id}/copies`** returns the whole group (survivor + hidden siblings) with both
+  hashes (so the client distinguishes "same image, EXIF-only difference" from "different content"),
+  each row's dedup state, last-edit time, and owner/provenance. The frontend renders this as a
+  foldable "Copies" section under the picture details.
+- **`POST /pictures/{id}/copies/keep`** makes a chosen copy the live survivor (hiding the others);
+  the stable reconciler makes the choice stick.
 
 ## 6. Boomerang vs. owner-match loop prevention
 
@@ -189,17 +226,33 @@ a deliberate same-directory mapping. Resolve when WebDAV directory-level ops lan
 
 ## 10. Work breakdown
 
-- [ ] Worker: compute metadata-stripped `content_hash` in `gen_thumbnail`; report it; backend stores
-  it; `AnnouncedPicture` + recipient write path carry/persist it.
-- [ ] Copy endpoint `POST /pictures/{id}/copy`: byte copy (same- and cross-instance), new owned row,
-  `copy_source_*` provenance (root-resolved), `gen_thumbnail` enqueue.
-- [ ] Dedup reconciler in the pipeline (serial per user): survivor selection (§5.1), promotion rule
-  (§5.3), arrival classification (§5.4), `content_hash`-change regrouping.
-- [ ] Boomerang guard at the announce-receive path (§5.4 / §6); flag + recoverable trash.
-- [ ] Frontend: copy/"rescue" action; optional provenance stack reading `content_dedupe` siblings.
-- [ ] Tests: copy creates distinct owned identity + provenance root; dedup keeps one survivor;
-  rescue-on-purge promotes a sibling; EXIF edit does not regroup, visual edit does; boomerang stays
-  after manual twin purged/unannounced; boomerang clears on own visual edit; manual delete of survivor
-  does not promote; concurrent copies don't double-surface; `file_hash` fallback when `content_hash`
-  NULL.
-- [ ] Docs (§9); revisit §8 with WebDAV directory ops.
+- [x] Worker: compute metadata-stripped `content_hash` in `gen_thumbnail` (`imaging/content_hash.rs`);
+  report it via `CompleteJobRequest`; backend stores it (`update_from_worker`/`update_after_processing`);
+  `AnnouncedPicture` + recipient write path (`create_received`) carry/persist it. `edit_picture`
+  recomputes it from the result so a visual edit regroups.
+- [x] Copy endpoint `POST /pictures/{id}/copy` (`services::pictures::copy_picture`,
+  `PictureRepository::create_copy`): byte copy (same-backend S3 copy / cross-instance presign+fetch),
+  new owned row, `copy_source_*` provenance (root-resolved), `gen_thumbnail` enqueue (`is_initial = false`
+  so the seeded effective EXIF is kept).
+- [x] Dedup reconciler in the pipeline (`infra::pipeline::dedup`, serial per user): survivor selection
+  (§5.1), rescue-promotion (§5.3), arrival classification (§5.4); `content_hash`-change regrouping via
+  the recompute on edit. Candidate-key + sweep queries in `repository::dedup`.
+- [x] Boomerang guard at the announce-receive path (`classify_arrival` in `register_received_pictures`,
+  §5.4 / §6) + the user-clarified manual-delete→boomerang of `content_dedupe` siblings (trash paths);
+  flag + recoverable trash.
+- [x] Frontend: copy/"rescue" action in the selection panel (incl. a prominent button in the
+  owner-deleting grace banner) and the lightbox header; copy-of provenance line; a foldable **Copies**
+  section (`CopiesSection`) under the picture details listing the whole content group with state /
+  hashes-diff / owner / last-edit and a "Keep this" control; an admin **Thumbnail & content-hash
+  regeneration** panel in the Jobs tab.
+- [x] Copies/keep + admin regen endpoints: `GET /pictures/{id}/copies`,
+  `POST /pictures/{id}/copies/keep`, `POST /admin/pictures/regenerate-thumbnails`; the trash view
+  hides `content_dedupe`/`boomerang`; manual-delete/restore lifecycle triggers; a stable reconciler
+  (no pin column needed).
+- [x] Tests (`back/tests/physical_copy_dedup.rs` + worker `content_hash` unit tests): copy creates a
+  distinct owned identity + provenance root; dedup keeps one survivor; rescue-on-purge promotes a
+  sibling; manual delete boomerangs siblings and blocks rescue; arrival into a rejected group
+  boomerangs; arrival with a live survivor is content_dedupe'd; content_hash stable across metadata,
+  changes on scan/framing.
+- [x] Docs (§9). §8 (WebDAV directory-op write-back on a collapsed group) remains an open question,
+  revisited when WebDAV directory ops land.

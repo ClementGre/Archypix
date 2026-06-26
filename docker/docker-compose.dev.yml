@@ -60,6 +60,7 @@ x-backend-extra-hosts: &backend-extra-hosts
   - "archypix.test:172.30.0.10"
   - "b1.archypix.test:172.30.0.10"
   - "b2.archypix.test:172.30.0.10"
+  - "s3.archypix.test:172.30.0.10"
   - "solo.archypix.test:172.30.0.10"
 
 # ── Services ──────────────────────────────────────────────────────────────────
@@ -335,6 +336,11 @@ services:
   minio:
     image: minio/minio:latest
     container_name: archypix-minio
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.s3.rule=Host(`s3.archypix.test`)"
+      - "traefik.http.routers.s3.entrypoints=web"
+      - "traefik.http.services.s3.loadbalancer.server.port=9000"
     command: server /data --address :9000 --console-address :9001
     ports:
       - "9000:9000"

@@ -1,6 +1,6 @@
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{exif as exif_mod, thumbnailer};
+use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
 use archypix_common::job::EditPictureConfig;
 use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
 use tempfile::TempDir;
@@ -92,6 +92,18 @@ pub async fn handle(
         warn!(job_id = %job_id, "failed to compute file hash; skipping");
     }
 
+    // Metadata-stripped content hash (feature 11): unchanged by an EXIF-only edit, refreshed by a
+    // visual re-encode so the dedup reconciler regroups it. Enters the current (job) span like the
+    // EXIF-write spawn_blocking task above.
+    let path_for_content = file_path.clone();
+    let content_span = tracing::Span::current();
+    let content_hash = tokio::task::spawn_blocking(move || {
+        let _guard = content_span.enter();
+        content_hash_mod::content_hash(&path_for_content)
+    })
+    .await
+    .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+
     // ── Upload modified original (last fallible step) ────────────────────────
     info!(job_id = %job_id, "edit_picture: uploading modified original");
     client.upload_presigned(&output_url, &file_path).await?;
@@ -106,6 +118,7 @@ pub async fn handle(
                 thumbnails_generated: thumb.generated,
                 file_size,
                 file_hash,
+                content_hash,
                 width: thumb.width,
                 height: thumb.height,
             },

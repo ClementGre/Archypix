@@ -66,8 +66,15 @@ For things involving the archypix-worker crate, run in `nix develop`.
 
 When making changes to the codebase:
 
-- Don’t over-comment in the code: keep comments concise and only where necessary. Detail important concepts in the doc instead, and don’t repeat them
-  in detail in the comments.
+- **Keep code comments short and sparse — this is strict.** A comment is at most ~1–2 lines that
+  explain a non-obvious *why*, or point to the spec that holds the full rationale (e.g.
+  `// priority §5.1 — see doc/features/11`). Do **not** write multi-sentence / multi-line paragraph
+  comments that re-explain a feature's design, walk through the algorithm, restate what the code
+  plainly does, or duplicate prose that belongs in `doc/`. The same applies to doc-comments (`///`):
+  one line of intent, not an essay. If you catch yourself writing a 4+ line comment block, stop — that
+  reasoning belongs in the relevant `doc/` file (`03_BACKEND_ARCHITECTURE.md`, the matching
+  `doc/features/NN_*.md`, …). Put it there and reference it from a one-liner. Detailed design in the
+  doc, terse pointers in the code.
 - Keep documentation up to date. Match the level of detail already present — do not add overly specific descriptions of what was changed beyond what
   the rest of the doc covers.
 - When editing the api, update `06_API_REFERENCE.md`.

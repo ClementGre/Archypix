@@ -160,6 +160,11 @@ pub struct CompleteJobRequest {
     /// ETag and for content-addressed deduplication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_hash: Option<String>,
+    /// SHA-256 over the image's **metadata-stripped** bytes (feature 11 §4) — stable across EXIF
+    /// edits, changes on a visual re-encode. `None` for a format the worker cannot strip (the
+    /// backend then groups by `file_hash`). Drives content deduplication.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     /// Authoritative pixel dimensions, read from the **decoded image** (not EXIF).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<i32>,

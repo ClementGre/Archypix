@@ -36,6 +36,11 @@ pub fn routes() -> Router<AppState> {
         .route("/jobs/stale", get(handlers::list_stale_jobs))
         .route("/jobs/{id}/reset", post(handlers::reset_job))
         .route("/jobs/{id}/cancel", post(handlers::cancel_job))
+        // ── Bulk thumbnail / content-hash regeneration ────────────────────────
+        .route(
+            "/pictures/regenerate-thumbnails",
+            post(handlers::regenerate_thumbnails),
+        )
         // ── Share management ──────────────────────────────────────────────────
         .route("/shares/errored", get(handlers::list_errored_shares))
         .route(

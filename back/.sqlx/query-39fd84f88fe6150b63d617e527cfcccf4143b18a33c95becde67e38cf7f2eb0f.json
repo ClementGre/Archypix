@@ -1,0 +1,437 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id\n               FROM pictures\n               WHERE local_user_id = $1 AND file_hash = $2\n                 AND remote_picture_id IS NULL\n                 AND ($3 OR deleted_at IS NULL)\n               ORDER BY deleted_at NULLS FIRST\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "local_user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "remote_picture_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "remote_picture_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_instance_domain",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_instance_domain"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "filename",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "filename"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "mime_type",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "mime_type"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "file_size",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "file_size"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "width",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "width"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "height",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "height"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "exif_data: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "exif_data"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "metadata: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "metadata"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "deleted_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "deleted_reason: _",
+        "type_info": {
+          "Custom": {
+            "name": "picture_deleted_reason",
+            "kind": {
+              "Enum": [
+                "manual",
+                "boomerang",
+                "content_dedupe"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "deleted_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "owner_deleted_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "owner_purge_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_purge_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "remote_exif_data: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "remote_exif_data"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "local_exif_overrides: _",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_exif_overrides"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "captured_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "captured_at"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "ingested_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "ingested_at"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "updated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "blurhash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "blurhash"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "gps_lat",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "gps_lat"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "gps_lng",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "gps_lng"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "gps_alt",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "gps_alt"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "orientation",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "orientation"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "thumbnails_generated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "thumbnails_generated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "file_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "file_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
+        "name": "exif_sync_status: _",
+        "type_info": {
+          "Custom": {
+            "name": "picture_exif_sync_status",
+            "kind": {
+              "Enum": [
+                "synced",
+                "pending",
+                "unsupported",
+                "pending_job_creation"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "exif_sync_status"
+          }
+        }
+      },
+      {
+        "ordinal": 29,
+        "name": "content_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "copy_source_owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "copy_source_owner_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 32,
+        "name": "copy_source_picture_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_picture_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "39fd84f88fe6150b63d617e527cfcccf4143b18a33c95becde67e38cf7f2eb0f"
+}

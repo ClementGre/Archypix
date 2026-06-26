@@ -3,12 +3,12 @@ import {createPortal} from 'react-dom'
 import {useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {ArchiveRestore, ChevronLeft, ChevronRight, Download, Loader2, RotateCcw, RotateCw, Trash2, X} from 'lucide-react'
+import {ArchiveRestore, ChevronLeft, ChevronRight, Copy, Download, Loader2, RotateCcw, RotateCw, Trash2, X} from 'lucide-react'
 import type {PictureDetail, PictureListItem} from '@/lib/types'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
-import {useTrashMutations} from '@/hooks/usePictureEdit'
+import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
@@ -143,6 +143,7 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
     }, [index, items, setView])
 
     const {trash, restore} = useTrashMutations()
+    const copy = useCopyPicture()
 
     // Trashing removes the picture from the underlying list (async, on refetch) — jump to the
     // next picture first (or the previous one if it was last) so the viewer stays open instead
@@ -225,6 +226,18 @@ export function Lightbox({items}: { items: PictureListItem[] }) {
                 >
                     {downloading ? <Loader2 className="h-5 w-5 animate-spin"/> : <Download className="h-5 w-5"/>}
                 </button>
+                {/* Copy ("rescue") a received picture into your own library (feature 11). */}
+                {!current.owned && (
+                    <button
+                        onClick={() => copy.mutate(current.id)}
+                        disabled={copy.isPending}
+                        aria-label="Copy to my library"
+                        title="Copy to my library"
+                        className="rounded p-1 hover:bg-white/10 disabled:opacity-50"
+                    >
+                        {copy.isPending ? <Loader2 className="h-5 w-5 animate-spin"/> : <Copy className="h-5 w-5"/>}
+                    </button>
+                )}
                 {trashed ? (
                     <button
                         onClick={() => restore.mutate(current.id)}

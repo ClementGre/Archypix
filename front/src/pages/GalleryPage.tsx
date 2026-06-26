@@ -10,6 +10,7 @@ import {useUploadStore} from '@/stores/upload'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {cn} from '@/lib/utils'
+import {filesFromDataTransfer} from '@/lib/uploadFiles'
 
 /**
  * The main workspace: three panes (left panel, photo grid, selection panel) plus a
@@ -60,9 +61,11 @@ export default function GalleryPage() {
             e.preventDefault()
             dragCounter.current = 0
             setDragOver(false)
-            if (e.dataTransfer.files.length > 0) {
-                openUpload(Array.from(e.dataTransfer.files))
-            }
+            // Recurse into dropped directories (excluding hidden files) — read the entries here,
+            // synchronously, before the DataTransfer is cleared.
+            void filesFromDataTransfer(e.dataTransfer).then((files) => {
+                if (files.length) openUpload(files)
+            })
         },
         [openUpload],
     )

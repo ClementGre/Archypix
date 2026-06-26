@@ -118,12 +118,13 @@ Downloads the original picture (streaming, no full memory buffer), then:
 
 | Variant | Height  | Format |
 |---------|---------|--------|
-| small   | 100 px  | WebP   |
+| small   | 150 px  | WebP   |
 | medium  | 500 px  | WebP   |
 | large   | 1000 px | WebP   |
 
 Width is derived from the original aspect ratio. The `THUMBNAIL_VARIANTS` constant in
-`imaging/resize.rs` is the single source of truth for these values.
+`imaging/resize.rs` is the single source of truth for these values. Encoded at quality 68
+(`THUMBNAIL_QUALITY`, libwebp default is 75).
 
 ### `edit_picture`
 

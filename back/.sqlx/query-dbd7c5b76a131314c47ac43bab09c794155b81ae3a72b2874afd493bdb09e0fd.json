@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, metadata,\n                    blurhash, file_hash, thumbnails_generated_at,\n                    remote_exif_data, owner_deleted_at, owner_purge_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,\n                       $10, $11, $12, $13, $14, $15)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),\n                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,\n                                                      pictures.thumbnails_generated_at),\n                   -- Owner-authoritative state is refreshed; local_exif_overrides is preserved.\n                   remote_exif_data = EXCLUDED.remote_exif_data,\n                   owner_deleted_at = EXCLUDED.owner_deleted_at,\n                   owner_purge_at   = EXCLUDED.owner_purge_at\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\"",
+  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id",
   "describe": {
     "columns": [
       {
@@ -344,24 +344,62 @@
             "name": "exif_sync_status"
           }
         }
+      },
+      {
+        "ordinal": 29,
+        "name": "content_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "copy_source_owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "copy_source_owner_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 32,
+        "name": "copy_source_picture_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_picture_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Varchar",
-        "Varchar",
-        "Varchar",
+        "Uuid",
         "Varchar",
         "Varchar",
         "Int8",
         "Int4",
         "Int4",
-        "Text",
-        "Text",
-        "Timestamp",
         "Jsonb",
-        "Timestamp",
         "Timestamp"
       ]
     },
@@ -394,8 +432,12 @@
       true,
       true,
       true,
-      false
+      false,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "235ce4e8e084905065f9e38e933dcf2ea155dca6e0ff3eaf46b7f66b600d64e5"
+  "hash": "dbd7c5b76a131314c47ac43bab09c794155b81ae3a72b2874afd493bdb09e0fd"
 }

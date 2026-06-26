@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\"",
+  "query": "SELECT DISTINCT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,\n                      p.owner_instance_domain, p.filename, p.mime_type, p.file_size,\n                      p.width, p.height, p.exif_data as \"exif_data: _\", p.metadata as \"metadata: _\",\n                      p.deleted_at, p.deleted_reason as \"deleted_reason: _\",\n                      p.owner_deleted_at, p.owner_purge_at,\n                      p.remote_exif_data as \"remote_exif_data: _\",\n                      p.local_exif_overrides as \"local_exif_overrides: _\",\n                      p.captured_at, p.ingested_at, p.updated_at,\n                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.thumbnails_generated_at, p.file_hash,\n                      p.exif_sync_status as \"exif_sync_status: _\",\n                      p.content_hash, p.copy_source_owner_username,\n                      p.copy_source_owner_instance, p.copy_source_picture_id\n               FROM pictures p\n               JOIN tags t ON t.picture_id = p.id\n               WHERE p.local_user_id = $1\n                 AND p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NULL\n                 AND t.tag_path <@ $2::text::ltree",
   "describe": {
     "columns": [
       {
@@ -344,19 +344,56 @@
             "name": "exif_sync_status"
           }
         }
+      },
+      {
+        "ordinal": 29,
+        "name": "content_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "copy_source_owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "copy_source_owner_instance",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_owner_instance"
+          }
+        }
+      },
+      {
+        "ordinal": 32,
+        "name": "copy_source_picture_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "copy_source_picture_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
-        "Varchar",
-        "Varchar",
-        "Int8",
-        "Int4",
-        "Int4",
-        "Jsonb",
-        "Timestamp"
+        "Text"
       ]
     },
     "nullable": [
@@ -388,8 +425,12 @@
       true,
       true,
       true,
-      false
+      false,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "595ca9310005f80e9f0c581c41d1ea526e14fc2eb8b6ff39bb69063fdfbd75e9"
+  "hash": "f05f040cdf00b00bd2497b87801443de001c7153ebb46d9d66f0ff9c99250ca0"
 }

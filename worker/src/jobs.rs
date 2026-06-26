@@ -74,10 +74,12 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     let mime_type = job.mime_type;
     let trace_context = job.trace_context.clone();
 
-    // Create a root span for this job and link it back to the enqueueing trace context.
-    // `otel.name` sets the Jaeger operation name. Use the job type (e.g. `gen_thumbnail`,
-    // `edit_picture`) so operations group by kind of work — bounded cardinality — rather than all
-    // collapsing into a single generic `job` operation.
+    // Create a **new root** span for this job and **link** it back to the enqueueing trace. A link
+    // (not parent-child) is correct because the job is decoupled in time from the enqueue: it may be
+    // claimed long after enqueue, and may be claimed more than once (watchdog reset → re-claim), so
+    // it is genuinely not the same trace. `otel.name` sets the Jaeger operation name to the job type
+    // (e.g. `gen_thumbnail`, `edit_picture`) so operations group by kind of work — bounded
+    // cardinality — rather than collapsing into one generic `job` operation.
     let job_span = tracing::info_span!(
         "job",
         "otel.name" = %job_type,
@@ -88,7 +90,6 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     if let Some(ctx_map) = &trace_context {
         let remote_cx = observability::extract_context(ctx_map);
         let remote_sc = remote_cx.span().span_context().clone();
-        info!(map = ?ctx_map, isvalid = remote_sc.is_valid(), "Extracted trace context: ");
         if remote_sc.is_valid() {
             job_span.add_link(remote_sc);
         }

@@ -20,12 +20,14 @@
 //! re-run. See `doc/features/02_pipeline_announcement_robustness.md` §7.
 
 pub mod announcement;
+pub mod dedup;
 pub mod evaluation;
 
 use crate::clients::federation::FederationClient;
 use crate::infra::config::Config;
 use crate::infra::error::AppError;
 use crate::infra::redis::Cache;
+use crate::repository::dedup::DedupRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use sqlx::PgPool;
@@ -379,7 +381,13 @@ impl crate::infra::scheduler::RecurringTask for PipelineRecoverySweepTask {
             PipelineRepository::invalidate(&self.db, &stale).await?;
         }
 
-        let users = PipelineRepository::find_users_with_dirty_pictures(&self.db).await?;
+        let mut users = PipelineRepository::find_users_with_dirty_pictures(&self.db).await?;
+        // Content-dedup backstop (feature 11 §5.2): users whose groups need a promotion/collapse but
+        // may have missed their event-driven wake (e.g. a lost cross-instance owner-purge unannounce).
+        let dedup_users = DedupRepository::find_users_needing_reconcile(&self.db).await?;
+        users.extend(dedup_users);
+        users.sort_unstable();
+        users.dedup();
         for user_id in users {
             self.waker.wake(user_id);
         }

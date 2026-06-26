@@ -323,6 +323,14 @@ Before announcing, Bob's backend checks whether the picture's `owner` matches th
 pictures relayed through Bob from being re-announced back to Alice). Duplicate detection also prevents loops when Alice shares to both Bob and Carol
 and Bob shares transitively to Carol.
 
+A **physical copy** is a new, independent owned picture `(copier, new_id)` — never a reuse of the original id — with
+`copy_source_*` recording the genuine original's identity. Because a copy *launders the owner identity*, the owner-match check above cannot catch a
+copy
+of content the recipient previously deleted; the **boomerang** guard closes that gap at receive time by routing such a copy straight to recoverable
+trash. Byte-identical copies across a share graph are de-duplicated by a metadata-stable `content_hash` (one live survivor, the rest reversibly
+hidden,
+rescue-on-purge). See `doc/features/11_physical_copy_and_dedup.md`.
+
 ### 6.7 Revocation
 
 Alice revokes via `POST /api/authenticated/shares/outgoing/{id}/revoke`. Her backend:

@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.local_user_id\n               FROM pictures p\n               WHERE p.remote_picture_id IS NULL\n                 AND (\n                   NOT $1\n                   OR (\n                     p.thumbnails_generated_at IS NULL\n                     AND p.ingested_at < (now() AT TIME ZONE 'utc') - interval '30 minutes'\n                     AND p.mime_type IS NOT NULL\n                     AND lower(p.mime_type) = ANY($2::text[])\n                   )\n                 )\n                 AND NOT EXISTS (\n                   SELECT 1 FROM jobs j\n                   WHERE j.picture_id = p.id\n                     AND j.job_type = 'gen_thumbnail'\n                     AND j.status IN ('pending', 'processing')\n                 )\n               ORDER BY p.ingested_at\n               LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "local_user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "local_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bool",
+        "TextArray",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "85a1396968fdd5beda1154774b5476675b07fb57bd76a8565b537865f5bb49e0"
+}

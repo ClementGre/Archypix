@@ -17,10 +17,10 @@ backend.rs           — BackendClient (one per backend): two separate HTTP clie
                        download_presigned (streaming) / upload_presigned
 
 jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
-jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → EXIF → thumbnails (only if the
-                       MIME is thumbnailable) → complete. A non-thumbnailable format is not an
-                       error: it still reports size/hash and completes with thumbnails skipped, so
-                       every ingested picture gets an ETag/size even without a thumbnail.
+jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → content_hash → EXIF → thumbnails
+                       (only if the MIME is thumbnailable) → complete. A non-thumbnailable format is
+                       not an error: it still reports size/hash and completes with thumbnails skipped,
+                       so every ingested picture gets an ETag/size even without a thumbnail.
 jobs/edit_picture.rs — edit_picture: download → EXIF set/clear write → thumbnail regen (visual) →
                        hash → upload original (last fallible step) → complete. The DB is updated
                        synchronously at edit time (write-through); this job only reconciles the S3
@@ -32,6 +32,11 @@ imaging/exif.rs      — extract_exif() / write_exif_overrides(set, clear) (rexi
                        Full editable-field coverage on write (date, GPS, orientation, make, model,
                        focal length, f-number, ISO, exposure time) plus per-field clear (tag delete).
 imaging/hash.rs      — hash_file(): SHA-256 hex digest in 64 KiB chunks (blocking)
+imaging/content_hash.rs — content_hash(): SHA-256 over the image's metadata-stripped bytes (feature
+                       11 §4) — strips JPEG APPn/COM and PNG text/time chunks, hashes the framing +
+                       scan. Stable across EXIF edits, changes on a visual re-encode, deterministic
+                       across instances. `None` for a format it can't strip (backend falls back to
+                       file_hash). edit_picture recomputes it from the result so a visual edit regroups.
 imaging/resize.rs    — generate_thumbnail() (ImageMagick/WebP), generate_blurhash(),
                        image_dimensions() (decoded raw pixel w/h — authoritative source of
                        pictures.width/height, EXIF only a fallback);

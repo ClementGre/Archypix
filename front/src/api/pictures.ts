@@ -213,6 +213,44 @@ export async function restorePicture(id: string): Promise<TrashResponse> {
     return data
 }
 
+/**
+ * Copy ("rescue") a received (or owned) picture into the caller's library as a new, independent
+ * owned picture (feature 11 §3). Returns the new picture id. The bytes are copied server-side and
+ * `gen_thumbnail` fills hashes/thumbnails asynchronously.
+ */
+export async function copyPicture(id: string): Promise<{ id: string }> {
+    const {data} = await apiClient.post<{ id: string }>(`/api/authenticated/pictures/${id}/copy`)
+    return data
+}
+
+/** One row of a picture's content-dedup group (feature 11 §5.5). */
+export interface PictureCopy {
+    id: string
+    filename: string | null
+    content_hash: string | null
+    file_hash: string | null
+    /** Dedup state: the visible survivor (`live`), the trash representative (`manual`), or hidden. */
+    state: 'live' | 'manual' | 'boomerang' | 'content_dedupe' | 'deleted'
+    updated_at: string
+    owned: boolean
+    owner_username: string | null
+    owner_instance: string | null
+    copy_source_owner_username: string | null
+    copy_source_owner_instance: string | null
+    copy_source_picture_id: string | null
+}
+
+/** List the content-dedup group of a picture (survivor + hidden siblings, feature 11 §5.5). */
+export async function getPictureCopies(id: string): Promise<PictureCopy[]> {
+    const {data} = await apiClient.get<{ copies: PictureCopy[] }>(`/api/authenticated/pictures/${id}/copies`)
+    return data.copies
+}
+
+/** Make this picture the live survivor of its content-dedup group (hides the others). */
+export async function keepCopy(id: string): Promise<void> {
+    await apiClient.post(`/api/authenticated/pictures/${id}/copies/keep`)
+}
+
 export async function getJob(id: string): Promise<Job> {
     const {data} = await apiClient.get<Job>(`/api/authenticated/jobs/${id}`)
     return data

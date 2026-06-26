@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures p\n               SET deleted_at = CASE WHEN p.id = $2 THEN NULL\n                                     ELSE COALESCE(p.deleted_at, now() AT TIME ZONE 'utc') END,\n                   deleted_reason = CASE WHEN p.id = $2 THEN NULL\n                                         ELSE 'content_dedupe'::picture_deleted_reason END,\n                   last_pipeline_run_at = NULL\n               FROM pictures src\n               WHERE src.id = $2\n                 AND src.local_user_id = $1\n                 AND p.local_user_id = $1\n                 AND COALESCE(p.content_hash, 'fh:' || p.file_hash)\n                     = COALESCE(src.content_hash, 'fh:' || src.file_hash)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "505a7feecbd4710c2a24c9f4988e8f6fba493f15ae88592d9f595edd905c76e3"
+}

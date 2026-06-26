@@ -17,7 +17,7 @@
 
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{exif as exif_mod, thumbnailer};
+use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
 use archypix_common::job::{ExtractedExif, GenThumbnailConfig};
 use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
 use tempfile::TempDir;
@@ -114,6 +114,19 @@ pub async fn handle(
         warn!("File hash failed; skipping");
     }
 
+    // ── Content hash (metadata-stripped, blocking) ───────────────────────────
+    // Drives content dedup (feature 11). `None` for a format we can't strip — the backend then
+    // groups by `file_hash` instead. The blocking task enters the current (job) span so its work is
+    // attributed to the job trace, like the EXIF/edit spawn_blocking tasks.
+    let path_for_content = original_path.clone();
+    let content_span = tracing::Span::current();
+    let content_hash = tokio::task::spawn_blocking(move || {
+        let _guard = content_span.enter();
+        content_hash_mod::content_hash(&path_for_content)
+    })
+    .await
+    .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+
     // ── Thumbnails + BlurHash + upload (skipped for non-thumbnailable formats) ─
     let (blurhash, thumbnails_generated, decoded_dims) = if do_thumbnails {
         let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;
@@ -141,6 +154,7 @@ pub async fn handle(
                 thumbnails_generated,
                 file_size,
                 file_hash,
+                content_hash,
                 width,
                 height,
             },

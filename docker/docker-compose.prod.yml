@@ -155,6 +155,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: archypix-minio
+    restart: unless-stopped
     command: server /data --address :9000 --console-address :9001
     labels:
       traefik.enable: true

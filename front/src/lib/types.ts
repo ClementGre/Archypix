@@ -84,6 +84,12 @@ export interface PictureDetail {
     owner_purge_at: string | null
     /** Received only: the recipient's sticky per-field EXIF overrides (sparse FullExif). */
     local_exif_overrides: Record<string, unknown> | null
+    /** Metadata-stripped content-dedup key (feature 11); null until hashed / for unstrippable formats. */
+    content_hash: string | null
+    /** Physical-copy provenance — the genuine original's owner identity (feature 11). Null when not a copy. */
+    copy_source_owner_username: string | null
+    copy_source_owner_instance: string | null
+    copy_source_picture_id: string | null
     versions: PictureVersion[]
 }
 

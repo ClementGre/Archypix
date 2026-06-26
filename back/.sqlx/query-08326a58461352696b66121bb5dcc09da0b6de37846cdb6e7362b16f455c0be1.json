@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures p\n               SET deleted_reason = 'content_dedupe'::picture_deleted_reason,\n                   last_pipeline_run_at = NULL\n               WHERE p.local_user_id = $1\n                 AND p.deleted_reason = 'boomerang'::picture_deleted_reason\n                 AND EXISTS (\n                   SELECT 1 FROM pictures m\n                   WHERE m.local_user_id = $1\n                     AND m.deleted_at IS NULL\n                     AND m.id <> p.id\n                     AND COALESCE(m.content_hash, 'fh:' || m.file_hash)\n                         = COALESCE(p.content_hash, 'fh:' || p.file_hash)\n                 )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "08326a58461352696b66121bb5dcc09da0b6de37846cdb6e7362b16f455c0be1"
+}
