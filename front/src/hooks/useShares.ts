@@ -1,6 +1,7 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {acceptIncomingShare, listIncomingShares, listOutgoingShares, rejectIncomingShare, revokeOutgoingShare,} from '@/api/shares'
 import {queryKeys} from '@/lib/constants'
+import {invalidatePicturesAndTags} from '@/lib/invalidation'
 
 export function useIncomingShares() {
     return useQuery({
@@ -25,7 +26,10 @@ export function useShareMutations() {
 
     const accept = useMutation({
         mutationFn: acceptIncomingShare,
-        onSuccess: invalidateShares,
+        onSuccess: () => {
+            invalidateShares()
+            invalidatePicturesAndTags(queryClient)
+        },
     })
 
     const reject = useMutation({

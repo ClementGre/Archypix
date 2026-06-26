@@ -3,7 +3,7 @@ import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
 import {editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
-import {queryKeys} from '@/lib/constants'
+import {invalidatePictures, invalidatePicturesAndTags, invalidateTags} from '@/lib/invalidation'
 import type {EditPictureResponse, ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
 
 const POLL_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
@@ -30,16 +30,15 @@ export function useEditExif(pictureId: string) {
             editPicture(pictureId, body),
 
         onSuccess: async (res: EditPictureResponse) => {
-            // Immediately reflect DB changes in the picture detail cache.
-            void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
-            void queryClient.invalidateQueries({queryKey: ['pictures']})
+            // A metadata (EXIF) edit is a pipeline event: rules/segments can (re)assign tag
+            invalidatePicturesAndTags(queryClient)
 
             if (res.exif_sync_status === 'pending' && res.job_id) {
                 setSyncing(true)
                 try {
                     await pollUntilDone(res.job_id)
-                    // File is now reconciled — refresh picture detail again.
-                    void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
+                    // File is now reconciled: refresh pictures again.
+                    invalidatePictures(queryClient)
                 } catch (err) {
                     toast.error('EXIF file sync failed', {description: apiErrorMessage(err)})
                 } finally {
@@ -76,8 +75,8 @@ export function useOverrideExif(pictureId: string) {
     const mutation = useMutation({
         mutationFn: (body: ReceivedExifBody) => editReceivedExif(pictureId, body),
         onSuccess: (res) => {
-            void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
-            void queryClient.invalidateQueries({queryKey: ['pictures']})
+            // A local override changes captured_at/GPS/… which can re-fire pipeline on the recipient's pictures
+            invalidatePicturesAndTags(queryClient)
             // 202 Accepted: the proposal was accepted but the owner applies + re-announces
             // asynchronously, so the authoritative value lands a moment later.
             if (res.status === 202) {
@@ -97,21 +96,20 @@ export function useOverrideExif(pictureId: string) {
 /** Soft-delete / restore mutations for pictures the user holds. */
 export function useTrashMutations() {
     const queryClient = useQueryClient()
-
-    const invalidate = (pictureId: string) => {
-        void queryClient.invalidateQueries({queryKey: queryKeys.picture(pictureId)})
-        void queryClient.invalidateQueries({queryKey: ['pictures']})
+    const invalidate = () => {
+        invalidatePictures(queryClient)
+        invalidateTags(queryClient)
     }
 
     const trash = useMutation({
         mutationFn: trashPicture,
-        onSuccess: (res) => invalidate(res.id),
+        onSuccess: invalidate,
         onError: (error: unknown) => toast.error('Could not move to trash', {description: apiErrorMessage(error)}),
     })
 
     const restore = useMutation({
         mutationFn: restorePicture,
-        onSuccess: (res) => invalidate(res.id),
+        onSuccess: invalidate,
         onError: (error: unknown) => toast.error('Could not restore', {description: apiErrorMessage(error)}),
     })
 

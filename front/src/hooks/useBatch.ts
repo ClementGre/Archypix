@@ -3,6 +3,7 @@ import {toast} from 'sonner'
 import {batchEditExif, type BatchExifBody, batchRestore, batchTrash} from '@/api/pictures'
 import {batchEditTags, type BatchEditTagsBody} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
+import {invalidatePicturesAndTags} from '@/lib/invalidation'
 import type {PictureSelection} from '@/lib/types'
 
 /**
@@ -13,8 +14,7 @@ import type {PictureSelection} from '@/lib/types'
 export function useBatchMutations() {
     const qc = useQueryClient()
     const invalidate = () => {
-        void qc.invalidateQueries({queryKey: ['pictures']})
-        void qc.invalidateQueries({queryKey: ['tags']})
+        invalidatePicturesAndTags(qc)
         void qc.invalidateQueries({queryKey: ['hierarchies']})
     }
     const onError = (label: string) => (e: unknown) => toast.error(label, {description: apiErrorMessage(e)})

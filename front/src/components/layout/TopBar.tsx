@@ -1,5 +1,6 @@
 import {Link, NavLink, useLocation, useNavigate} from 'react-router-dom'
-import {Images, LogOut, Moon, PanelLeft, PanelRight, Settings, Shield, Sun, Trash2, Upload, User as UserIcon, Wand2,} from 'lucide-react'
+import {useQueryClient} from '@tanstack/react-query'
+import {Images, LogOut, Moon, PanelLeft, PanelRight, RefreshCw, Settings, Shield, Sun, Trash2, Upload, User as UserIcon, Wand2,} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Avatar, AvatarFallback} from '@/components/ui/avatar'
 import {
@@ -52,8 +53,16 @@ export function TopBar() {
     const {leftSidebarOpen, rightSidebarOpen, mobileDrawer, toggleLeft, toggleRight, toggleMobileDrawer} = useUIStore()
     const openUpload = useUploadStore((s) => s.openDialog)
     const navigate = useNavigate()
+    const queryClient = useQueryClient()
     const isMobile = useIsMobile()
     const isGallery = useLocation().pathname === '/'
+
+    // Manual catch-all refresh — for the residual cases proper invalidation can't cover
+    // (asynchronous pipeline re-tagging / federated share delivery that lands after the settle pass).
+    const refreshAll = () =>
+        ['pictures', 'tags', 'tagging', 'shares', 'hierarchies'].forEach((key) =>
+            queryClient.invalidateQueries({queryKey: [key]}),
+        )
 
     const items = NAV.filter((n) => !n.adminOnly || user?.is_admin)
 
@@ -110,6 +119,18 @@ export function TopBar() {
             <div className="ml-2 flex min-w-0 flex-1 items-center gap-2 sm:ml-3">{isGallery && <FilterControls/>}</div>
 
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+                {isGallery && (
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={refreshAll}
+                        title="Refresh"
+                        aria-label="Refresh"
+                        className="text-muted-foreground hover:text-foreground"
+                    >
+                        <RefreshCw className="h-4 w-4"/>
+                    </Button>
+                )}
                 {isGallery && (
                     <Button
                         variant="ghost"

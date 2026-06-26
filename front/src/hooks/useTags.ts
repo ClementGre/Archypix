@@ -1,6 +1,7 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {batchEditTags, type BatchEditTagsBody, listAllTags, listPictureTags} from '@/api/tags'
 import {queryKeys} from '@/lib/constants'
+import {invalidatePicturesAndTags} from '@/lib/invalidation'
 
 export function useAllTags() {
     return useQuery({
@@ -21,9 +22,6 @@ export function useBatchEditTags() {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: (body: BatchEditTagsBody) => batchEditTags(body),
-        onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ['pictures']})
-            void queryClient.invalidateQueries({queryKey: ['tags']})
-        },
+        onSuccess: () => invalidatePicturesAndTags(queryClient),
     })
 }

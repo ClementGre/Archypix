@@ -7,7 +7,7 @@ import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {beginUploadBatch, completeUpload, restorePicture} from '@/api/pictures'
-import {queryKeys} from '@/lib/constants'
+import {invalidatePictures, invalidatePicturesAndTags} from '@/lib/invalidation'
 import {cn, TagPath} from '@/lib/utils'
 import {apiErrorMessage} from '@/api/client'
 
@@ -262,7 +262,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 patchItem(key, {status: 'done', progress: 100})
                 if (!firstSuccess.current) {
                     firstSuccess.current = true
-                    queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
+                    invalidatePictures(queryClient)
                 }
                 return true
             } catch (e) {
@@ -273,14 +273,10 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         [patchItem, tags, queryClient],
     )
 
-    const invalidateAll = useCallback(() => {
-        queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
-        queryClient.invalidateQueries({queryKey: queryKeys.tags()})
-        setTimeout(() => {
-            queryClient.invalidateQueries({queryKey: queryKeys.tags()})
-            queryClient.invalidateQueries({queryKey: queryKeys.pictures()})
-        }, 1500)
-    }, [queryClient])
+    // Uploads can dedup onto existing pictures (re-tagging them) and trigger background re-tagging,
+    // so refresh pictures + tags broadly — `['tags']` also refreshes per-picture tag caches (e.g. an
+    // already-existing picture open in the sidebar), which the old narrow keys missed.
+    const invalidateAll = useCallback(() => invalidatePicturesAndTags(queryClient), [queryClient])
 
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
