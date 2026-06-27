@@ -21,6 +21,23 @@ export function variantForSize(cssPx: number): PictureVariant {
     return 'large'
 }
 
+// ── Media (video/audio) ────────────────────────────────────────────────────────
+
+/** A picture whose mime is a video — played inline rather than shown as an image. */
+export function isVideoMime(mime: string | null | undefined): boolean {
+    return !!mime && mime.toLowerCase().startsWith('video/')
+}
+
+/** A picture whose mime is audio — played in the audio-bar layout. */
+export function isAudioMime(mime: string | null | undefined): boolean {
+    return !!mime && mime.toLowerCase().startsWith('audio/')
+}
+
+/** Video or audio — rendered by the `MediaPlayer` instead of the image pipeline. */
+export function isPlayableMedia(mime: string | null | undefined): boolean {
+    return isVideoMime(mime) || isAudioMime(mime)
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 /** Human-readable byte size (e.g. `4.2 GB`). */

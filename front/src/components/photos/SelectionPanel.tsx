@@ -2,7 +2,22 @@ import {useEffect, useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {AlertTriangle, ArchiveRestore, Copy, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
+import {
+    AlertTriangle,
+    ArchiveRestore,
+    Copy,
+    Download,
+    ImageIcon,
+    List,
+    Loader2,
+    PlayCircle,
+    Plus,
+    RotateCcw,
+    RotateCw,
+    Table2,
+    Trash2,
+    X
+} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
@@ -24,12 +39,13 @@ import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
 import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
+import {MediaPlayer} from '@/components/photos/MediaPlayer'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
-import {cn, formatBytes, formatDateTime, TagPath, variantForSize} from '@/lib/utils'
+import {cn, formatBytes, formatDateTime, isAudioMime, isVideoMime, TagPath, variantForSize} from '@/lib/utils'
 import {deadlineLabel, ownedPurgeAt} from '@/lib/trash'
 import type {IncomingShareResponse, PictureDetail, TagSource} from '@/lib/types'
 
@@ -183,12 +199,26 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const [, setSp] = useSearchParams()
     const {update} = useGalleryParams()
 
+    const isVideo = isVideoMime(picture.mime_type)
+    const isAudio = isAudioMime(picture.mime_type)
+    const isMedia = isVideo || isAudio
+
     // Size the preview to its capped display height (the preview never exceeds PREVIEW_MAX_HEIGHT,
     // so the sidebar width doesn't matter); the lightbox always uses `large`.
     const previewVariant = variantForSize(PREVIEW_MAX_HEIGHT)
     const {data: preview} = useQuery({
         queryKey: ['pictures', 'url', id, previewVariant],
         queryFn: () => getPictureUrl(id, previewVariant),
+        enabled: !isMedia,
+        staleTime: 10 * 60 * 1000,
+    })
+
+    // Video/audio play from the original file. Audio plays inline in the panel; video shows a
+    // first-frame poster that opens the (autoplaying) Lightbox on click.
+    const {data: mediaUrl} = useQuery({
+        queryKey: ['pictures', 'url', id, 'original'],
+        queryFn: () => getPictureUrl(id, 'original'),
+        enabled: isMedia,
         staleTime: 10 * 60 * 1000,
     })
 
@@ -314,84 +344,113 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
 
     return (
         <div>
-            {/* Thumbnail — borderless, full width, click opens lightbox */}
-            <div
-                className="group relative w-full cursor-pointer overflow-hidden bg-muted"
-                onClick={openLightbox}
-                title="Open full screen"
-            >
-                {preview?.url ? (
-                    <OrientedContainImage
-                        src={preview.url}
-                        alt={picture.filename ?? ''}
-                        orientation={draftOrientation}
-                        width={picture.width}
-                        height={picture.height}
-                        maxHeight={PREVIEW_MAX_HEIGHT}
-                    />
-                ) : (
-                    // No thumbnail (pending, or a non-thumbnailable format) — show a file-type icon.
-                    <div className="flex h-40 items-center justify-center text-muted-foreground">
-                        <FileTypeIcon mime={picture.mime_type} filename={picture.filename} className="h-12 w-12 opacity-70"/>
-                    </div>
-                )}
-
-                {/* Owner label for received pictures — overlaid on the preview. Turns red with a
-                    tooltip when the owner has trashed the picture (grace-window). */}
-                {picture.owner_username && (
-                    ownerDeleted ? (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <span
-                                    className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-destructive/85 px-1.5 py-0.5 text-[11px] font-medium text-white"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <AlertTriangle className="h-3 w-3"/>
-                                    @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
-                                </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-[15rem] text-xs">
-                                The owner moved this picture to their trash. It will be permanently removed
-                                {ownerPurgeLabel ? ` on ${ownerPurgeLabel}` : ' after their retention window'}.
-                            </TooltipContent>
-                        </Tooltip>
+            {isAudio ? (
+                /* Audio plays inline in the panel — there's nothing to view full-screen. */
+                <div className="px-3 pt-3">
+                    {mediaUrl?.url ? (
+                        <MediaPlayer src={mediaUrl.url} mime={picture.mime_type} title={picture.filename}/>
                     ) : (
-                        <span className="absolute bottom-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white">
-                            @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
-                        </span>
-                    )
-                )}
-
-                {/* Rotate overlays — owned pictures rotate their own EXIF; received pictures get a
-                    recipient-local orientation override. */}
-                <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-40 transition-opacity group-hover:opacity-100">
-                    {orientationOverridden && (
-                        <span onClick={(e) => e.stopPropagation()}>
-                            <OverwrittenBadge onRemove={() => exif.removeOverride('orientation')}/>
-                        </span>
+                        <div className="flex h-16 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                            <Loader2 className="h-5 w-5 animate-spin"/>
+                        </div>
                     )}
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            exif.rotate('ccw')
-                        }}
-                        title="Rotate left"
-                        className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
-                    >
-                        <RotateCcw className="h-4 w-4"/>
-                    </button>
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            exif.rotate('cw')
-                        }}
-                        title="Rotate right"
-                        className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
-                    >
-                        <RotateCw className="h-4 w-4"/>
-                    </button>
                 </div>
-            </div>
+            ) : (
+                /* Thumbnail / video poster — borderless, full width, click opens lightbox */
+                <div
+                    className="group relative w-full cursor-pointer overflow-hidden bg-muted"
+                    onClick={openLightbox}
+                    title="Open full screen"
+                >
+                    {isVideo ? (
+                        <div className="relative flex items-center justify-center bg-black">
+                            {mediaUrl?.url ? (
+                                // First-frame poster (metadata only); playback happens in the Lightbox.
+                                <video src={mediaUrl.url} preload="metadata" muted playsInline className="max-h-52 w-full object-contain"/>
+                            ) : (
+                                <div className="flex h-40 items-center justify-center text-muted-foreground">
+                                    <FileTypeIcon mime={picture.mime_type} filename={picture.filename} className="h-12 w-12 opacity-70"/>
+                                </div>
+                            )}
+                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                <PlayCircle className="h-12 w-12 text-white/90 drop-shadow-lg"/>
+                            </div>
+                        </div>
+                    ) : preview?.url ? (
+                        <OrientedContainImage
+                            src={preview.url}
+                            alt={picture.filename ?? ''}
+                            orientation={draftOrientation}
+                            width={picture.width}
+                            height={picture.height}
+                            maxHeight={PREVIEW_MAX_HEIGHT}
+                        />
+                    ) : (
+                        // No thumbnail (pending, or a non-thumbnailable format) — show a file-type icon.
+                        <div className="flex h-40 items-center justify-center text-muted-foreground">
+                            <FileTypeIcon mime={picture.mime_type} filename={picture.filename} className="h-12 w-12 opacity-70"/>
+                        </div>
+                    )}
+
+                    {/* Owner label for received pictures — overlaid on the preview. Turns red with a
+                        tooltip when the owner has trashed the picture (grace-window). */}
+                    {picture.owner_username && (
+                        ownerDeleted ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <span
+                                        className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-destructive/85 px-1.5 py-0.5 text-[11px] font-medium text-white"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <AlertTriangle className="h-3 w-3"/>
+                                        @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
+                                    </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-[15rem] text-xs">
+                                    The owner moved this picture to their trash. It will be permanently removed
+                                    {ownerPurgeLabel ? ` on ${ownerPurgeLabel}` : ' after their retention window'}.
+                                </TooltipContent>
+                            </Tooltip>
+                        ) : (
+                            <span className="absolute bottom-2 left-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                                @{picture.owner_username}:{picture.owner_instance_domain ?? '?'}
+                            </span>
+                        )
+                    )}
+
+                    {/* Rotate overlays — images only (EXIF orientation doesn't apply to video). Owned
+                        pictures rotate their own EXIF; received pictures get a recipient-local override. */}
+                    {!isMedia && (
+                        <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-40 transition-opacity group-hover:opacity-100">
+                            {orientationOverridden && (
+                                <span onClick={(e) => e.stopPropagation()}>
+                                    <OverwrittenBadge onRemove={() => exif.removeOverride('orientation')}/>
+                                </span>
+                            )}
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    exif.rotate('ccw')
+                                }}
+                                title="Rotate left"
+                                className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                            >
+                                <RotateCcw className="h-4 w-4"/>
+                            </button>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    exif.rotate('cw')
+                                }}
+                                title="Rotate right"
+                                className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/80"
+                            >
+                                <RotateCw className="h-4 w-4"/>
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Picture info */}
             <div className="flex items-start justify-between gap-1 px-3 pt-2 pb-1">

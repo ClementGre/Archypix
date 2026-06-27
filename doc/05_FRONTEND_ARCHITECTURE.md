@@ -34,6 +34,7 @@ see [06_API_REFERENCE.md](06_API_REFERENCE.md); for product semantics, [01_GENER
 | HTTP          | axios                                                                                   |
 | Drag & drop   | @dnd-kit (pipeline reordering)                                                          |
 | Misc          | blurhash (thumbnail placeholders), sonner (toasts), lucide-react (icons)                |
+| Media player  | `@vidstack/react` (default skin) — inline video/audio playback (lazy-loaded chunk)      |
 
 Commands: `npm run dev` (Vite :5173), `npm run build` (`tsc -b && vite build`). Node 24 / npm. **Theme:** dark is the base `@theme`; light mode is the
 `.light` class on `<html>` (toggled by `stores/theme.ts`). The repo runs a code formatter — match surrounding style; don't fight it.
@@ -188,7 +189,8 @@ lands on its specs; header carries **download-original**, rotate-left/right (aut
 sidebar), and a trash (`ConfirmDialog`)/restore action), `SelectionPanel`
 (right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
 an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
-tag assignment — see §9).
+tag assignment — see §9), `MediaPlayer` (Vidstack wrapper — picks the default video/audio layout from the picture's mime; used by the
+Lightbox and the details panel — see §9).
 **`photos/batch/`** (feature 14 multi-select) — `SelectionActionBar` (floating bar on **desktop and mobile** whenever
 more than one picture is selected; the full-width container is `pointer-events-none` so only the pill catches clicks:
 resolved count via `useSelectionCount`, **Select-all** (adopts the view's `PictureFilter`; `⌘/Ctrl+A` does the same),
@@ -371,6 +373,13 @@ mobile) and shown only when its `ui` store toggle is on:
   generated thumbnail (pending, or a non-thumbnailable format like a PDF/video) — never a fake/404 URL. The client renders a **`FileTypeIcon`**
   (`components/photos/`, a lucide icon picked from MIME or filename extension) instead: in the grid (`PhotoCard`), the sidebar preview, and the
   `Lightbox` ("No preview available — use Download"). `getPictureUrl` returns `url: string | null` accordingly (`original` is always a URL).
+- **Video/audio playback (Tier 1):** `video/*` and `audio/*` pictures (detected via `isPlayableMedia(mime)`, `lib/utils.ts`) play the **`original`**
+  file straight from S3 through the `MediaPlayer` (Vidstack) — progressive HTTP-Range playback, **no transcode/streaming infra**. The **Lightbox**
+  autoplays. The **details panel** plays audio inline; for video it shows a muted first-frame `<video preload="metadata">` poster with a play overlay
+  that opens the (autoplaying) Lightbox — the cramped panel isn't for watching. **Grid cards never mount a player** (poster/`FileTypeIcon` only). The
+  S3 object's `Content-Type` drives decoding, so only browser-playable codecs work (MP4/H.264, WebM, MP3/AAC/Ogg); `.mov`/HEVC, `.avi`, `.mkv` won't
+  decode — Download-original is the fallback until a transcode worker (Tier 2) lands. Cross-instance media follows the same direct-presign path as
+  images, so the owning backend's S3 CORS must allow `GET`/`Range`.
 - **Thumbnails & adaptive sizing:** list items carry a presigned thumbnail URL (no per-card round-trip). The requested variant is **sized to how the
   picture is displayed** via `variantForSize(cssPx)` (`lib/utils.ts` — maps a **logical** display height to the worker's variant heights small=100 /
   medium=500 / large=1000, with thresholds `≤150 → small`, `≤350 → medium`, else `large`; **no `devicePixelRatio` multiplier** — slight upscaling on

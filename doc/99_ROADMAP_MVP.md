@@ -126,3 +126,9 @@
   features).
   `If-None-Match`, `Overwrite`, `Range`), and Real LOCK/UNLOCK enforcement
 - [ ] **Rate limiting & validators** — More rate limiting
+- [~] **Video & audio playback** — **Tier 1 (done):** inline progressive playback of the original from
+  S3 (HTTP-Range, no transcode infra) via `@vidstack/react` in the Lightbox (autoplay) and details
+  panel (audio inline; video → poster opening the Lightbox). Only browser-playable codecs work.
+  **Tier 2 (todo):** a `transcode` worker job (ffmpeg) producing a web-friendly MP4 derivative +
+  poster-frame thumbnail for non-decodable uploads (`.mov`/HEVC, `.avi`, `.mkv`). **Tier 3 (later):**
+  HLS adaptive streaming (Vidstack already supports it). See `doc/05_FRONTEND_ARCHITECTURE.md §9`.

@@ -8,6 +8,8 @@ import type {PictureDetail, PictureListItem} from '@/lib/types'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
+import {isPlayableMedia} from '@/lib/utils'
+import {MediaPlayer} from './MediaPlayer'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {useSelectionStore} from '@/stores/selection'
@@ -65,10 +67,40 @@ function LightboxImage({item, url, loading}: { item: PictureListItem; url: strin
         queryKey: queryKeys.picture(item.id),
         queryFn: () => getPicture(item.id),
     })
+    const mime = detail?.mime_type
+    const media = isPlayableMedia(mime)
+
+    // Video/audio: play the original inline (autoplay). Its presigned URL is fetched separately —
+    // the `large` thumbnail variant (`url` above) is null for a non-thumbnailable media file.
+    const {data: mediaUrl} = useQuery({
+        queryKey: ['pictures', 'url', item.id, 'original'],
+        queryFn: () => getPictureUrl(item.id, 'original'),
+        enabled: media,
+        staleTime: 10 * 60 * 1000,
+    })
+
+    if (media) {
+        if (!mediaUrl?.url) {
+            return <Loader2 className="h-8 w-8 animate-spin text-white/70" onClick={(e) => e.stopPropagation()}/>
+        }
+        return (
+            <MediaPlayer
+                src={mediaUrl.url}
+                mime={mime ?? null}
+                title={item.filename}
+                autoPlay
+                className="max-h-full w-full max-w-5xl"
+            />
+        )
+    }
 
     // Resolved with no viewable image (a non-thumbnailable format like a PDF) — file icon + hint;
-    // the header's Download button still works on the original.
+    // the header's Download button still works on the original. While the detail is still loading
+    // (so we can't yet tell it's a playable media file), show a spinner instead of the icon flash.
     if (!loading && !url) {
+        if (!detail) {
+            return <Loader2 className="h-8 w-8 animate-spin text-white/70" onClick={(e) => e.stopPropagation()}/>
+        }
         return (
             <div className="flex flex-col items-center justify-center gap-3 text-white/70" onClick={(e) => e.stopPropagation()}>
                 <FileTypeIcon mime={detail?.mime_type} filename={item.filename} className="h-20 w-20"/>
