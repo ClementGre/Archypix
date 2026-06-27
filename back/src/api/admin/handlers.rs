@@ -205,7 +205,7 @@ pub async fn wake_user_pipeline(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    state.pipeline_waker.wake(user_id);
+    state.routines.pipeline.trigger(user_id);
     Ok(Json(serde_json::json!({ "woken": true })))
 }
 
@@ -336,7 +336,7 @@ pub async fn force_reconcile_share(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    state.pipeline_waker.wake(owner_id);
+    state.routines.pipeline.trigger(owner_id);
     Ok(Json(serde_json::json!({ "reconcile_triggered": true })))
 }
 

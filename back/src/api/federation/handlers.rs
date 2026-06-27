@@ -75,7 +75,7 @@ pub async fn announce_share(
     let (incoming_id, auto_accepted) = fed::receive_share_announcement(
         &state.db,
         &state.config,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         &auth.claims.sub,
         &payload.sender_username,
         &payload.sender_instance,
@@ -125,8 +125,8 @@ pub async fn revoke_share(
         state.cache.as_ref(),
         &state.federation,
         &state.config,
-        &state.task_queue,
-        &state.pipeline_waker,
+        &state.routines.unannounce,
+        &state.routines.pipeline,
         &auth.claims.sub,
         payload.outgoing_share_id,
     )
@@ -177,7 +177,7 @@ pub async fn accept_share(
     );
     fed::receive_share_accept(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         &auth.claims.sub,
         payload.outgoing_share_id,
     )
@@ -209,7 +209,7 @@ pub async fn announce_pictures(
         &state.db,
         state.cache.as_ref(),
         &state.config,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         &auth.claims.sub,
         &payload.sender_username,
         &payload.sender_instance,
@@ -244,7 +244,7 @@ pub async fn unannounce_pictures(
     );
     let deleted = fed::receive_pictures_unannouncement(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         &auth.claims.sub,
         payload.outgoing_share_id,
         &payload.picture_ids,
@@ -283,7 +283,7 @@ pub async fn edit_picture_request(
     }
     fed::receive_picture_edit_request(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         &payload.picture_id,
         &payload.requester_username,
         &payload.requester_instance,

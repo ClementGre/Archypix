@@ -1,5 +1,5 @@
 use crate::infra::error::{AppError, map_sqlx_error};
-use crate::infra::pipeline::PipelineWaker;
+use crate::infra::routine::RoutineHandle;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::tag::TagRepository;
@@ -20,7 +20,7 @@ pub enum TagBatchOutcome {
 #[tracing::instrument(skip(db, waker, sel, add_tags, remove_tags), fields(user_id = %user_id, dry_run))]
 pub async fn batch_edit_tags(
     db: &PgPool,
-    waker: &PipelineWaker,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     sel: &ResolvedSelection,
     add_tags: &[String],
@@ -70,7 +70,7 @@ pub async fn batch_edit_tags(
     // Manual tag changes re-dirty the pictures so the pipeline re-evaluates requires/excludes gates.
     PipelineRepository::invalidate(&mut *tx, &ids).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
-    waker.wake(user_id);
+    waker.trigger(user_id);
     Ok(TagBatchOutcome::Applied {
         affected: ids.len() as i64,
     })

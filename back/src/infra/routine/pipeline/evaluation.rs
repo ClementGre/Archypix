@@ -4,7 +4,7 @@ use crate::domain::pipeline::{self, PipelineInput};
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceType;
 use crate::infra::error::AppError;
-use crate::infra::pipeline::{PipelineRun, announcement, dedup};
+use crate::infra::routine::pipeline::{PipelineRun, announcement, dedup};
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::{

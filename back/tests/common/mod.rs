@@ -7,11 +7,11 @@ use archypix_back::domain::validation::MIN_PASSWORD_LEN;
 use archypix_back::infra::config::Config;
 use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::error::AppError;
-use archypix_back::infra::pipeline::PipelineWaker;
 use archypix_back::infra::redis::{Cache, RedisKey};
+use archypix_back::infra::routine::unannounce::{Unannounce, UnannounceInput};
+use archypix_back::infra::routine::{self, RoutineHandle};
 use archypix_back::infra::s3::Storage;
-use archypix_back::infra::tasks;
-use archypix_back::state::AppState;
+use archypix_back::state::{AppState, Routines};
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -205,11 +205,15 @@ pub fn make_federation(config: &Config) -> (FederationClient, Arc<InMemoryCache>
     (fed, cache)
 }
 
-/// Build a `TaskQueue` (with its runner spawned) and a `PipelineWaker` for tests that exercise
-/// share announce/unannounce delivery. The runner executes same-backend tasks against the DB;
-/// cross-instance tasks attempt HTTP and fail harmlessly (errors are logged). The waker is
-/// disconnected — tests drive the pipeline explicitly via `run_once_for_user`.
-pub fn test_task_queue(db: &PgPool, config: &Config) -> (tasks::TaskQueue, PipelineWaker) {
+/// Build an `Unannounce` routine handle (with its runtime spawned) and a disconnected pipeline
+/// handle for tests that exercise share announce/unannounce delivery. The routine executes
+/// same-backend unannounces against the DB; cross-instance ones attempt HTTP and fail harmlessly
+/// (errors are logged). The pipeline handle is disconnected — tests drive the pipeline explicitly
+/// via `run_once_for_user`.
+pub fn test_task_queue(
+    db: &PgPool,
+    config: &Config,
+) -> (RoutineHandle<UnannounceInput>, RoutineHandle<Uuid>) {
     let (fed, _cache) = make_federation(config);
     test_task_queue_with_federation(db, config, fed)
 }
@@ -221,11 +225,17 @@ pub fn test_task_queue_with_federation(
     db: &PgPool,
     config: &Config,
     federation: FederationClient,
-) -> (tasks::TaskQueue, PipelineWaker) {
-    let waker = PipelineWaker::disconnected();
-    let (queue, runner) = tasks::create(db.clone(), federation, config.clone(), waker.clone(), 1);
-    tokio::spawn(runner);
-    (queue, waker)
+) -> (RoutineHandle<UnannounceInput>, RoutineHandle<Uuid>) {
+    let pipeline = RoutineHandle::<Uuid>::disconnected();
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (queue, runtime) = routine::spawn(
+        Unannounce::new(db.clone(), federation, config.clone(), pipeline.clone()),
+        shutdown_rx,
+    );
+    // Keep the runtime alive for the test process and let same-backend / cross-instance unannounces run.
+    std::mem::forget(_shutdown_tx);
+    tokio::spawn(runtime);
+    (queue, pipeline)
 }
 
 // ── Full AppState helper ──────────────────────────────────────────────────────
@@ -259,16 +269,14 @@ pub fn test_app_state_with_storage(
     );
     let resolver = ResolverClient::new(reqwest::Client::new(), config.clone(), resolver_jwt);
 
-    let pipeline_waker = PipelineWaker::disconnected();
-    let (task_queue, runner) = tasks::create(
-        db.clone(),
-        federation.clone(),
-        config.clone(),
-        pipeline_waker.clone(),
-        1,
-    );
-    // Run the task runner so same-backend / cross-instance announce-unannounce tasks execute.
-    tokio::spawn(runner);
+    // Run the unannounce routine so same-backend / cross-instance unannounce triggers execute.
+    let (unannounce, pipeline) = test_task_queue_with_federation(&db, config, federation.clone());
+    let routines = Routines {
+        pipeline,
+        exif_drain: RoutineHandle::disconnected(),
+        tag_rename: RoutineHandle::disconnected(),
+        unannounce,
+    };
 
     AppState::new(
         config.clone(),
@@ -279,9 +287,7 @@ pub fn test_app_state_with_storage(
         storage,
         federation,
         resolver,
-        task_queue,
-        pipeline_waker,
-        archypix_back::infra::exif_drain::ExifDrainWaker::disconnected(),
+        routines,
     )
 }
 

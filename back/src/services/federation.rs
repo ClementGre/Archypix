@@ -4,8 +4,8 @@ use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
 use crate::infra::error::AppError;
-use crate::infra::pipeline::PipelineWaker;
 use crate::infra::redis::Cache;
+use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
 use crate::repository::picture::PictureRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
@@ -30,7 +30,7 @@ pub struct PresignTokenItem {
 pub async fn receive_share_announcement(
     db: &PgPool,
     config: &Config,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     sender_username: &str,
     sender_instance: &str,
@@ -146,7 +146,7 @@ pub async fn receive_share_announcement(
 #[tracing::instrument(skip(db, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_accept(
     db: &PgPool,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     outgoing_share_id: Uuid,
 ) -> Result<(), AppError> {
@@ -182,7 +182,7 @@ pub async fn receive_share_accept(
     OutgoingShareRepository::set_status(db, share.id, ShareStatus::PendingFirstAnnouncement)
         .await?;
     // The sender (this share's owner) must run its pipeline to announce the first coverage.
-    pipeline_waker.wake(share.owner_id);
+    pipeline_waker.trigger(share.owner_id);
     Ok(())
 }
 
@@ -194,8 +194,10 @@ pub async fn receive_share_revoke(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    task_queue: &crate::infra::tasks::TaskQueue,
-    pipeline_waker: &PipelineWaker,
+    task_queue: &crate::infra::routine::RoutineHandle<
+        crate::infra::routine::unannounce::UnannounceInput,
+    >,
+    pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     outgoing_share_id: Uuid,
 ) -> Result<u64, AppError> {
@@ -265,7 +267,7 @@ pub async fn receive_pictures_announcement(
     db: &PgPool,
     cache: &dyn Cache,
     config: &Config,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     sender_username: &str,
     sender_instance: &str,
@@ -332,7 +334,7 @@ pub async fn receive_pictures_announcement(
             .await?;
     // Newly received pictures start with last_pipeline_run_at = NULL → wake the recipient's pipeline.
     if registered > 0 {
-        pipeline_waker.wake(incoming.recipient_id);
+        pipeline_waker.trigger(incoming.recipient_id);
     }
     Ok(registered)
 }
@@ -342,7 +344,7 @@ pub async fn receive_pictures_announcement(
 #[tracing::instrument(skip(db, pipeline_waker, picture_ids), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_pictures_unannouncement(
     db: &PgPool,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     outgoing_share_id: Uuid,
     picture_ids: &[String],
@@ -356,7 +358,7 @@ pub async fn receive_pictures_unannouncement(
     .ok_or(AppError::NotFound)?;
 
     let deleted = unregister_announced_pictures(db, &incoming, picture_ids).await?;
-    pipeline_waker.wake(incoming.recipient_id);
+    pipeline_waker.trigger(incoming.recipient_id);
     Ok(deleted)
 }
 
@@ -371,7 +373,7 @@ pub async fn receive_pictures_unannouncement(
 #[tracing::instrument(skip(db, waker, set, clear), fields(picture_id))]
 pub async fn receive_picture_edit_request(
     db: &PgPool,
-    waker: &PipelineWaker,
+    waker: &RoutineHandle<Uuid>,
     picture_id: &str,
     requester_username: &str,
     requester_instance: &str,

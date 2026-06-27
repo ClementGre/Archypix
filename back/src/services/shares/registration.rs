@@ -107,7 +107,8 @@ pub async fn register_received_pictures(
 
     // Boomerang guard (feature 11 §5.4): a copy of content the recipient deleted lands in trash.
     for id in registered_ids {
-        if let Err(e) = crate::infra::pipeline::dedup::classify_arrival(db, recipient_id, id).await
+        if let Err(e) =
+            crate::infra::routine::pipeline::dedup::classify_arrival(db, recipient_id, id).await
         {
             tracing::warn!(picture_id = %id, error = ?e, "dedup: classify_arrival failed for received picture");
         }

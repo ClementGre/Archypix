@@ -1,5 +1,10 @@
 # Recurring Background-Task Framework
 
+> **Superseded by [`17_unified_routine_framework.md`](17_unified_routine_framework.md).** This
+> document describes the shipped v1 (`RecurringTask` + `Scheduler`). Feature 17 generalises it into
+> a single keyed `Routine` framework that also absorbs `infra/tasks.rs`, `infra/pipeline.rs`'s
+> per-user scheduler, and `infra/exif_drain.rs`. Kept for history.
+
 ## 1. Overview
 
 The backend runs several **periodic** background loops. Today each one is hand-rolled:

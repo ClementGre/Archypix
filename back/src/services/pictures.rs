@@ -226,7 +226,7 @@ pub async fn begin_upload_batch(
     files: &[BatchUploadFile],
     initial_tags: &[String],
     upload_label: Option<&str>,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
 ) -> Result<Vec<BatchUploadOutcome>, AppError> {
     if files.is_empty() {
         return Err(AppError::BadRequest("No filenames provided".to_string()));
@@ -344,7 +344,7 @@ pub async fn begin_upload_batch(
             .await?;
         }
         tx.commit().await.map_err(map_sqlx_error)?;
-        waker.wake_debounced(user_id);
+        waker.trigger_debounced(user_id);
     }
 
     Ok(outcomes)
@@ -506,7 +506,7 @@ pub async fn copy_picture(
     storage: &dyn Storage,
     config: &Config,
     federation: &FederationClient,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     caller_username: &str,
     source_picture_id: Uuid,
@@ -646,7 +646,7 @@ pub async fn copy_picture(
 
     // Wake the pipeline so the new owned picture is tagged; the dedup reconcile runs again once
     // `gen_thumbnail` lands its `content_hash` (that completion wakes the pipeline too).
-    waker.wake_debounced(user_id);
+    waker.trigger_debounced(user_id);
 
     Ok(copy)
 }
@@ -717,7 +717,7 @@ pub async fn snapshot_version_on_overwrite(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn trash_picture(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
@@ -729,7 +729,7 @@ pub async fn trash_picture(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn restore_picture(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
@@ -748,7 +748,7 @@ pub enum TrashBatchOutcome {
 #[tracing::instrument(skip(db, waker, sel), fields(user_id = %user_id, deleted, dry_run))]
 pub async fn batch_set_trashed_selection(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     sel: &crate::repository::picture::ResolvedSelection,
     deleted: bool,
@@ -777,7 +777,7 @@ pub async fn batch_set_trashed_selection(
         DedupRepository::dedupe_boomerang_in_live_groups(&mut *tx, user_id).await?;
     }
     tx.commit().await.map_err(map_sqlx_error)?;
-    waker.wake(user_id);
+    waker.trigger(user_id);
     Ok(TrashBatchOutcome::Applied {
         affected: affected as i64,
     })
@@ -786,7 +786,7 @@ pub async fn batch_set_trashed_selection(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
 async fn set_trashed(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
     deleted: bool,
@@ -811,7 +811,7 @@ async fn set_trashed(
     // re-evaluates; harmless for received rows.
     PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
-    waker.wake(user_id);
+    waker.trigger(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)
@@ -826,7 +826,7 @@ async fn set_trashed(
 #[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn override_received_exif(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
     set: crate::domain::job::FullExif,
@@ -880,7 +880,7 @@ pub async fn override_received_exif(
     PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
 
-    waker.wake(user_id);
+    waker.trigger(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)
@@ -920,7 +920,7 @@ pub async fn propose_received_exif(
     cache: &dyn Cache,
     config: &Config,
     federation: &FederationClient,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     requester_username: &str,
     picture_id: Uuid,
@@ -1032,7 +1032,7 @@ pub async fn propose_received_exif(
     .await?;
     PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
-    waker.wake(user_id);
+    waker.trigger(user_id);
 
     PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -1084,7 +1084,7 @@ pub async fn picture_copies(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn set_picture_survivor(
     db: &PgPool,
-    waker: &crate::infra::pipeline::PipelineWaker,
+    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<(), AppError> {
@@ -1099,7 +1099,7 @@ pub async fn set_picture_survivor(
     }
     tx.commit().await.map_err(map_sqlx_error)?;
     // Re-announce / re-tag the now-live picture and let the reconciler confirm consistency.
-    waker.wake(user_id);
+    waker.trigger(user_id);
     Ok(())
 }
 

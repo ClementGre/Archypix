@@ -83,18 +83,21 @@ api/
 
 infra/
   config.rs / error.rs / redis.rs / crypto.rs / db.rs / s3.rs
-  tasks.rs           # in-process Tokio task queue (tag rename, revocation-cascade unannounce)
-  scheduler.rs       # RecurringTask trait + Scheduler: runs all periodic loops
-  pipeline.rs        # tagging pipeline: event-driven loop + PipelineRecoverySweepTask (poll fallback)
-  exif_drain.rs      # feature 14: deferred-EXIF-job drain (event-driven loop + ExifDrainWaker, poll fallback)
-  pipeline/
-    evaluation.rs    # per-user tag service evaluation + reconciliation, then announcement
-    dedup.rs         # feature 11: content-dedup reconciler (serial per user) — survivor selection,
-                     # rescue-promotion, arrival classification (boomerang guard)
-    announcement.rs  # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
-  job_watchdog.rs    # JobWatchdogTask (reset stale jobs) + JobCleanupTask (prune terminal jobs)
-  purge_sweep.rs     # PurgeSweepTask (RecurringTask): physically purge owned, retention-expired
+  routine.rs         # feature 17: generic Routine trait + RoutineHandle + per-key
+                     # debounce/coalesce/rerun runtime — the one runtime all background work runs on
+  routine/           # the concrete routines, grouped under the framework
+    pipeline.rs      # Pipeline routine: per-user tag/announce reconcile; sweep = recovery/poll fallback
+    exif_drain.rs    # feature 14: ExifDrain routine (deferred-EXIF-job drain)
+    tag_rename.rs    # TagRename routine (trigger-only; run is todo!) + TagRenameInput
+    unannounce.rs    # Unannounce routine (trigger-only; revocation-cascade tail) + UnannounceInput
+    job_watchdog.rs  # JobWatchdogTask + JobCleanupTask routines (sweep-only)
+    purge_sweep.rs   # PurgeSweepTask routine (sweep-only): physically purge owned, retention-expired
                      # trashed pictures — unannounce + delete tracking, S3 cleanup, hard-delete
+    pipeline/
+      evaluation.rs  # per-user tag service evaluation + reconciliation, then announcement
+      dedup.rs       # feature 11: content-dedup reconciler (serial per user) — survivor selection,
+                     # rescue-promotion, arrival classification (boomerang guard)
+      announcement.rs # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
 ```
 
 ## D) AppState
@@ -109,27 +112,27 @@ pub struct AppState {
     pub storage: StorageClient,
     pub federation: FederationClient,
     pub resolver: ResolverClient,
-   pub task_queue: TaskQueue,
-   pub pipeline_waker: PipelineWaker,
+   pub routines: Routines,   // feature 17: pipeline / exif_drain / tag_rename / unannounce trigger handles
 }
 ```
 
 ## E) Tagging pipeline
 
-The pipeline runs as a background Tokio task (`infra/pipeline.rs`), evaluating enabled tagging services against dirty pictures and reconciling tag
-assignments.
+The pipeline is the `Pipeline` [`Routine`](#h-routine-framework-feature-17) (`infra/pipeline.rs`): `run(user_id)` evaluates enabled
+tagging services against dirty pictures and reconciles tag assignments; `sweep` is its recovery/poll fallback.
 
 **Dirty picture detection** — `pictures.last_pipeline_run_at IS NULL` on new/invalidated pictures; `tagging_services.last_invalidated_at` bumps on
 config changes. Dirty = `last_pipeline_run_at IS NULL OR last_pipeline_run_at < last_invalidated_at` for any enabled service.
 
-**Wake model** — a per-user `mpsc<(Uuid, debounce)>` (`PipelineWaker`) for event-driven wakes, bounded concurrency (`PIPELINE_CONCURRENCY`, default
-4),
-serial per user, plus a poll fallback (`PIPELINE_POLL_INTERVAL_SECS`, default 1 hour). Woken after: ingest, manual tag edit, service config change,
-inbound share announcement, `cleanup_incoming_share`. Interactive wakes (`wake`) start a run promptly; worker-driven wakes that arrive one-per-picture
-(EXIF/visual reconcile completion, thumbnail completion) use `wake_debounced`, coalescing a burst into a single run over a `PIPELINE_DEBOUNCE_MS`
-(default 5000) window. The window starts on the first debounced wake and is **not** reset (latency bounded to the window); an interactive wake
-arriving
-mid-window promotes the run to start immediately. `PIPELINE_DEBOUNCE_MS=0` disables debouncing (used by tests).
+**Wake model** — `Input = Key = Uuid` (the user). Triggered via `routines.pipeline` (a `RoutineHandle<Uuid>`) with bounded concurrency
+(`PIPELINE_CONCURRENCY`, default 4), serial per user, plus the `sweep` poll fallback (`PIPELINE_POLL_INTERVAL_SECS`, default 1 hour, + startup).
+Triggered after: ingest, manual tag edit, service config change, inbound share announcement, `cleanup_incoming_share`. Interactive triggers (
+`trigger`)
+start a run promptly; worker-driven ones that arrive one-per-picture (EXIF/visual reconcile completion, thumbnail completion) use `trigger_debounced`,
+coalescing a burst into a single run over a `PIPELINE_DEBOUNCE_MS` (default 5000) window. The window starts on the first debounced trigger and is
+**not** reset (latency bounded to the window); an interactive trigger arriving mid-window promotes the run to start immediately.
+`PIPELINE_DEBOUNCE_MS=0`
+disables debouncing (used by tests). The per-key debounce/coalesce/rerun mechanics live in the generic runtime, not here.
 
 **Re-announce on worker completion** — a `gen_thumbnail` completion usually first computes `file_hash`/`blurhash`/`thumbnails_generated_at`, which may
 post-date a picture's first announce. If the picture is in the `share_announcements` tracking table, completion re-marks it dirty (debounced wake) so
@@ -188,8 +191,8 @@ membership term (`PictureRepository::push_selection_where`) is reused as a SQL s
 (`services::aggregate`) and the batch writes are set-based, never materialising a 10k selection.
 A batch EXIF edit cannot create one `edit_picture` job per picture synchronously: owned pictures take
 a single set-based `UPDATE` that stamps `exif_sync_status = 'pending_job_creation'`, and the
-deferred-job drain (`infra::exif_drain`, mirroring the pipeline's dirty-then-drain + waker + poll
-fallback) creates the reconcile jobs and flips them to `pending`. Received pictures take the
+deferred-job drain (`infra::exif_drain`, the `ExifDrain` `Routine` — `()`-keyed, triggered + interval
+sweep) creates the reconcile jobs and flips them to `pending`. Received pictures take the
 set-based local-override merge (or a propose-to-owner edit in `suggest` mode). Convergence is tracked
 through the `exif_sync` histogram, not per-picture job ids. See `doc/features/14_better_batch_editing.md`.
 
@@ -317,3 +320,28 @@ its `OutgoingShare` to `pending_first_announcement`.
      presign-token cache.
    - **Cross-instance**: `POST /api/federation/shares/revoke` → same cleanup on Bob's backend.
 2. Bob's backend propagates revocation downstream to any transitive recipients.
+
+## H) Routine framework (feature 17)
+
+All background work runs on one generic runtime, `infra/routine.rs`. A **`Routine`** is a named unit
+of work triggerable three ways: recurrently (every `interval()`), at startup (`run_on_startup()`),
+and manually (`RoutineHandle::trigger`/`trigger_debounced`). Each trigger carries an `Input`; a dedup
+`Key` is *derived* from it (`Routine::key`). Equal keys never run concurrently — while a key is
+running a new trigger sets a **rerun** flag (storing the latest input) and the runtime re-runs once at
+the end; a per-routine `debounce()` window coalesces a burst before the first run. `concurrency()`
+bounds distinct keys in flight (per-key is always serial). The periodic/startup `sweep` enumerates
+the inputs needing a run (default: `trigger(Default)`, right for `()`-keyed routines; the pipeline
+overrides it to enumerate dirty/dedup-needing users).
+
+`AppState.routines: Routines` holds the trigger handles (`pipeline`, `exif_drain`, `tag_rename`,
+`unannounce`); the sweep-only routines (job watchdog/cleanup, purge sweep) expose no handle.
+`routine::spawn` spawns each runtime onto the Tokio runtime and returns its handle plus a
+`JoinHandle`; `main` collects the handles into `Routines` and keeps the join handles. On SIGINT/SIGTERM
+`main` drives `axum`'s `with_graceful_shutdown`, then flips the shared `shutdown` watch and awaits each
+join handle — the runtime stops its loops and drains in-flight runs before exiting.
+
+**Durability.** Triggers are in-memory (`mpsc`) — a crash drops queued triggers. A routine needing
+crash-safety provides a `sweep` that re-derives its outstanding work from the DB (pipeline, exif
+drain, job/purge sweeps do). `tag_rename`/`unannounce` are trigger-only and best-effort (exactly the
+old `TaskQueue` behaviour); making tag-rename durable is a noted follow-up. See
+`doc/features/17_unified_routine_framework.md`.

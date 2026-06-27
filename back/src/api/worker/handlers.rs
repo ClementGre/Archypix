@@ -339,7 +339,7 @@ pub async fn complete_job(
     // Debounced: worker completions arrive one-per-picture and should collapse into one run.
     if requeue {
         if let Some(job) = &completed {
-            state.pipeline_waker.wake_debounced(job.owner_id);
+            state.routines.pipeline.trigger_debounced(job.owner_id);
             return Ok(StatusCode::NO_CONTENT);
         }
     }
@@ -347,7 +347,7 @@ pub async fn complete_job(
     // Wake (post-commit) so the pipeline re-announces the freshly-hashed/thumbnailed picture.
     // Debounced for the same reason — a batch upload's thumbnails complete in a burst.
     if let Some(owner_id) = reannounce_owner {
-        state.pipeline_waker.wake_debounced(owner_id);
+        state.routines.pipeline.trigger_debounced(owner_id);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -411,7 +411,7 @@ pub async fn fail_job(
                     .map_err(map_sqlx_error)?;
                     // A revert is itself a metadata change — re-dirty + wake the pipeline.
                     // Debounced: this is a worker-driven completion path.
-                    state.pipeline_waker.wake_debounced(job.owner_id);
+                    state.routines.pipeline.trigger_debounced(job.owner_id);
                 }
             }
         }

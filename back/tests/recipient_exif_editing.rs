@@ -10,7 +10,8 @@ mod common;
 use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::infra::config::Config;
 use archypix_back::infra::error::AppError;
-use archypix_back::infra::pipeline::{self, PipelineWaker};
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline::{self};
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::share::IncomingShareRepository;
 use archypix_back::services::{federation, pictures, shares};
@@ -131,7 +132,7 @@ async fn propose(
         cache.as_ref(),
         &cfg,
         &fed,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         bob_id,
         "bob",
         bob_pic,
@@ -222,7 +223,7 @@ async fn escalate_clears_local_override(db: PgPool) {
     // Bob first overrides gps_lat locally (private).
     pictures::override_received_exif(
         &db,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif {
@@ -297,7 +298,7 @@ async fn owner_rejects_when_grant_revoked_in_flight(db: PgPool) {
     // The owner-side handler re-verifies the grant (never trusts the wire) → 403.
     let err = federation::receive_picture_edit_request(
         &db,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         &alice_pic.to_string(),
         "bob",
         "test.com",
@@ -322,7 +323,7 @@ async fn owner_rejects_edit_for_uncovered_recipient(db: PgPool) {
         editable_share(&db, "vacation", true).await;
     let err = federation::receive_picture_edit_request(
         &db,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         &alice_pic.to_string(),
         "mallory",
         "evil.com",

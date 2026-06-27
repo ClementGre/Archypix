@@ -9,9 +9,9 @@ mod common;
 
 use archypix_back::domain::share::ShareStatus;
 use archypix_back::infra::config::Config;
-use archypix_back::infra::pipeline;
-use archypix_back::infra::pipeline::PipelineWaker;
-use archypix_back::infra::tasks::TaskQueue;
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline;
+use archypix_back::infra::routine::unannounce::UnannounceInput;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::shares;
@@ -83,7 +83,14 @@ fn config() -> Config {
 }
 
 /// Build the shared deps (cache, federation, task queue with spawned runner, pipeline notify).
-async fn deps(db: &PgPool) -> (Config, Arc<common::InMemoryCache>, TaskQueue, PipelineWaker) {
+async fn deps(
+    db: &PgPool,
+) -> (
+    Config,
+    Arc<common::InMemoryCache>,
+    RoutineHandle<UnannounceInput>,
+    RoutineHandle<Uuid>,
+) {
     let config = config();
     let (fed, cache) = common::make_federation(&config);
     let (queue, notify) = common::test_task_queue(db, &config);
@@ -94,9 +101,14 @@ async fn deps(db: &PgPool) -> (Config, Arc<common::InMemoryCache>, TaskQueue, Pi
 
 /// Run the pipeline once for `user`. Delivery is inline (same-backend registers synchronously), so
 /// no settle delay is needed. (`_queue` is kept for call-site symmetry with the share helpers.)
-async fn run_pipeline_and_settle(db: &PgPool, _queue: &TaskQueue, config: &Config, user: Uuid) {
+async fn run_pipeline_and_settle(
+    db: &PgPool,
+    _queue: &RoutineHandle<UnannounceInput>,
+    config: &Config,
+    user: Uuid,
+) {
     let (fed, cache) = common::make_federation(config);
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     pipeline::run_once_for_user(db, &fed, cache.as_ref(), config, &waker, user)
         .await
         .unwrap();
@@ -110,8 +122,8 @@ async fn active_share(
     db: &PgPool,
     config: &Config,
     cache: &Arc<common::InMemoryCache>,
-    queue: &TaskQueue,
-    notify: &PipelineWaker,
+    queue: &RoutineHandle<UnannounceInput>,
+    notify: &RoutineHandle<Uuid>,
     sender_id: Uuid,
     sender_name: &str,
     recipient_id: Uuid,

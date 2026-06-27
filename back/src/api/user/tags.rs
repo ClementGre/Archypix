@@ -110,7 +110,7 @@ pub async fn edit(
     .await?;
     let outcome = services::tags::batch_edit_tags(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         user_id,
         &sel,
         &add_tags,

@@ -1,6 +1,6 @@
 //! Physical-purge sweep for soft-deleted owned pictures (09 §5.1).
 //!
-//! A [`RecurringTask`] that finds owned pictures whose retention window has elapsed
+//! A sweep-only [`Routine`](crate::infra::routine::Routine) that finds owned pictures whose retention window has elapsed
 //! (`deleted_at + user_settings.trash_retention_days < now`, derived per-owner so a retention change
 //! needs no backfill), unannounces them from any share recipients, deletes their S3 objects
 //! (original + thumbnails + versions), and hard-deletes the row. Removing the row drops its tags
@@ -11,9 +11,9 @@
 use crate::infra::config::Config;
 use crate::infra::error::AppError;
 use crate::infra::redis::{Cache, RedisKey};
+use crate::infra::routine::unannounce::UnannounceInput;
+use crate::infra::routine::{Routine, RoutineHandle};
 use crate::infra::s3::{self, Storage};
-use crate::infra::scheduler::RecurringTask;
-use crate::infra::tasks::{InternalTask, TaskQueue};
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
@@ -32,7 +32,7 @@ pub struct PurgeSweepTask {
     storage: Arc<dyn Storage>,
     cache: Arc<dyn Cache>,
     config: Config,
-    task_queue: TaskQueue,
+    unannounce: RoutineHandle<UnannounceInput>,
     interval: Duration,
     batch: i64,
 }
@@ -44,7 +44,7 @@ impl PurgeSweepTask {
         storage: Arc<dyn Storage>,
         cache: Arc<dyn Cache>,
         config: Config,
-        task_queue: TaskQueue,
+        unannounce: RoutineHandle<UnannounceInput>,
         interval: Duration,
         batch: i64,
     ) -> Self {
@@ -53,7 +53,7 @@ impl PurgeSweepTask {
             storage,
             cache,
             config,
-            task_queue,
+            unannounce,
             interval,
             batch,
         }
@@ -68,6 +68,8 @@ impl PurgeSweepTask {
             .await?
             .map(|u| u.username)
             .unwrap_or_default();
+
+        // TODO: proper transaction handling
 
         // ── Tracking teardown (downstream gathered before tracking rows are deleted) ──
         let mut tx = self
@@ -106,15 +108,14 @@ impl PurgeSweepTask {
             )
             .await?
             .is_some();
-            self.task_queue
-                .enqueue(InternalTask::UnannounceSharedPictures {
-                    outgoing_share_id: os_id,
-                    sender_username: owner_username.clone(),
-                    recipient_username,
-                    recipient_instance,
-                    picture_ids,
-                    is_same_backend,
-                });
+            self.unannounce.trigger(UnannounceInput {
+                outgoing_share_id: os_id,
+                sender_username: owner_username.clone(),
+                recipient_username,
+                recipient_instance,
+                picture_ids,
+                is_same_backend,
+            });
         }
 
         // ── S3 cleanup (best-effort: a missing object is not an error) ──
@@ -152,16 +153,21 @@ impl PurgeSweepTask {
 }
 
 #[async_trait::async_trait]
-impl RecurringTask for PurgeSweepTask {
+impl Routine for PurgeSweepTask {
+    type Input = ();
+    type Key = ();
+
     fn name(&self) -> &'static str {
         "purge_sweep"
     }
 
-    fn interval(&self) -> Duration {
-        self.interval
+    fn key(_input: &()) {}
+
+    fn interval(&self) -> Option<Duration> {
+        Some(self.interval)
     }
 
-    async fn tick(&self) -> anyhow::Result<()> {
+    async fn run(&self, _input: ()) -> anyhow::Result<()> {
         let purgeable = PictureRepository::find_purgeable(&self.db, self.batch).await?;
         if purgeable.is_empty() {
             return Ok(());

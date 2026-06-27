@@ -61,7 +61,7 @@ pub async fn enqueue_edit(
     let user_id = auth.user_id()?;
     let outcome = services::jobs::edit_pictures_exif(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         user_id,
         &[picture_id],
         body.set,
@@ -105,8 +105,8 @@ pub async fn batch_edit_exif(
     .await?;
     let outcome = services::jobs::batch_edit_exif_selection(
         &state.db,
-        &state.pipeline_waker,
-        &state.exif_drain,
+        &state.routines.pipeline,
+        &state.routines.exif_drain,
         state.cache.as_ref(),
         &state.config,
         &state.federation,
@@ -166,7 +166,7 @@ pub async fn resync_exif(
 ) -> Result<Json<Job>, AppError> {
     let job = services::jobs::resync_picture_exif(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         auth.user_id()?,
         picture_id,
     )

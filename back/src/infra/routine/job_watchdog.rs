@@ -1,6 +1,4 @@
-//! Job-table maintenance tasks: the stale-`processing` watchdog and the terminal-row cleanup.
-//!
-//! Both are [`RecurringTask`]s registered on the [`crate::infra::scheduler::Scheduler`].
+//! Job-table maintenance [`Routine`]s: the stale-`processing` watchdog and the terminal-row cleanup.
 //!
 //! - [`JobWatchdogTask`] periodically resets jobs stuck in `processing` (a worker that crashed,
 //!   was OOM-killed, or lost connectivity after claiming a job). Without recovery those jobs would
@@ -9,8 +7,11 @@
 //! - [`JobCleanupTask`] prunes terminal (`completed` / `failed`) job rows older than a retention
 //!   window so the `jobs` table does not grow without bound (every upload creates a `gen_thumbnail`
 //!   job; EXIF/visual edits add more).
+//!
+//! Both are `()`-keyed sweep-only routines (`infra::routine`): no manual trigger, the default sweep
+//! runs `run(())` on each interval tick.
 
-use crate::infra::scheduler::RecurringTask;
+use crate::infra::routine::Routine;
 use crate::repository::job::JobRepository;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -34,17 +35,21 @@ impl JobWatchdogTask {
 }
 
 #[async_trait::async_trait]
-impl RecurringTask for JobWatchdogTask {
+impl Routine for JobWatchdogTask {
+    type Input = ();
+    type Key = ();
+
     fn name(&self) -> &'static str {
         "job_watchdog"
     }
 
-    fn interval(&self) -> Duration {
-        self.interval
+    fn key(_input: &()) {}
+
+    fn interval(&self) -> Option<Duration> {
+        Some(self.interval)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn tick(&self) -> anyhow::Result<()> {
+    async fn run(&self, _input: ()) -> anyhow::Result<()> {
         let n = JobRepository::reset_stale(&self.db, self.timeout_secs).await?;
         if n > 0 {
             info!(reset = n, "job watchdog: reset stale jobs");
@@ -71,17 +76,21 @@ impl JobCleanupTask {
 }
 
 #[async_trait::async_trait]
-impl RecurringTask for JobCleanupTask {
+impl Routine for JobCleanupTask {
+    type Input = ();
+    type Key = ();
+
     fn name(&self) -> &'static str {
         "job_cleanup"
     }
 
-    fn interval(&self) -> Duration {
-        self.interval
+    fn key(_input: &()) {}
+
+    fn interval(&self) -> Option<Duration> {
+        Some(self.interval)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn tick(&self) -> anyhow::Result<()> {
+    async fn run(&self, _input: ()) -> anyhow::Result<()> {
         let n = JobRepository::delete_terminal_older_than(&self.db, self.retention_secs).await?;
         if n > 0 {
             info!(deleted = n, "job cleanup: pruned terminal jobs");
@@ -138,7 +147,7 @@ mod tests {
         .unwrap();
 
         let task = JobCleanupTask::new(db.clone(), 2_592_000, Duration::from_secs(86_400));
-        task.tick().await.unwrap();
+        task.run(()).await.unwrap();
 
         let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs")
             .fetch_one(&db)

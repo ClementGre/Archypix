@@ -6,8 +6,9 @@
 mod common;
 
 use archypix_back::infra::config::Config;
-use archypix_back::infra::pipeline::{self, PipelineWaker, dedup};
 use archypix_back::infra::redis::Cache;
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline::{self, dedup};
 use archypix_back::infra::s3::Storage;
 use archypix_back::services::pictures;
 use chrono::NaiveDateTime;
@@ -89,7 +90,7 @@ async fn reason(db: &PgPool, id: Uuid) -> Option<String> {
 async fn run_pipeline(db: &PgPool, user: Uuid) {
     let cfg = config();
     let (fed, cache) = common::make_federation(&cfg);
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &waker, user)
         .await
         .unwrap();
@@ -146,7 +147,7 @@ async fn delete_makes_owned_copy_the_trash_representative(db: PgPool) {
     // hidden as content_dedupe.
     let received = seed_received(&db, user, "hashA", None).await;
     let owned = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     // The user deletes the content (trashes the survivor — the received one they see).
     pictures::trash_picture(&db, &waker, user, received)
@@ -175,7 +176,7 @@ async fn rejected_content_promotes_representative_on_purge(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
     let a = seed_owned(&db, user, "hashA", None).await;
     let b = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     // Delete the content → one `manual` representative, the other `boomerang` (neither live).
     pictures::trash_picture(&db, &waker, user, a).await.unwrap();
@@ -212,7 +213,7 @@ async fn restore_lifts_rejection_and_re_enables_rescue(db: PgPool) {
     // Received survivor + owned hidden copy, so the representative is deterministic (the owned one).
     let received = seed_received(&db, user, "hashA", None).await;
     let owned = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     // Delete → the owned copy is the manual representative, the received one boomerang.
     pictures::trash_picture(&db, &waker, user, received)
@@ -361,7 +362,7 @@ async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
         .unwrap();
 
     let (fed, cache) = common::make_federation(&cfg);
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     let storage_dyn: Arc<dyn Storage> = storage.clone();
 
     let copy = pictures::copy_picture(

@@ -5,9 +5,8 @@ use crate::domain::job::{
 use crate::domain::picture::ExifSyncStatus;
 use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
-use crate::infra::exif_drain::ExifDrainWaker;
-use crate::infra::pipeline::PipelineWaker;
 use crate::infra::redis::Cache;
+use crate::infra::routine::RoutineHandle;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
@@ -134,7 +133,7 @@ pub struct ExifEditOutcome {
 #[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id))]
 pub async fn edit_pictures_exif(
     db: &PgPool,
-    waker: &PipelineWaker,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_ids: &[Uuid],
     set: FullExif,
@@ -217,7 +216,7 @@ pub async fn edit_pictures_exif(
     // A metadata change re-dirties the picture (date/GPS rules, segments, announcements). Debounced:
     // an EXIF edit reconciles via a worker, and a batch edit produces a per-picture wake burst that
     // should collapse into one pipeline run.
-    waker.wake_debounced(user_id);
+    waker.trigger_debounced(user_id);
     Ok(outcome)
 }
 
@@ -282,7 +281,7 @@ async fn enqueue_or_fold_edit(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn resync_picture_exif(
     db: &PgPool,
-    waker: &PipelineWaker,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Job, AppError> {
@@ -320,7 +319,7 @@ pub async fn resync_picture_exif(
     });
     let job = JobRepository::create(db, user_id, Some(picture_id), &config, None).await?;
     // Debounced: EXIF resync is a worker-driven reconcile path.
-    waker.wake_debounced(user_id);
+    waker.trigger_debounced(user_id);
     Ok(job)
 }
 
@@ -425,8 +424,8 @@ fn exif_field_key(f: ExifField) -> &'static str {
 #[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, config, federation, sel, set, clear), fields(user_id = %user_id, dry_run))]
 pub async fn batch_edit_exif_selection(
     db: &PgPool,
-    pipeline_waker: &PipelineWaker,
-    exif_drain: &ExifDrainWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
+    exif_drain: &RoutineHandle<()>,
     cache: &dyn Cache,
     config: &Config,
     federation: &FederationClient,
@@ -475,7 +474,7 @@ pub async fn batch_edit_exif_selection(
     tx.commit().await.map_err(map_sqlx_error)?;
     if edited > 0 {
         // New `pending_job_creation` rows → wake the drain to create their reconcile jobs.
-        exif_drain.wake();
+        exif_drain.trigger(());
     }
 
     // ── Received ──
@@ -546,7 +545,7 @@ pub async fn batch_edit_exif_selection(
     // A metadata change re-dirties the pictures (date/GPS rules, segments, announcements). Owned and
     // received-local set-based paths reset `last_pipeline_run_at`; the per-picture received paths
     // wake on their own. Debounced: a batch produces a burst that should collapse into one run.
-    pipeline_waker.wake_debounced(user_id);
+    pipeline_waker.trigger_debounced(user_id);
 
     Ok(ExifBatchOutcome::Applied {
         affected: edited + unsupported + suggested + local_override,

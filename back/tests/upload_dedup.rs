@@ -8,8 +8,8 @@
 mod common;
 
 use archypix_back::infra::config::Config;
-use archypix_back::infra::pipeline::PipelineWaker;
 use archypix_back::infra::redis::Cache;
+use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::services::pictures::{BatchUploadFile, BatchUploadOutcome, begin_upload_batch};
 use common::{InMemoryCache, MockStorage};
@@ -39,7 +39,7 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
     let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let user = common::seed_user(&db, "alice", "pw").await;
 
@@ -107,7 +107,7 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
     let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let user = common::seed_user(&db, "carol", "pw").await;
 
@@ -154,7 +154,7 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
     let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let user = common::seed_user(&db, "bob", "pw").await;
 
@@ -217,7 +217,7 @@ async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
     let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let user = common::seed_user(&db, "dave", "pw").await;
 

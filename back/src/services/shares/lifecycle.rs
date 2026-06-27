@@ -9,9 +9,9 @@ use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
-use crate::infra::pipeline::PipelineWaker;
 use crate::infra::redis::Cache;
-use crate::infra::tasks::{InternalTask, TaskQueue};
+use crate::infra::routine::RoutineHandle;
+use crate::infra::routine::unannounce::UnannounceInput;
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
@@ -39,8 +39,8 @@ pub async fn cleanup_incoming_share(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    task_queue: &TaskQueue,
-    pipeline_waker: &PipelineWaker,
+    task_queue: &RoutineHandle<UnannounceInput>,
+    pipeline_waker: &RoutineHandle<Uuid>,
     share: &IncomingShare,
     final_status: ShareStatus,
 ) -> Result<u64, AppError> {
@@ -111,7 +111,7 @@ pub async fn cleanup_incoming_share(
             find_local_user_id(cache, db, config, &recipient_username, &recipient_instance)
                 .await?
                 .is_some();
-        task_queue.enqueue(InternalTask::UnannounceSharedPictures {
+        task_queue.trigger(UnannounceInput {
             outgoing_share_id: os_id,
             sender_username: relayer_username.clone(),
             recipient_username,
@@ -144,7 +144,7 @@ pub async fn cleanup_incoming_share(
         }
     }
 
-    pipeline_waker.wake(share.recipient_id);
+    pipeline_waker.trigger(share.recipient_id);
     Ok(deleted)
 }
 
@@ -155,8 +155,8 @@ pub async fn reject_incoming_share(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    task_queue: &TaskQueue,
-    pipeline_waker: &PipelineWaker,
+    task_queue: &RoutineHandle<UnannounceInput>,
+    pipeline_waker: &RoutineHandle<Uuid>,
     rejector_id: Uuid,
     rejector_username: &str,
     share_id: Uuid,
@@ -230,7 +230,7 @@ pub async fn create_outgoing_share(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     owner_id: Uuid,
     sender_username: &str,
     tag_path: &str,
@@ -358,7 +358,7 @@ pub async fn create_outgoing_share(
 
     if cross_instance_auto_accepted {
         // Wake the pipeline to announce the just-created ShareBack's pictures (owner is the sender).
-        pipeline_waker.wake(owner_id);
+        pipeline_waker.trigger(owner_id);
     }
 
     // Same-backend ShareBack auto-accept (no federation involved). Runs *after* commit and is
@@ -391,7 +391,7 @@ pub async fn create_outgoing_share(
                             ShareStatus::PendingFirstAnnouncement,
                         )
                         .await;
-                        pipeline_waker.wake(owner_id);
+                        pipeline_waker.trigger(owner_id);
                     }
                     Err(e) => tracing::error!(
                         share_id = %share.id,
@@ -419,7 +419,7 @@ pub async fn accept_incoming_share(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     acceptor_id: Uuid,
     acceptor_username: &str,
     share_id: Uuid,
@@ -461,7 +461,7 @@ pub async fn accept_incoming_share(
             ShareStatus::PendingFirstAnnouncement,
         )
         .await?;
-        pipeline_waker.wake(sender_id);
+        pipeline_waker.trigger(sender_id);
         Ok(())
     } else {
         // ── Cross-instance path ───────────────────────────────────────────────
@@ -495,8 +495,8 @@ pub async fn revoke_outgoing_share(
     cache: &dyn Cache,
     federation: &FederationClient,
     config: &Config,
-    task_queue: &TaskQueue,
-    pipeline_waker: &PipelineWaker,
+    task_queue: &RoutineHandle<UnannounceInput>,
+    pipeline_waker: &RoutineHandle<Uuid>,
     owner_id: Uuid,
     owner_username: &str,
     share_id: Uuid,

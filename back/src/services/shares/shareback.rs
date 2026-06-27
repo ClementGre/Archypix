@@ -4,7 +4,7 @@
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tagging::ServiceType;
 use crate::infra::error::AppError;
-use crate::infra::pipeline::PipelineWaker;
+use crate::infra::routine::RoutineHandle;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tagging::{SharedTagMappingRuleRepository, TaggingServiceRepository};
 use sqlx::PgPool;
@@ -41,7 +41,7 @@ async fn find_or_create_shared_tag_mapping_service(
 #[tracing::instrument(skip(db, pipeline_waker, incoming, original_outgoing), fields(user_id = %recipient_id, share_id = %incoming.id))]
 pub async fn auto_accept_shareback_local(
     db: &PgPool,
-    pipeline_waker: &PipelineWaker,
+    pipeline_waker: &RoutineHandle<Uuid>,
     recipient_id: Uuid,
     incoming: &IncomingShare,
     original_outgoing: &OutgoingShare,
@@ -60,6 +60,6 @@ pub async fn auto_accept_shareback_local(
     IncomingShareRepository::set_local_mapping_service(db, incoming.id, mapping.id).await?;
     TaggingServiceRepository::touch_invalidated(db, service_id).await?;
 
-    pipeline_waker.wake(recipient_id);
+    pipeline_waker.trigger(recipient_id);
     Ok(())
 }

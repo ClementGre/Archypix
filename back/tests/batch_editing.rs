@@ -9,8 +9,7 @@ mod common;
 use archypix_back::domain::job::FullExif;
 use archypix_back::domain::picture::ExifSyncStatus;
 use archypix_back::infra::config::Config;
-use archypix_back::infra::exif_drain::ExifDrainWaker;
-use archypix_back::infra::pipeline::PipelineWaker;
+use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::repository::picture::{PictureRepository, ResolvedSelection};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::aggregate::{AggregateRequest, AggregateSection};
@@ -334,7 +333,7 @@ async fn aggregate_service_summary_and_exif(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_tags_apply_and_dry_run(db: PgPool) {
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     let user = common::seed_user(&db, "alice", "pass").await;
     let p1 = common::seed_picture(&db, user).await;
     let p2 = common::seed_picture(&db, user).await;
@@ -383,7 +382,7 @@ async fn batch_tags_apply_and_dry_run(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_tags_remove_only_affects_manual(db: PgPool) {
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     let user = common::seed_user(&db, "alice", "pass").await;
     let p1 = common::seed_picture_with_tag(&db, user, "Trip").await;
     let sel = ResolvedSelection::explicit(vec![p1]);
@@ -404,7 +403,7 @@ async fn batch_tags_remove_only_affects_manual(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_trash_then_restore(db: PgPool) {
     use archypix_back::services::pictures::{self, TrashBatchOutcome};
-    let waker = PipelineWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
     let user = common::seed_user(&db, "alice", "pass").await;
     let p1 = common::seed_picture(&db, user).await;
     let p2 = common::seed_picture(&db, user).await;
@@ -583,8 +582,8 @@ async fn received_local_override_materialises(db: PgPool) {
 async fn batch_exif_dry_run_partitions(db: PgPool) {
     let cfg = Config::test_defaults();
     let (fed, cache) = common::make_federation(&cfg);
-    let waker = PipelineWaker::disconnected();
-    let drain = ExifDrainWaker::disconnected();
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let drain = RoutineHandle::<()>::disconnected();
 
     let user = common::seed_user(&db, "alice", "pass").await;
     let jpeg = seed_owned(

@@ -2,7 +2,7 @@
 //!
 //! Rows are grouped per user by a **content key**: `content_hash` when present, else
 //! `'fh:' || file_hash` (the non-strippable-format fallback, §7.6). Rows with neither hash do not
-//! group. The reconciler ([`crate::infra::pipeline::dedup`]) keeps exactly one live survivor per
+//! group. The reconciler ([`crate::infra::routine::pipeline::dedup`]) keeps exactly one live survivor per
 //! group and hides the rest as `content_dedupe`; `manual`/`boomerang` rows are content rejections it
 //! never touches but does respect.
 

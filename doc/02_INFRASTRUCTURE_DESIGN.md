@@ -21,10 +21,10 @@
           client's SHA-256 (computed the same way as the worker) is stored as a provisional `file_hash` and re-confirmed by `gen_thumbnail`.
       - Federation endpoints: handle inbound/outbound federation messages (share announce/revoke, presign requests).
         - Job queue owner: writes `pending` jobs; exposes `/api/worker/*` for workers to claim/complete. Issues a one-time `claim_token` per claim.
-        - In-process task queue (`infra/tasks.rs`): DB-only async tasks (tag-rename cascade, pipeline evaluation).
-        - Recurring scheduler (`infra/scheduler.rs`): job watchdog (resets stale `processing` jobs, default 600 s timeout), job cleanup (prunes
-          terminal
-          jobs), pipeline recovery sweep, trash purge sweep (physically deletes owned pictures past their `trash_retention_days`).
+        - Routine framework (`infra/routine.rs`, feature 17): one generic runtime for all background work — recurrent (interval), startup, and
+          manual triggers with per-key debounce/coalesce/rerun. Routines: pipeline evaluation, deferred-EXIF-job drain, job watchdog (resets stale
+          `processing` jobs, default 600 s timeout), job cleanup (prunes terminal jobs), trash purge sweep (physically deletes owned pictures past
+          their `trash_retention_days`), and the trigger-only tag-rename cascade + revocation-cascade unannounce.
         - Redis: sessions, presigned URLs, federation tokens, backend domain mappings.
 
 - Workers (`archypix-worker`, one or more Rust processes)

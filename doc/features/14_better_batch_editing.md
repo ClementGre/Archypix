@@ -216,9 +216,9 @@ Mirroring the tagging pipeline's dirty-then-drain pattern:
 1. The batch write is a **single set-based** `UPDATE … WHERE <resolved predicate>` that applies the
    `set`/`clear` to the DB and stamps a new EXIF sync state
    `exif_sync_status = 'pending_job_creation'`. No enumeration; scales to the whole selection.
-2. A drain task (a `RecurringTask` plus an immediate wake, like `PipelineWaker`) selects rows in that
-   state with no active `edit_picture` job, creates jobs in batches, and flips them to `pending`. The
-   existing `stuck_exif_pending` consistency check already half-describes this drain.
+2. A drain task (the `ExifDrain` `Routine`, feature 17 — interval sweep + immediate `trigger`) selects
+   rows in that state with no active `edit_picture` job, creates jobs in batches, and flips them to
+   `pending`. The existing `stuck_exif_pending` consistency check already half-describes this drain.
 
 **Owned vs received partition.** The fast column write-through applies to owned pictures. Received
 pictures take the `local_exif_overrides` JSONB **merge** path (`exif_data || override`, still

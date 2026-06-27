@@ -7,8 +7,9 @@ mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::infra::config::Config;
-use archypix_back::infra::pipeline::{self, PipelineWaker};
-use archypix_back::infra::scheduler::RecurringTask;
+use archypix_back::infra::routine::Routine;
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline::{self};
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::share::IncomingShareRepository;
 use archypix_back::repository::share_announcement::ShareAnnouncementRepository;
@@ -110,9 +111,14 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     );
 
     // Owner trashes the shared picture → kept in coverage, re-announced with the lifecycle flag.
-    pictures::trash_picture(&db, &PipelineWaker::disconnected(), alice_id, alice_pic)
-        .await
-        .unwrap();
+    pictures::trash_picture(
+        &db,
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        alice_id,
+        alice_pic,
+    )
+    .await
+    .unwrap();
     run_alice(&db, alice_id).await;
 
     assert_eq!(
@@ -135,9 +141,14 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     );
 
     // Owner restores before purge → re-announce clears the lifecycle flag.
-    pictures::restore_picture(&db, &PipelineWaker::disconnected(), alice_id, alice_pic)
-        .await
-        .unwrap();
+    pictures::restore_picture(
+        &db,
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        alice_id,
+        alice_pic,
+    )
+    .await
+    .unwrap();
     run_alice(&db, alice_id).await;
     let restored = bob_received(&db, bob_id).await;
     assert!(
@@ -158,7 +169,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob overrides gps_lat locally (DB-only; no edit_picture job).
     pictures::override_received_exif(
         &db,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif {
@@ -215,7 +226,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob clears the override → the owner's value flows through again.
     pictures::override_received_exif(
         &db,
-        &PipelineWaker::disconnected(),
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif::default(),
@@ -315,7 +326,7 @@ async fn find_purgeable_respects_retention_and_owner_only(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
-    use archypix_back::infra::purge_sweep::PurgeSweepTask;
+    use archypix_back::infra::routine::purge_sweep::PurgeSweepTask;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -331,9 +342,14 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
     assert_eq!(tracked_before, 1);
 
     // Trash and backdate past retention.
-    pictures::trash_picture(&db, &PipelineWaker::disconnected(), alice_id, alice_pic)
-        .await
-        .unwrap();
+    pictures::trash_picture(
+        &db,
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        alice_id,
+        alice_pic,
+    )
+    .await
+    .unwrap();
     sqlx::query!(
         "UPDATE pictures SET deleted_at = (now() at time zone 'utc') - INTERVAL '40 days' WHERE id = $1",
         alice_pic,
@@ -353,7 +369,7 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
         Duration::from_secs(3600),
         100,
     );
-    task.tick().await.unwrap();
+    task.run(()).await.unwrap();
 
     let row = PictureRepository::find_by_id(&db, alice_pic).await.unwrap();
     assert!(row.is_none(), "purged owned picture row is hard-deleted");

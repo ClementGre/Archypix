@@ -63,22 +63,40 @@ storage backend, keeping large file traffic off the application server. Picture 
 
 ## Architecture
 
-Archypix is composed of two server-side services:
+Single-backend architecture:
 
 ```mermaid
 graph TB
     client(["Client"])
-    resolver["Resolver"]
-    backA["Backend A"]
-    backB["Backend B"]
-    storage[("Postgres, Redis, S3")]
-    client -->|WebFinger| resolver
+    back["Backend<br>example.com"]
+    worker["Worker(s)"]
+    storage[("• Postgres<br>• Redis<br>• S3")]
+    client -->|" REST / WebDAV "| back
+    back --- storage
+    worker -->|" Pools new jobs "| back
+    worker -->|" Submits job result "| back
+```
+
+Two-backend architecture:
+
+```mermaid
+graph TB
+    client(["Client"])
+    resolver["Resolver<br>example.com"]
+    backA["Backend A<br>b1.example.com"]
+    backB["Backend B<br>b2.example.com"]
+    worker["Worker(s)"]
+    storage[("• Postgres<br>• Redis<br>• S3")]
     client -->|" REST / WebDAV "| backA
-    backA <-->|Federation| backB
-    backA -->|self - register| resolver
-    backB -->|self - register| resolver
-    backB --- storage
+    client -->|" REST / WebDAV "| backB
+    client -->|WebFinger| resolver
     backA --- storage
+    backB --- storage
+    backA <-->|Federation| backB
+    backA -->|" • self-register<br>• WebFinger "| resolver
+    backB -->|" • self-register<br>• WebFinger "| resolver
+    worker -->|" • Pools new jobs<br>• Submits job result "| backA
+    worker -->|" • Pools new jobs<br>• Submits job result "| backB
 ```
 
 | Component                                                                 | Role                                                                                                                         |

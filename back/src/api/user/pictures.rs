@@ -88,7 +88,7 @@ pub async fn batch_create_upload(
         &payload.files,
         &initial_tags,
         payload.upload_label.as_deref(),
-        &state.pipeline_waker,
+        &state.routines.pipeline,
     )
     .await?;
 
@@ -145,7 +145,7 @@ pub async fn complete_upload(
         // New picture: last_pipeline_run_at = NULL by default → wake the pipeline loop. Debounced so
         // a multi-file upload collapses into one run; manual `initial_tags` are already committed in
         // the completion tx, so only background rule evaluation waits for the window.
-        state.pipeline_waker.wake_debounced(auth.user_id()?);
+        state.routines.pipeline.trigger_debounced(auth.user_id()?);
     }
     Ok(Json(serde_json::json!({ "id": picture.id })))
 }
@@ -156,7 +156,7 @@ pub async fn wake_pipeline(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.pipeline_waker.wake(auth.user_id()?);
+    state.routines.pipeline.trigger(auth.user_id()?);
     Ok(Json(serde_json::json!({ "woken": true })))
 }
 
@@ -256,7 +256,7 @@ pub async fn trash(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let picture = services::pictures::trash_picture(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         auth.user_id()?,
         picture_id,
     )
@@ -291,7 +291,7 @@ pub async fn copy(
         state.storage.as_ref(),
         &state.config,
         &state.federation,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         auth.user_id()?,
         &auth.claims.sub,
         picture_id,
@@ -352,7 +352,7 @@ pub async fn keep_copy(
 ) -> Result<Json<serde_json::Value>, AppError> {
     services::pictures::set_picture_survivor(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         auth.user_id()?,
         picture_id,
     )
@@ -388,7 +388,7 @@ async fn batch_set_trashed(
     .await?;
     let outcome = services::pictures::batch_set_trashed_selection(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         user_id,
         &sel,
         deleted,
@@ -439,7 +439,7 @@ pub async fn restore(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let picture = services::pictures::restore_picture(
         &state.db,
-        &state.pipeline_waker,
+        &state.routines.pipeline,
         auth.user_id()?,
         picture_id,
     )
@@ -492,7 +492,7 @@ pub async fn edit_received_exif(
         ReceivedExifMode::Local => {
             let picture = services::pictures::override_received_exif(
                 &state.db,
-                &state.pipeline_waker,
+                &state.routines.pipeline,
                 user_id,
                 picture_id,
                 body.set,
@@ -520,7 +520,7 @@ pub async fn edit_received_exif(
                 state.cache.as_ref(),
                 &state.config,
                 &state.federation,
-                &state.pipeline_waker,
+                &state.routines.pipeline,
                 user_id,
                 &auth.claims.sub,
                 picture_id,

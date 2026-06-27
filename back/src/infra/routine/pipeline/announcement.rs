@@ -328,7 +328,7 @@ async fn deliver_announce(
             &items,
         )
         .await?;
-        run.waker.wake(incoming.recipient_id);
+        run.waker.trigger(incoming.recipient_id);
         Ok(())
     } else {
         run.federation
@@ -366,7 +366,7 @@ async fn deliver_unannounce(
         .await?
         .ok_or(AppError::NotFound)?;
         unregister_announced_pictures(run.db, &incoming, picture_ids).await?;
-        run.waker.wake(incoming.recipient_id);
+        run.waker.trigger(incoming.recipient_id);
         Ok(())
     } else {
         run.federation

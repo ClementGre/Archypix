@@ -3,7 +3,8 @@ mod common;
 use archypix_back::clients::federation::models::AnnouncedPicture;
 use archypix_back::domain::share::ShareStatus;
 use archypix_back::infra::config::Config;
-use archypix_back::infra::pipeline;
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::services::shares;
 use sqlx::PgPool;
@@ -55,7 +56,7 @@ async fn alice_shares_with_bob(
 ) -> archypix_back::domain::share::OutgoingShare {
     let config = config();
     let (fed, cache) = common::make_federation(&config);
-    let notify = archypix_back::infra::pipeline::PipelineWaker::disconnected();
+    let notify = archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected();
 
     shares::create_outgoing_share(
         db,
@@ -110,7 +111,7 @@ async fn create_outgoing_share_propagates_name_and_message_same_backend(db: PgPo
     common::seed_user(&db, "bob", "pass").await;
     let config = config();
     let (fed, cache) = common::make_federation(&config);
-    let notify = pipeline::PipelineWaker::disconnected();
+    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let share = shares::create_outgoing_share(
         &db,
@@ -152,7 +153,7 @@ async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
     common::seed_user(&db, "bob", "pass").await;
     let config = config();
     let (fed, cache) = common::make_federation(&config);
-    let notify = pipeline::PipelineWaker::disconnected();
+    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
 
     let result = shares::create_outgoing_share(
         &db,
@@ -187,7 +188,7 @@ async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let config = config();
     let (fed, cache) = common::make_federation(&config);
-    let notify = pipeline::PipelineWaker::disconnected();
+    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
 
     // `localhost` is a forbidden federation target (SSRF guard, 07_security_audit.md §2.4).
     let result = shares::create_outgoing_share(
@@ -226,7 +227,7 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
     let mut config = config();
     config.max_pending_outgoing_shares = 1;
     let (fed, cache) = common::make_federation(&config);
-    let notify = pipeline::PipelineWaker::disconnected();
+    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
 
     // First pending share is accepted.
     shares::create_outgoing_share(
@@ -336,7 +337,7 @@ async fn accept_incoming_share_is_idempotent(db: PgPool) {
         cache.as_ref(),
         &fed,
         &config,
-        &archypix_back::infra::pipeline::PipelineWaker::disconnected(),
+        &archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected(),
         bob_id,
         "bob",
         incoming.id,
@@ -718,7 +719,7 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
 
     let config = config();
     let (fed, cache) = common::make_federation(&config);
-    let notify = archypix_back::infra::pipeline::PipelineWaker::disconnected();
+    let notify = archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected();
 
     // Share 2: "trip" → Bob (different tag — no unique-constraint conflict)
     let share2 = shares::create_outgoing_share(

@@ -111,6 +111,11 @@
   the manual twin). Schema already in 001 (via the trash migration). **Frontend:** copy/"rescue"
   action in the selection panel + lightbox, owner-deleting grace-banner rescue button, copy-of
   provenance line. See `doc/features/11_physical_copy_and_dedup.md`.
+- [x] **Unified routine framework** — one generic `Routine` runtime (`infra/routine.rs`) with
+  recurrent/startup/manual triggers and per-key debounce/coalesce/rerun, replacing the four
+  hand-rolled mechanisms (pipeline waker + per-user scheduler, recurring `Scheduler`, in-process
+  `TaskQueue`, exif-drain waker). Routines: pipeline, exif drain, job watchdog/cleanup, purge sweep,
+  tag rename, unannounce. See `doc/features/17_unified_routine_framework.md`.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions. Frontend viewing and editing versions.
