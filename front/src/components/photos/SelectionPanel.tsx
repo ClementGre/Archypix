@@ -2,22 +2,7 @@ import {useEffect, useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {
-    AlertTriangle,
-    ArchiveRestore,
-    Copy,
-    Download,
-    ImageIcon,
-    List,
-    Loader2,
-    PlayCircle,
-    Plus,
-    RotateCcw,
-    RotateCw,
-    Table2,
-    Trash2,
-    X
-} from 'lucide-react'
+import {AlertTriangle, ArchiveRestore, Copy, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
@@ -39,6 +24,7 @@ import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
 import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
+import {PlayBadge} from '@/components/photos/PlayBadge'
 import {MediaPlayer} from '@/components/photos/MediaPlayer'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
@@ -206,19 +192,19 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // Size the preview to its capped display height (the preview never exceeds PREVIEW_MAX_HEIGHT,
     // so the sidebar width doesn't matter); the lightbox always uses `large`.
     const previewVariant = variantForSize(PREVIEW_MAX_HEIGHT)
+    // Images and videos both have thumbnails (video's is a frame-grab); audio has none.
     const {data: preview} = useQuery({
         queryKey: ['pictures', 'url', id, previewVariant],
         queryFn: () => getPictureUrl(id, previewVariant),
-        enabled: !isMedia,
+        enabled: !isAudio,
         staleTime: 10 * 60 * 1000,
     })
 
-    // Video/audio play from the original file. Audio plays inline in the panel; video shows a
-    // first-frame poster that opens the (autoplaying) Lightbox on click.
+    // Audio plays inline in the panel from the original file; video opens the (autoplaying) Lightbox.
     const {data: mediaUrl} = useQuery({
         queryKey: ['pictures', 'url', id, 'original'],
         queryFn: () => getPictureUrl(id, 'original'),
-        enabled: isMedia,
+        enabled: isAudio,
         staleTime: 10 * 60 * 1000,
     })
 
@@ -362,19 +348,11 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     onClick={openLightbox}
                     title="Open full screen"
                 >
-                    {isVideo ? (
+                    {isVideo && preview?.url ? (
+                        // Frame-grab thumbnail poster + play badge; playback happens in the Lightbox.
                         <div className="relative flex items-center justify-center bg-black">
-                            {mediaUrl?.url ? (
-                                // First-frame poster (metadata only); playback happens in the Lightbox.
-                                <video src={mediaUrl.url} preload="metadata" muted playsInline className="max-h-52 w-full object-contain"/>
-                            ) : (
-                                <div className="flex h-40 items-center justify-center text-muted-foreground">
-                                    <FileTypeIcon mime={picture.mime_type} filename={picture.filename} className="h-12 w-12 opacity-70"/>
-                                </div>
-                            )}
-                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                <PlayCircle className="h-12 w-12 text-white/90 drop-shadow-lg"/>
-                            </div>
+                            <img src={preview.url} alt={picture.filename ?? ''} className="max-h-52 w-full object-contain"/>
+                            <PlayBadge hover/>
                         </div>
                     ) : preview?.url ? (
                         <OrientedContainImage

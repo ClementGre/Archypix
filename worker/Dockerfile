@@ -39,6 +39,7 @@ RUN apt-get update && \
     apt-get install -y \
     "$MAGICKWAND_PKG" \
     libgexiv2-2 \
+    ffmpeg \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -61,6 +62,7 @@ RUN apt-get update && apt-get install -y \
     libclang-dev \
     libmagickwand-dev \
     libgexiv2-dev \
+    ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 ENV MAGICKCORE_QUANTUM_DEPTH=16 \

@@ -132,3 +132,10 @@
   **Tier 2 (todo):** a `transcode` worker job (ffmpeg) producing a web-friendly MP4 derivative +
   poster-frame thumbnail for non-decodable uploads (`.mov`/HEVC, `.avi`, `.mkv`). **Tier 3 (later):**
   HLS adaptive streaming (Vidstack already supports it). See `doc/05_FRONTEND_ARCHITECTURE.md §9`.
+- [x] **Video metadata & thumbnails** — `gen_thumbnail` extracts video container metadata via ffprobe
+  (capture date, GPS ISO 6709, make/model, duration/codecs/frame-rate into the `exif_data` JSONB) and
+  grabs a frame via ffmpeg to feed the existing small/medium/large WebP pipeline. New
+  `imaging/video.rs` + `MIME_TYPES_VIDEO`; ffmpeg added to the worker image/flake. Video EXIF edits
+  are DB-only (`unsupported` sync — no container write-back). **Frontend:** play badge on the grid
+  thumbnail (`PhotoCard`), thumbnail poster in the details panel, and a read-only media-info block
+  (duration/codecs/fps) replacing the photographic-only EXIF rows in the editor.

@@ -138,6 +138,7 @@ pub struct PictureListParams {
 pub struct PictureListItem {
     pub id: Uuid,
     pub filename: Option<String>,
+    pub mime_type: Option<String>,
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
@@ -1280,6 +1281,7 @@ pub async fn list_with_filter(
         .map(|pic| PictureListItem {
             id: pic.id,
             filename: pic.filename,
+            mime_type: pic.mime_type,
             width: pic.width,
             height: pic.height,
             captured_at: pic.captured_at,

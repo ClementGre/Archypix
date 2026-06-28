@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useState} from 'react'
+import {useCallback, useEffect, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {useSearchParams} from 'react-router-dom'
 import {useQuery} from '@tanstack/react-query'
@@ -8,7 +8,7 @@ import type {PictureDetail, PictureListItem} from '@/lib/types'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
-import {isPlayableMedia} from '@/lib/utils'
+import {isAudioMime, isPlayableMedia} from '@/lib/utils'
 import {MediaPlayer} from './MediaPlayer'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useExifDraft} from '@/hooks/useExifDraft'
@@ -19,6 +19,23 @@ import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {Button} from '@/components/ui/button'
 import {FileTypeIcon} from './FileTypeIcon'
 import {OrientedContainImage} from './OrientedImage'
+
+// Keyboard shortcuts for the full-screen player (Vidstack `keyTarget="document"`, so they work
+// without focusing the player). ArrowLeft/Right are deliberately left unbound — the Lightbox uses
+// them to move between pictures; j/l seek instead.
+const MEDIA_KEY_SHORTCUTS = {
+    togglePaused: 'k Space',
+    toggleMuted: 'm',
+    toggleFullscreen: 'f',
+    togglePictureInPicture: 'i',
+    toggleCaptions: 'c',
+    seekBackward: 'j J',
+    seekForward: 'l L',
+    volumeUp: 'ArrowUp',
+    volumeDown: 'ArrowDown',
+    speedUp: '. >',
+    slowDown: ', <',
+} as const
 
 /** Image + rotate controls for the current picture. Rotation auto-commits (see `useExifDraft`). */
 function LightboxImageWithDraft({picture, url, blurhash}: { picture: PictureDetail; url: string; blurhash?: string | null }) {
@@ -61,6 +78,76 @@ function LightboxImageWithDraft({picture, url, blurhash}: { picture: PictureDeta
     )
 }
 
+/**
+ * Video player fitted into the viewer exactly like an image: the box matches the video's aspect
+ * ratio (when its dimensions are known) and grows to the largest size that fits the available area
+ * (contain). Falls back to a plain full-width player when dimensions are unknown.
+ */
+function LightboxVideo({src, mime, title, width, height}: {
+    src: string
+    mime: string | null
+    title?: string | null
+    width: number | null
+    height: number | null
+}) {
+    const ar = width && height ? width / height : null
+    const ref = useRef<HTMLDivElement>(null)
+    const [avail, setAvail] = useState({w: 0, h: 0})
+    useEffect(() => {
+        const el = ref.current
+        if (!el) return
+        setAvail({w: el.clientWidth, h: el.clientHeight})
+        const ro = new ResizeObserver((entries) => {
+            const r = entries[0].contentRect
+            setAvail({w: r.width, h: r.height})
+        })
+        ro.observe(el)
+        return () => ro.disconnect()
+    }, [])
+
+    // Largest box of the video's aspect ratio that fits the available area (contain).
+    let box: { width: number; height: number } | null = null
+    if (ar && avail.w > 0 && avail.h > 0) {
+        let w = avail.w
+        let h = w / ar
+        if (h > avail.h) {
+            h = avail.h
+            w = h * ar
+        }
+        box = {width: w, height: h}
+    }
+
+    return (
+        <div ref={ref} className="absolute inset-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            {box ? (
+                <div style={{width: box.width, height: box.height}}>
+                    <MediaPlayer
+                        src={src}
+                        mime={mime}
+                        title={title}
+                        autoPlay
+                        aspectRatio={`${width}/${height}`}
+                        keyTarget="document"
+                        keyShortcuts={MEDIA_KEY_SHORTCUTS}
+                        className="h-full w-full"
+                    />
+                </div>
+            ) : (
+                // Dimensions unknown — let Vidstack size to the media once loaded.
+                <MediaPlayer
+                    src={src}
+                    mime={mime}
+                    title={title}
+                    autoPlay
+                    keyTarget="document"
+                    keyShortcuts={MEDIA_KEY_SHORTCUTS}
+                    className="max-h-full w-full max-w-5xl"
+                />
+            )}
+        </div>
+    )
+}
+
 /** Resolves the picture detail (for rotate) and renders the fitted image. */
 function LightboxImage({item, url, loading}: { item: PictureListItem; url: string | null; loading: boolean }) {
     const {data: detail} = useQuery({
@@ -83,13 +170,27 @@ function LightboxImage({item, url, loading}: { item: PictureListItem; url: strin
         if (!mediaUrl?.url) {
             return <Loader2 className="h-8 w-8 animate-spin text-white/70" onClick={(e) => e.stopPropagation()}/>
         }
+        // Audio: a centred player bar. Video: fills the viewer like an image, keeping its aspect ratio.
+        if (isAudioMime(mime)) {
+            return (
+                <MediaPlayer
+                    src={mediaUrl.url}
+                    mime={mime ?? null}
+                    title={item.filename}
+                    autoPlay
+                    keyTarget="document"
+                    keyShortcuts={MEDIA_KEY_SHORTCUTS}
+                    className="w-full max-w-2xl"
+                />
+            )
+        }
         return (
-            <MediaPlayer
+            <LightboxVideo
                 src={mediaUrl.url}
                 mime={mime ?? null}
                 title={item.filename}
-                autoPlay
-                className="max-h-full w-full max-w-5xl"
+                width={item.width}
+                height={item.height}
             />
         )
     }

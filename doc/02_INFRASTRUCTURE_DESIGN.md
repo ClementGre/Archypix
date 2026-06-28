@@ -35,9 +35,11 @@
   - Auth: short-lived JWT (`WORKER_JWT_SECRET`), cached in-process.
     - Implemented job types:
         - `gen_thumbnail` — download original, compute `file_size` + SHA-256 `file_hash` + metadata-stripped `content_hash` (feature 11), extract
-          EXIF, generate small/medium/large WebP thumbnails (skipped, not failed, for non-thumbnailable formats so size/hash are still reported),
-          upload, report `exif`/`blurhash`/`file_size`/`file_hash`/`content_hash`/`thumbnails_generated` to backend. `content_hash` is forwarded
-          downstream in share announcements (`AnnouncedPicture`) so recipients can group byte-identical copies across owners.
+          metadata, generate small/medium/large WebP thumbnails (skipped, not failed, for non-thumbnailable formats so size/hash are still reported),
+          upload, report `exif`/`blurhash`/`file_size`/`file_hash`/`content_hash`/`thumbnails_generated` to backend. Images use GExiv2 EXIF +
+          ImageMagick; **videos** use ffprobe metadata (capture date, GPS, codecs, duration) + an ffmpeg frame-grab feeding the same WebP pipeline.
+          `content_hash` is forwarded downstream in share announcements (`AnnouncedPicture`) so recipients can group byte-identical copies across
+          owners.
         - `edit_picture` — download original, apply EXIF overrides, compute `file_size`/`file_hash`, upload, optionally regenerate thumbnails.
   - Stub job types (infrastructure ready, not yet implemented): `ml_style`, `ml_people`, `ml_group_location`.
   - Completion: backend applies picture updates + marks job done in one transaction. Auto-retries up to `max_retries` (default 3) on failure.

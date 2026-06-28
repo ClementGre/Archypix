@@ -8,9 +8,21 @@ import {FieldLabel} from './FieldLabel'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
 import {GpsPickerPopover} from './GpsPickerPopover'
 import {OverwrittenBadge} from './OverwrittenBadge'
-import {cn} from '@/lib/utils'
+import {cn, formatDuration, isAudioMime, isVideoMime} from '@/lib/utils'
 import type {PictureDetail} from '@/lib/types'
 import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
+
+/** A read-only metadata row (label + value), matching the editable rows' layout. */
+function ReadOnlyRow({label, value}: { label: string; value: string }) {
+    return (
+        <div className="flex min-h-[1.4rem] items-center gap-1">
+            <div className="w-3 shrink-0"/>
+            <div className="w-24 shrink-0"><FieldLabel>{label}</FieldLabel></div>
+            <span className="flex-1 truncate text-right text-xs">{value}</span>
+            <div className="w-4 shrink-0"/>
+        </div>
+    )
+}
 
 const SYNC_BADGE: Record<string, string> = {
     synced: 'synced',
@@ -233,6 +245,17 @@ export function ExifInlineEditor({
     exif: ReturnType<typeof useExifDraft>
 }) {
     const {draft, initialDraft, isDirty, isSaving, owned, allowExifEdit, overriddenKeys, set, setGps, reset, resetGps, save, removeOverride} = exif
+    // Video/audio: ffprobe metadata, not photographic EXIF. Hide the camera-only rows (focal length,
+    // aperture, ISO, exposure) and surface a read-only media-info block instead. Edits are DB-only
+    // (the worker can't rewrite container metadata), reflected by the `unsupported` sync status.
+    const isMedia = isVideoMime(picture.mime_type) || isAudioMime(picture.mime_type)
+    const ex = (picture.exif_data ?? {}) as Record<string, unknown>
+    const num = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null)
+    const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
+    const mediaDuration = num(ex.duration_s)
+    const mediaFps = num(ex.frame_rate)
+    const mediaVideoCodec = str(ex.video_codec)
+    const mediaAudioCodec = str(ex.audio_codec)
     // A received picture whose incoming share authorises EXIF editing offers two save modes:
     // "Suggest to owner" (propose — propagates to everyone) vs "Just for me" (private local override).
     const canPropose = !owned && allowExifEdit
@@ -265,6 +288,11 @@ export function ExifInlineEditor({
         'exposure_time_num',
         'exposure_time_den',
         'orientation',
+        // Media tech fields rendered in their own block below.
+        'duration_s',
+        'frame_rate',
+        'video_codec',
+        'audio_codec',
     ]
     const extraRows: Array<[string, string]> = []
     for (const [k, v] of Object.entries(picture.exif_data ?? {})) {
@@ -423,59 +451,74 @@ export function ExifInlineEditor({
                     canEdit={canEdit}
                     badge={overrideBadge('camera_model')}
                 />
-                <EditableRow
-                    label="Focal length"
-                    value={draft.focal_length_mm}
-                    isDirty={dirty('focal_length_mm')}
-                    onReset={() => reset('focal_length_mm')}
-                    onChange={(v) => set('focal_length_mm', v)}
-                    type="number"
-                    step="any"
-                    placeholder="50"
-                    suffix="mm"
-                    canEdit={canEdit}
-                    badge={overrideBadge('focal_length_mm')}
-                />
-                <EditableRow
-                    label="Aperture"
-                    value={draft.f_number}
-                    isDirty={dirty('f_number')}
-                    onReset={() => reset('f_number')}
-                    onChange={(v) => set('f_number', v)}
-                    type="number"
-                    step="any"
-                    placeholder="1.8"
-                    prefix="f/"
-                    canEdit={canEdit}
-                    badge={overrideBadge('f_number')}
-                />
-                <EditableRow
-                    label="ISO"
-                    value={draft.iso_speed}
-                    isDirty={dirty('iso_speed')}
-                    onReset={() => reset('iso_speed')}
-                    onChange={(v) => set('iso_speed', v)}
-                    type="number"
-                    step={1}
-                    placeholder="400"
-                    prefix="ISO "
-                    canEdit={canEdit}
-                    badge={overrideBadge('iso_speed')}
-                />
+                {/* Photographic-only fields — hidden for video/audio (no lens/exposure metadata). */}
+                {!isMedia && (
+                    <>
+                        <EditableRow
+                            label="Focal length"
+                            value={draft.focal_length_mm}
+                            isDirty={dirty('focal_length_mm')}
+                            onReset={() => reset('focal_length_mm')}
+                            onChange={(v) => set('focal_length_mm', v)}
+                            type="number"
+                            step="any"
+                            placeholder="50"
+                            suffix="mm"
+                            canEdit={canEdit}
+                            badge={overrideBadge('focal_length_mm')}
+                        />
+                        <EditableRow
+                            label="Aperture"
+                            value={draft.f_number}
+                            isDirty={dirty('f_number')}
+                            onReset={() => reset('f_number')}
+                            onChange={(v) => set('f_number', v)}
+                            type="number"
+                            step="any"
+                            placeholder="1.8"
+                            prefix="f/"
+                            canEdit={canEdit}
+                            badge={overrideBadge('f_number')}
+                        />
+                        <EditableRow
+                            label="ISO"
+                            value={draft.iso_speed}
+                            isDirty={dirty('iso_speed')}
+                            onReset={() => reset('iso_speed')}
+                            onChange={(v) => set('iso_speed', v)}
+                            type="number"
+                            step={1}
+                            placeholder="400"
+                            prefix="ISO "
+                            canEdit={canEdit}
+                            badge={overrideBadge('iso_speed')}
+                        />
 
-                <ExposureRow
-                    num={draft.exposure_time_num}
-                    den={draft.exposure_time_den}
-                    isDirty={expIsDirty}
-                    onChangeNum={(v) => set('exposure_time_num', v)}
-                    onChangeDen={(v) => set('exposure_time_den', v)}
-                    onReset={() => {
-                        reset('exposure_time_num');
-                        reset('exposure_time_den')
-                    }}
-                    canEdit={canEdit}
-                    badge={overrideBadge('exposure_time_num', 'exposure_time_den')}
-                />
+                        <ExposureRow
+                            num={draft.exposure_time_num}
+                            den={draft.exposure_time_den}
+                            isDirty={expIsDirty}
+                            onChangeNum={(v) => set('exposure_time_num', v)}
+                            onChangeDen={(v) => set('exposure_time_den', v)}
+                            onReset={() => {
+                                reset('exposure_time_num');
+                                reset('exposure_time_den')
+                            }}
+                            canEdit={canEdit}
+                            badge={overrideBadge('exposure_time_num', 'exposure_time_den')}
+                        />
+                    </>
+                )}
+
+                {/* Media (video/audio) technical metadata — read-only (ffprobe). */}
+                {isMedia && (mediaDuration != null || mediaVideoCodec || mediaAudioCodec || mediaFps != null) && (
+                    <>
+                        {mediaDuration != null && <ReadOnlyRow label="Duration" value={formatDuration(mediaDuration)}/>}
+                        {mediaFps != null && <ReadOnlyRow label="Frame rate" value={`${mediaFps} fps`}/>}
+                        {mediaVideoCodec && <ReadOnlyRow label="Video codec" value={mediaVideoCodec}/>}
+                        {mediaAudioCodec && <ReadOnlyRow label="Audio codec" value={mediaAudioCodec}/>}
+                    </>
+                )}
 
                 {/* Extra raw exif_data fields (read-only) */}
                 {extraRows.map(([k, v]) => (

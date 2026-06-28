@@ -370,13 +370,19 @@ mobile) and shown only when its `ui` store toggle is on:
 ## 9. Key behaviours & gotchas
 
 - **No-thumbnail fallback:** the backend returns `thumbnail_url` / the `/url` `url` as **`null`** for a thumbnail variant when the picture has no
-  generated thumbnail (pending, or a non-thumbnailable format like a PDF/video) — never a fake/404 URL. The client renders a **`FileTypeIcon`**
+  generated thumbnail (pending, or a non-thumbnailable format like a PDF, or audio) — never a fake/404 URL. The client renders a **`FileTypeIcon`**
   (`components/photos/`, a lucide icon picked from MIME or filename extension) instead: in the grid (`PhotoCard`), the sidebar preview, and the
-  `Lightbox` ("No preview available — use Download"). `getPictureUrl` returns `url: string | null` accordingly (`original` is always a URL).
+  `Lightbox` ("No preview available — use Download"). `getPictureUrl` returns `url: string | null` accordingly (`original` is always a URL). **Videos
+  do have thumbnails** (a worker frame-grab), so they render a real thumbnail with a play badge, not the icon fallback.
 - **Video/audio playback (Tier 1):** `video/*` and `audio/*` pictures (detected via `isPlayableMedia(mime)`, `lib/utils.ts`) play the **`original`**
   file straight from S3 through the `MediaPlayer` (Vidstack) — progressive HTTP-Range playback, **no transcode/streaming infra**. The **Lightbox**
-  autoplays. The **details panel** plays audio inline; for video it shows a muted first-frame `<video preload="metadata">` poster with a play overlay
-  that opens the (autoplaying) Lightbox — the cramped panel isn't for watching. **Grid cards never mount a player** (poster/`FileTypeIcon` only). The
+  autoplays: video fills the viewer like an image (`LightboxVideo` measures the area and sizes the player to the largest box of the video's aspect
+  ratio that fits — contain); audio is a centred player bar. The **details panel** plays audio inline; for video it shows the frame-grab thumbnail as
+  a
+  poster that opens the (autoplaying) Lightbox — the cramped panel isn't for watching. **Grid cards never mount a player.** The play badge is the
+  shared
+  `PlayBadge` (same icon in the grid and the details poster) and is shown **only over a real frame thumbnail** — a video with no thumbnail (or audio)
+  falls back to a bare `FileTypeIcon` with no badge. The
   S3 object's `Content-Type` drives decoding, so only browser-playable codecs work (MP4/H.264, WebM, MP3/AAC/Ogg); `.mov`/HEVC, `.avi`, `.mkv` won't
   decode — Download-original is the fallback until a transcode worker (Tier 2) lands. Cross-instance media follows the same direct-presign path as
   images, so the owning backend's S3 CORS must allow `GET`/`Range`.

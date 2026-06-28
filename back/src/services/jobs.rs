@@ -63,9 +63,8 @@ pub async fn regenerate_thumbnails(
     reextract_exif: bool,
     limit: i64,
 ) -> Result<usize, AppError> {
-    let thumbnailable: Vec<String> = archypix_common::mime::MIME_TYPES_THUMBNAIL
-        .iter()
-        .map(|m| m.to_lowercase())
+    let thumbnailable: Vec<String> = archypix_common::mime::thumbnailable_mimes()
+        .map(str::to_lowercase)
         .collect();
     let targets =
         PictureRepository::find_for_thumbnail_regen(db, only_missing, &thumbnailable, limit)

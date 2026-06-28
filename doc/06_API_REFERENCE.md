@@ -448,6 +448,7 @@ Paginated picture list.
 interface PictureListItem {
     id: string;
     filename: string | null;
+  mime_type: string | null;      // lets the client flag playable media (video/audio) in the grid
     width: number | null;
     height: number | null;
     captured_at: string | null;
@@ -492,7 +493,9 @@ Full picture details including version history.
     gps_lng: number | null;
     gps_alt: number | null;        // metres (i32)
     orientation: number | null;    // EXIF orientation value (i16), 1–8
-    exif_data: object;             // arbitrary EXIF fields (camera make/model, focal length, etc.)
+  exif_data: object;             // arbitrary EXIF fields (camera make/model, focal length, etc.);
+                                 // for video, read-only tech metadata: duration_s, video_codec,
+                                 // audio_codec, frame_rate. Video EXIF edits are DB-only (unsupported sync)
     exif_sync_status: ExifSyncStatus;
     owner_username: string | null;
     owner_instance_domain: string | null;

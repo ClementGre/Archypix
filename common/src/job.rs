@@ -178,6 +178,9 @@ pub enum ExifField {
 /// Camera/lens EXIF — the non-promoted editable fields. This is exactly what the `exif_data` JSONB
 /// column stores (owned and received rows alike); the five promoted fields live in their own
 /// `pictures` columns and in [`FullExif`]. Serialized sparsely (only `Some` keys appear).
+///
+/// The trailing `video_*`/`audio_*`/`duration_s`/`frame_rate` fields are read-only technical
+/// metadata populated for video formats (ffprobe). They are not [`ExifField`]s — never edited, only displayed
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CameraExif {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -194,6 +197,18 @@ pub struct CameraExif {
     pub exposure_time_num: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub exposure_time_den: Option<i32>,
+    /// Media duration in seconds (video/audio).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub duration_s: Option<f64>,
+    /// Video codec short name (e.g. `h264`, `hevc`, `vp9`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub video_codec: Option<String>,
+    /// Audio codec short name (e.g. `aac`, `opus`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub audio_codec: Option<String>,
+    /// Average frame rate (fps) of the primary video stream.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub frame_rate: Option<f64>,
 }
 
 /// The full editable EXIF: the five promoted fields (their own `pictures` columns) plus the

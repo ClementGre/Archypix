@@ -17,10 +17,12 @@ backend.rs           — BackendClient (one per backend): two separate HTTP clie
                        download_presigned (streaming) / upload_presigned
 
 jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
-jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → content_hash → EXIF → thumbnails
-                       (only if the MIME is thumbnailable) → complete. A non-thumbnailable format is
-                       not an error: it still reports size/hash and completes with thumbnails skipped,
-                       so every ingested picture gets an ETag/size even without a thumbnail.
+jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → content_hash → metadata →
+                       thumbnails → complete. Branches on MIME: image (GExiv2 EXIF + ImageMagick
+                       thumbnail), video (ffprobe metadata + ffmpeg frame-grab thumbnail), or neither.
+                       A non-thumbnailable format is not an error: it still reports size/hash and
+                       completes with thumbnails skipped, so every ingested picture gets an ETag/size
+                       even without a thumbnail. A failed video frame-grab degrades the same way.
 jobs/edit_picture.rs — edit_picture: download → EXIF set/clear write → thumbnail regen (visual) →
                        hash → upload original (last fallible step) → complete. The DB is updated
                        synchronously at edit time (write-through); this job only reconciles the S3
@@ -31,6 +33,16 @@ jobs/ml.rs           — stub for ml_* jobs (log + complete with empty result)
 imaging/exif.rs      — extract_exif() / write_exif_overrides(set, clear) (rexiv2, blocking).
                        Full editable-field coverage on write (date, GPS, orientation, make, model,
                        focal length, f-number, ISO, exposure time) plus per-field clear (tag delete).
+imaging/video.rs     — extract_video_metadata() / extract_frame() (ffprobe/ffmpeg, blocking).
+                       Maps container tags onto the image ExtractedExif/FullExif shape: capture date,
+                       GPS (ISO 6709), make/model, and the read-only tech fields (duration,
+                       video/audio codec, frame rate) stashed in the exif_data JSONB. Capture date is
+                       stored as local wall clock (like image EXIF): Apple `creationdate` embeds the
+                       offset; a bare-UTC `creation_time` is shifted by a vendor `*.utc_offset` tag
+                       (e.g. Samsung's) when present. Make/model are often absent on Android — the
+                       brand then falls back to "Android <com.android.version> Device".
+                       Orientation is left None — the grabbed frame is auto-rotated upright. Video
+                       EXIF edits are DB-only (no container write-back).
 imaging/hash.rs      — hash_file(): SHA-256 hex digest in 64 KiB chunks (blocking)
 imaging/content_hash.rs — content_hash(): SHA-256 over the image's metadata-stripped bytes (feature
                        11 §4) — strips JPEG APPn/COM and PNG text/time chunks, hashes the framing +
@@ -101,5 +113,5 @@ Library crate shared between `back/` and `worker/` so wire shapes never drift:
 |------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`, all `FullExif`), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
 | `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`)                                            |
-| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_THUMBNAIL`, `supports_exif()`, `supports_thumbnail()`                                                                                                                                                             |
+| `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_IMAGE_THUMBNAIL`, `MIME_TYPES_VIDEO`, `supports_exif()`, `supports_image_thumbnail()` (image engine), `supports_video()`, `supports_thumbnail()` (image **or** video — "gets a thumbnail at all")                 |
 | `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                                                                     |

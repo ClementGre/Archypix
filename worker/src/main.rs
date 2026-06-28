@@ -10,7 +10,7 @@ use backend::BackendClient;
 use config::Config;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tracing::info;
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,6 +35,14 @@ async fn main() -> anyhow::Result<()> {
     info!("Poll interval:     {}ms", config.poll_interval_ms);
     info!("Max concurrent:    {}", config.max_concurrent_jobs);
     info!("Job types:         {:?}", config.job_types);
+    if imaging::video::tools_available() {
+        info!("ffmpeg/ffprobe:    available");
+    } else {
+        warn!(
+            "ffmpeg/ffprobe not found on PATH — video metadata extraction and thumbnails will be \
+             skipped (install ffmpeg or rebuild the worker image)"
+        );
+    }
 
     // One semaphore shared across all backend loops — total concurrency is bounded globally.
     let sem = Arc::new(Semaphore::new(config.max_concurrent_jobs));

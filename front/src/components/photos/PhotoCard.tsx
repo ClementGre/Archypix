@@ -2,10 +2,11 @@ import {memo, type MouseEvent, type PointerEvent, useRef, useState} from 'react'
 import {AlertTriangle, Check, Trash2} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {useIsMobile} from '@/hooks/useMediaQuery'
-import {cn} from '@/lib/utils'
+import {cn, isVideoMime} from '@/lib/utils'
 import {countdown} from '@/lib/trash'
 import {Blurhash} from './Blurhash'
 import {FileTypeIcon} from './FileTypeIcon'
+import {PlayBadge} from './PlayBadge'
 import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
 
 interface PhotoCardProps {
@@ -90,6 +91,8 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
 
     const trashed = !!item.deleted_at
     const ownerDeleted = !item.owned && !!item.owner_deleted_at
+    // Play badge only over a real video frame thumbnail — never over the fallback file-type icon.
+    const showPlayBadge = isVideoMime(item.mime_type) && !!item.thumbnail_url
 
     // Once the thumbnail loads, fade the blurhash out so transparent (PNG) areas reveal the
     // checkerboard backdrop rather than the blurry placeholder.
@@ -136,10 +139,12 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
             ) : (
                 // No thumbnail (pending, or a non-thumbnailable format like a PDF) — file-type icon.
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-2 text-center text-muted-foreground">
-                    <FileTypeIcon filename={item.filename} className="h-[38%] w-[38%] max-h-16 max-w-16 opacity-70"/>
+                    <FileTypeIcon mime={item.mime_type} filename={item.filename} className="h-[38%] w-[38%] max-h-16 max-w-16 opacity-70"/>
                     {item.filename && <span className="max-w-full truncate text-[10px] leading-tight">{item.filename}</span>}
                 </div>
             )}
+
+            {showPlayBadge && <PlayBadge/>}
 
             <div
                 className={cn(

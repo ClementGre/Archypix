@@ -40,6 +40,17 @@ export function isPlayableMedia(mime: string | null | undefined): boolean {
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 
+/** Human-readable media duration (e.g. `1:05`, `1:02:03`). */
+export function formatDuration(seconds: number | null | undefined): string {
+    if (seconds == null || !isFinite(seconds) || seconds < 0) return '—'
+    const total = Math.round(seconds)
+    const h = Math.floor(total / 3600)
+    const m = Math.floor((total % 3600) / 60)
+    const s = total % 60
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
+}
+
 /** Human-readable byte size (e.g. `4.2 GB`). */
 export function formatBytes(bytes: number | null | undefined): string {
     if (!bytes) return '—'

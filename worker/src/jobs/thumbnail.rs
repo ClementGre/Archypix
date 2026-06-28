@@ -1,7 +1,9 @@
 //! Handler for `gen_thumbnail` jobs.
 //!
-//! Sequence: download → file_size + file_hash → EXIF extraction (initial only)
-//! → thumbnail generation (only when the MIME supports it) → upload → complete.
+//! Sequence: download → file_size + file_hash → metadata extraction (initial only) → thumbnail
+//! generation (only when the MIME supports it) → upload → complete. Images use GExiv2 EXIF +
+//! ImageMagick thumbnails; videos use ffprobe metadata + an ffmpeg frame-grab fed to the same WebP
+//! thumbnail pipeline (`imaging::video`).
 //!
 //! `file_size`/`file_hash` are computed **before** the thumbnail-support decision so that a
 //! format we cannot thumbnail (e.g. a RAW/heic without a codec) still reports its size and hash
@@ -17,8 +19,11 @@
 
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
+use crate::imaging::{
+    content_hash as content_hash_mod, exif as exif_mod, thumbnailer, video as video_mod,
+};
 use archypix_common::job::{ExtractedExif, GenThumbnailConfig};
+use archypix_common::mime::{supports_exif, supports_image_thumbnail, supports_video};
 use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
@@ -41,29 +46,25 @@ pub async fn handle(
         key: "original".to_string(),
     })?;
 
-    // ── MIME pre-flight (decides what work to do, not whether to fail) ────────
-    // A non-thumbnailable format is no longer an error: we still download, size, and hash it,
-    // then complete with thumbnails skipped. Only generate thumbnails when the job asked for them
-    // *and* the codec supports it.
-    let do_thumbnails = presigned_writes.has_thumbnails()
-        && mime_type
-            .as_deref()
-            .map(archypix_common::mime::supports_thumbnail)
-            .unwrap_or(true);
-    if !do_thumbnails && presigned_writes.has_thumbnails() {
+    // ── MIME pre-flight (decides which path to take, not whether to fail) ─────
+    // Three disjoint cases: image (GExiv2 EXIF + ImageMagick thumbnail), video (ffprobe metadata +
+    // ffmpeg frame-grab thumbnail), or neither (still download/size/hash, skip thumbnails). An
+    // unknown MIME defaults to the image path. A format we cannot thumbnail is not an error.
+    let is_video = mime_type.as_deref().map(supports_video).unwrap_or(false);
+    let is_image_thumbnailable = mime_type
+        .as_deref()
+        .map(supports_image_thumbnail)
+        .unwrap_or(!is_video);
+    let want_thumbnails = presigned_writes.has_thumbnails();
+    if want_thumbnails && !is_video && !is_image_thumbnailable {
         warn!(mime_type = ?mime_type, "gen_thumbnail: MIME not thumbnailable; reporting size/hash only");
     }
-    if let Some(ref mime) = mime_type {
-        if config.is_initial && !archypix_common::mime::supports_exif(mime) {
-            warn!(mime_type = %mime, "MIME type not supported for EXIF extraction; skipping");
-        }
-    }
 
-    let should_extract_exif = config.is_initial
-        && mime_type
-            .as_deref()
-            .map(archypix_common::mime::supports_exif)
-            .unwrap_or(true);
+    let extract_image_exif =
+        config.is_initial && !is_video && mime_type.as_deref().map(supports_exif).unwrap_or(true);
+    if config.is_initial && !is_video && !extract_image_exif {
+        warn!(mime_type = ?mime_type, "MIME type not supported for EXIF extraction; skipping");
+    }
 
     // ── Download ──────────────────────────────────────────────────────────────
     let tmp = TempDir::new()?;
@@ -79,23 +80,29 @@ pub async fn handle(
         .ok();
     debug!(size_bytes = ?file_size, "Original downloaded");
 
-    // ── EXIF extraction (initial jobs only, blocking) ─────────────────────────
-    let exif: Option<ExtractedExif> = if should_extract_exif {
+    // ── Metadata extraction (initial jobs only, blocking) ─────────────────────
+    // Image EXIF via GExiv2, or video container metadata via ffprobe. Both map onto ExtractedExif.
+    let exif: Option<ExtractedExif> = if extract_image_exif || (config.is_initial && is_video) {
         let path = original_path.clone();
-        let span = tracing::info_span!("exif_extract", file = ?path.file_name());
-        match tokio::task::spawn_blocking(move || {
+        let span =
+            tracing::info_span!("metadata_extract", file = ?path.file_name(), video = is_video);
+        let result = tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
-            exif_mod::extract_exif(&path)
+            if is_video {
+                video_mod::extract_video_metadata(&path)
+            } else {
+                exif_mod::extract_exif(&path)
+            }
         })
         .await
-        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
-        {
+        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+        match result {
             Ok(e) => {
-                debug!("EXIF extracted");
+                debug!("metadata extracted");
                 Some(e)
             }
             Err(e) => {
-                warn!(error = ?e, "EXIF extraction failed; continuing without EXIF");
+                warn!(error = ?e, "metadata extraction failed; continuing without it");
                 None
             }
         }
@@ -128,8 +135,35 @@ pub async fn handle(
     .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
 
     // ── Thumbnails + BlurHash + upload (skipped for non-thumbnailable formats) ─
-    let (blurhash, thumbnails_generated, decoded_dims) = if do_thumbnails {
-        let thumb = thumbnailer::run(client, &original_path, &presigned_writes, tmp.path()).await?;
+    // Images thumbnail the original directly; videos thumbnail an extracted frame. A failed
+    // frame-grab is non-fatal — we complete with thumbnails skipped (like a non-thumbnailable
+    // format) so the picture still reports size/hash.
+    let thumb_source: Option<std::path::PathBuf> = if want_thumbnails && is_image_thumbnailable {
+        Some(original_path.clone())
+    } else if want_thumbnails && is_video {
+        let frame = tmp.path().join("frame.png");
+        let src = original_path.clone();
+        let dst = frame.clone();
+        let span = tracing::info_span!("video_frame", file = ?src.file_name());
+        let grab = tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
+            video_mod::extract_frame(&src, &dst)
+        })
+        .await
+        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
+        match grab {
+            Ok(()) => Some(frame),
+            Err(e) => {
+                warn!(error = ?e, "video frame extraction failed; skipping thumbnails");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let (blurhash, thumbnails_generated, decoded_dims) = if let Some(ref src) = thumb_source {
+        let thumb = thumbnailer::run(client, src, &presigned_writes, tmp.path()).await?;
         (thumb.blurhash, thumb.generated, (thumb.width, thumb.height))
     } else {
         (None, false, (None, None))

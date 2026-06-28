@@ -320,3 +320,8 @@ Validation: `collapsed[i] <@ tagRoot` still required; `exclude[i]` only needs to
   drop dirs (always-shown, empty).
 - **[99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)** and
   **[15_qol_improvements.md](15_qol_improvements.md):** tick these four bullets, pointing here.
+
+## 11. Other things to make sure
+
+- When a mirror has Keep xxx as a directory level disabled, the root level should still be editable (adding a directory should be possible), because
+  it maps to this mirror. If there is also another mirror or a query sibling, it should just take the first one when making a new directory.

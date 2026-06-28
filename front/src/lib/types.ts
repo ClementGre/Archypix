@@ -23,6 +23,8 @@ export type TagSource = 'manual' | 'rule' | 'segment' | 'share_mapping' | 'incom
 export interface PictureListItem {
     id: string
     filename: string | null
+    /** MIME type — distinguishes playable media (video/audio) from images in the grid. */
+    mime_type: string | null
     width: number | null
     height: number | null
     captured_at: string | null
