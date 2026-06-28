@@ -148,6 +148,17 @@ base rules above, the implementation maintains:
 - **A stable survivor.** The reconciler never reshuffles a correct single-live group — survivor
   selection only *collapses* a transient multi-live group or *promotes* when none is live. So whichever
   copy is live stays live, and a user can pick one without a "pinned" column.
+- **Manual tags follow the live survivor.** Hidden copies are excluded from every view, so their
+  manual tags would otherwise be lost. Whenever the live survivor *changes*, manual tags are carried
+  over (deepest-only, idempotent — reusing `batch_assign`, which also re-dirties the survivor):
+  - **Reconciler collapse/promote** *merges* (unions) the group's manual tags onto the chosen
+    survivor — so receiving a "better" duplicate (e.g. a copy you also uploaded) that becomes live
+    keeps the tags the previous live copy carried.
+  - **`copies/keep`** *replaces* the new survivor's manual set with the previously-live copy's exact
+    set, so a tag the user removed from the old live stays removed (the live copy is the curated
+    source of truth, not each copy's stale row). A keep on a rejected group with no prior live falls
+    back to the union; a re-keep of the already-sole-live copy leaves its set untouched.
+    Only `manual` tags move — recipient `/SharedToMe/…` (`incoming_share`) tags stay per-copy.
 
 > **Future — permanent delete.** When the permanent-delete feature lands, emptying a rejected group's
 > `manual` representative should **also permanently delete its `boomerang` siblings** (they are copies

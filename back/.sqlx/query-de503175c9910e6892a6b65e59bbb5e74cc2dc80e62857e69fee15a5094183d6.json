@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH del AS (\n                 DELETE FROM tags\n                 WHERE picture_id = ANY($1::uuid[])\n                   AND tag_path <@ ANY($2::ltree[])\n                   AND source = 'manual'::tag_source\n                   AND picture_id IN (\n                     SELECT id FROM pictures WHERE local_user_id = $3 AND deleted_at IS NULL\n                   )\n                 RETURNING picture_id\n               )\n               UPDATE pictures SET last_pipeline_run_at = NULL\n               WHERE id IN (SELECT picture_id FROM del)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        },
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de503175c9910e6892a6b65e59bbb5e74cc2dc80e62857e69fee15a5094183d6"
+}

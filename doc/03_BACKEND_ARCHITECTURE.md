@@ -124,6 +124,15 @@ tagging services against dirty pictures and reconciles tag assignments; `sweep` 
 **Dirty picture detection** — `pictures.last_pipeline_run_at IS NULL` on new/invalidated pictures; `tagging_services.last_invalidated_at` bumps on
 config changes. Dirty = `last_pipeline_run_at IS NULL OR last_pipeline_run_at < last_invalidated_at` for any enabled service.
 
+**Invalidation is intrinsic to the write, not the caller.** Every repository write that changes a
+tagging-relevant input re-NULLs `last_pipeline_run_at` in the same statement: manual-tag mutations
+(`TagRepository::batch_assign`/`batch_remove`/`promote_service_tags_to_manual`) and the EXIF/metadata
+writes (`update_from_worker` extraction, `write_exif_snapshot` / batch EXIF write-through,
+`set_filename`). Service callers only need to *trigger* the wake (the sweep is the backstop if a
+trigger is dropped). This closes the gaps where a path mutated tags/EXIF but forgot to invalidate —
+notably WebDAV write-back (`vfs` add/remove ops route through `batch_assign`/`batch_remove`) and worker
+EXIF extraction landing after the first pipeline pass.
+
 **Wake model** — `Input = Key = Uuid` (the user). Triggered via `routines.pipeline` (a `RoutineHandle<Uuid>`) with bounded concurrency
 (`PIPELINE_CONCURRENCY`, default 4), serial per user, plus the `sweep` poll fallback (`PIPELINE_POLL_INTERVAL_SECS`, default 1 hour, + startup).
 Triggered after: ingest, manual tag edit, service config change, inbound share announcement, `cleanup_incoming_share`. Interactive triggers (

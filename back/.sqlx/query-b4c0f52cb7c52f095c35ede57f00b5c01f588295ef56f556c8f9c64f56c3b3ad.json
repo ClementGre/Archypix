@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE pictures SET filename = $3 WHERE id = $1 AND local_user_id = $2",
+  "query": "UPDATE pictures SET filename = $3, last_pipeline_run_at = NULL WHERE id = $1 AND local_user_id = $2",
   "describe": {
     "columns": [],
     "parameters": {
@@ -12,5 +12,5 @@
     },
     "nullable": []
   },
-  "hash": "ea881865776bc1abf5c936f67007167607499954354592c6a5a16d9d5c9c5f69"
+  "hash": "b4c0f52cb7c52f095c35ede57f00b5c01f588295ef56f556c8f9c64f56c3b3ad"
 }

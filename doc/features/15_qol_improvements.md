@@ -50,6 +50,10 @@
 - When scrolling for a long time, some already-seen photos reappears. If they were selected on top, their duplicate is selected too.
 - The sidebar image preview is broken on 16:9 images : they take full height and their right part overflows left (not visible).
 - Existing picture added in directory behaves strangely (foldersync error) while new uploads are ok. This might be due to the fact of returning StatusCode::NO_CONTENT. When the picture already existed but had not the tag yet (was not in this dir), we should maybe tell the client that is was a normal upload.
+- Don't refuse the deletion of a directory if this directory is empty or if it is a drop directory node: some webdav clients delete empty dirs and it
+  should not fail. **(Done 2026-06-25:** `Vfs::delete` accepts an empty directory as a no-op success — a hierarchy dir is virtual, so there's nothing
+  to remove — and refuses a non-empty one with `409 Conflict`. A drop-directory node lists empty by design, so the same check will cover it once that
+  node type lands.**)**
 
 ## New complex features
 
@@ -57,8 +61,3 @@
   example automatically defining the segments (e.g. one per year in a given range): it should allow to segment all pictures in tags (pictures are in a
   single subtag), with manual segments, but also automatic rules. The real value it can give and what are these "extensive options" is still to be
   determined.
-- Hierarchies :
-  - When the write back master switch is off, all queries should have writeback blocked at off. Writeback option should be available in the advanced features for each node. For queries, it should have all the currently configurable options. For static, it should be disabled with a hover message explaining that static can’t be written into (if subnodes inherit their writeback from the static and not from the root, it could remain configurable), and mirror should have it too, and drop directories should have it on, non-desactivable.   
-  - Write back on Untagged pictures query: untagged pictures queries should be able to have writeback enabled
-  - Drop directory as a specific node: a dir that accepts any upload but that returns no content in its propfind.
-  - Don't refuse the deletion of a directory if this directory is empty or if it is a drop directory node: some webdav clients delete empty dirs and it should not fail. **(Done 2026-06-25:** `Vfs::delete` accepts an empty directory as a no-op success — a hierarchy dir is virtual, so there's nothing to remove — and refuses a non-empty one with `409 Conflict`. A drop-directory node lists empty by design, so the same check will cover it once that node type lands.**)**

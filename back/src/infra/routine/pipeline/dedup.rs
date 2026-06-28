@@ -8,7 +8,8 @@ use super::PipelineRun;
 use crate::domain::picture::DeletedReason;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::repository::dedup::{DedupRepository, DedupRow};
-use sqlx::PgPool;
+use crate::repository::tag::TagRepository;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 /// Reconcile every content-dedup group of `user_id` that may need it. Idempotent and serial per user.
@@ -65,6 +66,10 @@ pub async fn reconcile_group(db: &PgPool, user_id: Uuid, key: &str) -> Result<()
                         DedupRepository::set_content_dedupe(&mut *tx, r.id).await?;
                     }
                 }
+                // Union the now-hidden copies' manual tags onto the survivor (§5.5).
+                if let Some(keep_id) = keep {
+                    merge_group_tags_to(&mut tx, user_id, keep_id).await?;
+                }
             }
             _ => {
                 // No live row → rescue-promote the best hidden copy.
@@ -74,6 +79,7 @@ pub async fn reconcile_group(db: &PgPool, user_id: Uuid, key: &str) -> Result<()
                     .collect();
                 if let Some(survivor) = best(&dedupe) {
                     DedupRepository::promote_to_live(&mut *tx, survivor.id).await?;
+                    merge_group_tags_to(&mut tx, user_id, survivor.id).await?;
                 }
             }
         }
@@ -105,6 +111,20 @@ pub async fn classify_arrival(
     });
     if deleted {
         DedupRepository::set_boomerang(db, picture_id).await?;
+    }
+    Ok(())
+}
+
+/// Union the manual tags of every other row in `target`'s content group onto `target` (§5.5).
+/// `batch_assign` keeps the result deepest-only and idempotent, and re-dirties `target`.
+async fn merge_group_tags_to(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    target: Uuid,
+) -> Result<(), AppError> {
+    let paths = DedupRepository::group_manual_tag_paths(&mut **tx, user_id, target).await?;
+    if !paths.is_empty() {
+        TagRepository::batch_assign(&mut **tx, user_id, &[target], &paths).await?;
     }
     Ok(())
 }

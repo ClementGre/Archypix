@@ -1,7 +1,6 @@
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::routine::RoutineHandle;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
-use crate::repository::pipeline::PipelineRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::aggregate::DryRun;
 use sqlx::PgPool;
@@ -65,10 +64,9 @@ pub async fn batch_edit_tags(
         tx.commit().await.map_err(map_sqlx_error)?;
         return Ok(TagBatchOutcome::Applied { affected: 0 });
     }
+    // batch_remove/batch_assign re-dirty the affected pictures intrinsically
     TagRepository::batch_remove(&mut *tx, user_id, &ids, remove_tags).await?;
     TagRepository::batch_assign(&mut *tx, user_id, &ids, add_tags).await?;
-    // Manual tag changes re-dirty the pictures so the pipeline re-evaluates requires/excludes gates.
-    PipelineRepository::invalidate(&mut *tx, &ids).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
     waker.trigger(user_id);
     Ok(TagBatchOutcome::Applied {

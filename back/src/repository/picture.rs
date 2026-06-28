@@ -745,8 +745,10 @@ impl PictureRepository {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        // Filename is a `metadata` event (filename rules) → re-dirty so the pipeline re-evaluates.
         let res = sqlx::query!(
-            "UPDATE pictures SET filename = $3 WHERE id = $1 AND local_user_id = $2",
+            "UPDATE pictures SET filename = $3, last_pipeline_run_at = NULL \
+             WHERE id = $1 AND local_user_id = $2",
             picture_id,
             user_id,
             filename,
@@ -1080,7 +1082,8 @@ impl PictureRepository {
                    file_size   = COALESCE($11, file_size),
                    file_hash   = COALESCE($12, file_hash),
                    content_hash = COALESCE($13, content_hash),
-                   thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')
+                   thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc'),
+                   last_pipeline_run_at = NULL
                WHERE id = $1
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
@@ -1144,7 +1147,8 @@ impl PictureRepository {
                    file_hash = COALESCE($5, file_hash),
                    content_hash = COALESCE($8, content_hash),
                    width     = COALESCE($6, width),
-                   height    = COALESCE($7, height)
+                   height    = COALESCE($7, height),
+                   last_pipeline_run_at = NULL
                WHERE id = $1"#,
             id,
             set_thumbnails,

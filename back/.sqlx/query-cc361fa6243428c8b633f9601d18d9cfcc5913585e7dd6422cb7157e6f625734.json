@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT t.tag_path::text as \"tag_path!\"\n               FROM pictures src\n               JOIN pictures sib ON sib.local_user_id = src.local_user_id\n                 AND sib.id <> src.id\n                 AND COALESCE(sib.content_hash, 'fh:' || sib.file_hash)\n                     = COALESCE(src.content_hash, 'fh:' || src.file_hash)\n               JOIN tags t ON t.picture_id = sib.id AND t.source = 'manual'::tag_source\n               WHERE src.id = $2 AND src.local_user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tag_path!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cc361fa6243428c8b633f9601d18d9cfcc5913585e7dd6422cb7157e6f625734"
+}

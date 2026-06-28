@@ -659,6 +659,57 @@ async fn move_across_dirs_refiles_tags(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn move_across_dirs_invalidates_pipeline(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(
+        &state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"bytes",
+        "Photos.Travel",
+    )
+    .await;
+    seed_full_picture(
+        &state,
+        user,
+        "b.jpg",
+        "image/jpeg",
+        b"other",
+        "Photos.Beach",
+    )
+    .await;
+    // Pretend the pipeline already ran on this picture.
+    sqlx::query!(
+        "UPDATE pictures SET last_pipeline_run_at = now() AT TIME ZONE 'utc' WHERE id = $1",
+        pic,
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    vfs.move_(
+        &seg(&["Photos", "Travel", "a.jpg"]),
+        &seg(&["Photos", "Beach", "a.jpg"]),
+    )
+    .await
+    .unwrap();
+
+    // The WebDAV re-file re-dirties the picture so the pipeline re-evaluates requires/excludes gates.
+    let dirty = sqlx::query_scalar!(
+        r#"SELECT (last_pipeline_run_at IS NULL) AS "dirty!" FROM pictures WHERE id = $1"#,
+        pic,
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(dirty, "a WebDAV move must invalidate the pipeline");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn copy_adds_destination_tag_keeping_source(db: PgPool) {
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;

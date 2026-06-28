@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id\n               FROM pictures p, pictures src\n               WHERE src.id = $2 AND src.local_user_id = $1\n                 AND p.local_user_id = $1\n                 AND p.id <> src.id\n                 AND p.deleted_at IS NULL\n                 AND COALESCE(p.content_hash, 'fh:' || p.file_hash)\n                     = COALESCE(src.content_hash, 'fh:' || src.file_hash)\n               ORDER BY p.id\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1c433d8ab123ea4e212da0d051718f3af0e62262c6001bedec42deb66d36afa1"
+}

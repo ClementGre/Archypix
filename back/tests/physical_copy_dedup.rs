@@ -274,6 +274,80 @@ async fn chosen_survivor_is_stable_across_reconciles(db: PgPool) {
     assert_eq!(reason(&db, first).await.as_deref(), Some("content_dedupe"));
 }
 
+/// Manual tag paths of a picture, sorted for stable assertions.
+async fn manual_tags(db: &PgPool, pic: Uuid) -> Vec<String> {
+    let mut v = archypix_back::repository::tag::TagRepository::list_manual_paths(db, pic)
+        .await
+        .unwrap();
+    v.sort();
+    v
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn dedup_collapse_merges_manual_tags_onto_survivor(db: PgPool) {
+    use archypix_back::repository::tag::TagRepository;
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let a = seed_owned(&db, user, "hashA", None).await; // lowest id wins → survivor
+    let b = seed_owned(&db, user, "hashA", None).await;
+    TagRepository::batch_assign(&db, user, &[a], &["Photos.A".to_string()])
+        .await
+        .unwrap();
+    TagRepository::batch_assign(&db, user, &[b], &["Photos.B".to_string()])
+        .await
+        .unwrap();
+
+    run_pipeline(&db, user).await;
+
+    let survivor = if is_live(&db, a).await { a } else { b };
+    assert_eq!(survivor, a.min(b));
+    assert_eq!(
+        manual_tags(&db, survivor).await,
+        vec!["Photos.A".to_string(), "Photos.B".to_string()],
+        "the survivor gains the hidden copy's manual tags (union)"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn keep_copy_replaces_manual_tags_from_old_live(db: PgPool) {
+    use archypix_back::infra::routine::RoutineHandle;
+    use archypix_back::repository::tag::TagRepository;
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let a = seed_owned(&db, user, "hashA", None).await;
+    let b = seed_owned(&db, user, "hashA", None).await;
+    // The eventually-hidden copy `b` carries a tag the user will *not* keep.
+    TagRepository::batch_assign(&db, user, &[a], &["Photos.X".to_string()])
+        .await
+        .unwrap();
+    TagRepository::batch_assign(&db, user, &[a], &["Photos.Y".to_string()])
+        .await
+        .unwrap();
+    TagRepository::batch_assign(&db, user, &[b], &["Photos.Z".to_string()])
+        .await
+        .unwrap();
+
+    // Collapse: `a` (lowest id) is the live survivor and gains the union {X, Y, Z}.
+    run_pipeline(&db, user).await;
+    let live = if is_live(&db, a).await { a } else { b };
+    let hidden = if live == a { b } else { a };
+    // The user curates the live copy: remove Y.
+    TagRepository::batch_remove(&db, user, &[live], &["Photos.Y".to_string()])
+        .await
+        .unwrap();
+
+    // Switch the live copy to the previously-hidden one.
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    pictures::set_picture_survivor(&db, &waker, user, hidden)
+        .await
+        .unwrap();
+
+    assert!(is_live(&db, hidden).await);
+    assert_eq!(
+        manual_tags(&db, hidden).await,
+        vec!["Photos.X".to_string(), "Photos.Z".to_string()],
+        "the new live mirrors the old live's curated set (Y stays removed), not its own stale tags"
+    );
+}
+
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn trash_view_hides_dedupe_and_boomerang(db: PgPool) {
     use archypix_back::repository::picture::{

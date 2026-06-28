@@ -200,6 +200,67 @@ impl DedupRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// The live sibling (`deleted_at IS NULL`, `id <> picture_id`) of `picture_id`'s content group,
+    /// if any. A stable group has at most one; the lowest id is chosen for determinism. Used by the
+    /// "keep this copy" flow to find the previously-live picture whose curated manual tag set the new
+    /// survivor should mirror (feature 11 §5.5).
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
+    pub async fn live_id_in_group<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+    ) -> Result<Option<Uuid>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            r#"SELECT p.id
+               FROM pictures p, pictures src
+               WHERE src.id = $2 AND src.local_user_id = $1
+                 AND p.local_user_id = $1
+                 AND p.id <> src.id
+                 AND p.deleted_at IS NULL
+                 AND COALESCE(p.content_hash, 'fh:' || p.file_hash)
+                     = COALESCE(src.content_hash, 'fh:' || src.file_hash)
+               ORDER BY p.id
+               LIMIT 1"#,
+            user_id,
+            picture_id,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Distinct `manual` tag paths held by the **other** rows in `picture_id`'s content group. The
+    /// dedup reconciler unions these onto the live survivor so a hidden copy's curation is not lost
+    /// (feature 11 §5.5).
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
+    pub async fn group_manual_tag_paths<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+    ) -> Result<Vec<String>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            r#"SELECT DISTINCT t.tag_path::text as "tag_path!"
+               FROM pictures src
+               JOIN pictures sib ON sib.local_user_id = src.local_user_id
+                 AND sib.id <> src.id
+                 AND COALESCE(sib.content_hash, 'fh:' || sib.file_hash)
+                     = COALESCE(src.content_hash, 'fh:' || src.file_hash)
+               JOIN tags t ON t.picture_id = sib.id AND t.source = 'manual'::tag_source
+               WHERE src.id = $2 AND src.local_user_id = $1"#,
+            user_id,
+            picture_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
     /// Hide a row as `content_dedupe` (set `deleted_at` if it was live; reason → `content_dedupe`).
     #[tracing::instrument(skip(ex), fields(picture_id = %id))]
     pub async fn set_content_dedupe<'e, E>(ex: E, id: Uuid) -> Result<(), AppError>

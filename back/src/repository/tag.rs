@@ -143,7 +143,8 @@ impl TagRepository {
         if tags.is_empty() || picture_ids.is_empty() {
             return Ok(0);
         }
-        // Data-modifying CTE: cleanup (remove proper ancestors) + insert (only deepest).
+        // Data-modifying CTE: cleanup (remove proper ancestors) + invalidate (re-dirty the
+        // targeted pictures so the pipeline re-gates) + insert (only deepest).
         // `tag_path @> t AND tag_path <> t` = strict ancestor of t → remove it (redundant).
         // NOT EXISTS (deeper descendant) = this tag is the deepest in the input list.
         // `$4` lets the upload flow also tag soft-deleted pictures.
@@ -158,6 +159,10 @@ impl TagRepository {
                      SELECT id FROM pictures
                      WHERE local_user_id = $2 AND ($4 OR deleted_at IS NULL)
                    )
+               ),
+               invalidate AS (
+                 UPDATE pictures SET last_pipeline_run_at = NULL
+                 WHERE id = ANY($1::uuid[]) AND local_user_id = $2 AND ($4 OR deleted_at IS NULL)
                )
                INSERT INTO tags (picture_id, tag_path, source)
                SELECT p.id, filtered.tag::ltree, 'manual'::tag_source
@@ -209,16 +214,66 @@ impl TagRepository {
         if tags.is_empty() || picture_ids.is_empty() {
             return Ok(());
         }
+        // Re-dirty only the pictures that actually lost a tag, so the pipeline re-gates.
         sqlx::query!(
-            r#"DELETE FROM tags
-               WHERE picture_id = ANY($1::uuid[])
-                 AND tag_path <@ ANY($2::ltree[])
-                 AND source = 'manual'::tag_source
-                 AND picture_id IN (
-                   SELECT id FROM pictures WHERE local_user_id = $3 AND deleted_at IS NULL
-                 )"#,
+            r#"WITH del AS (
+                 DELETE FROM tags
+                 WHERE picture_id = ANY($1::uuid[])
+                   AND tag_path <@ ANY($2::ltree[])
+                   AND source = 'manual'::tag_source
+                   AND picture_id IN (
+                     SELECT id FROM pictures WHERE local_user_id = $3 AND deleted_at IS NULL
+                   )
+                 RETURNING picture_id
+               )
+               UPDATE pictures SET last_pipeline_run_at = NULL
+               WHERE id IN (SELECT picture_id FROM del)"#,
             picture_ids as &[Uuid],
             tags as &[String],
+            local_user_id,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Distinct `manual` tag paths of a single picture. Used by the dedup "keep this copy" flow to
+    /// mirror the previously-live picture's curated tag set onto the new survivor (feature 11 §5.5).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
+    pub async fn list_manual_paths<'e, E>(ex: E, picture_id: Uuid) -> Result<Vec<String>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            r#"SELECT tag_path::text as "tag_path!"
+               FROM tags
+               WHERE picture_id = $1 AND source = 'manual'::tag_source"#,
+            picture_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Delete every `manual` tag of a picture the user holds (dedup survivor swap, feature 11 §5.5).
+    /// Does not invalidate the pipeline itself — the caller (`set_survivor`) already re-dirties the
+    /// whole group.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id, picture_id = %picture_id))]
+    pub async fn clear_manual_tags<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        picture_id: Uuid,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"DELETE FROM tags
+               WHERE picture_id = $1
+                 AND source = 'manual'::tag_source
+                 AND picture_id IN (SELECT id FROM pictures WHERE local_user_id = $2)"#,
+            picture_id,
             local_user_id,
         )
         .execute(ex)
@@ -611,6 +666,10 @@ impl TagRepository {
                    AND m.tag_path <> tp.tag_path
                    AND tp.id NOT IN (SELECT id FROM drop_collide)
                  RETURNING m.id
+               ),
+               invalidate AS (
+                 UPDATE pictures SET last_pipeline_run_at = NULL
+                 WHERE id IN (SELECT DISTINCT picture_id FROM to_promote)
                )
                UPDATE tags t
                SET source = 'manual'::tag_source, source_id = NULL
@@ -697,6 +756,70 @@ mod tests {
         .execute(db)
         .await
         .unwrap();
+    }
+
+    /// Force `last_pipeline_run_at` to a non-NULL value so a test can assert it was re-NULLed.
+    async fn mark_pipeline_ran(db: &PgPool, pic: Uuid) {
+        sqlx::query!(
+            "UPDATE pictures SET last_pipeline_run_at = now() AT TIME ZONE 'utc' WHERE id = $1",
+            pic,
+        )
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    async fn is_dirty(db: &PgPool, pic: Uuid) -> bool {
+        sqlx::query_scalar!(
+            r#"SELECT (last_pipeline_run_at IS NULL) AS "dirty!" FROM pictures WHERE id = $1"#,
+            pic,
+        )
+        .fetch_one(db)
+        .await
+        .unwrap()
+    }
+
+    // ── intrinsic pipeline invalidation ────────────────────────────────────────
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn batch_assign_invalidates_pipeline(db: PgPool) {
+        let user = seed_user(&db).await;
+        let pic = seed_picture(&db, user).await;
+        mark_pipeline_ran(&db, pic).await;
+
+        TagRepository::batch_assign(&db, user, &[pic], &["Photos.Travel".to_string()])
+            .await
+            .unwrap();
+
+        assert!(
+            is_dirty(&db, pic).await,
+            "a manual tag add re-dirties the picture"
+        );
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn batch_remove_invalidates_only_changed(db: PgPool) {
+        let user = seed_user(&db).await;
+        let tagged = seed_picture(&db, user).await;
+        let untouched = seed_picture(&db, user).await;
+        TagRepository::batch_assign(&db, user, &[tagged], &["Photos.Travel".to_string()])
+            .await
+            .unwrap();
+        mark_pipeline_ran(&db, tagged).await;
+        mark_pipeline_ran(&db, untouched).await;
+
+        TagRepository::batch_remove(&db, user, &[tagged, untouched], &["Photos".to_string()])
+            .await
+            .unwrap();
+
+        assert!(
+            is_dirty(&db, tagged).await,
+            "the picture that lost a tag is re-dirtied"
+        );
+        assert!(
+            !is_dirty(&db, untouched).await,
+            "a picture with nothing removed is left untouched"
+        );
     }
 
     // ── batch_assign ──────────────────────────────────────────────────────────

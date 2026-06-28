@@ -5,14 +5,17 @@ use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
 use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
+use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
 use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
     PictureListFilter, PictureRepository, PictureSortField, SortOrder,
 };
 use crate::repository::picture_version::PictureVersionRepository;
+use crate::repository::pipeline::PipelineRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
+use archypix_common::job::{ExifField, FullExif};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -226,7 +229,7 @@ pub async fn begin_upload_batch(
     files: &[BatchUploadFile],
     initial_tags: &[String],
     upload_label: Option<&str>,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
 ) -> Result<Vec<BatchUploadOutcome>, AppError> {
     if files.is_empty() {
         return Err(AppError::BadRequest("No filenames provided".to_string()));
@@ -324,15 +327,13 @@ pub async fn begin_upload_batch(
     let tag_live = !existing_live.is_empty() && !live_tags.is_empty();
     let tag_deleted = !existing_deleted.is_empty() && !deleted_tags.is_empty();
     if tag_live || tag_deleted {
-        use crate::repository::pipeline::PipelineRepository;
         let mut tx = db
             .begin()
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         if tag_live {
+            // batch_assign re-dirties the (live) pictures the user already holds.
             TagRepository::batch_assign(&mut *tx, user_id, &existing_live, &live_tags).await?;
-            // Re-dirty so tagging re-evaluates the (live) pictures the user already holds.
-            PipelineRepository::invalidate(&mut *tx, &existing_live).await?;
         }
         if tag_deleted {
             TagRepository::batch_assign_including_deleted(
@@ -717,7 +718,7 @@ pub async fn snapshot_version_on_overwrite(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn trash_picture(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
@@ -729,7 +730,7 @@ pub async fn trash_picture(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn restore_picture(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
@@ -748,7 +749,7 @@ pub enum TrashBatchOutcome {
 #[tracing::instrument(skip(db, waker, sel), fields(user_id = %user_id, deleted, dry_run))]
 pub async fn batch_set_trashed_selection(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     sel: &crate::repository::picture::ResolvedSelection,
     deleted: bool,
@@ -786,7 +787,7 @@ pub async fn batch_set_trashed_selection(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
 async fn set_trashed(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
     deleted: bool,
@@ -826,14 +827,12 @@ async fn set_trashed(
 #[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn override_received_exif(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
-    set: crate::domain::job::FullExif,
-    clear: Vec<crate::domain::job::ExifField>,
+    set: FullExif,
+    clear: Vec<ExifField>,
 ) -> Result<Picture, AppError> {
-    use crate::repository::pipeline::PipelineRepository;
-
     let picture = PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -887,7 +886,7 @@ pub async fn override_received_exif(
 }
 
 /// The twelve editable EXIF fields, used to enumerate which fields a `set`/`clear` delta touches.
-const ALL_EXIF_FIELDS: [crate::domain::job::ExifField; 12] = {
+const ALL_EXIF_FIELDS: [ExifField; 12] = {
     use crate::domain::job::ExifField::*;
     [
         CapturedAt,
@@ -920,12 +919,12 @@ pub async fn propose_received_exif(
     cache: &dyn Cache,
     config: &Config,
     federation: &FederationClient,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     requester_username: &str,
     picture_id: Uuid,
-    set: crate::domain::job::FullExif,
-    clear: Vec<crate::domain::job::ExifField>,
+    set: FullExif,
+    clear: Vec<ExifField>,
 ) -> Result<Picture, AppError> {
     use crate::repository::pipeline::PipelineRepository;
     use crate::repository::share::IncomingShareRepository;
@@ -997,7 +996,7 @@ pub async fn propose_received_exif(
 
     // Escalate clears the per-field local override so the owner's applied value (arriving via the
     // re-announce) is authoritative (09 §6.2 / 10 §2). Drop every field the proposal touched.
-    let mut touched: Vec<crate::domain::job::ExifField> = clear.clone();
+    let mut touched: Vec<ExifField> = clear.clone();
     for f in ALL_EXIF_FIELDS {
         if set.has(f) && !touched.contains(&f) {
             touched.push(f);
@@ -1053,9 +1052,7 @@ pub async fn picture_copies(
     if picture.local_user_id != user_id {
         return Err(AppError::NotFound);
     }
-    let group =
-        crate::repository::dedup::DedupRepository::list_content_group(db, user_id, picture_id)
-            .await?;
+    let group = DedupRepository::list_content_group(db, user_id, picture_id).await?;
     if !group.is_empty() {
         return Ok(group);
     }
@@ -1084,7 +1081,7 @@ pub async fn picture_copies(
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn set_picture_survivor(
     db: &PgPool,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<(), AppError> {
@@ -1092,11 +1089,45 @@ pub async fn set_picture_survivor(
         .begin()
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-    let ok = crate::repository::dedup::DedupRepository::set_survivor(&mut *tx, user_id, picture_id)
-        .await?;
+
+    let target = PictureRepository::find_by_id(&mut *tx, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if target.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+    let was_live = target.deleted_at.is_none();
+    // The previously-live sibling is the curated source of truth (its manual tag set reflects the
+    // user's adds *and removes*) — capture it before the survivor flip.
+    let old_live = DedupRepository::live_id_in_group(&mut *tx, user_id, picture_id).await?;
+
+    let ok = DedupRepository::set_survivor(&mut *tx, user_id, picture_id).await?;
     if !ok {
         return Err(AppError::NotFound);
     }
+
+    // Tag handoff (§5.5). Switching the live copy *replaces* the new survivor's manual tags with the
+    // old live's exact set, so a tag the user removed from the old live stays removed. With no prior
+    // live (a rejected group promoted by the user) the group's manual tags are merged in instead; a
+    // re-keep of the already-sole-live copy leaves its curated set untouched.
+    match old_live {
+        Some(from) => {
+            let paths = TagRepository::list_manual_paths(&mut *tx, from).await?;
+            TagRepository::clear_manual_tags(&mut *tx, user_id, picture_id).await?;
+            if !paths.is_empty() {
+                TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], &paths).await?;
+            }
+        }
+        None if !was_live => {
+            let paths =
+                DedupRepository::group_manual_tag_paths(&mut *tx, user_id, picture_id).await?;
+            if !paths.is_empty() {
+                TagRepository::batch_assign(&mut *tx, user_id, &[picture_id], &paths).await?;
+            }
+        }
+        None => {}
+    }
+
     tx.commit().await.map_err(map_sqlx_error)?;
     // Re-announce / re-tag the now-live picture and let the reconciler confirm consistency.
     waker.trigger(user_id);
