@@ -291,14 +291,8 @@ export interface ServiceBase {
     updated_at: string
 }
 
-export interface SharedTagMappingRule {
-    id: string
-    incoming_share_id: string
-    assign_tag: string
-    is_broken: boolean
-}
-
 export interface RuleTaggingRule {
+    /** Server-assigned; absent on rules submitted to create/`PUT config`. */
     id: string
     /** Structured predicate tree (feature 13). See `lib/predicate.ts`. */
     predicate: RulePredicate
@@ -332,18 +326,81 @@ export type RulePredicate =
     | { gps_radius: GpsRadius }
     | FieldPredicate
 
-export interface SegmentationSegment {
-    id: string
-    name: string
-    date_start: string
-    date_end: string
-    assign_tag: string
-    parent_segment_id: string | null
+// ---------- Calendar segmentation config (feature 20 §3) ----------
+
+export type Hemisphere = 'north' | 'south'
+export type PartBound = 'start' | 'end' | 'range'
+export type PartCase = 'lower' | 'upper' | 'pascal'
+
+/** Segmentation placeholders (feature 20 §4.1). */
+export type SegmentationPlaceholder =
+    | 'year'
+    | 'iso_year'
+    | 'quarter'
+    | 'season'
+    | 'month'
+    | 'week'
+    | 'day'
+    | 'weekday'
+    | 'daypart'
+
+export interface PartFormat {
+    numeric?: boolean
+    pad?: number
+    abbrev?: boolean
+    case?: PartCase
+    bound?: PartBound
+    range_sep?: string
+    inclusive_end?: boolean
 }
+
+export interface PartConfig {
+    stride?: number
+    format?: PartFormat
+}
+
+export interface SegmentationOffset {
+    months?: number
+    days?: number
+    hours?: number
+    minutes?: number
+}
+
+export interface SegmentationBand {
+    /** 'YYYY-MM-DD' or null (−∞). Half-open `[from, to)`. */
+    from: string | null
+    /** 'YYYY-MM-DD' or null (+∞). */
+    to: string | null
+    enabled?: boolean
+    template: string
+    parts?: Record<string, PartConfig>
+    offset?: SegmentationOffset
+}
+
+export interface CatchAll {
+    /** Single ltree label ⇒ `root_tag.<name>`. */
+    name: string
+    include_undated: boolean
+}
+
+export interface SegmentationConfig {
+    version: 1
+    /** ltree wire-form root every band hangs under. */
+    root_tag: string
+    hemisphere?: Hemisphere
+    catch_all: CatchAll | null
+    /** Ordered; index 0 = highest precedence. */
+    bands: SegmentationBand[]
+}
+
+// ---------- Service detail responses (tagged union on service_type) ----------
 
 export interface SharedTagMappingServiceDetail extends ServiceBase {
     service_type: 'shared_tag_mapping'
-    mappings: SharedTagMappingRule[]
+    incoming_share_id: string
+    assign_tags: string[]
+    /** Derived server-side: the referenced incoming share is absent/inactive. */
+    is_broken: boolean
 }
 
 export interface RuleServiceDetail extends ServiceBase {
@@ -353,13 +410,18 @@ export interface RuleServiceDetail extends ServiceBase {
 
 export interface SegmentationServiceDetail extends ServiceBase {
     service_type: 'segmentation'
-    segments: SegmentationSegment[]
+    config: SegmentationConfig
 }
 
 export type ServiceDetailResponse =
     | SharedTagMappingServiceDetail
     | RuleServiceDetail
     | SegmentationServiceDetail
+
+/** Type-specific config accepted by create / `PUT …/config` (feature 20 §10.2). */
+export type RuleConfig = { rules: { id?: string; predicate: RulePredicate; assign_tag: string }[] }
+export type SharedTagMappingConfig = { incoming_share_id: string; assign_tags: string[] }
+export type ServiceConfig = RuleConfig | SegmentationConfig | SharedTagMappingConfig
 
 export interface ServiceResponse {
     id: string

@@ -30,9 +30,11 @@ After adding a migration:
 
 ## Rust guidelines
 
-Follow Rust best practices. Always favor refactoring over sticking to existing legacy functions.
-
-For modules with sub-files, use a `module_name.rs` file alongside the `module_name/` directory instead of placing a `mod.rs` inside the directory.
+- Follow Rust best practices. Always favor refactoring over sticking to existing legacy functions.
+- For modules with sub-files, use a `module_name.rs` file alongside the `module_name/` directory instead of placing a `mod.rs` inside the directory.
+- Keep repository separated from services: don’t create too specific repository functions, instead create general ones that can be reused. Don’t
+  reference services in a repository function: if a function is made for a specific task today, it may be used elsewhere tomorrow, so make them
+  factorized and general rather than specific to a given service.
 
 ## Tracing
 

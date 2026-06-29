@@ -1,16 +1,13 @@
 //! Per-user tag service evaluation + reconciliation, plus the announcement step.
 
-use crate::domain::pipeline::{self, PipelineInput};
+use crate::domain::pipeline::PipelineInput;
 use crate::domain::tag::{TagPath, TagSource};
-use crate::domain::tagging::ServiceType;
+use crate::domain::tagging::ServiceConfig;
 use crate::infra::error::AppError;
 use crate::infra::routine::pipeline::{PipelineRun, announcement, dedup};
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
-use crate::repository::tagging::{
-    RuleTaggingRuleRepository, SegmentationRuleRepository, SharedTagMappingRuleRepository,
-    TaggingServiceRepository,
-};
+use crate::repository::tagging::TaggingServiceRepository;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -39,28 +36,21 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
     // announcement diff for new/invalidated pictures, so we do not early-return here.
     let services = TaggingServiceRepository::list_enabled_by_owner(db, user_id).await?;
 
-    // ── Load all rule sub-items (3 parallel queries) ──────────────────────────
-    let mut mapping_ids: Vec<Uuid> = vec![];
-    let mut rule_ids: Vec<Uuid> = vec![];
-    let mut segment_ids: Vec<Uuid> = vec![];
+    // ── Parse each service's config once (§12.1) ──────────────────────────────
+    // A service whose stored config fails to parse is skipped (logged) — it never matched anyway.
+    let mut configs: HashMap<Uuid, ServiceConfig> = HashMap::new();
     for svc in &services {
-        match svc.service_type {
-            ServiceType::SharedTagMapping => mapping_ids.push(svc.id),
-            ServiceType::Rule => rule_ids.push(svc.id),
-            ServiceType::Segmentation => segment_ids.push(svc.id),
+        match ServiceConfig::parse(svc.service_type, &svc.config) {
+            Ok(cfg) => {
+                configs.insert(svc.id, cfg);
+            }
+            Err(e) => tracing::warn!(
+                service_id = %svc.id,
+                error = %e,
+                "pipeline: service config failed to parse — skipping service"
+            ),
         }
     }
-
-    let (all_mappings, all_rules, all_segments) = tokio::try_join!(
-        SharedTagMappingRuleRepository::list_for_services(db, &mapping_ids),
-        RuleTaggingRuleRepository::list_for_services(db, &rule_ids),
-        SegmentationRuleRepository::list_for_services(db, &segment_ids),
-    )?;
-
-    // Group by service_id for O(1) lookup during evaluation.
-    let mappings_by_svc: HashMap<Uuid, Vec<_>> = group_by_service(&all_mappings, |r| r.service_id);
-    let rules_by_svc: HashMap<Uuid, Vec<_>> = group_by_service(&all_rules, |r| r.service_id);
-    let segments_by_svc: HashMap<Uuid, Vec<_>> = group_by_service(&all_segments, |r| r.service_id);
 
     // ── Find dirty pictures ───────────────────────────────────────────────────
     let dirty = PipelineRepository::find_dirty_for_user(db, user_id).await?;
@@ -140,42 +130,17 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
                     width: picture.width,
                     height: picture.height,
                     is_owned: picture.is_owned,
-                    current_tags: gating_tags.clone(),
                 };
 
-                if !pipeline::should_run(service, &input) {
+                if !service.should_run(&gating_tags) {
                     continue;
                 }
 
-                let result = match service.service_type {
-                    ServiceType::SharedTagMapping => pipeline::evaluate_shared_tag_mapping(
-                        mappings_by_svc
-                            .get(&service.id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]),
-                        incoming_share_ids,
-                    ),
-                    ServiceType::Rule => pipeline::evaluate_rule(
-                        rules_by_svc
-                            .get(&service.id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]),
-                        &input,
-                    ),
-                    ServiceType::Segmentation => pipeline::evaluate_segmentation(
-                        segments_by_svc
-                            .get(&service.id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]),
-                        &input,
-                    ),
+                let Some(config) = configs.get(&service.id) else {
+                    continue; // config failed to parse (already logged)
                 };
-
-                let source_str = match service.service_type {
-                    ServiceType::SharedTagMapping => "share_mapping",
-                    ServiceType::Rule => "rule",
-                    ServiceType::Segmentation => "segment",
-                };
+                let result = config.evaluate(&input, incoming_share_ids);
+                let source = config.source().as_str();
 
                 // Keep only the deepest tags this service emits (its own minimal form); a
                 // shallower tag from a *different* source is kept independently by the reconcile.
@@ -185,7 +150,7 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
                     }
                     produced.push(PipelineTagAssignment {
                         tag_path: tag.as_ltree().to_string(),
-                        source: source_str.to_string(),
+                        source: source.to_string(),
                         source_id: service.id,
                     });
                 }
@@ -224,14 +189,4 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
 
     tracing::debug!(user_id = %user_id, "pipeline: sweep complete for user");
     Ok(())
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn group_by_service<T: Clone, F: Fn(&T) -> Uuid>(items: &[T], key: F) -> HashMap<Uuid, Vec<T>> {
-    let mut map: HashMap<Uuid, Vec<T>> = HashMap::new();
-    for item in items {
-        map.entry(key(item)).or_default().push(item.clone());
-    }
-    map
 }

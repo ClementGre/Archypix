@@ -25,25 +25,26 @@ function sharedToMeTag(share: IncomingShareResponse): string {
     )
 }
 
-/** A share carries a single local-tag mapping: show it inline, or offer to add one. */
+/** A share may map to several local tags: show each inline (removable), plus an add control. */
 function MappingControl({
                           shareId,
-                          mapping,
+                            mappings,
                           busy,
                           onAdd,
                           onRemove,
                         }: {
   shareId: string
-  mapping: ShareMapping | undefined
+    mappings: ShareMapping[]
   busy: boolean
   onAdd: (shareId: string, wire: string) => void
-  onRemove: (serviceId: string, ruleId: string) => void
+    onRemove: (shareId: string, wire: string) => void
 }) {
   return (
-      <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="shrink-0 text-[11px] text-muted-foreground">Tag</span>
-        {mapping ? (
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="shrink-0 text-[11px] text-muted-foreground">Tags</span>
+          {mappings.map((mapping) => (
             <Badge
+                key={mapping.assign_tag}
                 variant="secondary"
                 className={cn('gap-1 font-normal', mapping.is_broken && 'line-through opacity-60')}
             >
@@ -53,7 +54,7 @@ function MappingControl({
                   description="This local tag will be removed from the pictures received through this share."
                   confirmLabel="Remove"
                   destructive
-                  onConfirm={() => onRemove(mapping.serviceId, mapping.ruleId)}
+                  onConfirm={() => onRemove(shareId, mapping.assign_tag)}
                   trigger={
                       <button aria-label="Remove mapping" disabled={busy} className="ml-0.5 shrink-0">
                       <X className="h-3 w-3"/>
@@ -61,16 +62,16 @@ function MappingControl({
                   }
               />
             </Badge>
-        ) : (
-            <TagPicker
-                onSelect={(wire) => onAdd(shareId, wire)}
-                trigger={
-                    <Button variant="outline" size="sm" className="h-6 gap-1 px-1.5 text-[11px]">
-                        Map tag
-                    </Button>
-                }
-            />
-        )}
+          ))}
+          <TagPicker
+              onSelect={(wire) => onAdd(shareId, wire)}
+              excludePaths={mappings.map((m) => m.assign_tag)}
+              trigger={
+                  <Button variant="outline" size="sm" className="h-6 gap-1 px-1.5 text-[11px]">
+                      {mappings.length ? 'Add tag' : 'Map tag'}
+                  </Button>
+              }
+          />
       </div>
   )
 }
@@ -190,7 +191,7 @@ export function IncomingSharesList() {
     const {data: outgoing} = useOutgoingShares()
   const {accept, reject} = useShareMutations()
   const {update, params} = useGalleryParams()
-  const {forShare, addMapping, removeMapping, isBusy} = useShareMappings()
+    const {forShare, addMapping, removeTag, isBusy} = useShareMappings()
     const [sharebackTarget, setSharebackTarget] = useState<IncomingShareResponse | null>(null)
 
     // incoming.shareback_of references one of the user's own outgoing shares.
@@ -206,10 +207,12 @@ export function IncomingSharesList() {
     }
 
   const onAddMapping = (shareId: string, wire: string) => {
-    addMapping(shareId, wire).catch((e) => toast.error('Could not map tag', {description: apiErrorMessage(e)}))
+      let share = shares?.find((s) => s.id = shareId);
+      let name = share ? `${share.name} from @${share.sender_username}:${share.sender_instance}` : undefined;
+      addMapping(shareId, name, wire).catch((e) => toast.error('Could not map tag', {description: apiErrorMessage(e)}))
   }
-  const onRemoveMapping = (serviceId: string, ruleId: string) => {
-    removeMapping(serviceId, ruleId).catch((e) =>
+    const onRemoveMapping = (shareId: string, wire: string) => {
+        removeTag(shareId, wire).catch((e) =>
         toast.error('Could not remove mapping', {description: apiErrorMessage(e)}),
     )
   }
@@ -250,7 +253,7 @@ export function IncomingSharesList() {
             mapping={
                 <MappingControl
                     shareId={share.id}
-                    mapping={forShare(share.id)[0]}
+                    mappings={forShare(share.id)}
                     busy={isBusy}
                     onAdd={onAddMapping}
                     onRemove={onRemoveMapping}

@@ -963,26 +963,24 @@ interface ServiceBase {
     updated_at: string;
 }
 
+// One service per incoming share (feature 20 §10.1). `is_broken` is **derived** (not stored):
+// true when the referenced incoming share is absent or no longer active.
 interface SharedTagMappingServiceDetail extends ServiceBase {
     service_type: "shared_tag_mapping";
-    mappings: SharedTagMappingRule[];
+    incoming_share_id: string;
+    assign_tags: string[];   // ltree paths assigned to pictures from this share
+    is_broken: boolean;
 }
 
 interface RuleServiceDetail extends ServiceBase {
     service_type: "rule";
-    rules: RuleTaggingRule[];
+    rules: RuleTaggingRule[];  // array order = display order
 }
 
+// Calendar segmentation (feature 20): a captured_at → tag partition operator.
 interface SegmentationServiceDetail extends ServiceBase {
     service_type: "segmentation";
-    segments: SegmentationSegment[];
-}
-
-interface SharedTagMappingRule {
-    id: string;
-    incoming_share_id: string;
-    assign_tag: string;     // ltree path — tag assigned to pictures from this share
-    is_broken: boolean;     // true if the referenced IncomingShare was revoked
+    config: SegmentationConfig;   // see doc/features/20_calendar_segmentation.md §3
 }
 
 interface RuleTaggingRule {
@@ -990,15 +988,20 @@ interface RuleTaggingRule {
     predicate: RulePredicate;   // structured predicate tree (see below)
     assign_tag: string;
 }
+```
 
-interface SegmentationSegment {
-    id: string;
-    name: string;
-    date_start: string;  // ISO 8601 datetime
-    date_end: string;
-    assign_tag: string;
-    parent_segment_id: string | null;  // null = top-level segment
-}
+`SegmentationConfig` is the band-list config documented in
+`doc/features/20_calendar_segmentation.md §3` (an ordered, flat list of bands, each rendering a
+`captured_at`-derived tag under a single `root_tag`; first covering band wins).
+
+The **`ServiceConfig`** accepted by create / `PUT …/config` is the type-specific payload, validated
+against the service's `service_type`:
+
+```ts
+type ServiceConfig =
+    | { rules: { id?: string; predicate: RulePredicate; assign_tag: string }[] }  // rule (id server-assigned if omitted)
+    | SegmentationConfig                                                          // segmentation
+    | { incoming_share_id: string; assign_tags: string[] };                       // shared_tag_mapping
 ```
 
 **`RuleTaggingRule.predicate` — structured predicate tree (feature 13):**
@@ -1057,28 +1060,28 @@ Create a new tagging service.
 
 ```ts
 {
-    service_type: ServiceType;   // "shared_tag_mapping" | "rule" | "segmentation"
+    service_type: ServiceType;    // "rule" | "segmentation" | "shared_tag_mapping"
     name ? : string;              // optional user-facing label
     requires ? : string[];
     excludes ? : string[];
+    config ? : ServiceConfig;     // type-specific config (see below); defaults to the empty config
 }
 ```
 
-**Response `200`:**
+`config` is the same type-specific object the service detail returns and `PUT …/config` accepts,
+validated against `service_type`:
 
-```ts
-interface ServiceResponse {
-    id: string;
-  name: string;
-    service_type: ServiceType;
-    requires: string[];
-    excludes: string[];
-    enabled: boolean;
-    position: number;
-    created_at: string;
-    updated_at: string;
-}
-```
+- **rule** → `{ rules: RuleInput[] }` where `RuleInput = { id?: string; predicate; assign_tag }`
+  (omit `id` for new rules — the server assigns one). Defaults to `{ rules: [] }`.
+- **segmentation** → a full `SegmentationConfig`. Defaults to an empty config rooted at `Photos`
+  (replace it with `PUT …/config`).
+- **shared_tag_mapping** → `{ incoming_share_id, assign_tags }`. `incoming_share_id` must be one of
+  the caller's incoming shares (404 otherwise). No default — must be supplied.
+
+Predicates, assigned tags, and segmentation bands are all validated; a `400` names the offending
+node / band index.
+
+**Response `200`:** `ServiceDetailResponse` (the created service with its normalized config).
 
 New service starts enabled at `position = max(existing)+1`.
 
@@ -1103,18 +1106,41 @@ Update a service.
 }
 ```
 
-**Response `200`:** `ServiceResponse` (flat, without rules).
+**Response `200`:** `ServiceResponse` (flat, without config).
 
 **Side-effects:**
 
 - Setting `enabled = false` immediately removes all tags this service assigned.
 - Any change invalidates the service and wakes the pipeline for a full re-evaluation.
 
+> The type-specific config (rules / segmentation bands / mapping tags) is **not** edited here — use
+> `PUT /tagging-services/{id}/config` below.
+
+---
+
+#### `PUT /api/authenticated/tagging-services/{id}/config`
+
+Replace a service's whole type-specific config — the **single, uniform** config-editing path for all
+three service types. There are no per-rule / per-band / per-mapping sub-resources: the array (rules)
+or band order in the submitted config *is* the stored order, so reordering / adding / removing is
+just a `PUT` with the new array.
+
+**Path params:** `id: string`
+
+**Request:** `{ config: ServiceConfig }` — the full config for the service's stored type (same
+shapes as the create `config`, validated identically).
+
+**Response `200`:** `ServiceDetailResponse` (the service with its normalized config — rule `id`s
+filled in).
+
+**Errors:** `400` if the config is invalid (the message names the offending node / band index);
+`404` if the service is not found, or (for a mapping) the `incoming_share_id` is not the caller's.
+
 ---
 
 #### `DELETE /api/authenticated/tagging-services/{id}`
 
-Delete a tagging service (cascades to all its rules).
+Delete a tagging service.
 
 **Path params:** `id: string`
 
@@ -1151,156 +1177,6 @@ Set the execution order of Rule and Segmentation services. `SharedTagMapping` se
 ```ts
 {
     reordered: true
-}
-```
-
----
-
-#### `POST /api/authenticated/tagging-services/{id}/mappings`
-
-Add a mapping rule to a `shared_tag_mapping` service.
-
-**Path params:** `id: string`
-
-**Request:**
-
-```ts
-{
-    incoming_share_id: string;  // UUID of the IncomingShare to map
-    assign_tag: string;          // ltree path to assign (no protected prefixes)
-}
-```
-
-**Response `200`:** `SharedTagMappingRule`
-
-**Errors:** 400 if service is not `shared_tag_mapping` type; 404 if not found.
-
----
-
-#### `DELETE /api/authenticated/tagging-services/{id}/mappings/{rule_id}`
-
-Remove a mapping rule.
-
-**Path params:** `id: string`, `rule_id: string`
-
-**Response `200`:**
-
-```ts
-{
-    deleted: true
-}
-```
-
----
-
-#### `POST /api/authenticated/tagging-services/{id}/rules`
-
-Add a rule to a `rule` tagging service.
-
-**Path params:** `id: string`
-
-**Request:**
-
-```ts
-{
-    predicate: RulePredicate;  // structured predicate tree (validated server-side)
-    assign_tag: string;        // ltree path (no protected prefixes)
-}
-```
-
-`400` if the predicate is structurally invalid, applies a type-incompatible condition to a field,
-has an out-of-range bound, an uncompilable regex, or nests deeper than 10 levels — the error names
-the offending node.
-
-**Response `200`:** `RuleTaggingRule`
-
-**Errors:** 400 if service is not `rule` type, or predicate syntax is invalid; 404 if not found.
-
-New rules are appended (highest `position`).
-
----
-
-#### `PATCH /api/authenticated/tagging-services/{id}/rules/{rule_id}`
-
-Edit a rule's predicate and assigned tag.
-
-**Path params:** `id: string`, `rule_id: string`
-
-**Request:**
-
-```ts
-{
-    predicate: RulePredicate;  // structured predicate tree (validated server-side)
-    assign_tag: string;        // ltree path (no protected prefixes)
-}
-```
-
-**Response `200`:** `RuleTaggingRule`. **Errors:** `400` invalid predicate; `404` if not found.
-
----
-
-#### `POST /api/authenticated/tagging-services/{id}/rules/reorder`
-
-Set the display order of a rule service's rules (presentation only — rules are evaluated
-independently of order).
-
-**Request:** `{ ordered_ids: string[] }` — the complete list of the service's rule IDs in order.
-
-**Response `200`:** `{ reordered: true }`. **Errors:** `400` if an ID is not part of the service.
-
----
-
-#### `DELETE /api/authenticated/tagging-services/{id}/rules/{rule_id}`
-
-Remove a rule from a `rule` service.
-
-**Path params:** `id: string`, `rule_id: string`
-
-**Response `200`:**
-
-```ts
-{
-    deleted: true
-}
-```
-
----
-
-#### `POST /api/authenticated/tagging-services/{id}/segments`
-
-Add a date-range segment to a `segmentation` service.
-
-**Path params:** `id: string`
-
-**Request:**
-
-```ts
-{
-    name: string;
-    date_start: string;              // ISO 8601 datetime
-    date_end: string;                // must be after date_start
-    assign_tag: string;              // ltree path (no protected prefixes)
-    parent_segment_id ? : string;      // UUID of parent segment (for nesting)
-}
-```
-
-**Response `200`:** `SegmentationSegment`
-
-**Errors:** 400 if service is not `segmentation` type, or `date_end <= date_start`; 404 if not found.
-
----
-
-#### `DELETE /api/authenticated/tagging-services/{id}/segments/{segment_id}`
-
-Remove a segment (cascades to all child segments).
-
-**Path params:** `id: string`, `segment_id: string`
-
-**Response `200`:**
-
-```ts
-{
-    deleted: true
 }
 ```
 

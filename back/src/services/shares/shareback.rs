@@ -1,40 +1,17 @@
 //! ShareBack auto-accept: when a user shares back to someone who allowed it, the recipient's
-//! incoming share is auto-activated and an automatic `SharedTagMappingService` rule is created.
+//! incoming share is auto-activated and an automatic per-share `SharedTagMappingService` is created.
 
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tagging::ServiceType;
 use crate::infra::error::AppError;
 use crate::infra::routine::RoutineHandle;
 use crate::repository::share::IncomingShareRepository;
-use crate::repository::tagging::{SharedTagMappingRuleRepository, TaggingServiceRepository};
+use crate::repository::tagging::TaggingServiceRepository;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Find the user's first `shared_tag_mapping` service, creating an empty one if none exists.
-/// Used by ShareBack auto-accept to attach the new mapping rule.
-async fn find_or_create_shared_tag_mapping_service(
-    db: &PgPool,
-    owner_id: Uuid,
-) -> Result<Uuid, AppError> {
-    if let Some(id) =
-        TaggingServiceRepository::first_mapping_service_for_owner(db, owner_id).await?
-    {
-        return Ok(id);
-    }
-    let svc = TaggingServiceRepository::create(
-        db,
-        owner_id,
-        ServiceType::SharedTagMapping,
-        "Share-backs",
-        &[],
-        &[],
-    )
-    .await?;
-    Ok(svc.id)
-}
-
 /// Local part of a ShareBack auto-accept: transition the IncomingShare to Active and create +
-/// link the automatic `SharedTagMappingService` rule pointing back at the original tag. No
+/// link the automatic per-share `SharedTagMappingService` pointing back at the original tag. No
 /// pictures are registered here — the initiator's pictures are announced by its pipeline once its
 /// OutgoingShare is moved to `pending_first_announcement` (cross-instance: the initiator does this
 /// on the `auto_accepted` response; same-backend: `create_outgoing_share` does it).
@@ -48,17 +25,24 @@ pub async fn auto_accept_shareback_local(
 ) -> Result<(), AppError> {
     IncomingShareRepository::set_status(db, incoming.id, ShareStatus::Active).await?;
 
-    let service_id = find_or_create_shared_tag_mapping_service(db, recipient_id).await?;
-    let mapping = SharedTagMappingRuleRepository::create(
+    // One shared_tag_mapping service per incoming share (feature 20 §10.1).
+    let config = serde_json::json!({
+        "incoming_share_id": incoming.id,
+        "assign_tags": [original_outgoing.tag_path],
+    });
+    let service = TaggingServiceRepository::create(
         db,
-        service_id,
-        incoming.id,
-        &original_outgoing.tag_path,
+        recipient_id,
+        ServiceType::SharedTagMapping,
+        "Share-back",
+        &[],
+        &[],
+        &config,
     )
     .await?;
-    // `incoming_shares.local_mapping_service_id` FKs to the mapping-rule row (not the service).
-    IncomingShareRepository::set_local_mapping_service(db, incoming.id, mapping.id).await?;
-    TaggingServiceRepository::touch_invalidated(db, service_id).await?;
+    // `incoming_shares.local_mapping_service_id` now references the service itself.
+    IncomingShareRepository::set_local_mapping_service(db, incoming.id, service.id).await?;
+    TaggingServiceRepository::touch_invalidated(db, service.id).await?;
 
     pipeline_waker.trigger(recipient_id);
     Ok(())

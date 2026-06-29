@@ -261,10 +261,10 @@ then type `Birthday`. Input is **sanitized live**: accents stripped, spaces/`-` 
 **red** warning for a reserved `SharedToMe` prefix or any still-invalid character).
 
 **`tagging/`** — `TaggingPage` (titled **"Tagging services"**; header has a **Force run** button — `POST /pictures/pipeline/wake` — for debugging)
-composes `SharedMappingSection`
-(shared-tag-mapping services in a **collapsed-by-default accordion, always first**)
-then
-`PipelineList` (rule + segmentation services, **@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s (a compact row —
+composes `PipelineList` (rule + segmentation services — the "queries" — shown **first**) then `SharedMappingSection`
+(shared-tag-mapping services, which still **run first** in the pipeline, in a **collapsed-by-default `Section`** below the queries so the user reads
+the rules/segments before expanding the mappings).
+`PipelineList` (**@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s (a compact row —
 type badge, name, item count, enabled switch, a prominent **Edit** button and delete; the requires/excludes **gates are not on the card**, only on the
 editor page, so the list stays short with many services).
 `RequiresExcludesEditor`
@@ -289,10 +289,12 @@ trigger button — hover on desktop, tap on touch — anchored to the **right**,
 right-aligned Yes/No), the shared tag, created date, ShareBack provenance ("which share this answers"), and — by side — the last-announcement
 timestamp
 (incoming), `last_error_at` / `next_retry_at` (outgoing, while errored/recovering), and the close date for revoked/rejected shares, then the `message`
-("No message" when null), plus an optional `footer` slot. `IncomingSharesList` keeps flat rows (accept / reject(confirm) / view-photos; single
-local-tag
-mapping per share via `useShareMappings`) and, when the sender allows it, a **Share back** button in the popover footer that opens a controlled
-`CreateShareDialog` pre-targeted at the sender and pre-filled with that share's mapped local tag (if a `SharedTagMappingService` mapping exists; still
+("No message" when null), plus an optional `footer` slot. `IncomingSharesList` keeps flat rows (accept / reject(confirm) / view-photos; a share maps
+to one or more
+local tags via `useShareMappings` — each shown as a removable chip plus an add control) and, when the sender allows it, a **Share back** button in the
+popover footer that opens a controlled
+`CreateShareDialog` pre-targeted at the sender and pre-filled with that share's first mapped local tag (if a `SharedTagMappingService` mapping exists;
+still
 editable). `OutgoingSharesList` groups by tag via a factorized
 `GroupedShareRow` reused across all three sections — the group header shows the most common `name` with a "(and N others)" suffix when names differ
 (`summarizeNames`), the per-recipient details living in the popover, plus confirm-revoke. Both lists cross-reference the other direction (incoming ↔
@@ -430,8 +432,12 @@ mobile) and shown only when its `ui` store toggle is on:
   arrive, instead of a blank/spinner.
 - **Infinite-scroll dedup:** `PhotoGrid` dedups the flattened pages by `id` before rendering — as new pictures shift pagination, consecutive pages can
   re-emit an already-seen item, which would otherwise render a duplicate card (and look doubly-selected if it was selected).
-- **Single mapping per share:** `useShareMappings.addMapping` deletes any existing mapping first; the tagging `MappingEditor` hides already-mapped
-  shares.
+- **Multi-tag mapping per share:** one `SharedTagMappingService` per incoming share, but it may map to **several** local tags. `useShareMappings`
+  exposes `addMapping` (appends a tag, creating the service on the first one), `removeTag` (drops a single tag — deleting the service once its last
+  tag
+  is removed), and `forShare` (one `ShareMapping` per assigned tag). The `MappingControl` in `IncomingSharesList` renders one removable chip per
+  mapped
+  tag plus an always-present add control; the tagging `MappingEditor` edits the full `assign_tags` list via `PUT …/config`.
 - **Cross-links:** right-panel tag → sets the `tag` filter; a provenance source badge → `/tagging/:source_id` (or `panel=incoming` + `share` highlight
   for an `incoming_share` source); a "Shared with you" tag → `tag` filter + `panel=incoming` + highlights the matching card in `IncomingSharesList`.
 - **Search:** there is **no free-text/filename search** (a client-side filename filter was removed as misleading — it only matched already-loaded

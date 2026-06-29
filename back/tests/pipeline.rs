@@ -9,7 +9,7 @@ use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline;
 use archypix_back::repository::tag::TagRepository;
-use archypix_back::repository::tagging::{RuleTaggingRuleRepository, TaggingServiceRepository};
+use archypix_back::repository::tagging::TaggingServiceRepository;
 use archypix_back::services;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -41,16 +41,78 @@ async fn seed_picture_2024(db: &PgPool, user_id: Uuid) -> Uuid {
     id
 }
 
+/// Create an empty Rule service.
+async fn create_rule_service(db: &PgPool, owner: Uuid) -> Uuid {
+    let config = serde_json::json!({ "rules": [] });
+    TaggingServiceRepository::create(db, owner, ServiceType::Rule, "", &[], &[], &config)
+        .await
+        .unwrap()
+        .id
+}
+
+/// Replace a rule service's whole config with `rules` (mirrors the `PUT /{id}/config` path).
+async fn set_rules(db: &PgPool, owner: Uuid, svc: Uuid, rules: Vec<serde_json::Value>) {
+    let config = serde_json::json!({ "rules": rules });
+    assert!(
+        TaggingServiceRepository::set_config(db, owner, svc, ServiceType::Rule, &config)
+            .await
+            .unwrap()
+    );
+}
+
+/// Append a rule (predicate + assign_tag) to a rule service and return its generated id.
+async fn add_rule(
+    db: &PgPool,
+    owner: Uuid,
+    svc: Uuid,
+    predicate: serde_json::Value,
+    tag: &str,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    let mut rules: Vec<serde_json::Value> = rule_objects(db, owner, svc).await;
+    rules.push(serde_json::json!({ "id": id, "predicate": predicate, "assign_tag": tag }));
+    set_rules(db, owner, svc, rules).await;
+    id
+}
+
+/// The raw rule objects of a rule service, in stored order.
+async fn rule_objects(db: &PgPool, owner: Uuid, svc: Uuid) -> Vec<serde_json::Value> {
+    TaggingServiceRepository::get_by_owner_and_id(db, owner, svc)
+        .await
+        .unwrap()
+        .unwrap()
+        .config["rules"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Rule ids of a rule service, in stored order.
+async fn rule_ids(db: &PgPool, owner: Uuid, svc: Uuid) -> Vec<Uuid> {
+    TaggingServiceRepository::get_by_owner_and_id(db, owner, svc)
+        .await
+        .unwrap()
+        .unwrap()
+        .rule_config()
+        .unwrap()
+        .rules
+        .into_iter()
+        .map(|r| r.id)
+        .collect()
+}
+
 /// Create a Rule service with a single "captured in 2024" rule assigning `tag`.
 async fn seed_rule_service(db: &PgPool, owner: Uuid, tag: &str) -> Uuid {
-    let svc = TaggingServiceRepository::create(db, owner, ServiceType::Rule, "", &[], &[])
-        .await
-        .unwrap();
-    let predicate = serde_json::json!({"field": "captured_at", "year": 2024});
-    RuleTaggingRuleRepository::create(db, svc.id, &predicate, tag)
-        .await
-        .unwrap();
-    svc.id
+    let svc = create_rule_service(db, owner).await;
+    add_rule(
+        db,
+        owner,
+        svc,
+        serde_json::json!({"field": "captured_at", "year": 2024}),
+        tag,
+    )
+    .await;
+    svc
 }
 
 fn has_tag(tags: &[archypix_back::domain::tag::Tag], path: &str) -> bool {
@@ -89,13 +151,8 @@ async fn pipeline_removes_tag_when_rule_no_longer_produces_it(db: PgPool) {
         "Photos.Y2024"
     ));
 
-    // Drop the rule and re-invalidate — the service now produces nothing.
-    let rules = RuleTaggingRuleRepository::list_for_services(&db, &[svc])
-        .await
-        .unwrap();
-    RuleTaggingRuleRepository::delete(&db, user, svc, rules[0].id)
-        .await
-        .unwrap();
+    // Drop the rule (empty the config) and re-invalidate — the service now produces nothing.
+    set_rules(&db, user, svc, vec![]).await;
     TaggingServiceRepository::touch_invalidated(&db, svc)
         .await
         .unwrap();
@@ -184,9 +241,7 @@ async fn pipeline_evaluates_composed_exif_predicate(db: PgPool) {
     .await
     .unwrap();
 
-    let svc = TaggingServiceRepository::create(&db, user, ServiceType::Rule, "", &[], &[])
-        .await
-        .unwrap();
+    let svc = create_rule_service(&db, user).await;
     // (Fujifilm, case-insensitive) AND ISO in [100, 800] AND summer AND exposure ≥ 0.5 s.
     let predicate = serde_json::json!({
         "and": [
@@ -196,9 +251,7 @@ async fn pipeline_evaluates_composed_exif_predicate(db: PgPool) {
             {"field": "exposure_time", "min": 0.5}
         ]
     });
-    RuleTaggingRuleRepository::create(&db, svc.id, &predicate, "Camera.Fuji")
-        .await
-        .unwrap();
+    add_rule(&db, user, svc, predicate, "Camera.Fuji").await;
 
     run_pipeline(&db, user).await;
 
@@ -228,14 +281,18 @@ async fn editing_rule_predicate_updates_tags(db: PgPool) {
     ));
 
     // Edit the rule so it now matches a different year — the old tag goes, no new one appears.
-    let rules = RuleTaggingRuleRepository::list_for_services(&db, &[svc])
-        .await
-        .unwrap();
-    let new_pred = serde_json::json!({"field": "captured_at", "year": 1999});
-    RuleTaggingRuleRepository::update(&db, user, svc, rules[0].id, &new_pred, "Photos.Y1999")
-        .await
-        .unwrap()
-        .expect("rule updated");
+    let rule_id = rule_ids(&db, user, svc).await[0];
+    set_rules(
+        &db,
+        user,
+        svc,
+        vec![serde_json::json!({
+            "id": rule_id,
+            "predicate": {"field": "captured_at", "year": 1999},
+            "assign_tag": "Photos.Y1999",
+        })],
+    )
+    .await;
     TaggingServiceRepository::touch_invalidated(&db, svc)
         .await
         .unwrap();
@@ -251,29 +308,63 @@ async fn editing_rule_predicate_updates_tags(db: PgPool) {
     );
 }
 
-/// Reordering a rule service's rules persists a new `position` order.
+/// A rule service's config is stored verbatim in array order (order = the submitted order).
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn reordering_rules_persists_order(db: PgPool) {
+async fn rule_config_preserves_array_order(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
-    let svc = TaggingServiceRepository::create(&db, user, ServiceType::Rule, "", &[], &[])
-        .await
-        .unwrap();
+    let svc = create_rule_service(&db, user).await;
     let p = |y: i32| serde_json::json!({"field": "captured_at", "year": y});
-    let r1 = RuleTaggingRuleRepository::create(&db, svc.id, &p(2021), "T.A")
-        .await
-        .unwrap();
-    let r2 = RuleTaggingRuleRepository::create(&db, svc.id, &p(2022), "T.B")
-        .await
-        .unwrap();
-    assert!(r1.position < r2.position, "rules seeded in creation order");
+    let r1 = add_rule(&db, user, svc, p(2021), "T.A").await;
+    let r2 = add_rule(&db, user, svc, p(2022), "T.B").await;
+    assert_eq!(
+        rule_ids(&db, user, svc).await,
+        vec![r1, r2],
+        "seeded in creation order"
+    );
 
-    RuleTaggingRuleRepository::reorder(&db, user, svc.id, &[r2.id, r1.id])
+    // Replacing the config with a reordered array is the only reorder path now.
+    let reordered: Vec<_> = rule_objects(&db, user, svc)
+        .await
+        .into_iter()
+        .rev()
+        .collect();
+    set_rules(&db, user, svc, reordered).await;
+
+    assert_eq!(
+        rule_ids(&db, user, svc).await,
+        vec![r2, r1],
+        "config array order is preserved verbatim"
+    );
+}
+
+/// A calendar-segmentation service assigns the single resolved band tag (feature 20).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn segmentation_assigns_single_band_tag(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await; // captured 2024-06-01
+
+    let config = serde_json::json!({
+        "version": 1,
+        "root_tag": "Photos.Travel",
+        "bands": [
+            { "from": "2024-01-01", "to": "2025-01-01", "template": "{year}.{month}",
+              "parts": { "month": { "format": { "numeric": false } } } }
+        ]
+    });
+    TaggingServiceRepository::create(&db, user, ServiceType::Segmentation, "", &[], &[], &config)
         .await
         .unwrap();
 
-    let rules = RuleTaggingRuleRepository::list_for_services(&db, &[svc.id])
+    run_pipeline(&db, user).await;
+
+    let tags = TagRepository::list_for_picture(&db, user, pic)
         .await
         .unwrap();
-    assert_eq!(rules[0].id, r2.id, "reordered: B is now first");
-    assert_eq!(rules[1].id, r1.id);
+    // Only the deepest label is stored (the ancestor is virtual) with source = segment.
+    let seg: Vec<_> = tags
+        .iter()
+        .filter(|t| t.source == TagSource::Segment)
+        .collect();
+    assert_eq!(seg.len(), 1, "exactly one segment tag");
+    assert_eq!(seg[0].tag_path, "Photos.Travel.2024.June");
 }

@@ -128,23 +128,23 @@ $$;
 
 CREATE TABLE public.federation_messages
 (
-    id                uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    id              uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
     message_type public.federation_message_type NOT NULL,
     direction public.federation_direction NOT NULL,
-    sender_username   character varying(255),
-    sender_instance   character varying(255),
+    sender_username character varying(255),
+    sender_instance character varying(255),
     recipient_username character varying(255),
     recipient_instance character varying(255),
     outgoing_share_id uuid,
     incoming_share_id uuid,
-    payload           jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    payload         jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
     status public.federation_status DEFAULT 'pending'::public.federation_status NOT NULL,
-    created_at        timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    sent_at           timestamp without time zone,
-    delivered_at      timestamp without time zone,
-    idempotency_key   text,
-    error_message     text,
-    retry_count       integer                     DEFAULT 0                                NOT NULL
+    created_at      timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    sent_at         timestamp without time zone,
+    delivered_at    timestamp without time zone,
+    idempotency_key text,
+    error_message   text,
+    retry_count     integer                     DEFAULT 0                                NOT NULL
 );
 
 CREATE TABLE public.hierarchies
@@ -168,43 +168,43 @@ CREATE TABLE public.hierarchies
 
 CREATE TABLE public.incoming_shares
 (
-    id                       uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    recipient_id             uuid                                                                 NOT NULL,
-    sender_username          character varying(255)                                               NOT NULL,
-    sender_instance          character varying(255)                                               NOT NULL,
-    name                     character varying(64)                                                NOT NULL,
-    message                  text,
-    outgoing_share_id        uuid                                                                 NOT NULL,
+    id                uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    recipient_id      uuid                                                                 NOT NULL,
+    sender_username   character varying(255)                                               NOT NULL,
+    sender_instance   character varying(255)                                               NOT NULL,
+    name              character varying(64)                                                NOT NULL,
+    message           text,
+    outgoing_share_id uuid                                                                 NOT NULL,
     local_mapping_service_id uuid,
     status public.share_status DEFAULT 'pending'::public.share_status NOT NULL,
-    allow_share_back         boolean                     DEFAULT false                            NOT NULL,
-    future                   boolean                     DEFAULT false                            NOT NULL,
-    allow_exif_edit          boolean                     DEFAULT false                            NOT NULL,
+    allow_share_back  boolean                     DEFAULT false                            NOT NULL,
+    future            boolean                     DEFAULT false                            NOT NULL,
+    allow_exif_edit   boolean                     DEFAULT false                            NOT NULL,
     shared_tag_path public.ltree,
     last_announcement_received_at timestamp without time zone,
-    shareback_of             uuid,
-    created_at               timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at               timestamp without time zone
+    shareback_of      uuid,
+    created_at        timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at        timestamp without time zone
 );
 
 CREATE TABLE public.jobs
 (
-    id            uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id      uuid                                                                 NOT NULL,
+    id           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    owner_id     uuid                                                                 NOT NULL,
     job_type public.job_type NOT NULL,
     status public.job_status DEFAULT 'pending'::public.job_status NOT NULL,
-    config        jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    result        jsonb                       DEFAULT '{}'::jsonb,
+    config       jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    result       jsonb                       DEFAULT '{}'::jsonb,
     error_message text,
-    retry_count   integer                     DEFAULT 0                                NOT NULL,
-    max_retries   integer                     DEFAULT 3                                NOT NULL,
+    retry_count  integer                     DEFAULT 0                                NOT NULL,
+    max_retries  integer                     DEFAULT 3                                NOT NULL,
     idempotency_key character varying(255),
-    picture_id    uuid,
-    claimed_by    text,
-    claim_token   uuid,
-    created_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    started_at    timestamp without time zone,
-    completed_at  timestamp without time zone,
+    picture_id   uuid,
+    claimed_by   text,
+    claim_token  uuid,
+    created_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    started_at   timestamp without time zone,
+    completed_at timestamp without time zone,
     trace_context jsonb
 );
 
@@ -230,8 +230,8 @@ CREATE TABLE public.outgoing_shares
 
 CREATE TABLE public.picture_versions
 (
-    id         uuid                                                                 NOT NULL,
-    picture_id uuid                                                                 NOT NULL,
+    id         uuid NOT NULL,
+    picture_id uuid NOT NULL,
     version_number integer NOT NULL,
     file_size  bigint,
     mime_type  character varying(100),
@@ -240,40 +240,40 @@ CREATE TABLE public.picture_versions
 
 CREATE TABLE public.pictures
 (
-    id                      uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    local_user_id           uuid                                                                 NOT NULL,
-    remote_picture_id       character varying(255),
-    owner_username          character varying(255),
-    owner_instance_domain   character varying(255),
-    filename                character varying(1024),
-    mime_type               character varying(100),
-    file_size               bigint,
-    width                   integer,
-    height                  integer,
-    exif_data               jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    metadata                jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    deleted_at              timestamp without time zone,
-    captured_at             timestamp without time zone,
-    ingested_at             timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at              timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    blurhash                text,
-    gps_lat                 double precision,
-    gps_lng                 double precision,
-    gps_alt                 integer,
-    orientation             smallint,
+    id                     uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    local_user_id          uuid                                                                 NOT NULL,
+    remote_picture_id      character varying(255),
+    owner_username         character varying(255),
+    owner_instance_domain  character varying(255),
+    filename               character varying(1024),
+    mime_type              character varying(100),
+    file_size              bigint,
+    width                  integer,
+    height                 integer,
+    exif_data              jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    metadata               jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    deleted_at             timestamp without time zone,
+    captured_at            timestamp without time zone,
+    ingested_at            timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at             timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    blurhash               text,
+    gps_lat                double precision,
+    gps_lng                double precision,
+    gps_alt                integer,
+    orientation            smallint,
     thumbnails_generated_at timestamp without time zone,
-    file_hash               text,
-    last_pipeline_run_at    timestamp without time zone,
+    file_hash              text,
+    last_pipeline_run_at   timestamp without time zone,
     exif_sync_status public.picture_exif_sync_status DEFAULT 'synced'::public.picture_exif_sync_status NOT NULL,
-    owner_deleted_at        timestamp without time zone,
-    owner_purge_at          timestamp without time zone,
-    remote_exif_data        jsonb,
-    local_exif_overrides    jsonb,
+    owner_deleted_at       timestamp without time zone,
+    owner_purge_at         timestamp without time zone,
+    remote_exif_data       jsonb,
+    local_exif_overrides   jsonb,
     deleted_reason public.picture_deleted_reason,
-    content_hash            text,
+    content_hash           text,
     copy_source_owner_username character varying(255),
     copy_source_owner_instance character varying(255),
-    copy_source_picture_id  character varying(255)
+    copy_source_picture_id character varying(255)
 );
 
 CREATE TABLE public.refresh_tokens
@@ -287,25 +287,6 @@ CREATE TABLE public.refresh_tokens
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.rule_tagging_services
-(
-    id         uuid    DEFAULT public.uuid_generate_v4() NOT NULL,
-    service_id uuid                                      NOT NULL,
-    predicate  jsonb                                     NOT NULL,
-    assign_tag public.ltree                              NOT NULL,
-    "position" integer DEFAULT 0                         NOT NULL
-);
-
-CREATE TABLE public.segmentation_tagging_services
-(
-    id         uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    service_id uuid                                   NOT NULL,
-    name       character varying(255)                 NOT NULL,
-    date_range tstzrange                              NOT NULL,
-    assign_tag public.ltree NOT NULL,
-    parent_segment_id uuid
-);
-
 CREATE TABLE public.share_announcements
 (
     outgoing_share_id uuid                           NOT NULL,
@@ -314,46 +295,38 @@ CREATE TABLE public.share_announcements
     announced_updated_at timestamp without time zone
 );
 
-CREATE TABLE public.shared_tag_mapping_services
-(
-    id                uuid    DEFAULT public.uuid_generate_v4() NOT NULL,
-    service_id        uuid                                      NOT NULL,
-    incoming_share_id uuid                                      NOT NULL,
-    assign_tag public.ltree NOT NULL,
-    is_broken         boolean DEFAULT false                     NOT NULL
-);
-
 CREATE TABLE public.tagging_services
 (
-    id             uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id       uuid                                                                 NOT NULL,
+    id            uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    owner_id      uuid                                                                 NOT NULL,
     service_type public.service_type NOT NULL,
     requires public.ltree[] DEFAULT '{}'::public.ltree[] NOT NULL,
     excludes public.ltree[] DEFAULT '{}'::public.ltree[] NOT NULL,
-    enabled        boolean                     DEFAULT true                             NOT NULL,
-    "position"     integer                     DEFAULT 0                                NOT NULL,
+    enabled       boolean                     DEFAULT true                             NOT NULL,
+    "position"    integer                     DEFAULT 0                                NOT NULL,
     last_invalidated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    last_error_at  timestamp without time zone,
+    last_error_at timestamp without time zone,
     last_error_msg text,
-    created_at     timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at     timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    name           character varying(255)      DEFAULT ''::character varying            NOT NULL
+    created_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    name          character varying(255)      DEFAULT ''::character varying            NOT NULL,
+    config        jsonb                       DEFAULT '{}'::jsonb                      NOT NULL
 );
 
 CREATE TABLE public.tags
 (
-    id          uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    picture_id  uuid                                                                 NOT NULL,
+    id         uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    picture_id uuid                                   NOT NULL,
     tag_path public.ltree NOT NULL,
     source public.tag_source DEFAULT 'manual'::public.tag_source NOT NULL,
-    source_id   uuid,
+    source_id  uuid,
     picture_token uuid,
     assigned_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
 CREATE TABLE public.user_credentials
 (
-    user_id    uuid                                                                 NOT NULL,
+    user_id uuid NOT NULL,
     password_hash text NOT NULL,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
@@ -361,7 +334,7 @@ CREATE TABLE public.user_credentials
 
 CREATE TABLE public.user_settings
 (
-    user_id    uuid                                                                 NOT NULL,
+    user_id uuid NOT NULL,
     versioning_mode public.versioning_mode DEFAULT 'none'::public.versioning_mode NOT NULL,
     trash_retention_days integer DEFAULT 30 NOT NULL,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
@@ -409,17 +382,8 @@ ALTER TABLE ONLY public.pictures
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.rule_tagging_services
-    ADD CONSTRAINT rule_tagging_services_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.segmentation_tagging_services
-    ADD CONSTRAINT segmentation_tagging_services_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.share_announcements
     ADD CONSTRAINT share_announcements_pkey PRIMARY KEY (outgoing_share_id, picture_id);
-
-ALTER TABLE ONLY public.shared_tag_mapping_services
-    ADD CONSTRAINT shared_tag_mapping_services_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.tagging_services
     ADD CONSTRAINT tagging_services_pkey PRIMARY KEY (id);
@@ -441,9 +405,6 @@ ALTER TABLE ONLY public.picture_versions
 
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT uq_refresh_token_hash UNIQUE (token_hash);
-
-ALTER TABLE ONLY public.shared_tag_mapping_services
-    ADD CONSTRAINT uq_stms_mapping UNIQUE (service_id, incoming_share_id);
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT uq_user_email UNIQUE (email);
@@ -530,25 +491,13 @@ CREATE INDEX idx_refresh_tokens_expires ON public.refresh_tokens USING btree (ex
 
 CREATE INDEX idx_refresh_tokens_user ON public.refresh_tokens USING btree (user_id);
 
-CREATE INDEX idx_rts_position ON public.rule_tagging_services USING btree (service_id, "position");
-
-CREATE INDEX idx_rts_service ON public.rule_tagging_services USING btree (service_id);
-
 CREATE INDEX idx_share_announcements_picture ON public.share_announcements USING btree (picture_id);
 
 CREATE INDEX idx_share_announcements_token ON public.share_announcements USING btree (picture_token);
 
-CREATE INDEX idx_stms_incoming_share ON public.shared_tag_mapping_services USING btree (incoming_share_id);
-
-CREATE INDEX idx_stms_service ON public.shared_tag_mapping_services USING btree (service_id);
-
-CREATE INDEX idx_sts_date_range ON public.segmentation_tagging_services USING gist (date_range);
-
-CREATE INDEX idx_sts_parent ON public.segmentation_tagging_services USING btree (parent_segment_id);
-
-CREATE INDEX idx_sts_service ON public.segmentation_tagging_services USING btree (service_id);
-
 CREATE INDEX idx_tagging_services_enabled ON public.tagging_services USING btree (enabled);
+
+CREATE INDEX idx_tagging_services_mapping_share ON public.tagging_services USING btree (((config ->> 'incoming_share_id'::text))) WHERE (service_type = 'shared_tag_mapping'::public.service_type);
 
 CREATE INDEX idx_tagging_services_owner ON public.tagging_services USING btree (owner_id);
 
@@ -629,7 +578,7 @@ ALTER TABLE ONLY public.federation_messages
     ADD CONSTRAINT federation_messages_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares (id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.incoming_shares
-    ADD CONSTRAINT fk_incoming_shares_mapping FOREIGN KEY (local_mapping_service_id) REFERENCES public.shared_tag_mapping_services (id) ON DELETE SET NULL;
+    ADD CONSTRAINT fk_incoming_shares_mapping FOREIGN KEY (local_mapping_service_id) REFERENCES public.tagging_services (id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.hierarchies
     ADD CONSTRAINT hierarchies_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
@@ -655,23 +604,8 @@ ALTER TABLE ONLY public.pictures
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.rule_tagging_services
-    ADD CONSTRAINT rule_tagging_services_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.tagging_services (id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.segmentation_tagging_services
-    ADD CONSTRAINT segmentation_tagging_services_parent_segment_id_fkey FOREIGN KEY (parent_segment_id) REFERENCES public.segmentation_tagging_services (id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.segmentation_tagging_services
-    ADD CONSTRAINT segmentation_tagging_services_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.tagging_services (id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.share_announcements
     ADD CONSTRAINT share_announcements_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares (id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.shared_tag_mapping_services
-    ADD CONSTRAINT shared_tag_mapping_services_incoming_share_id_fkey FOREIGN KEY (incoming_share_id) REFERENCES public.incoming_shares (id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.shared_tag_mapping_services
-    ADD CONSTRAINT shared_tag_mapping_services_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.tagging_services (id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.tagging_services
     ADD CONSTRAINT tagging_services_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;

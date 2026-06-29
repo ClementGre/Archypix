@@ -55,9 +55,3 @@
   to remove — and refuses a non-empty one with `409 Conflict`. A drop-directory node lists empty by design, so the same check will cover it once that
   node type lands.**)**
 
-## New complex features
-
-- Tag service Segmentation rule refactor: Currently, segmentation is only syntax sugar over query rules. It should instead give real value, for
-  example automatically defining the segments (e.g. one per year in a given range): it should allow to segment all pictures in tags (pictures are in a
-  single subtag), with manual segments, but also automatic rules. The real value it can give and what are these "extensive options" is still to be
-  determined.

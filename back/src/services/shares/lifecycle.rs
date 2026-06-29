@@ -17,7 +17,6 @@ use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::tag::TagRepository;
-use crate::repository::tagging::SharedTagMappingRuleRepository;
 use crate::repository::user::UserRepository;
 use crate::services::shares::shareback::auto_accept_shareback_local;
 use crate::services::users::find_local_user_id;
@@ -26,8 +25,9 @@ use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
 use uuid::Uuid;
 
-/// Remove tags, delete unreachable received pictures, set the share to `final_status`, flag
-/// broken mappings, cascade downstream unannounce / transitive revocation, and wake the pipeline.
+/// Remove tags, delete unreachable received pictures, set the share to `final_status` (which makes
+/// any mapping referencing it derive as broken), cascade downstream unannounce / transitive
+/// revocation, and wake the pipeline.
 /// Used by both revocation (→ Revoked) and rejection (→ Tombstoned).
 ///
 /// See doc/features/01_better_sharing_support.md §8 for the full sequence. Returns the number of
@@ -80,7 +80,8 @@ pub async fn cleanup_incoming_share(
     .await?;
     ShareAnnouncementRepository::delete_for_pictures(&mut *tx, &deleted_ids).await?;
     PipelineRepository::invalidate(&mut *tx, &survivors).await?;
-    SharedTagMappingRuleRepository::flag_broken_for_share(&mut *tx, share.id).await?;
+    // Mapping brokenness is derived from the share status (feature 20 §10.1) — setting the share's
+    // status below is all that's needed; no tagging-config write here.
     IncomingShareRepository::set_status(&mut *tx, share.id, final_status.clone()).await?;
 
     tx.commit().await.map_err(map_sqlx_error)?;

@@ -398,6 +398,26 @@ impl IncomingShareRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// Ids of the recipient's currently-`active` incoming shares. Used to derive shared-tag-mapping
+    /// brokenness (a mapping is broken iff its share is not in this set — feature 20 §10.1).
+    #[tracing::instrument(skip(ex), fields(recipient_id = %recipient_id))]
+    pub async fn active_ids_for_recipient<'e, E>(
+        ex: E,
+        recipient_id: Uuid,
+    ) -> Result<Vec<Uuid>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            r#"SELECT id FROM incoming_shares
+               WHERE recipient_id = $1 AND status = 'active'::share_status"#,
+            recipient_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
     #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
     pub async fn set_status<'e, E>(
         ex: E,

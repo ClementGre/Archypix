@@ -39,7 +39,10 @@ domain/
   share.rs          # OutgoingShare, IncomingShare
   federation.rs     # FederationMessage, BackendMapping
   job.rs            # Job (includes claim_token), re-exports from archypix-common
-  tagging.rs / pipeline.rs   # pipeline config types + pure evaluator
+  tagging.rs        # service model + ServiceConfig (parse/validate/normalize/evaluate dispatch) + should_run
+  pipeline.rs       # PipelineInput (the picture projection the evaluator reads)
+  predicate.rs      # feature 13: rule predicate engine (Predicate/Field/Condition + parsing)
+  segmentation.rs   # feature 20: SegmentationConfig (band-list parse/validate/resolve)
 
 repository/
   user.rs / picture.rs / picture_version.rs / user_settings.rs
@@ -153,9 +156,21 @@ the announcement delta re-delivers the refreshed metadata. The race-free backsto
 
 **Rule predicates** — a structured JSONB predicate tree (feature 13): logical `and`/`or`/`not`
 composition over spatial nodes (`gps_bbox`, `gps_radius`) and typed field-condition leaves covering
-all EXIF/file/ownership attributes. Parsed into `domain::pipeline::Predicate` (validated on
+all EXIF/file/ownership attributes. Parsed into `domain::predicate::Predicate` (validated on
 create/update, evaluated against the `PipelineInput` projection). See
 `doc/features/13_better_rules.md`.
+
+**Service config (feature 20)** — every service type's payload lives in one `tagging_services.config`
+JSONB column (the per-type child tables are dropped). `domain::tagging::ServiceConfig` is the single
+hub: `parse` validates + normalizes raw JSON (rule predicates, assigned tags, segmentation bands),
+`to_value` is storage-ready, and one `evaluate(input, incoming_share_ids)` dispatch covers all three
+types (gating is `TaggingService::should_run`). The API edits config **uniformly** — create takes a
+`config`, `PUT /tagging-services/{id}/config` replaces it; there are no per-rule/segment/mapping
+sub-resources. `shared_tag_mapping` is **one service per incoming share** (scalar `incoming_share_id`
+
++ `assign_tags`), brokenness derived from the share's status. **Segmentation** is the calendar
+  partition operator (resolves to 0 or 1 tag, first-covering-band-wins). See
+  `doc/features/20_calendar_segmentation.md`.
 
 **Tag storage (per-source)** — two partial unique indexes: `(picture_id, tag_path) WHERE source='manual'` and
 `(picture_id, tag_path, source, source_id) WHERE source<>'manual'`. `source_id` is the `tagging_services.id` for pipeline sources,

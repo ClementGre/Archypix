@@ -9,7 +9,6 @@ import RegisterPage from '@/pages/RegisterPage'
 import GalleryPage from '@/pages/GalleryPage'
 import TagsPage from '@/pages/TagsPage'
 import TaggingPage from '@/pages/TaggingPage'
-import ServiceEditorPage from '@/pages/ServiceEditorPage'
 import SharesPage from '@/pages/SharesPage'
 import SettingsPage from '@/pages/SettingsPage'
 import TrashPage from '@/pages/TrashPage'
@@ -40,7 +39,7 @@ export default function App() {
                             <Route path="/" element={<GalleryPage/>}/>
                             <Route path="/tags" element={<TagsPage/>}/>
                             <Route path="/tagging" element={<TaggingPage/>}/>
-                            <Route path="/tagging/:id" element={<ServiceEditorPage/>}/>
+                            <Route path="/tagging/:id" element={<TaggingPage/>}/>
                             <Route path="/shares" element={<SharesPage/>}/>
                             <Route path="/settings" element={<SettingsPage/>}/>
                             <Route path="/trash" element={<TrashPage/>}/>

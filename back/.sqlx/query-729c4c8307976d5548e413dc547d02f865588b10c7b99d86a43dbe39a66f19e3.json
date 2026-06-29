@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\"\n               FROM tagging_services ts\n               LEFT JOIN incoming_shares i ON (ts.config->>'incoming_share_id')::uuid = i.id\n               WHERE ts.service_type = 'shared_tag_mapping'::service_type\n                 AND (i.id IS NULL OR i.status <> 'active'::share_status)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "729c4c8307976d5548e413dc547d02f865588b10c7b99d86a43dbe39a66f19e3"
+}

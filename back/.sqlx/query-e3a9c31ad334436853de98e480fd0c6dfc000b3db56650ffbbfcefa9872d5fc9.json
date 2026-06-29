@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE tagging_services\n               SET enabled    = COALESCE($3, enabled),\n                   requires   = COALESCE($4::ltree[], requires),\n                   excludes   = COALESCE($5::ltree[], excludes),\n                   name       = COALESCE($6, name),\n                   updated_at = now() AT TIME ZONE 'utc'\n               WHERE id = $1 AND owner_id = $2\n               RETURNING id, owner_id, name,\n                         service_type as \"service_type: ServiceType\",\n                         requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                         enabled, position, last_invalidated_at, last_error_at, last_error_msg,\n                         created_at, updated_at",
+  "query": "UPDATE tagging_services\n               SET enabled    = COALESCE($3, enabled),\n                   requires   = COALESCE($4::ltree[], requires),\n                   excludes   = COALESCE($5::ltree[], excludes),\n                   name       = COALESCE($6, name),\n                   updated_at = now() AT TIME ZONE 'utc'\n               WHERE id = $1 AND owner_id = $2\n               RETURNING id, owner_id, name,\n                         service_type as \"service_type: ServiceType\",\n                         requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                         enabled, position, config as \"config!: serde_json::Value\",\n                         last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -94,6 +94,17 @@
       },
       {
         "ordinal": 8,
+        "name": "config!: serde_json::Value",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "tagging_services",
+            "name": "config"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "last_invalidated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -104,7 +115,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "last_error_at",
         "type_info": "Timestamp",
         "origin": {
@@ -115,7 +126,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "last_error_msg",
         "type_info": "Text",
         "origin": {
@@ -126,7 +137,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -137,7 +148,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -192,11 +203,12 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false,
       false
     ]
   },
-  "hash": "07ace7a47d7ddd06cca7cf3098d8045218a886fc7bd173f4d6d87508fabd1466"
+  "hash": "e3a9c31ad334436853de98e480fd0c6dfc000b3db56650ffbbfcefa9872d5fc9"
 }

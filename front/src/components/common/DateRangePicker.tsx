@@ -66,7 +66,12 @@ export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a
 
     const startDate = parseDate(from)
     const endDate = parseDate(to)
-    const selected: DateRange | undefined = startDate ? {from: startDate, to: endDate} : undefined
+    // Highlight the end even when only it is set (open-ended start).
+    const selected: DateRange | undefined = startDate
+        ? {from: startDate, to: endDate}
+        : endDate
+            ? {from: endDate}
+            : undefined
     const fromTime = parseTime(from) || '00:00'
     const toTime = parseTime(to) || '23:59'
 
@@ -100,7 +105,13 @@ export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a
     }
 
     const label =
-        from && to ? `${fmtDisplay(from, mode)} → ${fmtDisplay(to, mode)}` : from ? fmtDisplay(from, mode) : placeholder
+        from && to
+            ? `${fmtDisplay(from, mode)} → ${fmtDisplay(to, mode)}`
+            : from
+                ? fmtDisplay(from, mode)
+                : to
+                    ? `→ ${fmtDisplay(to, mode)}`
+                    : placeholder
 
     return (
         <Popover
@@ -113,7 +124,7 @@ export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a
             <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 justify-start gap-1.5 text-xs font-normal">
                     <CalendarRange className="h-3.5 w-3.5 text-muted-foreground"/>
-                    <span className={from ? '' : 'text-muted-foreground'}>{label}</span>
+                    <span className={from || to ? '' : 'text-muted-foreground'}>{label}</span>
                 </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto space-y-2 p-3" align="start">

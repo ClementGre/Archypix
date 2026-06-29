@@ -413,9 +413,11 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
     );
 
     // The auto-mapping reintegrates the shared-back pictures into Alice's *original* shared tag
-    // (§7.3: assign_tag = original outgoing share's tag_path).
+    // (§7.3: assign_tags = [original outgoing share's tag_path]). One shared_tag_mapping service
+    // per incoming share now (feature 20 §10.1), keyed on `config->>'incoming_share_id'`.
     let mapping_assign: Option<String> = sqlx::query_scalar(
-        "SELECT assign_tag::text FROM shared_tag_mapping_services WHERE incoming_share_id = $1",
+        "SELECT config->'assign_tags'->>0 FROM tagging_services \
+         WHERE service_type = 'shared_tag_mapping' AND (config->>'incoming_share_id')::uuid = $1",
     )
     .bind(from_bob.id)
     .fetch_optional(&db)

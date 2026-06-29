@@ -13,6 +13,19 @@ pub enum TagSource {
     IncomingShare,
 }
 
+impl TagSource {
+    /// The `tag_source` enum value as stored text (matches the snake_case Postgres labels).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TagSource::Manual => "manual",
+            TagSource::Rule => "rule",
+            TagSource::Segment => "segment",
+            TagSource::ShareMapping => "share_mapping",
+            TagSource::IncomingShare => "incoming_share",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tag {
     pub id: Uuid,
@@ -395,7 +408,7 @@ mod tests {
         assert_eq!(shared.as_ltree(), "SharedToMe.alice_AT_example_DOT_com");
     }
 
-    // ── ancestor satisfaction (used by pipeline::should_run) ─────────────────
+    // ── ancestor satisfaction (used by TaggingService::should_run) ─────────────────
 
     #[test]
     fn ancestor_of_self_is_not_ancestor() {

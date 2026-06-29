@@ -605,8 +605,14 @@ impl AdminRepository {
         .await
         .map_err(map_sqlx_error)?;
 
+        // Brokenness is derived (feature 20 §10.1): a shared_tag_mapping service is broken iff its
+        // referenced incoming share is absent or not active.
         let broken_mapping_count: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "count!" FROM shared_tag_mapping_services WHERE is_broken = true"#
+            r#"SELECT COUNT(*) AS "count!"
+               FROM tagging_services ts
+               LEFT JOIN incoming_shares i ON (ts.config->>'incoming_share_id')::uuid = i.id
+               WHERE ts.service_type = 'shared_tag_mapping'::service_type
+                 AND (i.id IS NULL OR i.status <> 'active'::share_status)"#
         )
         .fetch_one(db)
         .await

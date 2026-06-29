@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, owner_id, name,\n                      service_type as \"service_type: ServiceType\",\n                      requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                      enabled, position, last_invalidated_at, last_error_at, last_error_msg,\n                      created_at, updated_at\n               FROM tagging_services\n               WHERE id = $1 AND owner_id = $2",
+  "query": "SELECT id, owner_id, name,\n                      service_type as \"service_type: ServiceType\",\n                      requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                      enabled, position, config as \"config!: serde_json::Value\",\n                      last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at\n               FROM tagging_services\n               WHERE id = $1 AND owner_id = $2",
   "describe": {
     "columns": [
       {
@@ -94,6 +94,17 @@
       },
       {
         "ordinal": 8,
+        "name": "config!: serde_json::Value",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "tagging_services",
+            "name": "config"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "last_invalidated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -104,7 +115,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "last_error_at",
         "type_info": "Timestamp",
         "origin": {
@@ -115,7 +126,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "last_error_msg",
         "type_info": "Text",
         "origin": {
@@ -126,7 +137,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -137,7 +148,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -164,11 +175,12 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false,
       false
     ]
   },
-  "hash": "8d9a580c96138d9f9adceac9e352b402748ca9be3d75309c6b140d717799099e"
+  "hash": "d9460a1d9b859a655e07ab300d7c73bbfd76b6925af6530e2de14a1f78ec18d6"
 }

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tagging_services\n               SET config = $4, updated_at = now() AT TIME ZONE 'utc'\n               WHERE id = $1 AND owner_id = $2 AND service_type = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        {
+          "Custom": {
+            "name": "service_type",
+            "kind": {
+              "Enum": [
+                "shared_tag_mapping",
+                "rule",
+                "segmentation"
+              ]
+            }
+          }
+        },
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2e5dbccd180b51c8254ca986833197332e105fd4f60f1f05a121aa9c5ab8bfd1"
+}

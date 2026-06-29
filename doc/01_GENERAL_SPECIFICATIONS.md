@@ -82,18 +82,20 @@ Operates exclusively on `/SharedToMe/...` tags. Maps pictures received via an `I
 pictures into their own tag hierarchy.   
 **Trigger labels:** `incoming-share`
 
+There is **one `SharedTagMappingService` per `IncomingShare`** (feature 20 §10.1); its config is a
+scalar `incoming_share_id` plus the list of tags to assign:
+
 ```
 SharedTagMappingService:
-  mappings:
-    - source: is-001          # IncomingShare id
-      assignTag: /Photos/Holidays/2024
-    - source: is-003
-      assignTag: /Photos/Friends/Bob
+  incomingShareId: is-001     # the IncomingShare this maps
+  assignTags: [/Photos/Holidays/2024]
 ```
 
-- Multiple mappings can match a single picture; all matching tags are assigned.
+- All `assignTags` are applied to every picture received via that share.
 - This service is index-based: it looks up pictures by `IncomingShare` id rather than scanning all tags, making it efficient.
-- If the referenced `IncomingShare` is revoked, the mapping produces no pictures and is flagged in the UI.
+- **Brokenness is derived, not stored:** a mapping is broken (and flagged in the UI) when its
+  `IncomingShare` is no longer active (revoked / tombstoned / absent). A broken mapping yields no
+  tags — revocation removes the share's `incoming_share` tags, so the share id is simply absent.
 
 ### 3.3 RuleTaggingService
 
@@ -108,28 +110,37 @@ RuleTaggingService:
       requires: [/Photos]
 ```
 
-### 3.4 SegmentationTaggingService
+### 3.4 SegmentationTaggingService — calendar segmentation
 
-Assigns tags based on capture date ranges.   
+A **partition operator** over `captured_at`: it auto-generates date buckets and drops each picture
+into **exactly one** of them, as a subtag of a single `root_tag`. The user declares an ordered, flat
+list of **bands** (one bucket-per-year here, per-season there, per-decade before that, with custom
+overrides); buckets are produced dynamically as pictures arrive — no hand-authored range per bucket.
+Everything is a pure function of `captured_at` + the static config, so it slots into the per-picture
+evaluator with no population pass.   
 **Trigger labels:** (`incoming-share`, `ingest`, `metadata`, `manual-tag`, `rule-edit`), `segmentation-edit`
 
-```
-SegmentationTaggingService:
-  segments:
-    - name: "Alps trip"
-      dateRange: [2024-08-01, 2024-08-14]
-      assignTag: /Photos/Travel/Alps
-      requires: [/Photos]
-      excludes: [/Images]
-      subSegments:
-        - name: "Hiking days"
-          dateRange: [2024-08-03, 2024-08-07]
-          assignTag: /Photos/Travel/Alps/Hiking
+```jsonc
+SegmentationTaggingService:           // config = SegmentationConfig
+  root_tag: Photos.Travel
+  catch_all: { name: Undated, include_undated: true }
+  bands:                              // ordered; first covering band wins
+    - { from: 2015-08-01, to: 2016-08-01, template: "School_year_15_16" }
+    - { from: 2020-01-01, to: null,       template: "{season}_{year}" }
+    - { from: 2000-01-01, to: 2020-01-01, template: "{year}" }
 ```
 
-- Subsegments inherit the parent's `requires`/ `excludes` and assign their tag in addition to the parent's.
-- **Overlap rule:** if a picture falls in two overlapping segments at the same depth, all matching tags are assigned. Overlapping same-depth segments
-  emit a validation warning.
+- **First covering band wins:** for a picture, the first band whose half-open `[from, to)` range
+  contains `captured_at` renders its tag; no other band is consulted. A picture therefore receives
+  **at most one** segment tag from a service (the §1 overlap concern is structurally impossible).
+- The `template` renders the path under `root_tag` from placeholders (`{year}`, `{month}`,
+  `{season}`, `{quarter}`, `{week}`, `{day}`, `{weekday}`, `{daypart}`, `{iso_year}`) with per-part
+  `stride`/`format` and a band `offset`. A higher-precedence band overrides (literal template) or
+  subdivides (`{year}.{month}`) a broader one.
+- Data-derived boundaries (trip/event clustering by capture-time gaps or GPS) are **out of scope** —
+  reserved for a future clustering service type.
+
+Full model, grammar, validation, and worked examples: `doc/features/20_calendar_segmentation.md`.
 
 ### 3.5 Tag removal
 

@@ -95,9 +95,20 @@
   owned picture comes back `duplicate: true` (no S3 slot) with the initial tags landed on the existing picture, a trashed match restored, and
   identical
   files within one batch collapsed to a single slot. The upload dialog computes the hash up front and shows an amber check for deduplicated files.
+- [~] **Calendar segmentation & unified service config** — _Backend (done):_ repurposed the
+  `SegmentationTaggingService` into a calendar **partition operator** (`domain::segmentation`: a flat,
+  ordered band list resolving `captured_at` → one tag under a `root_tag`, first-covering-band-wins,
+  with `{year}/{month}/{season}/...` templates, `stride`/`format`/`offset`). Folded all three service
+  types into a single `tagging_services.config` JSONB column (child tables dropped, migration 0006),
+  with one validation/evaluation hub (`domain::tagging::ServiceConfig`) and the predicate engine split
+  into `domain::predicate`. `shared_tag_mapping` is one service per incoming share with **derived**
+  brokenness. **Uniform editing**: create takes a `config`; `PUT /tagging-services/{id}/config`
+  replaces it — no per-rule/segment/mapping sub-resources or reorder endpoints (array order = stored
+  order). _Frontend (todo):_ two-pane tagging view + band-list segment editor with timeline preview.
+  See `doc/features/20_calendar_segmentation.md`.
 - [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
 - [ ] **Federation robustness** — do not fail list pictures with 500 when the inbound picture remote presign fails, token refresh schedule, retry
-  logic, presigned URL caching for remote pictures.
+  logic, presigned URL caching for remote pictures (either use or remove the `federation_messages` table).
 
 ## To-do for v1.0
 
@@ -111,10 +122,6 @@
   the manual twin). Schema already in 001 (via the trash migration). **Frontend:** copy/"rescue"
   action in the selection panel + lightbox, owner-deleting grace-banner rescue button, copy-of
   provenance line. See `doc/features/11_physical_copy_and_dedup.md`.
-- [x] **Unified routine framework** — one generic `Routine` runtime (`infra/routine.rs`) with
-  recurrent/startup/manual triggers and per-key debounce/coalesce/rerun, replacing the four
-  hand-rolled mechanisms (pipeline waker + per-user scheduler, recurring `Scheduler`, in-process
-  `TaskQueue`, exif-drain waker). Routines: pipeline, exif drain, job watchdog/cleanup, purge sweep,
   tag rename, unannounce. See `doc/features/17_unified_routine_framework.md`.
 - [ ] **Storage quotas** — per-user storage quotas, webdav quota properties in PROPFIND. Allow resolver to update quotas (for smart-resolver
 - [ ] **Registration rules** – open registration vs invite-only (requires an invite code/link).
@@ -132,10 +139,3 @@
   **Tier 2 (todo):** a `transcode` worker job (ffmpeg) producing a web-friendly MP4 derivative +
   poster-frame thumbnail for non-decodable uploads (`.mov`/HEVC, `.avi`, `.mkv`). **Tier 3 (later):**
   HLS adaptive streaming (Vidstack already supports it). See `doc/05_FRONTEND_ARCHITECTURE.md §9`.
-- [x] **Video metadata & thumbnails** — `gen_thumbnail` extracts video container metadata via ffprobe
-  (capture date, GPS ISO 6709, make/model, duration/codecs/frame-rate into the `exif_data` JSONB) and
-  grabs a frame via ffmpeg to feed the existing small/medium/large WebP pipeline. New
-  `imaging/video.rs` + `MIME_TYPES_VIDEO`; ffmpeg added to the worker image/flake. Video EXIF edits
-  are DB-only (`unsupported` sync — no container write-back). **Frontend:** play badge on the grid
-  thumbnail (`PhotoCard`), thumbnail poster in the details panel, and a read-only media-info block
-  (duration/codecs/fps) replacing the photographic-only EXIF rows in the editor.

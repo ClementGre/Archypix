@@ -4,6 +4,8 @@ pub mod hierarchy;
 pub mod job;
 pub mod picture;
 pub mod pipeline;
+pub mod predicate;
+pub mod segmentation;
 pub mod share;
 pub mod tag;
 pub mod tagging;

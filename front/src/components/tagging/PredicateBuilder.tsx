@@ -487,7 +487,7 @@ function CondValue({
         case 'regex':
             return <TextVal value={cond.value} onChange={(v) => onChange({value: v})}/>
         case 'year':
-            return <NumVal step="1" value={cond.value} onChange={(v) => onChange({value: v})} placeholder="2024" width="w-20"/>
+            return <NumVal step="1" value={cond.value} onChange={(v) => onChange({value: v})} placeholder="2024" width="w-28"/>
         case 'month':
             return (
                 <Select value={cond.value ?? '1'} onValueChange={(v) => onChange({value: v})}>
@@ -537,7 +537,7 @@ function NumVal({
                     onChange,
                     step,
                     placeholder,
-                    width = 'w-24',
+                    width = 'w-28',
                 }: {
     value: string | undefined
     onChange: (v: string) => void

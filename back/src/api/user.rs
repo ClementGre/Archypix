@@ -10,7 +10,7 @@ mod users;
 
 use crate::state::AppState;
 use axum::Router;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{get, patch, post, put};
 
 pub fn auth_routes() -> Router<AppState> {
     Router::new()
@@ -91,32 +91,8 @@ pub fn authenticated_routes() -> Router<AppState> {
                 .delete(tagging_services::delete_service),
         )
         .route(
-            "/tagging-services/{id}/mappings",
-            post(tagging_services::add_mapping),
-        )
-        .route(
-            "/tagging-services/{id}/mappings/{rule_id}",
-            delete(tagging_services::delete_mapping),
-        )
-        .route(
-            "/tagging-services/{id}/rules",
-            post(tagging_services::add_rule),
-        )
-        .route(
-            "/tagging-services/{id}/rules/reorder",
-            post(tagging_services::reorder_rules),
-        )
-        .route(
-            "/tagging-services/{id}/rules/{rule_id}",
-            patch(tagging_services::update_rule).delete(tagging_services::delete_rule),
-        )
-        .route(
-            "/tagging-services/{id}/segments",
-            post(tagging_services::add_segment),
-        )
-        .route(
-            "/tagging-services/{id}/segments/{segment_id}",
-            delete(tagging_services::delete_segment),
+            "/tagging-services/{id}/config",
+            put(tagging_services::replace_config),
         )
         .route(
             "/hierarchies",
