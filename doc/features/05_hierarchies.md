@@ -133,6 +133,12 @@ Mirrors the tag subtree under `tagRoot`. Keeps the collapse/exclude controls.
 
 Validation: every `collapsed`/`exclude` entry must be `<@ tagRoot`.
 
+> **Extended in [`18_hierarchy_improvements.md`](18_hierarchy_improvements.md) §7:** a mirror
+> gains `maxDepth` (cap directory generation N levels below `tagRoot`) + `deeperMode`
+> (`collapse|exclude` for pictures below the cut), and `exclude` entries may now be **foreign**
+> to `tagRoot` (a pure picture-membership cut, no directory effect); `collapsed` stays
+> `<@ tagRoot`.
+
 ### 4.4 `kind: "query"`
 
 Explicit predicate; may nest.
@@ -161,6 +167,24 @@ Pure container — no predicate, no direct pictures, read-only.
 { "id": "n_albums", "kind": "static", "name": "Albums",
   "children": [ /* Node[] */ ] }
 ```
+
+### 4.6bis `kind: "drop"` (feature 18)
+
+A write-only inbox: always shown, lists nothing, and applies a fixed `onAdd` op-list to every
+upload. Always writable (ignores `writeBackEnabled` and the master switch). Full spec:
+[`18_hierarchy_improvements.md`](18_hierarchy_improvements.md) §4.
+
+```jsonc
+{ "id": "n_inbox", "kind": "drop", "name": "Inbox",
+  "onAdd": [ { "op": "assign", "path": "Inbox" } ] }
+```
+
+### 4.7 Per-node `writeBackEnabled` (feature 18)
+
+Every node gains an optional `writeBackEnabled: bool | null` (`null` = inherit the nearest
+explicit ancestor, root seed = the master switch). The master switch stays a hard ceiling. See
+[`18_hierarchy_improvements.md`](18_hierarchy_improvements.md) §5. `version` is bumped to `2`;
+v1 blobs deserialize forward unchanged.
 
 ### 4.6 Changes vs. the current schema default
 
@@ -377,6 +401,12 @@ runtime write failure for `singleBranch`.
 
 ### 7.5 Writability matrix
 
+> **Superseded by [`18_hierarchy_improvements.md`](18_hierarchy_improvements.md) §5.2.**
+> Write-back became a per-node tri-state (`writeBackEnabled: inherit|on|off`) under the
+> hierarchy master switch (still a hard ceiling), the `drop` inbox kind was added (always
+> writable, even master-off), and `matchUntagged` queries may now carry a (free-form) op-list.
+> The table below is the original v1 model.
+
 | Node kind                     | add / copy / move-in / singleBranch delete | fullDelete            |
 |-------------------------------|--------------------------------------------|-----------------------|
 | `mirror`                      | writable (implicit op-list)                | allowed               |
@@ -385,7 +415,8 @@ runtime write failure for `singleBranch`.
 | `query` `matchUntagged`       | read-only (`403`)                          | allowed               |
 | `static`                      | read-only (`403`)                          | n/a (no direct files) |
 
-`config.writeBack: false` forces the entire hierarchy read-only (fullDelete still allowed).
+`config.writeBack: false` forces the entire hierarchy read-only (fullDelete still allowed)
+— **except `drop` nodes** (feature 18 §5.4).
 
 ## 8. Naming strategy
 

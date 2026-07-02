@@ -211,12 +211,13 @@ export function HierarchyEditor({id}: { id: string }) {
                                     <h2 className="text-sm font-medium">Directories</h2>
                                     <p className="text-xs text-muted-foreground">
                                         Each node renders to a directory. Mirror expands a tag subtree; query filters by a
-                                        predicate and may nest; static is a plain container.
+                                        predicate and may nest; static is a plain container; drop is a write-only inbox.
                                     </p>
                                 </div>
                                 <NodeListEditor
                                     nodes={draft.config.nodes}
                                     onChange={(nodes) => setConfig({nodes})}
+                                    wb={{master: draft.config.writeBack, inherited: true}}
                                 />
                             </section>
                         </>

@@ -171,6 +171,12 @@ The `config` is an ordered tree of **nodes**, each rendering to a directory. Thr
   `match: all | any` combines a flat `include` list; `exclude` rejects; `matchUntagged` selects
   pictures with no stored tag of any source. A node is writable iff it declares a `writeBack` op-list.
 - **`static`** — a pure container (no predicate, no direct pictures).
+- **`drop`** — a write-only inbox (feature 18): always shown, lists nothing, applies a fixed
+  `onAdd` op-list to every upload; writable even when the master switch is off.
+
+Write-back is a per-node tri-state (`writeBackEnabled: inherit | on | off`) under the
+hierarchy-wide master switch (a hard ceiling), and a `mirror` can cap its depth (`maxDepth`) and
+exclude foreign tags — see [`doc/features/18_hierarchy_improvements.md`](features/18_hierarchy_improvements.md).
 
 ```jsonc
 {

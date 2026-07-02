@@ -418,10 +418,19 @@ impl<'a> Vfs<'a> {
             let Some(anc) = self.dir(&segments[..i]) else {
                 continue;
             };
-            let base = anc.mirror_tag.as_ref().ok_or_else(|| {
-                AppError::Forbidden("cannot create directories outside a mirror node".into())
-            })?;
-            if !anc.writable {
+            // The base tag + its writability: a `mirror` directory extends its own tag; a
+            // container hoisting a `keepDir=false` mirror (root/static/query) maps a brand-new
+            // child directory to that mirror's tagRoot (feature 18 §11).
+            let (base, writable) = if let Some(t) = anc.mirror_tag.as_ref() {
+                (t.clone(), anc.writable)
+            } else if let Some((t, w)) = anc.new_child_mirror.as_ref() {
+                (t.clone(), *w)
+            } else {
+                return Err(AppError::Forbidden(
+                    "cannot create directories outside a mirror node".into(),
+                ));
+            };
+            if !writable {
                 return Err(AppError::Forbidden(
                     "this part of the hierarchy is read-only".into(),
                 ));
@@ -487,7 +496,15 @@ impl<'a> Vfs<'a> {
         tracing::Span::current().record("picture_id", tracing::field::display(pid));
         let (parent, _) = split_last(segments)?;
         let dir = self.dir(parent).ok_or(AppError::NotFound)?;
-        match dir.safe_delete_mode {
+        // safeDeleteMode is only meaningful when the directory is effectively writable (feature
+        // 18 §5.3): a read-only directory has no tag to single-branch-remove, so delete is always
+        // a fullDelete (trash).
+        let mode = if dir.writable {
+            dir.safe_delete_mode
+        } else {
+            SafeDeleteMode::FullDelete
+        };
+        match mode {
             SafeDeleteMode::FullDelete => {
                 trace!("vfs delete: fullDelete (trash picture)");
                 // Trash (received pictures too — local deleted_at only).
@@ -578,6 +595,14 @@ impl<'a> Vfs<'a> {
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
         if self.dir(segments).is_some() || self.is_pending_dir(segments).await? {
             return Err(AppError::Conflict("directory already exists".into()));
+        }
+        // A drop inbox is a leaf — MKCOL inside it is not allowed (feature 18 §4).
+        if let Some((_, parent)) = segments.split_last() {
+            if self.dir(parent).is_some_and(|d| d.always_visible) {
+                return Err(AppError::MethodNotAllowed(
+                    "cannot create a directory inside a drop inbox".into(),
+                ));
+            }
         }
         match self.resolve_path(segments)? {
             PathResolution::Existing(_) => {

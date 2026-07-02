@@ -4,22 +4,73 @@ import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
+import {NumberInput} from '@/components/ui/number-input'
 import {Switch} from '@/components/ui/switch'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {cn, TagPath} from '@/lib/utils'
-import type {HierarchyNode, MirrorNode, NamingStrategy, NodeKind, QueryNode, SafeDeleteMode, StaticNode,} from '@/lib/types'
+import type {
+    DeeperMode,
+    DropNode,
+    HierarchyNode,
+    MirrorNode,
+    NamingStrategy,
+    NodeKind,
+    QueryNode,
+    SafeDeleteMode,
+    StaticNode,
+    WriteBackOp,
+} from '@/lib/types'
 import {TagListField} from './TagListField'
 import {WriteBackEditor} from './WriteBackEditor'
-import {KIND_COLOR, KIND_HINT, KIND_LABEL, makeNode, NAMING_OPTIONS, nodeDisplayName, SAFE_DELETE_OPTIONS,} from './hierarchyUtils'
+import {
+    effectiveWriteBack,
+    KIND_COLOR,
+    KIND_HINT,
+    KIND_LABEL,
+    makeNode,
+    NAMING_OPTIONS,
+    nodeDisplayName,
+    SAFE_DELETE_OPTIONS,
+} from './hierarchyUtils'
 
 const INHERIT = '__inherit__'
 
-/** Per-node naming / safe-delete overrides (inherit from the hierarchy default by default). */
-function CommonAdvanced<T extends HierarchyNode>({node, onChange}: { node: T; onChange: (n: T) => void }) {
+/** Write-back context threaded down the tree: the master switch and the parent chain's effective value. */
+interface WbCtx {
+    master: boolean
+    inherited: boolean
+}
+
+/** The tri-state value the write-back Select shows for a node. */
+function wbSelectValue(v: boolean | null | undefined): string {
+    if (v === true) return 'on'
+    if (v === false) return 'off'
+    return INHERIT
+}
+
+/**
+ * Per-node write-back tri-state + naming / safe-delete overrides. `wb` carries the master switch
+ * and the inherited effective write-back so the control can label "Inherit (on/off)" and gate the
+ * safe-delete control on the node's effective writability (feature 18 §5.1, §5.3).
+ */
+function CommonAdvanced<T extends HierarchyNode>({
+                                                     node,
+                                                     onChange,
+                                                     wb,
+                                                     isStatic = false,
+                                                 }: {
+    node: T
+    onChange: (n: T) => void
+    wb: WbCtx
+    isStatic?: boolean
+}) {
     const [open, setOpen] = useState(false)
     const set = (patch: Partial<T>) => onChange({...node, ...patch})
+
+    const eff = effectiveWriteBack(wb.master, wb.inherited, node.writeBackEnabled)
+    const inheritLabel = `Inherit (${wb.master && wb.inherited ? 'on' : 'off'})`
 
     return (
         <div>
@@ -33,42 +84,74 @@ function CommonAdvanced<T extends HierarchyNode>({node, onChange}: { node: T; on
                 Advanced
             </Button>
             {open && (
-                <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-3 pt-1">
                     <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Naming</Label>
+                        <Label className="text-xs text-muted-foreground">Write-back</Label>
                         <Select
-                            value={node.naming ?? INHERIT}
-                            onValueChange={(v) => set({naming: v === INHERIT ? null : (v as NamingStrategy)} as Partial<T>)}
-                        >
-                            <SelectTrigger className="h-8 text-xs">
-                                <SelectValue/>
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value={INHERIT}>Inherit</SelectItem>
-                                {NAMING_OPTIONS.map((o) => (
-                                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Safe delete</Label>
-                        <Select
-                            value={node.safeDeleteMode ?? INHERIT}
+                            value={wbSelectValue(node.writeBackEnabled)}
+                            disabled={!wb.master}
                             onValueChange={(v) =>
-                                set({safeDeleteMode: v === INHERIT ? null : (v as SafeDeleteMode)} as Partial<T>)
+                                set({
+                                    writeBackEnabled: v === INHERIT ? undefined : v === 'on',
+                                } as Partial<T>)
                             }
                         >
                             <SelectTrigger className="h-8 text-xs">
                                 <SelectValue/>
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value={INHERIT}>Inherit</SelectItem>
-                                {SAFE_DELETE_OPTIONS.map((o) => (
-                                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                                ))}
+                                <SelectItem value={INHERIT}>{inheritLabel}</SelectItem>
+                                <SelectItem value="on">On</SelectItem>
+                                <SelectItem value="off">Off</SelectItem>
                             </SelectContent>
                         </Select>
+                        <p className="text-[11px] text-muted-foreground">
+                            {!wb.master
+                                ? 'Master write-back is off — every directory here is read-only.'
+                                : isStatic
+                                    ? 'Static folders are never written into; this only sets the default for their sub-folders.'
+                                    : 'Overrides write-back for this folder and its sub-folders.'}
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Naming</Label>
+                            <Select
+                                value={node.naming ?? INHERIT}
+                                onValueChange={(v) => set({naming: v === INHERIT ? null : (v as NamingStrategy)} as Partial<T>)}
+                            >
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue/>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={INHERIT}>Inherit</SelectItem>
+                                    {NAMING_OPTIONS.map((o) => (
+                                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Safe delete</Label>
+                            {/* Only meaningful when the folder is writable — a read-only folder always full-deletes (§5.3). */}
+                            <Select
+                                value={eff ? (node.safeDeleteMode ?? INHERIT) : 'fullDelete'}
+                                disabled={!eff}
+                                onValueChange={(v) =>
+                                    set({safeDeleteMode: v === INHERIT ? null : (v as SafeDeleteMode)} as Partial<T>)
+                                }
+                            >
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue/>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={INHERIT}>Inherit</SelectItem>
+                                    {SAFE_DELETE_OPTIONS.map((o) => (
+                                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
                 </div>
             )}
@@ -76,8 +159,14 @@ function CommonAdvanced<T extends HierarchyNode>({node, onChange}: { node: T; on
     )
 }
 
-function MirrorFields({node, onChange}: { node: MirrorNode; onChange: (n: HierarchyNode) => void }) {
+const DEEPER_OPTIONS: { value: DeeperMode; label: string }[] = [
+    {value: 'collapse', label: 'Collapse (roll up to the deepest folder)'},
+    {value: 'exclude', label: 'Exclude (hide deeper pictures)'},
+]
+
+function MirrorFields({node, onChange, wb}: { node: MirrorNode; onChange: (n: HierarchyNode) => void; wb: WbCtx }) {
     const set = (patch: Partial<MirrorNode>) => onChange({...node, ...patch})
+    const maxDepth = node.maxDepth ?? 0
     return (
         <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -122,16 +211,55 @@ function MirrorFields({node, onChange}: { node: MirrorNode; onChange: (n: Hierar
                 emptyHint="None"
             />
             <p className="text-[11px] text-muted-foreground">
-                Collapsed and excluded paths must be under the tag root.
+                Collapsed paths must be under the tag root. Excluded paths may be <em>foreign</em> to it — a foreign
+                tag just hides any picture carrying it, without removing a directory.
             </p>
-            <CommonAdvanced node={node} onChange={onChange}/>
+
+            {/* Depth limit (§7). */}
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Max depth</Label>
+                    <NumberInput
+                        className="h-8"
+                        min={0}
+                        step={1}
+                        value={maxDepth}
+                        onChange={(e) => {
+                            const n = Math.max(0, Math.floor(Number(e.target.value) || 0))
+                            set({maxDepth: n || undefined})
+                        }}
+                    />
+                    <p className="text-[11px] text-muted-foreground">0 = unlimited (levels below the tag root).</p>
+                </div>
+                {maxDepth >= 1 && (
+                    <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Below the limit</Label>
+                        <Select
+                            value={node.deeperMode ?? 'collapse'}
+                            onValueChange={(v) => set({deeperMode: v as DeeperMode})}
+                        >
+                            <SelectTrigger className="h-8 text-xs">
+                                <SelectValue/>
+                            </SelectTrigger>
+                            <SelectContent>
+                                {DEEPER_OPTIONS.map((o) => (
+                                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                )}
+            </div>
+
+            <CommonAdvanced node={node} onChange={onChange} wb={wb}/>
         </div>
     )
 }
 
-function QueryFields({node, onChange, depth}: { node: QueryNode; onChange: (n: HierarchyNode) => void; depth: number }) {
+function QueryFields({node, onChange, depth, wb}: { node: QueryNode; onChange: (n: HierarchyNode) => void; depth: number; wb: WbCtx }) {
     const set = (patch: Partial<QueryNode>) => onChange({...node, ...patch})
     const untagged = !!node.matchUntagged
+    const eff = effectiveWriteBack(wb.master, wb.inherited, node.writeBackEnabled)
     return (
         <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -161,7 +289,9 @@ function QueryFields({node, onChange, depth}: { node: QueryNode; onChange: (n: H
                 <Switch
                     checked={untagged}
                     onCheckedChange={(v) =>
-                        set(v ? {matchUntagged: true, include: [], exclude: [], writeBack: null} : {matchUntagged: false})
+                        // Untagged still requires empty include/exclude, but may now carry a (free-form)
+                        // op-list — so we no longer force writeBack to null here (feature 18 §6).
+                        set(v ? {matchUntagged: true, include: [], exclude: []} : {matchUntagged: false})
                     }
                 />
                 <span>Match untagged pictures only</span>
@@ -183,37 +313,74 @@ function QueryFields({node, onChange, depth}: { node: QueryNode; onChange: (n: H
                         color="red"
                         emptyHint="None"
                     />
-                    <WriteBackEditor node={node} onChange={(wb) => set({writeBack: wb})}/>
                 </>
             )}
+            <WriteBackEditor
+                node={node}
+                untagged={untagged}
+                effectiveEnabled={eff}
+                onChange={(wbOp) => set({writeBack: wbOp})}
+            />
 
-            <CommonAdvanced node={node} onChange={onChange}/>
+            <CommonAdvanced node={node} onChange={onChange} wb={wb}/>
 
             <ChildrenSection
                 label="Sub-folders"
                 children={node.children ?? []}
                 onChange={(children) => set({children: children.length ? children : undefined})}
                 depth={depth}
+                wb={{master: wb.master, inherited: eff}}
             />
         </div>
     )
 }
 
-function StaticFields({node, onChange, depth}: { node: StaticNode; onChange: (n: HierarchyNode) => void; depth: number }) {
+function StaticFields({node, onChange, depth, wb}: { node: StaticNode; onChange: (n: HierarchyNode) => void; depth: number; wb: WbCtx }) {
     const set = (patch: Partial<StaticNode>) => onChange({...node, ...patch})
+    const eff = effectiveWriteBack(wb.master, wb.inherited, node.writeBackEnabled)
     return (
         <div className="space-y-3">
             <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Name</Label>
                 <Input className="h-8" value={node.name} onChange={(e) => set({name: e.target.value})}/>
             </div>
-            <CommonAdvanced node={node} onChange={onChange}/>
+            <CommonAdvanced node={node} onChange={onChange} wb={wb} isStatic/>
             <ChildrenSection
                 label="Sub-folders"
                 children={node.children ?? []}
                 onChange={(children) => set({children: children.length ? children : undefined})}
                 depth={depth}
+                wb={{master: wb.master, inherited: eff}}
             />
+        </div>
+    )
+}
+
+/** Assign-only inbox editor (feature 18 §4). Tags every upload; lists nothing; always writable. */
+function DropFields({node, onChange}: { node: DropNode; onChange: (n: HierarchyNode) => void }) {
+    const set = (patch: Partial<DropNode>) => onChange({...node, ...patch})
+    const assignPaths = node.onAdd.filter((o) => o.op === 'assign').map((o) => o.path)
+    const otherOps = node.onAdd.filter((o) => o.op !== 'assign')
+    const setPaths = (paths: string[]) =>
+        set({onAdd: [...paths.map((path): WriteBackOp => ({op: 'assign', path})), ...otherOps]})
+
+    return (
+        <div className="space-y-3">
+            <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Name</Label>
+                <Input className="h-8" value={node.name} onChange={(e) => set({name: e.target.value})}/>
+            </div>
+            <TagListField
+                label="Assign"
+                values={assignPaths}
+                onChange={setPaths}
+                color="emerald"
+                emptyHint="No tags — uploads land untagged"
+            />
+            <p className="text-[11px] text-muted-foreground">
+                Every uploaded picture gets these tags. The folder lists nothing and is always writable — even when
+                the hierarchy master write-back switch is off.
+            </p>
         </div>
     )
 }
@@ -223,16 +390,18 @@ function ChildrenSection({
                              children,
                              onChange,
                              depth,
+                             wb,
                          }: {
     label: string
     children: HierarchyNode[]
     onChange: (nodes: HierarchyNode[]) => void
     depth: number
+    wb: WbCtx
 }) {
     return (
         <div className="space-y-2 border-l-2 border-border/60 pl-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-            <NodeListEditor nodes={children} onChange={onChange} depth={depth + 1}/>
+            <NodeListEditor nodes={children} onChange={onChange} depth={depth + 1} wb={wb}/>
         </div>
     )
 }
@@ -246,6 +415,7 @@ function NodeEditor({
                         canMoveUp,
                         canMoveDown,
                         depth,
+                        wb,
                     }: {
     node: HierarchyNode
     onChange: (n: HierarchyNode) => void
@@ -255,6 +425,7 @@ function NodeEditor({
     canMoveUp: boolean
     canMoveDown: boolean
     depth: number
+    wb: WbCtx
 }) {
     const [expanded, setExpanded] = useState(true)
 
@@ -296,9 +467,10 @@ function NodeEditor({
             {expanded && (
                 <div className="border-t px-3 py-3">
                     <p className="mb-3 text-xs text-muted-foreground">{KIND_HINT[node.kind]}</p>
-                    {node.kind === 'mirror' && <MirrorFields node={node} onChange={onChange}/>}
-                    {node.kind === 'query' && <QueryFields node={node} onChange={onChange} depth={depth}/>}
-                    {node.kind === 'static' && <StaticFields node={node} onChange={onChange} depth={depth}/>}
+                    {node.kind === 'mirror' && <MirrorFields node={node} onChange={onChange} wb={wb}/>}
+                    {node.kind === 'query' && <QueryFields node={node} onChange={onChange} depth={depth} wb={wb}/>}
+                    {node.kind === 'static' && <StaticFields node={node} onChange={onChange} depth={depth} wb={wb}/>}
+                    {node.kind === 'drop' && <DropFields node={node} onChange={onChange}/>}
                 </div>
             )}
         </div>
@@ -310,10 +482,12 @@ export function NodeListEditor({
                                    nodes,
                                    onChange,
                                    depth = 0,
+                                   wb,
                                }: {
     nodes: HierarchyNode[]
     onChange: (nodes: HierarchyNode[]) => void
     depth?: number
+    wb: WbCtx
 }) {
     const replaceAt = (i: number, n: HierarchyNode) => onChange(nodes.map((x, idx) => (idx === i ? n : x)))
     const removeAt = (i: number) => onChange(nodes.filter((_, idx) => idx !== i))
@@ -333,6 +507,7 @@ export function NodeListEditor({
                     key={node.id}
                     node={node}
                     depth={depth}
+                    wb={wb}
                     onChange={(n) => replaceAt(i, n)}
                     onRemove={() => removeAt(i)}
                     onMoveUp={() => move(i, -1)}
@@ -350,7 +525,7 @@ export function NodeListEditor({
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-64">
-                    {(['mirror', 'query', 'static'] as NodeKind[]).map((kind) => (
+                    {(['mirror', 'query', 'static', 'drop'] as NodeKind[]).map((kind) => (
                         <DropdownMenuItem key={kind} onClick={() => add(kind)} className="flex-col items-start gap-0.5">
                             <span className="font-medium">{KIND_LABEL[kind]}</span>
                             <span className="text-xs text-muted-foreground">{KIND_HINT[kind]}</span>

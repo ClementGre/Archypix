@@ -21,6 +21,8 @@ pub enum AppError {
     Conflict(String),
     #[error("Forbidden: {0}")]
     Forbidden(String),
+    #[error("Method not allowed: {0}")]
+    MethodNotAllowed(String),
     #[error("Payload too large: {0}")]
     PayloadTooLarge(String),
     #[error("Too many requests: {0}")]
@@ -37,6 +39,7 @@ impl IntoResponse for AppError {
             AppError::DatabaseError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+            AppError::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
         };

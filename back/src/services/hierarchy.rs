@@ -9,8 +9,8 @@
 
 use crate::clients::federation::FederationClient;
 use crate::domain::hierarchy::{
-    HierarchyConfig, MatchMode, NamingStrategy, NodeKind, SafeDeleteMode, TagOp, TagOpKind,
-    TagPredicate, WriteBack,
+    DeeperMode, HierarchyConfig, MatchMode, NamingStrategy, NodeKind, SafeDeleteMode, TagOp,
+    TagOpKind, TagPredicate, WriteBack,
 };
 use crate::domain::tag::TagPath;
 use crate::infra::config::Config;
@@ -39,10 +39,15 @@ pub struct ResolvedDir {
     pub safe_delete_mode: SafeDeleteMode,
     #[allow(dead_code)]
     pub naming: NamingStrategy,
-    /// Direct-files predicate (`P(D) ∧ ⋀¬own(childᵢ)`). `None` for `static` (no direct files).
+    /// Direct-files predicate (`P(D) ∧ ⋀¬own(childᵢ)`). `None` for `static`/`drop` (no direct
+    /// files).
     pub direct: Option<TagPredicate>,
-    /// Subtree predicate, for counts / empty-dir hiding. `None` for `static` (recurse children).
+    /// Subtree predicate, for counts / empty-dir hiding. `None` for `static` (recurse children)
+    /// and `drop` (always shown, see [`ResolvedDir::always_visible`]).
     pub subtree: Option<TagPredicate>,
+    /// Exempt from empty-directory hiding (feature 18 §4) — a `drop` inbox is always listed even
+    /// though it surfaces no pictures.
+    pub always_visible: bool,
     /// The membership term the parent subtracts as `own(child)`. `None` for `static`.
     own_for_parent: Option<TagPredicate>,
     /// Effective write-back op-list for this directory (06_webdav.md §7). `None` ⇒ read-only.
@@ -53,6 +58,11 @@ pub struct ResolvedDir {
     /// for `query`/`static`/root. The WebDAV write layer uses this to extend the mirror with a
     /// brand-new sub-path — appending the new segments as deeper tag labels (06_webdav.md §9).
     pub mirror_tag: Option<String>,
+    /// For a **container** directory (root/`static`/`query`) that hoists a `keepDir=false`
+    /// `mirror` child's expansion into its own level: the mirror's `(tagRoot, writable)`, so a
+    /// brand-new child directory created here maps to that mirror (feature 18 §11 — the first
+    /// hoisted mirror wins). `None` when the container has no hoisted mirror.
+    pub new_child_mirror: Option<(String, bool)>,
     pub children: Vec<ResolvedDir>,
 }
 
@@ -72,6 +82,7 @@ pub fn resolve(config: &HierarchyConfig, distinct_paths: &[String]) -> ResolvedD
         distinct_paths,
         &[],
         config.write_back,
+        true, // root seed for the tri-state write-back inheritance (feature 18 §5.1)
         config.safe_delete_mode,
         config.naming,
     );
@@ -87,18 +98,46 @@ pub fn resolve(config: &HierarchyConfig, distinct_paths: &[String]) -> ResolvedD
         naming: config.naming,
         direct: None,
         subtree: None,
+        always_visible: false,
         own_for_parent: None,
         write_back: None,
         mirror_tag: None,
+        new_child_mirror: first_hoisted_mirror(&config.nodes, config.write_back, true),
         children: roots,
     }
 }
 
+/// The first `keepDir=false` `mirror` among `nodes` (its expansion is hoisted into the container's
+/// level, so a brand-new child directory of the container maps to it) with its effective
+/// writability — feature 18 §11. `master`/`inherited` resolve the mirror's `writeBackEnabled`.
+fn first_hoisted_mirror(
+    nodes: &[crate::domain::hierarchy::Node],
+    master: bool,
+    inherited: bool,
+) -> Option<(String, bool)> {
+    nodes.iter().find_map(|node| match &node.kind {
+        NodeKind::Mirror {
+            tag_root,
+            keep_dir: false,
+            ..
+        } => {
+            let writable = master && node.write_back_enabled.unwrap_or(inherited);
+            Some((tag_root.clone(), writable))
+        }
+        _ => None,
+    })
+}
+
+/// Recursively build directories for `nodes`. `master` is the hierarchy write-back switch (hard
+/// ceiling); `inherited_enabled` is the effective write-back of the parent chain (feature 18
+/// §5.1) — the nearest explicit ancestor `writeBackEnabled`, seeded `true` at the root.
+#[allow(clippy::too_many_arguments)]
 fn build_nodes(
     nodes: &[crate::domain::hierarchy::Node],
     distinct_paths: &[String],
     and_terms: &[TagPredicate],
-    cfg_write_back: bool,
+    master: bool,
+    inherited_enabled: bool,
     def_sdm: SafeDeleteMode,
     def_naming: NamingStrategy,
 ) -> Vec<ResolvedDir> {
@@ -106,12 +145,18 @@ fn build_nodes(
     for node in nodes {
         let sdm = node.safe_delete_mode.unwrap_or(def_sdm);
         let naming = node.naming.unwrap_or(def_naming);
+        // Effective write-back for this node + the value its subtree inherits.
+        let node_enabled = if master {
+            node.write_back_enabled.unwrap_or(inherited_enabled)
+        } else {
+            false
+        };
         match &node.kind {
             NodeKind::Mirror { .. } => out.extend(expand_mirror(
                 node,
                 distinct_paths,
                 and_terms,
-                cfg_write_back,
+                node_enabled,
                 sdm,
                 naming,
             )),
@@ -143,7 +188,8 @@ fn build_nodes(
                     children,
                     distinct_paths,
                     &child_and,
-                    cfg_write_back,
+                    master,
+                    node_enabled,
                     def_sdm,
                     def_naming,
                 );
@@ -158,7 +204,8 @@ fn build_nodes(
                         .collect(),
                     ..membership.clone()
                 };
-                let writable = cfg_write_back && write_back.is_some() && !*match_untagged;
+                // Untagged nodes may now be writable (feature 18 §6) — free-form op-list.
+                let writable = node_enabled && write_back.is_some();
                 out.push(ResolvedDir {
                     name: node.effective_name().unwrap_or_default(),
                     writable,
@@ -166,18 +213,23 @@ fn build_nodes(
                     naming,
                     direct: Some(direct),
                     subtree: Some(membership),
+                    always_visible: false,
                     own_for_parent: Some(own_base),
                     write_back: if writable { write_back.clone() } else { None },
                     mirror_tag: None,
+                    new_child_mirror: first_hoisted_mirror(children, master, node_enabled),
                     children: child_dirs,
                 });
             }
             NodeKind::Static { children } => {
+                // A static node is never writable itself, but its toggle sets the inherited
+                // default for descendants (feature 18 §5).
                 let child_dirs = build_nodes(
                     children,
                     distinct_paths,
                     and_terms,
-                    cfg_write_back,
+                    master,
+                    node_enabled,
                     def_sdm,
                     def_naming,
                 );
@@ -188,10 +240,33 @@ fn build_nodes(
                     naming,
                     direct: None,
                     subtree: None,
+                    always_visible: false,
                     own_for_parent: None,
                     write_back: None,
                     mirror_tag: None,
+                    new_child_mirror: first_hoisted_mirror(children, master, node_enabled),
                     children: child_dirs,
+                });
+            }
+            NodeKind::Drop { on_add } => {
+                // Write-only inbox (feature 18 §4): always shown, lists nothing, always writable
+                // (ignores master + writeBackEnabled), applies the fixed on_add op-list.
+                out.push(ResolvedDir {
+                    name: node.effective_name().unwrap_or_default(),
+                    writable: true,
+                    safe_delete_mode: sdm,
+                    naming,
+                    direct: None,
+                    subtree: None,
+                    always_visible: true,
+                    own_for_parent: None,
+                    write_back: Some(WriteBack {
+                        on_add: on_add.clone(),
+                        on_remove: vec![],
+                    }),
+                    mirror_tag: None,
+                    new_child_mirror: None,
+                    children: vec![],
                 });
             }
         }
@@ -204,30 +279,66 @@ fn expand_mirror(
     node: &crate::domain::hierarchy::Node,
     distinct_paths: &[String],
     and_terms: &[TagPredicate],
-    cfg_write_back: bool,
+    writable: bool,
     sdm: SafeDeleteMode,
     naming: NamingStrategy,
 ) -> Vec<ResolvedDir> {
-    let (tag_root, keep_dir, collapsed, exclude) = match &node.kind {
+    let (tag_root, keep_dir, collapsed, exclude, max_depth, deeper_mode) = match &node.kind {
         NodeKind::Mirror {
             tag_root,
             keep_dir,
             collapsed,
             exclude,
+            max_depth,
+            deeper_mode,
         } => (
             tag_root.clone(),
             *keep_dir,
             collapsed.clone(),
             exclude.clone(),
+            *max_depth,
+            *deeper_mode,
         ),
         _ => return vec![],
     };
     let root_depth = depth_of(&tag_root);
 
-    // Paths under tagRoot (inclusive), minus excluded subtrees.
+    // Split excludes (feature 18 §7.3): sub-tag excludes (`<@ tagRoot`) prune directories AND
+    // pictures; foreign excludes are a pure picture-membership cut applied to every directory.
+    let (mut sub_excludes, foreign_excludes): (Vec<String>, Vec<String>) = exclude
+        .into_iter()
+        .partition(|er| under_or_eq(&tag_root, er));
+    let mut collapsed = collapsed;
+
+    // maxDepth (§7.1–7.2): every tag path deeper than the cut folds at its level-(maxDepth+1)
+    // ancestor, which we inject as a synthetic collapsed (roll-up) or excluded (drop) root —
+    // reusing the existing machinery so directory generation naturally stops at the cut.
+    if max_depth >= 1 {
+        let cut_depth = root_depth + max_depth as usize;
+        let cut_roots: HashSet<String> = distinct_paths
+            .iter()
+            .filter(|p| {
+                under_or_eq(&tag_root, p)
+                    && !sub_excludes.iter().any(|er| under_or_eq(er, p))
+                    && depth_of(p) > cut_depth
+            })
+            .map(|p| {
+                p.split('.')
+                    .take(cut_depth + 1)
+                    .collect::<Vec<_>>()
+                    .join(".")
+            })
+            .collect();
+        match deeper_mode {
+            DeeperMode::Collapse => collapsed.extend(cut_roots),
+            DeeperMode::Exclude => sub_excludes.extend(cut_roots),
+        }
+    }
+
+    // Paths under tagRoot (inclusive), minus sub-tag-excluded subtrees.
     let relevant: Vec<&String> = distinct_paths
         .iter()
-        .filter(|p| under_or_eq(&tag_root, p) && !exclude.iter().any(|er| under_or_eq(er, p)))
+        .filter(|p| under_or_eq(&tag_root, p) && !sub_excludes.iter().any(|er| under_or_eq(er, p)))
         .collect();
 
     // Directory paths: every prefix at or below tagRoot depth, not inside a collapsed subtree.
@@ -246,7 +357,7 @@ fn expand_mirror(
     // Collapsed roll-up arms: each collapsed root's pictures bubble to its nearest enabled ancestor.
     let mut collapsed_arms: HashMap<String, Vec<String>> = HashMap::new();
     for cr in &collapsed {
-        if !under_or_eq(&tag_root, cr) || exclude.iter().any(|er| under_or_eq(er, cr)) {
+        if !under_or_eq(&tag_root, cr) || sub_excludes.iter().any(|er| under_or_eq(er, cr)) {
             continue;
         }
         if !relevant.iter().any(|p| under_or_eq(cr, p)) {
@@ -267,9 +378,10 @@ fn expand_mirror(
     let ctx = MirrorCtx {
         dir_paths,
         collapsed_arms,
-        exclude_roots: exclude,
+        sub_excludes,
+        foreign_excludes,
         and_terms: and_terms.to_vec(),
-        cfg_write_back,
+        writable,
         sdm,
         naming,
     };
@@ -290,9 +402,12 @@ fn expand_mirror(
 struct MirrorCtx {
     dir_paths: HashSet<String>,
     collapsed_arms: HashMap<String, Vec<String>>,
-    exclude_roots: Vec<String>,
+    /// Sub-tag excludes (`<@ tagRoot`) — prune the subtree; applied to the `subtree` predicate.
+    sub_excludes: Vec<String>,
+    /// Foreign excludes (not under tagRoot) — a picture-membership cut on every directory.
+    foreign_excludes: Vec<String>,
     and_terms: Vec<TagPredicate>,
-    cfg_write_back: bool,
+    writable: bool,
     sdm: SafeDeleteMode,
     naming: NamingStrategy,
 }
@@ -315,6 +430,23 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
         .map(|c| build_mirror_dir(&c, None, ctx))
         .collect();
 
+    // Membership-cut excludes for this directory:
+    //   - foreign excludes (§7.3): reject any picture carrying one, on every mirror directory;
+    //   - sub-tag excludes that fall *within this directory's subtree*: otherwise a picture that
+    //     independently carries the exact directory tag (e.g. a `rule`/`segment` `Photos` row) would
+    //     leak into the ancestor directory even though it also carries the excluded `Photos.Test`.
+    //     Sibling-branch excludes are not added here (a picture keeps showing under its other branch).
+    let mut cut: Vec<TagPath> = ctx
+        .foreign_excludes
+        .iter()
+        .map(|s| TagPath::from_ltree(s.clone()))
+        .collect();
+    for e in &ctx.sub_excludes {
+        if under_or_eq(path, e) {
+            cut.push(TagPath::from_ltree(e.clone()));
+        }
+    }
+
     // Membership for direct files: exact T plus any collapsed subtrees rolled into this dir.
     let mut include: Vec<TagPath> = Vec::new();
     if let Some(arms) = ctx.collapsed_arms.get(path) {
@@ -324,6 +456,7 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
         exact: vec![TagPath::from_ltree(path.to_string())],
         include,
         match_all: false, // exact T OR collapsed arms
+        exclude: cut,
         and_terms: ctx.and_terms.clone(),
         ..TagPredicate::all()
     };
@@ -334,21 +467,27 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
             .collect(),
         ..own.clone()
     };
-    // Subtree: everything under T (inclusive), minus excluded subtrees.
+    // Subtree: everything under T (inclusive), minus excluded subtrees (sub-tag + foreign).
+    let mut subtree_exclude: Vec<TagPath> = ctx
+        .sub_excludes
+        .iter()
+        .map(|s| TagPath::from_ltree(s.clone()))
+        .collect();
+    subtree_exclude.extend(
+        ctx.foreign_excludes
+            .iter()
+            .map(|s| TagPath::from_ltree(s.clone())),
+    );
     let subtree = TagPredicate {
         include: vec![TagPath::from_ltree(path.to_string())],
         match_all: true,
-        exclude: ctx
-            .exclude_roots
-            .iter()
-            .map(|s| TagPath::from_ltree(s.clone()))
-            .collect(),
+        exclude: subtree_exclude,
         and_terms: ctx.and_terms.clone(),
         ..TagPredicate::all()
     };
     let label = path.rsplit('.').next().unwrap_or(path).to_string();
     // Mirror write-back is implicit: assign/remove the directory's own tag (§7.1).
-    let write_back = if ctx.cfg_write_back {
+    let write_back = if ctx.writable {
         Some(WriteBack {
             on_add: vec![TagOp {
                 op: TagOpKind::Assign,
@@ -364,11 +503,12 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
     };
     ResolvedDir {
         name: name_override.unwrap_or(label),
-        writable: ctx.cfg_write_back,
+        writable: ctx.writable,
         safe_delete_mode: ctx.sdm,
         naming: ctx.naming,
         direct: Some(direct),
         subtree: Some(subtree),
+        always_visible: false,
         // Parent subtracts membership under this dir's tag (inclusive).
         own_for_parent: Some(TagPredicate {
             include: vec![TagPath::from_ltree(path.to_string())],
@@ -377,6 +517,7 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
         }),
         write_back,
         mirror_tag: Some(path.to_string()),
+        new_child_mirror: None,
         children,
     }
 }
@@ -454,8 +595,9 @@ async fn build_entries(
 ) -> Result<Vec<TreeEntry>, AppError> {
     let mut out = Vec::new();
     for dir in dirs {
-        // Empty-directory hiding only when counts are computed (§5.2).
-        if counts && !dir_nonempty(db, user_id, dir).await? {
+        // Empty-directory hiding only when counts are computed (§5.2). Drop inboxes are always
+        // shown even though they surface no pictures (feature 18 §4).
+        if counts && !dir.always_visible && !dir_nonempty(db, user_id, dir).await? {
             continue;
         }
         let picture_count = if counts {

@@ -35,7 +35,8 @@ domain/
   user.rs / user_settings.rs
   picture.rs        # Picture (exif_data is CameraExif; Picture::full_exif() → FullExif), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
-  hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static), validation, TagPredicate
+  hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static/drop), validation,
+                    #   per-node writeBackEnabled (feature 18 effective_enabled), TagPredicate
   share.rs          # OutgoingShare, IncomingShare
   federation.rs     # FederationMessage, BackendMapping
   job.rs            # Job (includes claim_token), re-exports from archypix-common

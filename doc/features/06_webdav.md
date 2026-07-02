@@ -226,7 +226,7 @@ thumbnails, blurhash, final hash) — identical to the existing upload path.
 | `MOVE` (same dir, rename) | rename                                     | rename `pictures.filename` (naming=`original`); it is a real sync endpoint, not just a view                                         |
 | `COPY`                    | appear in two places                       | target-dir `onAdd` / mirror auto-tag (picture becomes multi-tagged); no byte copy                                                   |
 | `DELETE`                  | per `safeDeleteMode`                       | `singleBranch` → `onRemove` (may `409`, §7.2); `fullDelete` → `deleted_at` (received pictures always local-only)                    |
-| `MKCOL`                   | new directory                              | static/query → `405`; mirror subtree → sidecar (§9)                                                                                 |
+| `MKCOL`                   | new directory                              | static/query → `405`; **drop → `405`** (leaf, feature 18 §4); mirror subtree → sidecar (§9)                                         |
 | `PROPPATCH`               | client sets mtime, etc.                    | accept as no-op (clients need a success)                                                                                            |
 | `LOCK`/`UNLOCK`           | Finder class 2                             | in-memory lock store                                                                                                                |
 
@@ -239,9 +239,18 @@ the directory's own tag (`mirror`), operating on **`manual`** tags only. Two har
   `rule`/`segment`/`share_mapping` service still asserts** for that picture (the picture
   would still match after the write). Names the conflicting service. This is the
   "non-manual tag survives" rejection the owner requested.
-- **`403 Forbidden`** on read-only targets per the §7.5 writability matrix of the hierarchy
-  spec (`static`, `query` with `writeBack: null`, `matchUntagged`, or
-  `config.writeBack: false`). `fullDelete` is allowed everywhere (no tag mutation).
+- **`403 Forbidden`** on read-only targets per the writability matrix
+  ([`18_hierarchy_improvements.md`](18_hierarchy_improvements.md) §5.2, superseding the
+  hierarchy spec §7.5): a target is writable when its **effective** write-back is on
+  (per-node `writeBackEnabled` tri-state under the master ceiling) and it carries an op-list.
+  `fullDelete` is allowed everywhere (no tag mutation).
+
+**Feature 18 deltas:** **`drop`** inbox nodes are writable **even when `config.writeBack:
+false`** (the one exemption to the master read-only ceiling); a `PUT`/`COPY`/`MOVE`-in ingests
+or dedupes as usual then applies the drop's fixed `onAdd`. **`matchUntagged`** query nodes may
+now carry a **free-form** op-list (the §7.2-of-05 compliance check is skipped — "untagged" is
+not an include/exclude predicate; a surviving pipeline tag may keep the picture out of the
+directory and can still raise the `409`).
 
 ### 7.3 Versioning on overwrite
 

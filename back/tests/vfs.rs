@@ -8,6 +8,7 @@ mod common;
 
 use archypix_back::domain::user_settings::VersioningMode;
 use archypix_back::infra::config::Config;
+use archypix_back::infra::error::AppError;
 use archypix_back::infra::s3;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::picture_version::PictureVersionRepository;
@@ -1184,4 +1185,119 @@ async fn sidecar_is_stored_listed_read_and_deleted(db: PgPool) {
     assert!(vfs.read_sidecar(&path).await.unwrap().is_none());
     let listed = vfs.list_dir(&seg(&["Photos", "Travel"])).await.unwrap();
     assert!(!listed.iter().any(|e| e.name == ".DS_Store"));
+}
+
+// ── feature 18: drop nodes ────────────────────────────────────────────────────────
+
+/// A hierarchy with a `drop` inbox alongside a read-only mirror; master switch off, so only the
+/// drop is writable (feature 18 §4, §5.4).
+fn drop_config() -> serde_json::Value {
+    serde_json::json!({
+        "writeBack": false,
+        "nodes": [
+            {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true},
+            {"id": "d", "kind": "drop", "name": "Inbox",
+             "onAdd": [{"op": "assign", "path": "Inbox"}]}
+        ]
+    })
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn drop_lists_nothing_but_is_writable(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    // A picture already tagged Inbox must NOT appear in the drop listing.
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"x", "Inbox").await;
+    let h = make_hierarchy(&state.db, user, drop_config()).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let listed = vfs.list_dir(&seg(&["Inbox"])).await.unwrap();
+    assert!(listed.is_empty(), "drop inbox lists nothing");
+
+    let st = vfs.stat(&seg(&["Inbox"])).await.unwrap();
+    assert!(st.is_dir && st.writable);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn put_into_drop_applies_on_add_even_with_master_off(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let h = make_hierarchy(&state.db, user, drop_config()).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let created = put(
+        &vfs,
+        &["Inbox", "new.jpg"],
+        b"dropbytes",
+        Some("image/jpeg"),
+    )
+    .await
+    .unwrap();
+    assert!(created);
+
+    let hash = archypix_common::hash::hash_bytes(&b"dropbytes".to_vec()).unwrap();
+    let pic = PictureRepository::find_owned_by_hash(&state.db, user, &hash, false)
+        .await
+        .unwrap()
+        .expect("new picture");
+    assert_eq!(tags_of(&state.db, user, pic.id).await, vec!["Inbox"]);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn put_into_mirror_with_master_off_is_read_only(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"x", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, drop_config()).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    // The mirror is read-only under master-off: a PUT into it is forbidden.
+    let res = put(
+        &vfs,
+        &["Photos", "Travel", "new.jpg"],
+        b"nope",
+        Some("image/jpeg"),
+    )
+    .await;
+    assert!(matches!(res, Err(AppError::Forbidden(_))));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mkcol_inside_drop_is_method_not_allowed(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let h = make_hierarchy(&state.db, user, drop_config()).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let res = vfs.mkcol(&seg(&["Inbox", "sub"])).await;
+    assert!(matches!(res, Err(AppError::MethodNotAllowed(_))));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn new_top_level_dir_maps_to_hoisted_keep_dir_false_mirror(db: PgPool) {
+    // A keepDir=false mirror at root hoists its children, so a brand-new top-level directory maps
+    // to the mirror's tagRoot (feature 18 §11).
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let cfg = serde_json::json!({
+        "nodes": [
+            {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": false}
+        ]
+    });
+    let h = make_hierarchy(&state.db, user, cfg).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    // MKCOL a new top-level dir, then PUT a file into it → tag Photos.Trips.
+    vfs.mkcol(&seg(&["Trips"])).await.unwrap();
+    let created = put(&vfs, &["Trips", "p.jpg"], b"tripbytes", Some("image/jpeg"))
+        .await
+        .unwrap();
+    assert!(created);
+
+    let hash = archypix_common::hash::hash_bytes(&b"tripbytes".to_vec()).unwrap();
+    let pic = PictureRepository::find_owned_by_hash(&state.db, user, &hash, false)
+        .await
+        .unwrap()
+        .expect("new picture");
+    assert_eq!(tags_of(&state.db, user, pic.id).await, vec!["Photos.Trips"]);
 }

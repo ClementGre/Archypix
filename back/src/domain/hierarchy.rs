@@ -40,6 +40,18 @@ pub enum MatchMode {
     Any,
 }
 
+/// What a `mirror` does with pictures whose deepest tag sits below its `maxDepth` cut
+/// (feature 18 §7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeeperMode {
+    /// Roll the picture up to the deepest allowed directory (the existing collapse roll-up).
+    #[default]
+    Collapse,
+    /// Drop the picture (and any directory below the cut) from the mirror.
+    Exclude,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TagOpKind {
@@ -80,6 +92,12 @@ pub struct Node {
     pub naming: Option<NamingStrategy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_delete_mode: Option<SafeDeleteMode>,
+    /// Per-node write-back tri-state (feature 18 §5). `None` = inherit the nearest explicit
+    /// ancestor (root seed = the hierarchy master switch); `Some(true/false)` overrides for this
+    /// node and its subtree. Inert (ceiling wins) when the master switch is off; ignored on
+    /// `drop` nodes (always writable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_back_enabled: Option<bool>,
     #[serde(flatten)]
     pub kind: NodeKind,
 }
@@ -101,6 +119,13 @@ pub enum NodeKind {
         collapsed: Vec<String>,
         #[serde(default)]
         exclude: Vec<String>,
+        /// Cap directory generation to N tag levels below `tag_root`. `0`/absent = unrestricted
+        /// (feature 18 §7.1).
+        #[serde(default)]
+        max_depth: u32,
+        /// How pictures below the `max_depth` cut are handled (feature 18 §7.2).
+        #[serde(default)]
+        deeper_mode: DeeperMode,
     },
     /// Explicit predicate node; may nest. Effective read predicate = own ∧ all ancestors.
     Query {
@@ -112,7 +137,7 @@ pub enum NodeKind {
         exclude: Vec<String>,
         #[serde(default)]
         match_untagged: bool,
-        /// `None` ⇒ read-only directory.
+        /// `None` ⇒ read-only directory (subject to the effective write-back gate).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         write_back: Option<WriteBack>,
         #[serde(default)]
@@ -123,10 +148,26 @@ pub enum NodeKind {
         #[serde(default)]
         children: Vec<Node>,
     },
+    /// Write-only inbox (feature 18 §4): always shown, lists nothing, and applies a fixed
+    /// `on_add` op-list to every upload. Always writable, even when the master switch is off.
+    Drop {
+        #[serde(default)]
+        on_add: Vec<TagOp>,
+    },
+}
+
+impl NodeKind {
+    /// The authored child nodes, for kinds that carry them (`query`/`static`).
+    pub fn children(&self) -> Option<&[Node]> {
+        match self {
+            NodeKind::Query { children, .. } | NodeKind::Static { children } => Some(children),
+            NodeKind::Mirror { .. } | NodeKind::Drop { .. } => None,
+        }
+    }
 }
 
 fn default_version() -> u32 {
-    1
+    2
 }
 fn default_write_back() -> bool {
     true
@@ -152,7 +193,7 @@ pub struct HierarchyConfig {
 impl Default for HierarchyConfig {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             safe_delete_mode: SafeDeleteMode::default(),
             naming: NamingStrategy::default(),
             write_back: true,
@@ -241,6 +282,31 @@ impl HierarchyConfig {
         let mut seen_ids = std::collections::HashSet::new();
         validate_nodes(&self.nodes, &mut seen_ids)
     }
+
+    /// Resolve effective write-back for the node with `node_id` (feature 18 §5.1): the master
+    /// switch is a hard ceiling; otherwise the nearest explicit `writeBackEnabled` ancestor wins
+    /// (root seed = `true`). Returns `false` for an unknown id. Note: `drop` nodes are writable
+    /// regardless of this — callers special-case them by kind.
+    pub fn effective_enabled(&self, node_id: &str) -> bool {
+        if !self.write_back {
+            return false;
+        }
+        fn walk(nodes: &[Node], target: &str, inherited: bool) -> Option<bool> {
+            for n in nodes {
+                let here = n.write_back_enabled.unwrap_or(inherited);
+                if n.id == target {
+                    return Some(here);
+                }
+                if let Some(children) = n.kind.children() {
+                    if let Some(v) = walk(children, target, here) {
+                        return Some(v);
+                    }
+                }
+            }
+            None
+        }
+        walk(&self.nodes, node_id, true).unwrap_or(false)
+    }
 }
 
 fn validate_nodes(
@@ -281,13 +347,18 @@ fn validate_node(
             ..
         } => {
             let root = parse_path(tag_root)?;
-            for entry in collapsed.iter().chain(exclude.iter()) {
+            // `collapsed` must stay under tagRoot; `exclude` may be foreign now (feature 18 §7.3)
+            // — a foreign exclude is a pure picture-membership cut, so it only needs to parse.
+            for entry in collapsed {
                 let p = parse_path(entry)?;
                 if !(p == root || root.is_ancestor_of(&p)) {
                     return Err(format!(
-                        "mirror collapsed/exclude entry {entry:?} must be under tagRoot {tag_root:?}"
+                        "mirror collapsed entry {entry:?} must be under tagRoot {tag_root:?}"
                     ));
                 }
+            }
+            for entry in exclude {
+                parse_path(entry)?;
             }
         }
         NodeKind::Query {
@@ -301,21 +372,15 @@ fn validate_node(
             for p in include.iter().chain(exclude.iter()) {
                 parse_path(p)?;
             }
-            if *match_untagged {
-                if !include.is_empty() || !exclude.is_empty() {
-                    return Err(format!(
-                        "node {:?}: matchUntagged requires empty include and exclude",
-                        node.id
-                    ));
-                }
-                if write_back.is_some() {
-                    return Err(format!(
-                        "node {:?}: matchUntagged directories are read-only (no writeBack)",
-                        node.id
-                    ));
-                }
+            if *match_untagged && (!include.is_empty() || !exclude.is_empty()) {
+                return Err(format!(
+                    "node {:?}: matchUntagged requires empty include and exclude",
+                    node.id
+                ));
             }
-            if let Some(wb) = write_back {
+            // Untagged write-back is now permitted (feature 18 §6); its op-list is free-form
+            // ("no stored tag" is not an include/exclude predicate, so §7.2 compliance is skipped).
+            if let (Some(wb), false) = (write_back, *match_untagged) {
                 validate_write_back(wb, include, exclude, *match_mode)
                     .map_err(|e| format!("node {:?}: {e}", node.id))?;
             }
@@ -323,6 +388,13 @@ fn validate_node(
         }
         NodeKind::Static { children } => {
             validate_nodes(children, seen_ids)?;
+        }
+        NodeKind::Drop { on_add } => {
+            // A leaf inbox (feature 18 §4): the fixed op-list only needs to parse — no read
+            // predicate to satisfy, so no compliance check.
+            for op in on_add {
+                parse_path(&op.path)?;
+            }
         }
     }
     Ok(())
@@ -614,6 +686,131 @@ mod tests {
                            "onRemove": [{"op": "remove", "path": "A"}]}}
         ]});
         assert!(cfg(json).is_err());
+    }
+
+    // ── feature 18: drop, tri-state write-back, foreign excludes, mirror depth ──────
+
+    #[test]
+    fn default_version_is_2() {
+        let c: HierarchyConfig = serde_json::from_value(serde_json::json!({"nodes": []})).unwrap();
+        assert_eq!(c.version, 2);
+    }
+
+    #[test]
+    fn parses_drop_node() {
+        let json = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "Inbox",
+             "onAdd": [{"op": "assign", "path": "Inbox"}]}
+        ]});
+        let c = cfg(json).unwrap();
+        assert!(matches!(c.nodes[0].kind, NodeKind::Drop { .. }));
+    }
+
+    #[test]
+    fn drop_requires_name_and_valid_on_add() {
+        // Missing name → error (leaf still needs a directory label).
+        let no_name = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "onAdd": [{"op": "assign", "path": "Inbox"}]}
+        ]});
+        assert!(cfg(no_name).is_err());
+        // Invalid tag path in onAdd → error.
+        let bad = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "Inbox", "onAdd": [{"op": "assign", "path": "a b"}]}
+        ]});
+        assert!(cfg(bad).is_err());
+    }
+
+    #[test]
+    fn untagged_query_may_have_write_back() {
+        // Previously rejected; feature 18 §6 allows it (compliance skipped, free-form ops).
+        let json = serde_json::json!({"nodes": [
+            {"id": "u", "kind": "query", "name": "Inbox", "matchUntagged": true,
+             "writeBack": {"onAdd": [{"op": "remove", "path": "Inbox"}],
+                           "onRemove": [{"op": "assign", "path": "Filed"}]}}
+        ]});
+        assert!(cfg(json).is_ok());
+    }
+
+    #[test]
+    fn mirror_allows_foreign_exclude() {
+        let json = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Photos",
+             "exclude": ["Private", "Photos.Outdoor"]}
+        ]});
+        assert!(cfg(json).is_ok());
+    }
+
+    #[test]
+    fn mirror_still_rejects_foreign_collapsed() {
+        let json = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Photos", "collapsed": ["Private"]}
+        ]});
+        assert!(cfg(json).is_err());
+    }
+
+    #[test]
+    fn mirror_parses_max_depth_and_deeper_mode() {
+        let json = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Photos", "maxDepth": 2, "deeperMode": "exclude"}
+        ]});
+        let c = cfg(json).unwrap();
+        match &c.nodes[0].kind {
+            NodeKind::Mirror {
+                max_depth,
+                deeper_mode,
+                ..
+            } => {
+                assert_eq!(*max_depth, 2);
+                assert_eq!(*deeper_mode, DeeperMode::Exclude);
+            }
+            _ => panic!("expected mirror"),
+        }
+    }
+
+    #[test]
+    fn effective_enabled_master_off_is_hard_ceiling() {
+        let json = serde_json::json!({
+            "writeBack": false,
+            "nodes": [
+                {"id": "a", "kind": "static", "name": "A", "writeBackEnabled": true, "children": [
+                    {"id": "b", "kind": "query", "name": "B", "include": ["X"], "writeBackEnabled": true}
+                ]}
+            ]
+        });
+        let c = cfg(json).unwrap();
+        assert!(!c.effective_enabled("a"));
+        assert!(!c.effective_enabled("b"));
+    }
+
+    #[test]
+    fn effective_enabled_nearest_ancestor_wins() {
+        let json = serde_json::json!({
+            "writeBack": true,
+            "nodes": [
+                {"id": "root_off", "kind": "static", "name": "Off", "writeBackEnabled": false,
+                 "children": [
+                    {"id": "mid", "kind": "static", "name": "Mid", "children": [
+                        {"id": "leaf_on", "kind": "query", "name": "On", "include": ["X"],
+                         "writeBackEnabled": true},
+                        {"id": "leaf_inherit", "kind": "query", "name": "Inh", "include": ["Y"]}
+                    ]}
+                ]}
+            ]
+        });
+        let c = cfg(json).unwrap();
+        assert!(!c.effective_enabled("mid")); // inherits the off ancestor
+        assert!(c.effective_enabled("leaf_on")); // explicit override
+        assert!(!c.effective_enabled("leaf_inherit")); // inherits off
+    }
+
+    #[test]
+    fn effective_enabled_root_seed_true() {
+        let json = serde_json::json!({
+            "writeBack": true,
+            "nodes": [{"id": "q", "kind": "query", "name": "Q", "include": ["X"]}]
+        });
+        let c = cfg(json).unwrap();
+        assert!(c.effective_enabled("q"));
     }
 
     #[test]

@@ -333,9 +333,13 @@ grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a loc
 open editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
 name/enabled/Save/Reset/Delete + a small **Braces** JSON-debug button; hierarchy-level settings — naming, safeDeleteMode, write-back master switch —
 then the node tree; edits a local draft committed on Save via `PATCH`, re-validated server-side), `NodeEditor` (mutually-recursive `NodeListEditor` +
-per-node card; add/remove/reorder of `mirror`/`query`/`static` nodes with their kind-specific fields and an Advanced disclosure for per-node
-naming/safeDeleteMode), `WriteBackEditor` (query-node write-back op-lists with a "suggest from predicate" helper — forward-looking, exercised by
-WebDAV), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed), `JsonConfigDialog` (raw `config` textarea; applies to the draft).
+per-node card; add/remove/reorder of `mirror`/`query`/`static`/`drop` nodes with their kind-specific fields and an Advanced disclosure for per-node
+naming/safeDeleteMode and the **write-back tri-state** `inherit|on|off` — feature 18; the master switch + parent chain are threaded down as a `wb`
+context so it labels "Inherit (on/off)", disables under a master-off ceiling, and gates the safe-delete control on the node's effective write-back;
+`mirror` fields include `maxDepth`/`deeperMode` and foreign-tag excludes; `drop` is a name + assign-tags inbox editor), `WriteBackEditor` (query-node
+write-back op-lists with a "suggest from predicate" helper — enabled on `matchUntagged` nodes too with a free-form op-list + the "can't guarantee
+untagged" warning, and an inactive-when-write-back-off note), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed/drop-assign),
+`JsonConfigDialog` (raw `config` textarea; applies to the draft).
 
 **`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions), `MapView` (shared imperative Leaflet map;
 point/bbox/circle modes — in every mode **clicking the map moves the pin / rect / circle centre** there; custom app-styled zoom ±, **re-center on the selection**, my-location, save-favourite and enlarge

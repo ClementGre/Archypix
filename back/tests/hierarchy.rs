@@ -483,3 +483,236 @@ async fn tree_bad_path_is_not_found(db: PgPool) {
         Err(AppError::NotFound)
     ));
 }
+
+// ─── feature 18: drop nodes ───────────────────────────────────────────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn drop_dir_always_shown_empty_and_writable(db: PgPool) {
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+    // A picture exists but the drop dir never lists it.
+    pic_with_tags(&db, user, &["Inbox"]).await;
+
+    let config_json = serde_json::json!({"nodes": [
+        {"id": "d", "kind": "drop", "name": "Inbox", "onAdd": [{"op": "assign", "path": "Inbox"}]}
+    ]});
+    let id = create(&db, user, "H", config_json).await;
+
+    // Shown even with counts on (exempt from empty-dir hiding); empty + writable.
+    let tree = hierarchy::resolve_tree(&db, user, id, "", 1, true)
+        .await
+        .unwrap();
+    assert_eq!(tree.directories.len(), 1);
+    let d = &tree.directories[0];
+    assert_eq!(d.name, "Inbox");
+    assert!(d.writable);
+    assert_eq!(d.child_count, 0);
+    assert_eq!(d.picture_count, Some(0));
+
+    // Browse returns nothing.
+    assert!(browse_ids(&state, user, id, "Inbox").await.is_empty());
+}
+
+// ─── feature 18: mirror maxDepth ──────────────────────────────────────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mirror_max_depth_collapse_rolls_up(db: PgPool) {
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+
+    let deep = pic_with_tags(&db, user, &["Photos.Travel.Alps.Hiking"]).await;
+
+    // maxDepth 1 (one level below Photos): Travel is the deepest allowed dir.
+    let config_json = serde_json::json!({"nodes": [
+        {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true,
+         "maxDepth": 1, "deeperMode": "collapse"}
+    ]});
+    let id = create(&db, user, "H", config_json).await;
+
+    // No directory below Travel.
+    let travel = hierarchy::resolve_tree(&db, user, id, "Photos/Travel", 1, false)
+        .await
+        .unwrap();
+    assert!(travel.directories.is_empty(), "cut below maxDepth");
+    // The deep picture rolls up into Travel.
+    assert!(
+        browse_ids(&state, user, id, "Photos/Travel")
+            .await
+            .contains(&deep)
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mirror_max_depth_exclude_drops_deeper(db: PgPool) {
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+
+    let deep_only = pic_with_tags(&db, user, &["Photos.Travel.Alps.Hiking"]).await;
+    let at_cut = pic_with_tags(&db, user, &["Photos.Travel"]).await;
+
+    let config_json = serde_json::json!({"nodes": [
+        {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true,
+         "maxDepth": 1, "deeperMode": "exclude"}
+    ]});
+    let id = create(&db, user, "H", config_json).await;
+
+    let travel = hierarchy::resolve_tree(&db, user, id, "Photos/Travel", 1, false)
+        .await
+        .unwrap();
+    assert!(travel.directories.is_empty(), "no dir below cut");
+
+    let ids = browse_ids(&state, user, id, "Photos/Travel").await;
+    assert!(ids.contains(&at_cut), "exact-at-cut picture stays");
+    assert!(!ids.contains(&deep_only), "deeper-only picture dropped");
+}
+
+// ─── feature 18: foreign mirror excludes ──────────────────────────────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mirror_foreign_exclude_cuts_pictures_not_dirs(db: PgPool) {
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+
+    let clean = pic_with_tags(&db, user, &["Photos.Travel"]).await;
+    let private = pic_with_tags(&db, user, &["Photos.Travel", "Private"]).await;
+
+    // `Private` is a sibling root, not under Photos → pure membership cut.
+    let config_json = serde_json::json!({"nodes": [
+        {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true,
+         "exclude": ["Private"]}
+    ]});
+    let id = create(&db, user, "H", config_json).await;
+
+    // The Travel directory still exists (foreign exclude has no directory effect).
+    let photos = hierarchy::resolve_tree(&db, user, id, "Photos", 1, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        photos
+            .directories
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Travel"]
+    );
+
+    let ids = browse_ids(&state, user, id, "Photos/Travel").await;
+    assert!(ids.contains(&clean));
+    assert!(
+        !ids.contains(&private),
+        "picture also tagged Private is cut"
+    );
+}
+
+// ─── feature 18: tri-state write-back ─────────────────────────────────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn writability_tri_state_and_master_ceiling(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pw").await;
+    pic_with_tags(&db, user, &["Photos.Travel"]).await;
+
+    // Master on: a static "Locked" (writeBackEnabled=false) makes its mirror child read-only,
+    // but a nested mirror with writeBackEnabled=true is writable again. A drop is always writable.
+    let config_json = serde_json::json!({
+        "writeBack": true,
+        "nodes": [
+            {"id": "locked", "kind": "static", "name": "Locked", "writeBackEnabled": false,
+             "children": [
+                {"id": "ro", "kind": "mirror", "name": "RO", "tagRoot": "Photos", "keepDir": true},
+                {"id": "rw", "kind": "mirror", "name": "RW", "tagRoot": "Photos", "keepDir": true,
+                 "writeBackEnabled": true}
+             ]},
+            {"id": "d", "kind": "drop", "name": "Inbox", "onAdd": [{"op": "assign", "path": "Inbox"}]}
+        ]
+    });
+    let id = create(&db, user, "H", config_json).await;
+
+    let tree = hierarchy::resolve_tree(&db, user, id, "", 2, false)
+        .await
+        .unwrap();
+    let locked = tree
+        .directories
+        .iter()
+        .find(|d| d.name == "Locked")
+        .unwrap();
+    assert!(!locked.writable, "static is never writable");
+    let ro = locked.children.iter().find(|d| d.name == "RO").unwrap();
+    let rw = locked.children.iter().find(|d| d.name == "RW").unwrap();
+    assert!(!ro.writable, "inherits the off ancestor");
+    assert!(rw.writable, "explicit override re-enables");
+    let inbox = tree.directories.iter().find(|d| d.name == "Inbox").unwrap();
+    assert!(inbox.writable, "drop always writable");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn master_off_forces_read_only_except_drop(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pw").await;
+    pic_with_tags(&db, user, &["Photos.Travel"]).await;
+
+    let config_json = serde_json::json!({
+        "writeBack": false,
+        "nodes": [
+            {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos",
+             "writeBackEnabled": true},
+            {"id": "d", "kind": "drop", "name": "Inbox", "onAdd": [{"op": "assign", "path": "Inbox"}]}
+        ]
+    });
+    let id = create(&db, user, "H", config_json).await;
+
+    let tree = hierarchy::resolve_tree(&db, user, id, "", 1, false)
+        .await
+        .unwrap();
+    let travel = tree
+        .directories
+        .iter()
+        .find(|d| d.name == "Travel")
+        .unwrap();
+    assert!(!travel.writable, "master off is a hard ceiling");
+    let inbox = tree.directories.iter().find(|d| d.name == "Inbox").unwrap();
+    assert!(inbox.writable, "drop exempt from master ceiling");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mirror_exclude_cuts_picture_from_ancestor_dir(db: PgPool) {
+    // A mirror `exclude` of a sub-tag must also remove a picture from the excluded tag's *ancestor*
+    // directory, even when the picture independently carries the exact ancestor tag from another
+    // source (a rule/segment `Photos` row) — otherwise it leaks into /Photos despite excluding
+    // /Photos/Test (matches the query-node behaviour). Sibling branches are unaffected.
+    let cfg = config();
+    let state = common::test_app_state(db.clone(), &cfg);
+    let user = common::seed_user(&db, "alice", "pw").await;
+
+    let excluded = pic_with_tags(&db, user, &["Photos.Test"]).await;
+    add_pipeline_tag(&db, excluded, "Photos").await; // exact Photos from a rule
+    let sibling = pic_with_tags(&db, user, &["Photos.Other"]).await;
+    add_pipeline_tag(&db, sibling, "Photos").await; // exact Photos, but no excluded tag
+
+    let mirror = serde_json::json!({"nodes": [
+        {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true,
+         "exclude": ["Photos.Test"]}
+    ]});
+    let hm = create(&db, user, "M", mirror).await;
+    let in_photos = browse_ids(&state, user, hm, "Photos").await;
+    assert!(
+        !in_photos.contains(&excluded),
+        "excluded-tag picture must not leak into /Photos"
+    );
+    assert!(
+        !in_photos.contains(&sibling),
+        "a picture without the excluded tag but with a deeper tag leak into /Photos"
+    );
+
+    // Same picture, query node — was already correct; assert parity.
+    let query = serde_json::json!({"nodes": [
+        {"id": "q", "kind": "query", "name": "Ph", "match": "all", "include": ["Photos"],
+         "exclude": ["Photos.Test"]}
+    ]});
+    let hq = create(&db, user, "Q", query).await;
+    let in_q = browse_ids(&state, user, hq, "Ph").await;
+    assert!(!in_q.contains(&excluded));
+    assert!(in_q.contains(&sibling));
+}

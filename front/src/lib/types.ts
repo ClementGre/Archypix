@@ -179,6 +179,10 @@ export interface PictureFilters {
 
 export type NamingStrategy = 'original' | 'date' | 'id'
 export type SafeDeleteMode = 'singleBranch' | 'fullDelete'
+/** Mirror behaviour for pictures below the `maxDepth` cut (feature 18 §7.2). */
+export type DeeperMode = 'collapse' | 'exclude'
+/** Per-node write-back tri-state (feature 18 §5). `null`/undefined = inherit. */
+export type WriteBackEnabled = boolean | null
 
 export interface WriteBackOp {
     op: 'assign' | 'remove'
@@ -196,14 +200,18 @@ export interface NodeCommon {
     name?: string
     naming?: NamingStrategy | null
     safeDeleteMode?: SafeDeleteMode | null
+    /** Tri-state write-back override; `null`/undefined = inherit nearest explicit ancestor. */
+    writeBackEnabled?: WriteBackEnabled
 }
 
 export interface MirrorNode extends NodeCommon {
     kind: 'mirror'
     tagRoot: string // ltree wire form
     keepDir?: boolean
-    collapsed?: string[]
-    exclude?: string[]
+    collapsed?: string[] // must be under tagRoot
+    exclude?: string[] // may be foreign to tagRoot (pure picture-membership cut)
+    maxDepth?: number // 0/absent = unrestricted; caps levels below tagRoot
+    deeperMode?: DeeperMode // pictures below the cut (default 'collapse')
 }
 
 export interface QueryNode extends NodeCommon {
@@ -223,7 +231,14 @@ export interface StaticNode extends NodeCommon {
     children?: HierarchyNode[]
 }
 
-export type HierarchyNode = MirrorNode | QueryNode | StaticNode
+/** Write-only inbox: always shown, lists nothing, applies `onAdd` to every upload (feature 18 §4). */
+export interface DropNode extends NodeCommon {
+    kind: 'drop'
+    name: string
+    onAdd: WriteBackOp[]
+}
+
+export type HierarchyNode = MirrorNode | QueryNode | StaticNode | DropNode
 
 export type NodeKind = HierarchyNode['kind']
 

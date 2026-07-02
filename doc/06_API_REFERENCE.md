@@ -1341,8 +1341,9 @@ Reject an incoming share. Moves it to `tombstoned` status.
 
 A hierarchy maps a filtered view of the tag graph to a navigable directory tree. It stores **no
 pictures** — every directory resolves to a tag-set predicate and its picture list is derived live.
-The `config` is an ordered tree of nodes (`mirror` / `query` / `static`); see
-`doc/01_GENERAL_SPECIFICATIONS.md §4` and `doc/features/05_hierarchies.md` for the full model.
+The `config` is an ordered tree of nodes (`mirror` / `query` / `static` / `drop`); see
+`doc/01_GENERAL_SPECIFICATIONS.md §4`, `doc/features/05_hierarchies.md`, and
+`doc/features/18_hierarchy_improvements.md` for the full model.
 
 Write operations (move/copy/upload/delete) ship with WebDAV and are **not** part of this API yet;
 the `config` already declares the write-back model so no schema change is needed when WebDAV lands.
@@ -1351,23 +1352,29 @@ the `config` already declares the write-back model so no schema change is needed
 
 ```ts
 interface HierarchyConfig {
-    version: number;                              // schema version (currently 1)
+    version: number;                              // schema version (currently 2; v1 blobs read forward)
     safeDeleteMode: "singleBranch" | "fullDelete"; // hierarchy default
     naming: "original" | "date" | "id";           // hierarchy default (WebDAV file naming)
-    writeBack: boolean;                            // master switch; false ⇒ entire hierarchy read-only
+    writeBack: boolean;                            // master switch (hard ceiling); false ⇒ read-only
     nodes: Node[];                                 // ordered root-level tree
 }
 
-// Common node fields + a kind discriminator.
+// Common node fields (incl. writeBackEnabled tri-state) + a kind discriminator.
+// writeBackEnabled: true | false | null (null = inherit nearest explicit ancestor, root seed = master).
 type Node =
-    | { id: string; name?: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
+    | { id: string; name?: string; naming?; safeDeleteMode?; writeBackEnabled?: boolean | null;
         kind: "mirror"; tagRoot: string; keepDir?: boolean;
-        collapsed?: string[]; exclude?: string[]; }
-    | { id: string; name: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
+        collapsed?: string[];       // must be <@ tagRoot
+        exclude?: string[];         // may be foreign to tagRoot (pure picture-membership cut)
+        maxDepth?: number;          // 0/absent = unrestricted; cap N levels below tagRoot
+        deeperMode?: "collapse" | "exclude"; } // pictures below the cut (default collapse)
+    | { id: string; name: string; naming?; safeDeleteMode?; writeBackEnabled?: boolean | null;
         kind: "query"; match?: "all" | "any"; include?: string[]; exclude?: string[];
         matchUntagged?: boolean; writeBack?: WriteBack | null; children?: Node[]; }
-    | { id: string; name: string; naming?: NamingStrategy; safeDeleteMode?: SafeDeleteMode;
-        kind: "static"; children?: Node[]; };
+    | { id: string; name: string; naming?; safeDeleteMode?; writeBackEnabled?: boolean | null;
+        kind: "static"; children?: Node[]; }
+    | { id: string; name: string; naming?; safeDeleteMode?; writeBackEnabled?: boolean | null;
+        kind: "drop"; onAdd: Array<{ op: "assign" | "remove"; path: string }>; };
 
 interface WriteBack {
     onAdd: Array<{ op: "assign" | "remove"; path: string }>;
@@ -1377,16 +1384,24 @@ interface WriteBack {
 
 - **`mirror`** — expands the live tag subtree under `tagRoot`. `keepDir` keeps the `tagRoot` label as
   a directory level; `collapsed` subtrees roll their pictures up to the nearest enabled ancestor;
-  `exclude` subtrees are removed entirely. `mirror` is a leaf in the authored JSON (children are
-  tag-derived). Tag paths in `collapsed`/`exclude` must be under `tagRoot`.
+  a **sub-tag** `exclude` removes the subtree entirely, a **foreign** `exclude` (not under `tagRoot`)
+  just rejects pictures carrying it (no directory effect). `maxDepth` caps directory generation and
+  `deeperMode` (`collapse`|`exclude`) governs pictures below the cut. Leaf in the authored JSON.
 - **`query`** — explicit predicate; may nest. Effective predicate = own ∧ all ancestors. `match`
   combines `include` (AND/OR); `exclude` rejects; `matchUntagged: true` means "no stored tag of any
-  source" (requires empty `include`/`exclude`). `writeBack: null` ⇒ read-only directory.
-- **`static`** — pure container, no predicate, no direct pictures, read-only.
+  source" (requires empty `include`/`exclude`, but **may** now carry a free-form `writeBack`).
+  `writeBack: null` ⇒ read-only directory.
+- **`static`** — pure container, no predicate, no direct pictures, read-only (its `writeBackEnabled`
+  still seeds descendants' inherited default).
+- **`drop`** — write-only inbox (feature 18): always shown, lists nothing, applies the fixed `onAdd`
+  to every upload; always writable (ignores `writeBackEnabled` and the master switch). In `tree`,
+  a drop dir is always shown with `child_count: 0`, `picture_count: 0` (when `counts=true`), and
+  `writable: true`; `browse` returns an empty page.
 
 Validation (server-side, on create/update) rejects: duplicate node ids, duplicate sibling names,
-`collapsed`/`exclude` not under `tagRoot`, `matchUntagged` with a non-empty `include`/`exclude`, and a
-`writeBack` op-list that cannot satisfy/break the predicate.
+`collapsed` not under `tagRoot`, `matchUntagged` with a non-empty `include`/`exclude`, and a
+(non-untagged) `writeBack` op-list that cannot satisfy/break the predicate. Foreign `exclude`
+entries, `drop.onAdd`, and untagged `writeBack` op-lists only need to parse as tag paths.
 
 #### `GET /api/authenticated/hierarchies`
 

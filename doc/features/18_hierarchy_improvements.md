@@ -1,5 +1,21 @@
 # Hierarchy improvements
 
+## 0. Implementation status
+
+**Backend: done.** Domain config v2 (`drop` kind, `writeBackEnabled`, mirror
+`maxDepth`/`deeperMode`, foreign excludes), `HierarchyConfig::effective_enabled`, the resolver
+(`services::hierarchy` — always-shown drop dirs, tri-state writability inheritance, depth
+cut via synthetic collapsed/excluded roots, foreign-exclude arms), and the VFS/WebDAV layer
+(drop writes bypass the master ceiling, `safeDeleteMode` coupled to effective write-back,
+`MKCOL` inside a drop → `405` via the new `AppError::MethodNotAllowed`). Covered by
+`domain::hierarchy` unit tests + `tests/hierarchy.rs` / `tests/vfs.rs`. No schema/migration
+change (v1 blobs deserialize forward).
+
+**Frontend: done (§8.4).** `front/src/lib/types.ts` (v2 node shapes), `hierarchyUtils.ts`
+(`effectiveWriteBack`, `drop` kind), `NodeEditor.tsx` (Drop editor; write-back tri-state threaded
+via a `wb` context; safe-delete gating; mirror `maxDepth`/`deeperMode` + foreign excludes),
+`WriteBackEditor.tsx` (untagged free-form op-list + warnings). `npm run build` green.
+
 ## 1. Overview & goals
 
 Four refinements to the hierarchy model ([`05_hierarchies.md`](05_hierarchies.md)) and its

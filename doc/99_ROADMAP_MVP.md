@@ -32,6 +32,9 @@
   `doc/features/05_hierarchies.md`.
 - [x] **WebDAV** — per-hierarchy webdav endpoint, proxy reads, tag write-back, hash-dedupe, OS-junk filtering, versioning on overwrite, mirror subdir
   auto-tag on new path, case-insensitive write-side tag reuse. See `doc/features/06_webdav.md`.
+- [x] **Hierarchy improvements** — `drop` inbox node kind, per-node tri-state `writeBackEnabled` (master switch as hard ceiling),
+  writable `matchUntagged` queries, mirror `maxDepth`/`deeperMode` and foreign excludes. Backend (resolver/VFS/WebDAV) + frontend node editors. See
+  `doc/features/18_hierarchy_improvements.md`.
 - [x] **Better workers** — multi-backend support (comma-separated), global semaphore, burst-friendly polling.
 - [x] **Security audit** — audit and fix: security, privacy, reliability (rate limiting and throttling).
 - [x] **Shares name and message** — required `name` and optional `message` on shares, propagated from the
