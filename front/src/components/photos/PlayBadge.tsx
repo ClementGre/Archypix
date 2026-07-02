@@ -10,17 +10,30 @@ import {cn} from '@/lib/utils'
  * (the details pane). In the grid, clicking a card selects it — it does not play — so the badge is a
  * static indicator with no hover affordance.
  */
-export function PlayBadge({hover = false, className}: { hover?: boolean; className?: string }) {
+/** Badge / icon sizes per `size`. `lg` is the details poster; `sm`/`xs` suit the grid/carousel. */
+const SIZES = {
+    xs: {badge: 'h-5 w-5', icon: 'h-2.5 w-2.5'},
+    sm: {badge: 'h-7 w-7', icon: 'h-3.5 w-3.5'},
+    lg: {badge: 'h-12 w-12', icon: 'h-6 w-6'},
+} as const
+
+export function PlayBadge({hover = false, size = 'lg', className}: {
+    hover?: boolean
+    size?: keyof typeof SIZES
+    className?: string
+}) {
+    const s = SIZES[size]
     return (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <span
                 className={cn(
-                    'flex h-12 w-12 items-center justify-center rounded-full bg-black/55 text-white shadow-sm ring-1 ring-white/30',
+                    'flex items-center justify-center rounded-full bg-black/55 text-white shadow-sm ring-1 ring-white/30',
+                    s.badge,
                     hover && 'transition-transform group-hover:scale-110',
                     className,
                 )}
             >
-                <Play className="h-6 w-6 translate-x-[1px] fill-current"/>
+                <Play className={cn('translate-x-[0.5px] fill-current', s.icon)}/>
             </span>
         </div>
     )

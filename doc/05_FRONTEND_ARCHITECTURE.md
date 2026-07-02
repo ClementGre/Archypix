@@ -98,13 +98,15 @@ right panel.
 
 ### Zustand stores (`src/stores/`)
 
-| Store          | Shape                                                                                                                                                                                                                                                                                                                                                                       | Persistence (`localStorage`) |
-|----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------|
-| `auth.ts`      | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                                                                                                                                                                                   | `archypix_auth`              |
-| `ui.ts`        | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`)                                                                                                                                                               | `archypix_ui`                |
-| `theme.ts`     | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                | `archypix_theme`             |
-| `selection.ts` | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9) | none (session only)          |
-| `upload.ts`    | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                          | none (session only)          |
+| Store           | Shape                                                                                                                                                                                                                                                                                                                                                                              | Persistence (`localStorage`)                                                   |
+|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| `auth.ts`       | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                                                                                                                                                                                          | `archypix_auth`                                                                |
+| `ui.ts`         | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`)                                                                                                                                                                      | `archypix_ui`                                                                  |
+| `theme.ts`      | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                       | `archypix_theme`                                                               |
+| `selection.ts`  | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9)        | none (session only)                                                            |
+| `upload.ts`     | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                                 | none (session only)                                                            |
+| `lightbox.ts`   | Lightbox chrome: top-bar / carousel visibility kept **separately per fullscreen vs non-fullscreen** (`toggleTopBar`/`toggleCarousel` flip the current mode's flag), `fullscreen` (mirrors `document.fullscreenElement`), `originalQuality` (session-only, defaults off — presign the `original` instead of `large`); `topBarVisible`/`carouselVisible` selectors resolve the mode. | `archypix_lightbox` (visibility flags only; quality + fullscreen session-only) |
+| `imageCache.ts` | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                       | none (session only)                                                            |
 
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
@@ -178,15 +180,28 @@ picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row 
 Sort offers Date taken / added / modified, File size, Name — default **Date taken** (`captured_at`); Filters folds in scope, Include-trashed,
 and a **capture-date range** using the shared `DateRangePicker` calendar — no tag chips here, those live in the centre `TagFilterBar`),
 `TagFilterBar` (`components/tags/`, a breadcrumb-style bar atop the flat grid showing the active include / `=`-exact / `⦸`-exclude tags as chips,
-each with a switch-include↔exact control + remove, plus Clear), `Lightbox` (full-screen carousel driven by the `view` param;
+each with a switch-include↔exact control + remove, plus Clear), `Lightbox` (full-screen viewer driven by the `view` param;
 ←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
 instead of closing**, only closing when no picture remains;
-always the `large` variant; **portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
+**portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
 on
 top; **click the backdrop outside the image to close** — and closing **selects the viewed picture** (opening the right drawer on mobile) so the user
-lands on its specs; header carries **download-original**, rotate-left/right (auto-committing orientation via `useExifDraft`, same as the
-sidebar), and a trash (`ConfirmDialog`)/restore action), `SelectionPanel`
+lands on its specs. The top bar sits **in flow when pinned** (the image never goes under it) and becomes a slide-in **overlay** only when hidden (
+revealed on a
+top-edge hover); it carries the filename, `index/total`, **file size + mime + owner handle + trash / owner-deleting badges**,
+**download-original**, copy-to-library (received), a trash (`ConfirmDialog`)/restore action, and rotate-left/right (over the image, auto-committing
+orientation via `useExifDraft`). Three chrome toggles (state in `stores/lightbox.ts`): **top-bar visibility**, **carousel visibility** (both persisted
+per fullscreen-vs-normal mode), and **original-quality** (session-only — presigns the `original` instead of the default `large`). A **fullscreen**
+button
+enters the browser fullscreen API; while the top bar is hidden the whole chrome hides, and each control re-appears while the mouse is near its edge
+(top → bar, left/right → nav arrows, bottom → rotate). Still images support **ctrl/⌘ + wheel zoom-to-cursor and drag-to-pan** (`ZoomableArea`,
+double-click toggles), and reuse an already-loaded lower-res variant (`stores/imageCache.ts`) as a progressive placeholder (`OrientedContainImage`'s
+`placeholderSrc`, painted eager so a browser-cached thumbnail shows instantly with no blurhash flash). `LightboxCarousel` is the optional bottom
+filmstrip: the current picture centres (half-width end spacers let the first/last thumb reach the centre), clicking or sliding/scrolling a thumbnail
+into the centre changes it, thumbnails reuse already-loaded / list `thumbnail_url` images before requesting a `small` presign, and image work is
+**lazy** (per-thumb `IntersectionObserver`) so a large library doesn't presign every thumbnail; the viewer also pages in more grid items (`loadMore`)
+as it nears the end of what's loaded), `SelectionPanel`
 (right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
 an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
 tag assignment — see §9), `MediaPlayer` (Vidstack wrapper — picks the default video/audio layout from the picture's mime; used by the
@@ -396,7 +411,9 @@ mobile) and shown only when its `ui` store toggle is on:
   it into `usePictures`/`useHierarchyBrowse` (variant is in the query key, so crossing a threshold refetches; `placeholderData: keepPreviousData`
   keeps
   the grid visible meanwhile); the **sidebar** preview picks from its capped display height (`PREVIEW_MAX_HEIGHT = 208` → `medium`, not the sidebar
-  width); the **Lightbox** always uses `large`. Presigned URLs are cached in Query (`['pictures','url',id,variant]`, ~10 min `staleTime`).
+  width) — but reuses a higher variant already loaded (via `stores/imageCache.ts`) rather than a fresh `medium` presign; the **Lightbox** uses `large`
+  (or `original` when the original-quality toggle is on). Presigned URLs are cached in Query (`['pictures','url',id,variant]`, ~10 min `staleTime`);
+  additionally `stores/imageCache.ts` tracks which variant URLs the browser has **loaded** so the carousel/lightbox/sidebar can reuse them instantly.
   `downloadOriginal(id, filename)` (`api/pictures.ts`) fetches the `original` and saves it under the original filename via a blob + `download`
   attribute
   (this only sets the name when the cross-origin fetch succeeds; it falls back to opening the presigned URL, which downloads under the S3 key — the
@@ -418,6 +435,11 @@ mobile) and shown only when its `ui` store toggle is on:
   Overridden fields are derived from `picture.local_exif_overrides` (a sparse `FullExif`, snake-case keys) and tagged with `OverwrittenBadge`. The
   override never touches the owner's file, so it is invisible over WebDAV — that caveat is the badge's tooltip.
 - **Trash & restore:** `useTrashMutations` (`trash`/`restore`) POSTs `/pictures/{id}/trash` | `/restore` and invalidates `['pictures']` + the detail.
+  Trashing also **optimistically drops the id from every cached grid list** (`removePicturesFromLists` in `lib/invalidation.ts`,
+  page/offset-agnostic —
+  it filters the infinite-query pages directly rather than relying on a refetch, so a delete from the Lightbox or sidebar disappears instantly;
+  skipped
+  for "include trashed" views where the item legitimately stays). The subsequent invalidation reconciles totals.
   Owned trash is purged after `trash_retention_days` (the `/trash` page derives the purge date as `deleted_at + retention` since the list item carries
   no `owner_purge_at` for owned rows); received trash is local-only. The gallery shows trashed items only with Filters → **Include trashed**; the
   `/trash` page fetches `include_deleted` and client-filters to `deleted_at != null`.

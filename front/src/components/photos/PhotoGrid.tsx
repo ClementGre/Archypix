@@ -1,4 +1,4 @@
-import {Fragment, type MouseEvent, useEffect, useMemo, useRef} from 'react'
+import {Fragment, type MouseEvent, useCallback, useEffect, useMemo, useRef} from 'react'
 import {useSearchParams} from 'react-router-dom'
 import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
 import {usePictures} from '@/hooks/usePictures'
@@ -127,6 +127,11 @@ export function PhotoGrid() {
         else enterMultiSelect(id)
     }
 
+    // Let the Lightbox page in more items as it nears the end of what's loaded (large libraries).
+    const loadMore = useCallback(() => {
+        if (hasNextPage && !isFetchingNextPage) fetchNextPage()
+    }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
     const openViewer = (id: string) =>
         setSp((prev) => {
             const next = new URLSearchParams(prev)
@@ -197,7 +202,7 @@ export function PhotoGrid() {
                     {isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground"/>}
                 </div>
 
-                <Lightbox items={items}/>
+                <Lightbox items={items} gridVariant={variant} loadMore={loadMore}/>
             </div>
         )
     }

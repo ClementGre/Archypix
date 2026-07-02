@@ -23,6 +23,11 @@
   preflight. See `doc/features/04_better_exif_support.md`.
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [ ] **Full frontend** — v1 MVP frontend.
+  - [x] **Lightbox overhaul** — richer top bar (file size / mime / owner / trash + owner-deleting badges), three chrome toggles
+    (top-bar & carousel visibility persisted per fullscreen/normal mode, session-only original-quality that presigns the `original`), browser
+    fullscreen with hover-reveal top bar, ctrl/⌘+wheel zoom-to-cursor + drag-pan (`ZoomableArea`), a bottom thumbnail carousel (centre-current,
+    slide/scroll to change), and a shared image-cache store (`stores/imageCache.ts`) so the carousel/lightbox/sidebar reuse already-loaded variants
+    (progressive placeholder, no redundant presigns). Trashing now optimistically removes the picture from the grid regardless of page/offset.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.
 - [x] **WebDAV** — per-hierarchy webdav endpoint, proxy reads, tag write-back, hash-dedupe, OS-junk filtering, versioning on overwrite, mirror subdir

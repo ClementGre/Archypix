@@ -16,6 +16,7 @@ import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
+import {bestLoaded, recordImage, useImageCache, VARIANT_RANK} from '@/stores/imageCache'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
@@ -192,13 +193,20 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // Size the preview to its capped display height (the preview never exceeds PREVIEW_MAX_HEIGHT,
     // so the sidebar width doesn't matter); the lightbox always uses `large`.
     const previewVariant = variantForSize(PREVIEW_MAX_HEIGHT)
+    // Reuse a higher-or-equal variant the browser already loaded (e.g. the lightbox's large image)
+    // instead of a fresh medium presign; use a lower loaded variant as a progressive placeholder.
+    const entry = useImageCache((s) => s.entries[id])
+    const cached = useMemo(() => bestLoaded(entry), [entry])
+    const reuseCached = !!cached && VARIANT_RANK[cached.variant] >= VARIANT_RANK[previewVariant]
     // Images and videos both have thumbnails (video's is a frame-grab); audio has none.
     const {data: preview} = useQuery({
         queryKey: ['pictures', 'url', id, previewVariant],
         queryFn: () => getPictureUrl(id, previewVariant),
-        enabled: !isAudio,
+        enabled: !isAudio && !reuseCached,
         staleTime: 10 * 60 * 1000,
     })
+    const previewUrl = reuseCached ? cached!.url : preview?.url
+    const previewUsedVariant = reuseCached ? cached!.variant : previewVariant
 
     // Audio plays inline in the panel from the original file; video opens the (autoplaying) Lightbox.
     const {data: mediaUrl} = useQuery({
@@ -348,20 +356,27 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     onClick={openLightbox}
                     title="Open full screen"
                 >
-                    {isVideo && preview?.url ? (
+                    {isVideo && previewUrl ? (
                         // Frame-grab thumbnail poster + play badge; playback happens in the Lightbox.
                         <div className="relative flex items-center justify-center bg-black">
-                            <img src={preview.url} alt={picture.filename ?? ''} className="max-h-52 w-full object-contain"/>
+                            <img
+                                src={previewUrl}
+                                alt={picture.filename ?? ''}
+                                className="max-h-52 w-full object-contain"
+                                onLoad={() => recordImage(id, previewUsedVariant, previewUrl, true)}
+                            />
                             <PlayBadge hover/>
                         </div>
-                    ) : preview?.url ? (
+                    ) : previewUrl ? (
                         <OrientedContainImage
-                            src={preview.url}
+                            src={previewUrl}
                             alt={picture.filename ?? ''}
                             orientation={draftOrientation}
                             width={picture.width}
                             height={picture.height}
                             maxHeight={PREVIEW_MAX_HEIGHT}
+                            placeholderSrc={cached && cached.url !== previewUrl ? cached.url : undefined}
+                            onLoad={() => recordImage(id, previewUsedVariant, previewUrl, true)}
                         />
                     ) : (
                         // No thumbnail (pending, or a non-thumbnailable format) — show a file-type icon.

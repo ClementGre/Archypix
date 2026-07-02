@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react'
+import {useLayoutEffect, useRef, useState} from 'react'
 import {cn} from '@/lib/utils'
 import {Blurhash} from './Blurhash'
 
@@ -77,6 +77,8 @@ interface OrientedImageProps {
     width?: number | null
     height?: number | null
     className?: string
+    /** Native lazy/eager loading. Defaults to `lazy` (grid); the lightbox/sidebar pass `eager`. */
+    loading?: 'lazy' | 'eager'
     onLoad?: React.ReactEventHandler<HTMLImageElement>
 }
 
@@ -85,13 +87,13 @@ interface OrientedImageProps {
  * sized to *cover* its parent. Must be placed inside a `position: relative`
  * parent whose box already carries the display aspect ratio.
  */
-export function OrientedImage({src, alt, orientation, width, height, className, onLoad}: OrientedImageProps) {
+export function OrientedImage({src, alt, orientation, width, height, className, loading = 'lazy', onLoad}: OrientedImageProps) {
     const {className: coverClass, style} = orientedCoverStyle(orientation, width, height)
     return (
         <img
             src={src}
             alt={alt}
-            loading="lazy"
+            loading={loading}
             onLoad={onLoad}
             className={cn(coverClass, 'object-cover', className)}
             style={style}
@@ -109,6 +111,13 @@ interface OrientedContainImageProps {
      * faded out. Also shown on its own while `src` is absent (URL still resolving).
      */
     blurhash?: string | null
+    /**
+     * A lower-resolution URL already loaded by the browser (e.g. the grid's medium thumbnail),
+     * painted behind the main image so a sharp-ish picture shows instantly before `src` loads.
+     */
+    placeholderSrc?: string | null
+    /** Called once the main `src` image finishes loading. */
+    onLoad?: () => void
     /** Raw (pre-orientation) pixel dimensions — used to derive the display aspect ratio. */
     width?: number | null
     height?: number | null
@@ -136,26 +145,32 @@ export function OrientedContainImage({
                                          alt,
                                          orientation,
                                          blurhash,
+                                         placeholderSrc,
                                          width,
                                          height,
                                          maxHeight,
                                          className,
+                                         onLoad,
                                          onClick,
                                      }: OrientedContainImageProps) {
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
     const aspect = dW && dH ? dW / dH : 1
 
-    // Blurhash placeholder behind the image, faded out once it loads. Reset when `src` changes
-    // (e.g. navigating the lightbox) so the next picture shows its own placeholder first.
-    const [loaded, setLoaded] = useState(false)
-    useEffect(() => setLoaded(false), [src])
+    // Track the loaded state per-URL so it flips to false *synchronously* when `src` changes (an
+    // effect-based reset leaves one frame where the placeholders are hidden under the new-but-unloaded
+    // image — the flicker). `loaded` is derived, so navigating never flashes the blurhash.
+    const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
+    const loaded = !!src && loadedSrc === src
+    const hasPlaceholder = !!placeholderSrc && placeholderSrc !== src
     const cover = orientedCoverStyle(orientation, width, height)
 
     const ref = useRef<HTMLDivElement>(null)
     // Seed with the element's current width so the first paint is already sized (avoids a flash and a
     // brief mis-size on wide/16:9 previews before the observer's first tick).
     const [avail, setAvail] = useState({w: 0, h: 0})
-    useEffect(() => {
+    // Layout effect (not effect) so the box is measured *before* paint — otherwise the first frame
+    // after (re)mount has avail=0 and renders nothing, which reads as a flicker when navigating.
+    useLayoutEffect(() => {
         const el = ref.current
         if (!el) return
         setAvail({w: el.clientWidth, h: el.clientHeight})
@@ -208,16 +223,30 @@ export function OrientedContainImage({
                             style={cover.style}
                         />
                     )}
+                    {/* Lower-res already-loaded picture, painted behind `src` (eager so a browser-cached
+                        thumbnail paints instantly, covering the blurhash — no fade, the main image
+                        simply covers it once loaded). Kept mounted until the main image has loaded. */}
+                    {hasPlaceholder && !loaded && (
+                        <OrientedImage src={placeholderSrc!} alt={alt} orientation={orientation} width={width} height={height} loading="eager"/>
+                    )}
                     {src && (
                         <OrientedImage
+                            key={src}
                             src={src}
                             alt={alt}
                             orientation={orientation}
                             width={width}
                             height={height}
-                            // Only gate visibility on load when there's a placeholder to fade from.
-                            className={blurhash ? cn('transition-opacity duration-300', loaded ? 'opacity-100' : 'opacity-0') : undefined}
-                            onLoad={blurhash ? () => setLoaded(true) : undefined}
+                            loading="eager"
+                            // Gate visibility on load, but **snap** (no opacity transition): a cross-fade
+                            // momentarily shows the dark backdrop through the still-transparent image (the
+                            // blurhash/placeholder behind it fades/unmounts in lockstep), which reads as a
+                            // dark re-flash. A hard cut from the low-res placeholder to the sharp image has none.
+                            className={blurhash || hasPlaceholder ? (loaded ? 'opacity-100' : 'opacity-0') : undefined}
+                            onLoad={() => {
+                                setLoadedSrc(src)
+                                onLoad?.()
+                            }}
                         />
                     )}
                 </div>

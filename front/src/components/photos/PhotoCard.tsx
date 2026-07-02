@@ -2,7 +2,8 @@ import {memo, type MouseEvent, type PointerEvent, useRef, useState} from 'react'
 import {AlertTriangle, Check, Trash2} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {useIsMobile} from '@/hooks/useMediaQuery'
-import {cn, isVideoMime} from '@/lib/utils'
+import {recordImage} from '@/stores/imageCache'
+import {cn, isVideoMime, variantForSize} from '@/lib/utils'
 import {countdown} from '@/lib/trash'
 import {Blurhash} from './Blurhash'
 import {FileTypeIcon} from './FileTypeIcon'
@@ -134,7 +135,11 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
                     width={item.width}
                     height={item.height}
                     className={cn('transition-opacity duration-200', loaded ? 'opacity-100' : 'opacity-0')}
-                    onLoad={() => setLoaded(true)}
+                    onLoad={() => {
+                        setLoaded(true)
+                        // Record for reuse by the carousel/lightbox (browser already has these bytes).
+                        recordImage(item.id, variantForSize(rowHeight), item.thumbnail_url, true)
+                    }}
                 />
             ) : (
                 // No thumbnail (pending, or a non-thumbnailable format like a PDF) — file-type icon.
@@ -144,7 +149,7 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
                 </div>
             )}
 
-            {showPlayBadge && <PlayBadge/>}
+            {showPlayBadge && <PlayBadge size="sm"/>}
 
             <div
                 className={cn(

@@ -21,6 +21,45 @@ export function invalidatePictures(qc: QueryClient): void {
     void qc.invalidateQueries({queryKey: ['pictures']})
 }
 
+/**
+ * Optimistically drop pictures from every cached grid list (flat + hierarchy browse) so a delete
+ * disappears immediately — without waiting for a refetch, and regardless of which page/offset the
+ * item sat on. A background refetch (via {@link invalidatePictures}) then reconciles totals. Only
+ * touches infinite-list caches (shape `{ pages: [{ items, total }] }`); detail/url/aggregate
+ * queries under `['pictures']`/`['hierarchies']` are left untouched.
+ */
+export function removePicturesFromLists(qc: QueryClient, ids: string[]): void {
+    const drop = new Set(ids)
+    type Page = { items: Array<{ id: string }>; total: number }
+    type Infinite = { pages: Page[]; pageParams: unknown[] }
+    const isInfinite = (d: unknown): d is Infinite =>
+        !!d && typeof d === 'object' && Array.isArray((d as { pages?: unknown }).pages)
+    // Only grid lists that DON'T include trashed items — in an "include trashed" view a just-trashed
+    // picture legitimately stays visible, so removing it there would flash it out then back on refetch.
+    const includesDeleted = (f: unknown) => !!f && typeof f === 'object' && !!(f as { includeDeleted?: boolean }).includeDeleted
+    const predicate = ({queryKey: k}: { queryKey: readonly unknown[] }) => {
+        if (k[0] === 'pictures') return typeof k[1] === 'object' && k[1] !== null && !includesDeleted(k[1])
+        if (k[0] === 'hierarchies' && k[1] === 'browse') return !includesDeleted(k[4])
+        return false
+    }
+    const update = (old: unknown) => {
+        if (!isInfinite(old)) return old
+        let removed = 0
+        const pages = old.pages.map((p) => {
+            const items = p.items.filter((it) => {
+                const keep = !drop.has(it.id)
+                if (!keep) removed++
+                return keep
+            })
+            return {...p, items}
+        })
+        if (!removed) return old
+        // `total` is the global count repeated on every page — drop it uniformly.
+        return {...old, pages: pages.map((p) => ({...p, total: Math.max(0, (p.total ?? 0) - removed)}))}
+    }
+    qc.setQueriesData({predicate}, update)
+}
+
 /** Invalidate all tag caches (the tag list, per-picture tags, provenance). */
 export function invalidateTags(qc: QueryClient): void {
     void qc.invalidateQueries({queryKey: ['tags']})

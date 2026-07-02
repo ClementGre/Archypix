@@ -3,7 +3,7 @@ import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
 import {copyPicture, editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
-import {invalidatePictures, invalidatePicturesAndTags, invalidateTags} from '@/lib/invalidation'
+import {invalidatePictures, invalidatePicturesAndTags, invalidateTags, removePicturesFromLists} from '@/lib/invalidation'
 import type {EditPictureResponse, ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
 
 const POLL_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
@@ -103,7 +103,11 @@ export function useTrashMutations() {
 
     const trash = useMutation({
         mutationFn: trashPicture,
-        onSuccess: invalidate,
+        onSuccess: (_res, id) => {
+            // Drop it from the grid immediately (page/offset-agnostic), then reconcile via refetch.
+            removePicturesFromLists(queryClient, [id])
+            invalidate()
+        },
         onError: (error: unknown) => toast.error('Could not move to trash', {description: apiErrorMessage(error)}),
     })
 
