@@ -75,7 +75,7 @@ Consequences that resolve the hard cases up front:
 > unused until those features ship. Apply inline in the table definitions (not trailing `ALTER`s) to
 > match the file's style, then `cd back && cargo sqlx migrate revert && cargo sqlx migrate run &&
 > cargo sqlx prepare -- --tests` and migrate the seeded test DBs per
-> [00_CODING_GUIDELINES.md](../00_CODING_GUIDELINES.md). Tags: **[09]** trash + overrides,
+> doc/03_BACKEND_ARCHITECTURE.md §I. Tags: **[09]** trash + overrides,
 > **[10]** recipient EXIF editing, **[11]** physical copy + dedup.
 
 **New enum:**

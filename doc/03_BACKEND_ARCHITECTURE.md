@@ -370,3 +370,78 @@ crash-safety provides a `sweep` that re-derives its outstanding work from the DB
 drain, job/purge sweeps do). `tag_rename`/`unannounce` are trigger-only and best-effort (exactly the
 old `TaskQueue` behaviour); making tag-rename durable is a noted follow-up. See
 `doc/features/17_unified_routine_framework.md`.
+
+## I) Coding guidelines
+
+Applies to `back/` and `worker/` (the whole Rust workspace, including `archypix-common`).
+
+### Database migrations
+
+Schema changes go into new migration files by default; only edit an already-applied migration if explicitly asked or if not yet applied in production.
+
+```bash
+cargo sqlx migrate add -r --sequential <name>   # creates xxx_<name>.up.sql / .down.sql
+```
+
+`back/migrations/schema.sql` is a generated, non-authoritative snapshot of the **full current schema**
+— read this file (not the individual migration files) when you need to see the schema as it stands
+today. Regenerate it after every migration:
+
+```bash
+docker exec -i archypix-postgres pg_dump -U archypix -d archypix_back --schema-only --no-owner \
+  --no-privileges --no-comments --schema=public --exclude-table=_sqlx_migrations \
+  | grep -vE '^--|^SET |^SELECT pg_catalog\.set_config|^\\restrict|^\\unrestrict' | cat -s \
+  > back/migrations/schema.sql
+```
+
+After adding a migration:
+
+1. **Apply it to the dev DB and regenerate the offline cache** (from `back/`, `DATABASE_URL=…/archypix_back`):
+   `cargo sqlx migrate run && cargo sqlx prepare -- --tests`
+   (`-- --tests` captures test query macros in `.sqlx`; verify with
+   `env -u DATABASE_URL SQLX_OFFLINE=true cargo check --tests -p archypix-back`).
+2. **Regenerate `schema.sql`** (command above) so it reflects the new schema.
+
+### Rust guidelines
+
+- Follow Rust best practices. Always favor refactoring over sticking to existing legacy functions.
+- For modules with sub-files, use a `module_name.rs` file alongside the `module_name/` directory instead of placing a `mod.rs` inside the directory.
+- Keep repository separated from services: don't create too specific repository functions, instead create general ones that can be reused. Don't
+  reference services in a repository function: if a function is made for a specific task today, it may be used elsewhere tomorrow, so make them
+  factorized and general rather than specific to a given service.
+
+### Tracing
+
+Use `#[tracing::instrument]` with `fields(...)` for identifying context instead of logging it at
+the call site: don't repeat a field already on the span (own or ancestor's); log calls should
+just carry genuinely new info (errors, counts, computed values). Use empty fields +
+`Span::current().record(...)` for values only known partway through the function.
+
+In `fields(...)`, a bare `name` declares an empty field — it does **not** capture the in-scope
+variable (unlike `span!`/`event!`). Use `name = value` (or `%name`/`?name` shorthand) to actually
+record it.
+
+`AppError`-based error responses are already logged by `AppError::into_response()` — no need for
+an extra `warn!` next to a function that just returns `AppError`.
+
+Federation calls propagate trace context via headers (`trace_headers_for`/
+`maybe_set_remote_parent` in `back/src/infra/observability.rs`, gated on the JWT-verified peer);
+worker jobs propagate it through the DB job row instead.
+
+### Common mistakes
+
+- Global domain comparaison can't tell if the instances are the same. bob_global_domain == alice_global_domain does not tell if bob and alice are on
+  the same instance. Multiple instances can have the same global domain. Use `services::users::find_local_user_id` instead to check if a user is on
+  the same instance.
+
+### Environment
+
+For things involving the `archypix-worker` crate, run in `nix develop`.
+
+### Agents — working on back/worker
+
+- Keep code comments short and sparse — see the shared rule in doc/00_CODING_GUIDELINES.md.
+- When editing the API, update doc/06_API_REFERENCE.md.
+- Keep tests up to date: new features and modified behaviour should be reflected in the test suite.
+- Keep documentation up to date, matching the level of detail already present.
+- When completing a task, update doc/99_ROADMAP_MVP.md, and add things not yet implemented to it.

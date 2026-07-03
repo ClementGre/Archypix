@@ -1,86 +1,33 @@
-# Coding Guidelines
+# Documentation Index
 
-## Database migrations
+Where to look depending on the task. Layer-specific coding guidelines (migrations, Rust
+conventions, tracing, frontend conventions) live inside that layer's architecture doc, not here.
 
-Schema changes go into new migration files by default; only edit an already-applied migration if explicitly asked or if not yet applied in production.
+## General — read regardless of task
 
-```bash
-cargo sqlx migrate add -r --sequential <name>   # creates xxx_<name>.up.sql / .down.sql
-```
+- doc/01_GENERAL_SPECIFICATIONS.md: product/domain spec — tags, trash, tagging pipeline, hierarchies, federation, sharing. What the system does.
+- doc/02_INFRASTRUCTURE_DESIGN.md: deployment topology — resolver, backend, workers, MinIO, frontend, and their invariants.
+- doc/99_ROADMAP_MVP.md: current status. Update when you complete a task.
 
-`back/migrations/schema.sql` is a generated, non-authoritative snapshot of the **full current schema**
-— read this file (not the individual migration files) when you need to see the schema as it stands
-today. Regenerate it after every migration:
+## Specific — pick by what you're touching
 
-```bash
-docker exec -i archypix-postgres pg_dump -U archypix -d archypix_back --schema-only --no-owner \
-  --no-privileges --no-comments --schema=public --exclude-table=_sqlx_migrations \
-  | grep -vE '^--|^SET |^SELECT pg_catalog\.set_config|^\\restrict|^\\unrestrict' | cat -s \
-  > back/migrations/schema.sql
-```
+- doc/03_BACKEND_ARCHITECTURE.md: `back/` layered architecture, `AppState`, pipeline internals, API conventions, federation flows. **§I has
+  backend/Rust guidelines** (migrations, Rust conventions, tracing, common mistakes). Read for any `back/` or Rust-workspace-wide work.
+- doc/04_WORKER_ARCHITECTURE.md: `worker/` module layout, job loop, claim-token protocol, EXIF/thumbnail/video jobs, shared `archypix-common` types.
+  Read for `worker/` work (also applies doc/03_BACKEND_ARCHITECTURE.md §I).
+- doc/05_FRONTEND_ARCHITECTURE.md: `front/` stack, routes, stores, data layer, components, gotchas. **§11 has frontend guidelines** (no dev server,
+  build-check only). Read for any `front/` work.
+- doc/06_API_REFERENCE.md: full HTTP endpoint catalog. Read/update when consuming or editing an API endpoint, from either layer.
+- doc/features/NN_*.md: per-feature design docs, referenced from the architecture docs above. Read the matching one before changing that feature's
+  behavior.
 
-After adding a migration:
+## Shared agent conventions
 
-1. **Apply it to the dev DB and regenerate the offline cache** (from `back/`, `DATABASE_URL=…/archypix_back`):
-   `cargo sqlx migrate run && cargo sqlx prepare -- --tests`
-   (`-- --tests` captures test query macros in `.sqlx`; verify with
-   `env -u DATABASE_URL SQLX_OFFLINE=true cargo check --tests -p archypix-back`).
-3. **Regenerate `schema.sql`** (command above) so it reflects the new schema.
+- **Comments: short and sparse, strict.** ≤1–2 lines, only for non-obvious *why*, or a pointer to the doc with full rationale (e.g.
+  `// priority §5.1 — see doc/features/11`). Never multi-line paragraph comments re-explaining design/algorithm/what-the-code-does — that belongs in
+  `doc/`, referenced with a one-liner.
+- Keep docs up to date, at the level of detail already present — no overly specific blow-by-blow of a single change.
+- Editing the API → update doc/06_API_REFERENCE.md. Completing a task → update doc/99_ROADMAP_MVP.md.
 
-
-## Rust guidelines
-
-- Follow Rust best practices. Always favor refactoring over sticking to existing legacy functions.
-- For modules with sub-files, use a `module_name.rs` file alongside the `module_name/` directory instead of placing a `mod.rs` inside the directory.
-- Keep repository separated from services: don’t create too specific repository functions, instead create general ones that can be reused. Don’t
-  reference services in a repository function: if a function is made for a specific task today, it may be used elsewhere tomorrow, so make them
-  factorized and general rather than specific to a given service.
-
-## Tracing
-
-Use `#[tracing::instrument]` with `fields(...)` for identifying context instead of logging it at
-the call site: don't repeat a field already on the span (own or ancestor's); log calls should
-just carry genuinely new info (errors, counts, computed values). Use empty fields +
-`Span::current().record(...)` for values only known partway through the function.
-
-In `fields(...)`, a bare `name` declares an empty field — it does **not** capture the in-scope
-variable (unlike `span!`/`event!`). Use `name = value` (or `%name`/`?name` shorthand) to actually
-record it.
-
-`AppError`-based error responses are already logged by `AppError::into_response()` — no need for
-an extra `warn!` next to a function that just returns `AppError`.
-
-Federation calls propagate trace context via headers (`trace_headers_for`/
-`maybe_set_remote_parent` in `back/src/infra/observability.rs`, gated on the JWT-verified peer);
-worker jobs propagate it through the DB job row instead.
-
-# Common mistakes
-
-- Global domain comparaison can’t tell if the instances are the same. bob_global_domain == alice_global_domain does not tell if bob and alice are on
-  the same instance. Multiple instances can have the same global domain. Use `services::users::find_local_user_id` instead to check if a user is on
-  the same instance.
-
-# Environment
-
-For things involving the archypix-worker crate, run in `nix develop`.
-
-# Agents
-
-When making changes to the codebase:
-
-- **Keep code comments short and sparse — this is strict.** A comment is at most ~1–2 lines that
-  explain a non-obvious *why*, or point to the spec that holds the full rationale (e.g.
-  `// priority §5.1 — see doc/features/11`). Do **not** write multi-sentence / multi-line paragraph
-  comments that re-explain a feature's design, walk through the algorithm, restate what the code
-  plainly does, or duplicate prose that belongs in `doc/`. The same applies to doc-comments (`///`):
-  one line of intent, not an essay. If you catch yourself writing a 4+ line comment block, stop — that
-  reasoning belongs in the relevant `doc/` file (`03_BACKEND_ARCHITECTURE.md`, the matching
-  `doc/features/NN_*.md`, …). Put it there and reference it from a one-liner. Detailed design in the
-  doc, terse pointers in the code.
-- Keep documentation up to date. Match the level of detail already present — do not add overly specific descriptions of what was changed beyond what
-  the rest of the doc covers.
-- When editing the api, update `06_API_REFERENCE.md`.
-- When completing a task, update `99_ROADMAP_MVP.md`, and eventually add things not implemented yet into it.
-- On back, keep tests up to date. New features and modified behaviour should be reflected in the test suite.
-- On front, don’t start or preview the frontend server yourself. Only check that it builds. The user can give you feedback on the frontend
-  changes.
+Layer-specific rules (migrations, Rust idioms, tracing, frontend dev-server ban, …): doc/03_BACKEND_ARCHITECTURE.md §I,
+doc/05_FRONTEND_ARCHITECTURE.md §11.

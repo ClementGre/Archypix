@@ -275,7 +275,7 @@ check rather than per-picture state.
 
 ## 9. Migrations
 
-Per `00_CODING_GUIDELINES.md`, schema changes are edited **directly** into
+Per `03_BACKEND_ARCHITECTURE.md` §I "Database migrations", schema changes are edited **directly** into
 `001_initial_schema.up.sql` (no `ALTER`, no new migration files):
 
 - add `errored` to the `share_status` enum definition;

@@ -537,3 +537,13 @@ mobile) and shown only when its `ui` store toggle is on:
 - shadcn primitives are editable project files under `components/ui/`; custom domain components live in their domain folder.
 - **Number inputs:** use `components/ui/number-input.tsx` (`NumberInput`) — native spin arrows are stripped in `index.css`; this component adds styled
   chevron steppers. Steppers auto-hide when `step="any"` (free-form decimals like GPS lat/lng).
+
+## 11. Coding guidelines (agents)
+
+- **Don't start or preview the frontend dev server yourself.** Only check that it builds (`npm run build`). The user can give feedback on frontend
+  changes by running the app themselves.
+- Keep code comments short and sparse — see the shared rule in doc/00_CODING_GUIDELINES.md.
+- Keep documentation (this file included) up to date, matching the level of detail already present — don't add overly specific descriptions of a
+  single change beyond what the rest of the doc covers.
+- When editing an endpoint's request/response shape, check it against doc/06_API_REFERENCE.md.
+- When completing a task, update doc/99_ROADMAP_MVP.md, and add things not yet implemented to it.

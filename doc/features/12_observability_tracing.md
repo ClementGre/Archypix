@@ -355,7 +355,7 @@ link**, not parent-child: a job may be claimed long after enqueue, and may be cl
 worker's job span (its `References`/`Links`), pointing back to the originating enqueue trace.
 
 **Schema.** Add a nullable `trace_context JSONB` column to the `jobs` table. Per the coding
-guidelines (`doc/00_CODING_GUIDELINES.md` §"Database migrations"), edit the single
+guidelines (`doc/03_BACKEND_ARCHITECTURE.md` §I "Database migrations"), edit the single
 `back/migrations/001_initial_schema.up.sql` (add the column inside the `CREATE TABLE jobs` block,
 ~line 569, next to `config`; add a matching line to `001_initial_schema.down.sql` if it drops
 columns explicitly), then run the rebuild + `cargo sqlx prepare` workflow, add an idempotent
