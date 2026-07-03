@@ -9,10 +9,9 @@ use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
 use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
-    PictureListFilter, PictureRepository, PictureSortField, SortOrder,
+    PictureListFilter, PictureRepository, PictureSortField, ResolvedSelection, SortOrder,
 };
 use crate::repository::picture_version::PictureVersionRepository;
-use crate::repository::pipeline::PipelineRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
 use archypix_common::job::{ExifField, FullExif};
@@ -479,7 +478,14 @@ pub async fn complete_upload(
     }
 
     // Enqueue initial thumbnail generation + EXIF extraction inside the same transaction
-    crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, picture_id, true).await?;
+    crate::services::jobs::enqueue_thumbnail_job(
+        &mut *tx,
+        user_id,
+        picture_id,
+        true,
+        meta.file_hash.as_deref(),
+    )
+    .await?;
 
     // Assign any caller-supplied initial manual tags
     if !initial_tags.is_empty() {
@@ -643,7 +649,7 @@ pub async fn copy_picture(
     .await?;
     // `is_initial = false`: keep the seeded effective EXIF (don't re-extract the owner's embedded
     // EXIF), but still compute file_size/hash, content_hash, dimensions and thumbnails.
-    crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, new_id, false).await?;
+    crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, new_id, false, None).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
 
     // Wake the pipeline so the new owned picture is tagged; the dedup reconcile runs again once
@@ -823,17 +829,20 @@ async fn set_trashed(
 /// per-field key set into `local_exif_overrides`, re-materialise `exif_data` + promoted columns from
 /// `merge(remote_exif_data, overrides)`, and fire the local `metadata` event (re-dirty + wake). DB
 /// only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
-/// fields claim the override; `clear` fields drop the override (the owner's value flows through
-/// again). Returns the updated picture.
-#[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id, picture_id = %picture_id))]
+/// fields claim the override; `empty` fields claim it as empty/`null` (10 §6.3); `clear` fields drop
+/// the override (the owner's value flows through again). Returns the updated picture.
+#[tracing::instrument(skip(db, waker, set, empty, clear), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn override_received_exif(
     db: &PgPool,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
     set: FullExif,
+    empty: Vec<ExifField>,
     clear: Vec<ExifField>,
 ) -> Result<Picture, AppError> {
+    use crate::domain::received_exif;
+
     let picture = PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -847,38 +856,20 @@ pub async fn override_received_exif(
         ));
     }
 
-    // Start from the current sticky override set; `set` claims a field (its value wins), `clear`
-    // drops the claim (the owner's value flows through again).
-    let mut overrides = picture
-        .local_exif_overrides
-        .as_ref()
-        .map(|j| j.0.clone())
-        .unwrap_or_default();
-    overrides.apply_set(&set);
-    overrides.clear_fields(&clear);
-
-    let mut tx = db
-        .begin()
-        .await
-        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-    let remote =
-        PictureRepository::set_local_exif_overrides(&mut *tx, user_id, picture_id, &overrides)
-            .await?
-            .ok_or(AppError::NotFound)?;
-    let merged = remote.merged_with(&overrides);
-    PictureRepository::apply_received_materialization(
-        &mut *tx,
-        picture_id,
-        &merged.camera,
-        merged.captured_at,
-        merged.gps_lat,
-        merged.gps_lng,
-        merged.gps_alt,
-        merged.orientation,
+    // Same normalisation + set-based merge as batch editing: `set` claims a field, `empty` claims it
+    // as empty (null), `clear` drops the claim.
+    let (empty, clear) = crate::domain::validation::validate_exif_edit(&set, empty, clear)
+        .map_err(AppError::BadRequest)?;
+    let (patch, clear_keys) = received_exif::override_patch(&set, &empty, &clear);
+    let sel = ResolvedSelection::explicit(vec![picture_id]);
+    PictureRepository::batch_apply_exif_received_local_selection(
+        db,
+        user_id,
+        &sel,
+        &patch,
+        &clear_keys,
     )
     .await?;
-    PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
-    tx.commit().await.map_err(map_sqlx_error)?;
 
     waker.trigger(user_id);
     PictureRepository::find_by_id(db, picture_id)
@@ -927,7 +918,6 @@ pub async fn propose_received_exif(
     set: FullExif,
     clear: Vec<ExifField>,
 ) -> Result<Picture, AppError> {
-    use crate::repository::pipeline::PipelineRepository;
     use crate::repository::share::IncomingShareRepository;
 
     let picture = PictureRepository::find_by_id(db, picture_id)
@@ -1003,35 +993,19 @@ pub async fn propose_received_exif(
             touched.push(f);
         }
     }
-    let mut overrides = picture
-        .local_exif_overrides
-        .as_ref()
-        .map(|j| j.0.clone())
-        .unwrap_or_default();
-    overrides.clear_fields(&touched);
-
-    let mut tx = db
-        .begin()
-        .await
-        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-    let remote =
-        PictureRepository::set_local_exif_overrides(&mut *tx, user_id, picture_id, &overrides)
-            .await?
-            .ok_or(AppError::NotFound)?;
-    let merged = remote.merged_with(&overrides);
-    PictureRepository::apply_received_materialization(
-        &mut *tx,
-        picture_id,
-        &merged.camera,
-        merged.captured_at,
-        merged.gps_lat,
-        merged.gps_lng,
-        merged.gps_alt,
-        merged.orientation,
+    // Drop the touched fields from the override via the shared set-based merge (empty patch, the
+    // touched keys as the clear set) — same path as a local override / batch edit.
+    let (patch, clear_keys) =
+        crate::domain::received_exif::override_patch(&FullExif::default(), &[], &touched);
+    let sel = ResolvedSelection::explicit(vec![picture_id]);
+    PictureRepository::batch_apply_exif_received_local_selection(
+        db,
+        user_id,
+        &sel,
+        &patch,
+        &clear_keys,
     )
     .await?;
-    PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
-    tx.commit().await.map_err(map_sqlx_error)?;
     waker.trigger(user_id);
 
     PictureRepository::find_by_id(db, picture_id)

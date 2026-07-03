@@ -53,7 +53,8 @@
 
 - [x] **Physical copy & content dedup** — rescue-copy into own library with `copy_source_*` provenance, `content_hash`-based dedup reconciler,
   boomerang guard. See `doc/features/11_physical_copy_and_dedup.md`.
-- [ ] **Storage quotas** — per-user storage quotas, WebDAV quota properties in PROPFIND, resolver-updatable quotas.
+- [ ] **Storage quotas** — per-user storage quotas, WebDAV quota properties in PROPFIND, resolver and admin-updatable quotas.
+- [ ] **Photos fix tools** — Quick and useful tools for fixing missing exif infos in files (feature 21).
 - [ ] **Registration rules** — open registration vs invite-only (invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.

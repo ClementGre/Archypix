@@ -227,9 +227,10 @@ async fn escalate_clears_local_override(db: PgPool) {
         bob_id,
         bob_pic,
         FullExif {
-            gps_lat: Some(99.0),
+            gps_lat: Some(89.0),
             ..Default::default()
         },
+        vec![],
         vec![],
     )
     .await
@@ -239,10 +240,9 @@ async fn escalate_clears_local_override(db: PgPool) {
             .await
             .local_exif_overrides
             .as_ref()
-            .unwrap()
-            .0
-            .gps_lat,
-        Some(99.0)
+            .and_then(|j| j.0.get("gps_lat"))
+            .and_then(serde_json::Value::as_f64),
+        Some(89.0)
     );
 
     // Then escalates the same field to a proposal → the per-field override is cleared.
@@ -262,8 +262,8 @@ async fn escalate_clears_local_override(db: PgPool) {
     let still_overridden = after
         .local_exif_overrides
         .as_ref()
-        .map(|j| j.0.gps_lat)
-        .unwrap_or(None);
+        .and_then(|j| j.0.get("gps_lat"))
+        .cloned();
     assert_eq!(
         still_overridden, None,
         "escalating a field to a proposal clears its local override"

@@ -41,14 +41,18 @@ function buildInitial(picture: PictureDetail): ExifDraft {
 function buildPayload(
     draft: ExifDraft,
     initial: ExifDraft,
-): { set?: Partial<ExifOverrides>; clear?: ExifField[] } | null {
+    owned: boolean,
+): { set?: Partial<ExifOverrides>; empty?: ExifField[]; clear?: ExifField[] } | null {
     const set: Partial<ExifOverrides> = {}
-    const clear: ExifField[] = []
+    // Emptying a field: an owned picture nulls its own column (`clear`); a received picture claims
+    // the field as empty (`empty`) — a sticky override that shadows the owner's value with emptiness,
+    // distinct from dropping the claim (which reveals the owner's value again — see removeOverride).
+    const emptied: ExifField[] = []
 
     function diffText(key: ExifField, cur: string, ini: string) {
         if (cur === ini) return
         if (cur === '') {
-            if (ini !== '') clear.push(key)
+            if (ini !== '') emptied.push(key)
         } else {
             (set as Record<string, unknown>)[key] = cur
         }
@@ -57,7 +61,7 @@ function buildPayload(
     function diffNum(key: ExifField, cur: string, ini: string, toNum: (s: string) => number = Number) {
         if (cur === ini) return
         if (cur === '') {
-            if (ini !== '') clear.push(key)
+            if (ini !== '') emptied.push(key)
         } else {
             (set as Record<string, unknown>)[key] = toNum(cur)
         }
@@ -76,10 +80,10 @@ function buildPayload(
     diffNum('exposure_time_num', draft.exposure_time_num, initial.exposure_time_num, (s) => Math.round(Number(s)))
     diffNum('exposure_time_den', draft.exposure_time_den, initial.exposure_time_den, (s) => Math.round(Number(s)))
 
-    if (Object.keys(set).length === 0 && clear.length === 0) return null
+    if (Object.keys(set).length === 0 && emptied.length === 0) return null
     return {
         ...(Object.keys(set).length > 0 ? {set} : {}),
-        ...(clear.length > 0 ? {clear} : {}),
+        ...(emptied.length > 0 ? (owned ? {clear: emptied} : {empty: emptied}) : {}),
     }
 }
 
@@ -130,7 +134,7 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     // Attach the received-picture edit mode (owned edits ignore it). Rotation and the per-field
     // reset always stay a private local override; only an explicit Save can propose to the owner.
     const withMode = (
-        body: { set?: Partial<ExifOverrides>; clear?: ExifField[] },
+        body: { set?: Partial<ExifOverrides>; empty?: ExifField[]; clear?: ExifField[] },
         mode: ExifEditMode = 'local',
     ) => (owned ? body : {mode, ...body})
 
@@ -197,7 +201,7 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     // Save the pending edit. For received pictures `mode` chooses between a private local override
     // (default) and a proposal to the owner ('propose', only valid when the share authorises it).
     function save(mode: ExifEditMode = 'local') {
-        const payload = buildPayload(draft, initialDraft)
+        const payload = buildPayload(draft, initialDraft, owned)
         if (!payload) return
         mutation.mutate(withMode(payload, mode), {
             onError: (e) => toast.error('Could not save EXIF', {description: apiErrorMessage(e)}),

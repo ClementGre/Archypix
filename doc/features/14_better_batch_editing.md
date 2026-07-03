@@ -238,12 +238,12 @@ backward compatibility, but the status histogram is the uniform signal.
 All batch writes accept a `PictureSelection`, resolve it inside the transaction, support
 `dry_run: true`, and are gated by a mandatory confirmation popup on the frontend.
 
-| Endpoint                                   | Status  | Change                                                    |
-|--------------------------------------------|---------|-----------------------------------------------------------|
-| `PATCH /api/authenticated/tags`            | exists  | accept `selection`; tristate add/remove (§6.4)            |
-| `PATCH /api/authenticated/pictures/exif`   | exists  | accept `selection`; owner-mode (§6.1); deferred jobs (§5) |
-| `POST /api/authenticated/pictures/trash`   | **new** | batch soft-delete (replaces per-picture loop)             |
-| `POST /api/authenticated/pictures/restore` | **new** | batch restore                                             |
+| Endpoint                                   | Status  | Change                                                                                                                 |
+|--------------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------|
+| `PATCH /api/authenticated/tags`            | exists  | accept `selection`; tristate add/remove (§6.4)                                                                         |
+| `PATCH /api/authenticated/pictures/exif`   | exists  | accept `selection`; owner-mode (§6.1); deferred jobs (§5); `set`/`empty`/`clear` (`empty` = override-to-null, 10 §6.3) |
+| `POST /api/authenticated/pictures/trash`   | **new** | batch soft-delete (replaces per-picture loop)                                                                          |
+| `POST /api/authenticated/pictures/restore` | **new** | batch restore                                                                                                          |
 
 ### 6.1 Dry-run & owner modes
 

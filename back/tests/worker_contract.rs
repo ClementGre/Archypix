@@ -85,7 +85,7 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     // Seed: user + picture + pending gen_thumbnail job
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
-    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, true)
+    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, true, None)
         .await
         .unwrap();
 
@@ -198,7 +198,7 @@ async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
 
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
-    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, true)
+    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, true, None)
         .await
         .unwrap();
 
@@ -249,7 +249,7 @@ async fn worker_fail_wrong_token_returns_conflict(db: PgPool) {
 
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
-    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, false)
+    let job = enqueue_thumbnail_job(&db, alice_id, pic_id, false, None)
         .await
         .unwrap();
 

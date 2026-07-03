@@ -146,15 +146,17 @@ export interface ReceivedExifResult {
  * Edit a **received** picture's EXIF (`doc/features/10 §4.1`). Two modes:
  *
  * - `mode: 'local'` (default) — a recipient-local override. DB-only, no file reconcile, no job.
- *   `set` claims a sticky per-field override; `clear` drops it so the owner's value flows through
- *   again. Always permitted. Returns `200`.
+ *   `set` claims a sticky per-field override; `empty` claims it as empty/`null` (shadows a present
+ *   owner value with emptiness); `clear` drops the claim so the owner's value flows through again.
+ *   Always permitted. Returns `200`.
  * - `mode: 'propose'` — propose the edit to the owner, who auto-applies + re-announces so all
  *   recipients converge. Requires the incoming share to grant editing (`403` otherwise). The
- *   proposed fields' local overrides are cleared. Lands asynchronously — returns `202`.
+ *   proposed fields' local overrides are cleared; `empty` folds into `clear`. Lands asynchronously —
+ *   returns `202`.
  */
 export async function editReceivedExif(
     id: string,
-    body: { mode?: ExifEditMode; set?: Partial<ExifOverrides>; clear?: ExifField[] },
+    body: { mode?: ExifEditMode; set?: Partial<ExifOverrides>; empty?: ExifField[]; clear?: ExifField[] },
 ): Promise<ReceivedExifResult> {
     const res = await apiClient.post<OverrideExifResponse>(`/api/authenticated/pictures/${id}/exif`, body)
     return {data: res.data, status: res.status}
@@ -176,6 +178,9 @@ export async function aggregatePictures(body: AggregateRequest): Promise<Aggrega
 export interface BatchExifBody {
     selection: PictureSelection
     set?: Partial<ExifOverrides>
+    /** Fields to empty: owned pictures null the column, received-local pictures get a `null` override
+     *  claim (10 §6.3). For propose-to-owner this folds into a clear. */
+    empty?: ExifField[]
     clear?: ExifField[]
     mode?: BatchExifMode
     dry_run?: boolean

@@ -34,8 +34,8 @@ pub struct Picture {
     /// JSON), refreshed on every announcement. `exif_data` for received rows is the merge of this
     /// with `local_exif_overrides`.
     pub remote_exif_data: Option<Json<FullExif>>,
-    /// Received rows only: the recipient's sticky per-field EXIF overrides (sparse key set).
-    pub local_exif_overrides: Option<Json<FullExif>>,
+    /// Received rows only: the recipient's sticky per-field EXIF overrides (sparse key set, `null` to claim the field as empty).
+    pub local_exif_overrides: Option<Json<serde_json::Value>>,
     pub captured_at: Option<NaiveDateTime>,
     pub ingested_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,

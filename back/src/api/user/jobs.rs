@@ -114,6 +114,7 @@ pub async fn batch_edit_exif(
         &auth.claims.sub,
         &sel,
         body.set,
+        body.empty,
         body.clear,
         body.mode,
         body.dry_run,
@@ -149,6 +150,10 @@ pub struct BatchExifEditBody {
     pub picture_ids: Vec<Uuid>,
     #[serde(default)]
     pub set: FullExif,
+    /// Received-local (`mode: local`) only: fields to override to **empty**/`null` (10 §6.3). For
+    /// owned pictures and propose-to-owner this folds into `clear` (nulls the column).
+    #[serde(default)]
+    pub empty: Vec<ExifField>,
     #[serde(default)]
     pub clear: Vec<ExifField>,
     #[serde(default)]

@@ -173,9 +173,10 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
         bob_id,
         bob_pic,
         FullExif {
-            gps_lat: Some(99.0),
+            gps_lat: Some(89.0),
             ..Default::default()
         },
+        vec![],
         vec![],
     )
     .await
@@ -191,7 +192,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
         edit_jobs, 0,
         "a recipient override never enqueues an edit_picture job"
     );
-    assert_eq!(bob_received(&db, bob_id).await.gps_lat, Some(99.0));
+    assert_eq!(bob_received(&db, bob_id).await.gps_lat, Some(89.0));
 
     // Owner edits the same picture: gps_lat (overridden) + captured_at (not overridden).
     let cap = chrono::NaiveDate::from_ymd_opt(2024, 9, 9)
@@ -211,7 +212,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     let merged = bob_received(&db, bob_id).await;
     assert_eq!(
         merged.gps_lat,
-        Some(99.0),
+        Some(89.0),
         "override stays sticky across an owner re-announce"
     );
     assert_eq!(
@@ -230,6 +231,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
         bob_id,
         bob_pic,
         FullExif::default(),
+        vec![],
         vec![ExifField::GpsLat],
     )
     .await
@@ -238,6 +240,98 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
         bob_received(&db, bob_id).await.gps_lat,
         Some(10.0),
         "cleared override reveals owner value"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
+    let (alice_pic, bob_id, alice_id) = share_and_announce(&db, "vacation").await;
+
+    // Owner has a gps_lat; announce it so Bob's merged value reflects the owner.
+    sqlx::query("UPDATE pictures SET gps_lat = 45.0, last_pipeline_run_at = NULL WHERE id = $1")
+        .bind(alice_pic)
+        .execute(&db)
+        .await
+        .unwrap();
+    run_alice(&db, alice_id).await;
+    let bob_pic = bob_received(&db, bob_id).await;
+    assert_eq!(
+        bob_pic.gps_lat,
+        Some(45.0),
+        "owner value flows through before override"
+    );
+
+    // Bob overrides gps_lat to *empty* (not just un-claim) — the owner still has a value.
+    pictures::override_received_exif(
+        &db,
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        bob_id,
+        bob_pic.id,
+        FullExif::default(),
+        vec![ExifField::GpsLat],
+        vec![],
+    )
+    .await
+    .unwrap();
+    let after = bob_received(&db, bob_id).await;
+    assert_eq!(
+        after.gps_lat, None,
+        "empty override shadows the owner value with emptiness"
+    );
+    assert_eq!(
+        after.remote_exif_data.as_ref().and_then(|r| r.0.gps_lat),
+        Some(45.0),
+        "the owner snapshot still holds the owner value"
+    );
+    // The empty claim is stored as an explicit null (present key), not an absent key.
+    assert_eq!(
+        after
+            .local_exif_overrides
+            .as_ref()
+            .and_then(|j| j.0.get("gps_lat")),
+        Some(&serde_json::Value::Null),
+        "empty claim is a present null key in the override JSON"
+    );
+
+    // Owner edits a *different* field and re-announces; the empty claim stays sticky.
+    let cap = chrono::NaiveDate::from_ymd_opt(2024, 9, 9)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    sqlx::query("UPDATE pictures SET captured_at = $2, last_pipeline_run_at = NULL WHERE id = $1")
+        .bind(alice_pic)
+        .bind(cap)
+        .execute(&db)
+        .await
+        .unwrap();
+    run_alice(&db, alice_id).await;
+    let merged = bob_received(&db, bob_id).await;
+    assert_eq!(
+        merged.gps_lat, None,
+        "empty override stays sticky across an owner re-announce"
+    );
+    assert_eq!(
+        merged.captured_at,
+        Some(cap),
+        "non-claimed owner field still flows through"
+    );
+
+    // Bob clears the empty claim → the owner's value flows through again.
+    pictures::override_received_exif(
+        &db,
+        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        bob_id,
+        bob_pic.id,
+        FullExif::default(),
+        vec![],
+        vec![ExifField::GpsLat],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        bob_received(&db, bob_id).await.gps_lat,
+        Some(45.0),
+        "clearing the empty claim reveals the owner value"
     );
 }
 

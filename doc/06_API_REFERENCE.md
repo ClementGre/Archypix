@@ -634,6 +634,7 @@ through the `exif_sync` histogram from `POST /pictures/aggregate`.
     selection?: PictureSelection;     // the selection (or use picture_ids)
     picture_ids?: string[];           // legacy explicit set (used when selection is absent)
     set ? : Partial<ExifOverrides>;
+    empty ? : ExifField[];            // override to empty/null; owned + suggest fold it into clear
     clear ? : ExifField[];
     mode?: "local" | "suggest";       // default "local" (§6.1)
     dry_run?: boolean;                // default false
@@ -675,20 +676,23 @@ Edit a **received** picture's EXIF (`set`/`clear`, same shape as an owned edit) 
 {
     mode?: "local" | "propose";   // default "local"
     set?: Partial<ExifOverrides>;
+    empty?: ExifField[];          // local mode: claim-as-empty (null)
     clear?: ExifField[];
 }
 ```
 
 - `mode: "local"` (default) — a **recipient-local** override. DB-only; no `edit_picture` job, no file
-  reconcile (the recipient does not own the file). `set` fields claim a sticky per-field override;
-  `clear` fields drop it so the owner's value flows through again. The effective `exif_data` (+
+  reconcile (the recipient does not own the file). Three per-field verbs: `set` claims a sticky
+  value; `empty` claims the field as **empty/`null`**, shadowing a present owner value with emptiness;
+  `clear` drops the claim so the owner's value flows through again. The effective `exif_data` (+
   promoted columns) is `merge(owner snapshot, overrides)`. Always permitted. Returns `200`.
 - `mode: "propose"` — **propose the edit to the owner**, who auto-applies it to the authoritative
   picture and re-announces so all recipients converge (owner is the serialization point;
   last-write-wins). Requires the incoming share to grant editing
   (`IncomingShareResponse.allow_exif_edit = true`), else `403`. On success the proposed fields'
-  local overrides are cleared (the owner's value is authoritative). The change lands asynchronously,
-  so this returns `202 Accepted`.
+  local overrides are cleared (the owner's value is authoritative). Any `empty` fields are folded
+  into `clear` (owner-side clear nulls the column). The change lands asynchronously, so this returns
+  `202 Accepted`.
 
 **Path params:** `id: string` — must be a received (`owned = false`) picture.
 

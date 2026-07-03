@@ -55,8 +55,8 @@ export function useEditExif(pictureId: string) {
     return {mutation, syncing}
 }
 
-/** Body of a received-picture EXIF edit: a `set`/`clear` delta plus the edit mode. */
-type ReceivedExifBody = { mode?: ExifEditMode; set?: Partial<ExifOverrides>; clear?: ExifField[] }
+/** Body of a received-picture EXIF edit: a `set`/`empty`/`clear` delta plus the edit mode. */
+type ReceivedExifBody = { mode?: ExifEditMode; set?: Partial<ExifOverrides>; empty?: ExifField[]; clear?: ExifField[] }
 
 /**
  * EXIF edit for a **received** picture (feature 10). Supports both modes of

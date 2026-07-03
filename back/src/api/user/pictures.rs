@@ -468,6 +468,9 @@ pub struct ReceivedExifEditBody {
     pub mode: ReceivedExifMode,
     #[serde(default)]
     pub set: FullExif,
+    /// Fields to override to **empty** (local mode only, 10 §6.3)
+    #[serde(default)]
+    pub empty: Vec<ExifField>,
     #[serde(default)]
     pub clear: Vec<ExifField>,
 }
@@ -496,6 +499,7 @@ pub async fn edit_received_exif(
                 user_id,
                 picture_id,
                 body.set,
+                body.empty,
                 body.clear,
             )
             .await?;
@@ -515,6 +519,15 @@ pub async fn edit_received_exif(
             ))
         }
         ReceivedExifMode::Propose => {
+            // Emptying a field is expressed to the owner as a `clear` (owner-side clear nulls the
+            // column, 04 §7.3); the recipient-local `empty`/`clear` distinction only exists for the
+            // private override path, so fold the two here.
+            let mut clear = body.clear;
+            for f in body.empty {
+                if !clear.contains(&f) {
+                    clear.push(f);
+                }
+            }
             let picture = services::pictures::propose_received_exif(
                 &state.db,
                 state.cache.as_ref(),
@@ -525,7 +538,7 @@ pub async fn edit_received_exif(
                 &auth.claims.sub,
                 picture_id,
                 body.set,
-                body.clear,
+                clear,
             )
             .await?;
             Ok((

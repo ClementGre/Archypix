@@ -1,5 +1,56 @@
 //! Small input validators shared across services (07_security_audit.md §2.4/§2.7).
 
+use crate::domain::job::{ExifField, FullExif};
+
+/// Any GPS component present pulls in all three (they are set/cleared/emptied as a unit).
+pub fn couple_gps(mut fields: Vec<ExifField>) -> Vec<ExifField> {
+    if fields
+        .iter()
+        .any(|f| matches!(f, ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt))
+    {
+        for f in [ExifField::GpsLat, ExifField::GpsLng, ExifField::GpsAlt] {
+            if !fields.contains(&f) {
+                fields.push(f);
+            }
+        }
+    }
+    fields
+}
+
+/// Normalise an EXIF edit delta shared by every edit path (owned write-through, recipient-local
+/// override, batch): GPS-couple `empty`/`clear`, reject a field claimed in both `set` and
+/// `empty`/`clear`, and range-check `set`. Returns the normalised `(empty, clear)`.
+pub fn validate_exif_edit(
+    set: &FullExif,
+    empty: Vec<ExifField>,
+    clear: Vec<ExifField>,
+) -> Result<(Vec<ExifField>, Vec<ExifField>), String> {
+    let empty = couple_gps(empty);
+    let clear = couple_gps(clear);
+
+    for &f in empty.iter().chain(clear.iter()) {
+        if set.has(f) {
+            return Err(format!("field {f:?} present in both set and empty/clear"));
+        }
+    }
+    if let Some(lat) = set.gps_lat {
+        if !(-90.0..=90.0).contains(&lat) {
+            return Err("gps_lat out of range [-90,90]".into());
+        }
+    }
+    if let Some(lng) = set.gps_lng {
+        if !(-180.0..=180.0).contains(&lng) {
+            return Err("gps_lng out of range [-180,180]".into());
+        }
+    }
+    if let Some(o) = set.orientation {
+        if !(1..=8).contains(&o) {
+            return Err("orientation must be 1..=8".into());
+        }
+    }
+    Ok((empty, clear))
+}
+
 /// Minimum acceptable password length.
 pub const MIN_PASSWORD_LEN: usize = 8;
 
@@ -149,6 +200,37 @@ mod tests {
         assert!(validate_share_message(Some("Here are the photos")).is_ok());
         assert!(validate_share_message(Some(&"a".repeat(MAX_SHARE_MESSAGE_LEN))).is_ok());
         assert!(validate_share_message(Some(&"a".repeat(MAX_SHARE_MESSAGE_LEN + 1))).is_err());
+    }
+
+    #[test]
+    fn exif_edit() {
+        use crate::domain::job::ExifField;
+        // GPS-couples empty/clear; a lone GPS component pulls in all three.
+        let (empty, clear) =
+            validate_exif_edit(&FullExif::default(), vec![ExifField::GpsLat], vec![]).unwrap();
+        assert_eq!(
+            empty.len(),
+            3,
+            "empty GPS is coupled to all three components"
+        );
+        assert!(clear.is_empty());
+        // Range checks.
+        let bad = FullExif {
+            gps_lat: Some(120.0),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        let bad = FullExif {
+            orientation: Some(9),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        // A field cannot be both set and emptied/cleared.
+        let set = FullExif {
+            orientation: Some(3),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&set, vec![ExifField::Orientation], vec![]).is_err());
     }
 
     #[test]

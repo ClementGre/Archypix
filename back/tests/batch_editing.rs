@@ -6,7 +6,7 @@
 
 mod common;
 
-use archypix_back::domain::job::FullExif;
+use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::domain::picture::ExifSyncStatus;
 use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::RoutineHandle;
@@ -575,7 +575,126 @@ async fn received_local_override_materialises(db: PgPool) {
     assert_eq!(pic_row.gps_lat, Some(20.0));
     assert_eq!(pic_row.gps_lng, Some(5.0));
     let ov = pic_row.local_exif_overrides.as_ref().unwrap();
-    assert_eq!(ov.0.gps_lat, Some(20.0));
+    assert_eq!(
+        ov.0.get("gps_lat").and_then(serde_json::Value::as_f64),
+        Some(20.0)
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn received_override_equal_to_owner_value_is_not_stored(db: PgPool) {
+    async fn gps_lat_override(db: &PgPool, pic: Uuid) -> Option<serde_json::Value> {
+        PictureRepository::find_by_id(db, pic)
+            .await
+            .unwrap()
+            .unwrap()
+            .local_exif_overrides
+            .as_ref()
+            .and_then(|j| j.0.get("gps_lat").cloned())
+    }
+
+    let user = common::seed_user(&db, "alice", "pass").await;
+    // Owner asserts gps_lat 10.0.
+    let pic = seed_received(&db, user, "carol", json!({"gps_lat": 10.0, "gps_lng": 5.0})).await;
+    let sel = ResolvedSelection::explicit(vec![pic]);
+
+    // Setting a field to the owner's current value must NOT create an override.
+    let same = serde_json::to_value(FullExif {
+        gps_lat: Some(10.0),
+        ..Default::default()
+    })
+    .unwrap();
+    PictureRepository::batch_apply_exif_received_local_selection(&db, user, &sel, &same, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        gps_lat_override(&db, pic).await,
+        None,
+        "no override when the set value equals the owner value"
+    );
+
+    // A differing value is stored…
+    let diff = serde_json::to_value(FullExif {
+        gps_lat: Some(20.0),
+        ..Default::default()
+    })
+    .unwrap();
+    PictureRepository::batch_apply_exif_received_local_selection(&db, user, &sel, &diff, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        gps_lat_override(&db, pic).await,
+        Some(json!(20.0)),
+        "a differing value is stored"
+    );
+
+    // …and re-setting it to the owner value drops the now-stale override.
+    PictureRepository::batch_apply_exif_received_local_selection(&db, user, &sel, &same, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        gps_lat_override(&db, pic).await,
+        None,
+        "re-setting to the owner value drops the stale override"
+    );
+    assert_eq!(
+        PictureRepository::find_by_id(&db, pic)
+            .await
+            .unwrap()
+            .unwrap()
+            .gps_lat,
+        Some(10.0),
+        "the owner value flows through again"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn batch_local_override_can_empty_a_received_field(db: PgPool) {
+    let cfg = Config::test_defaults();
+    let (fed, cache) = common::make_federation(&cfg);
+    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let drain = RoutineHandle::<()>::disconnected();
+
+    let user = common::seed_user(&db, "alice", "pass").await;
+    // Owner has a gps_lat; the recipient empties it via a batch local override.
+    let pic = seed_received(&db, user, "carol", json!({"gps_lat": 10.0, "gps_lng": 5.0})).await;
+    let sel = ResolvedSelection::explicit(vec![pic]);
+
+    jobs::batch_edit_exif_selection(
+        &db,
+        &waker,
+        &drain,
+        cache.as_ref(),
+        &cfg,
+        &fed,
+        user,
+        "alice",
+        &sel,
+        FullExif::default(),
+        vec![ExifField::GpsLat],
+        vec![],
+        BatchExifMode::Local,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let pic_row = PictureRepository::find_by_id(&db, pic)
+        .await
+        .unwrap()
+        .unwrap();
+    // GPS-coupled: emptying lat empties all three; owner values are shadowed with emptiness.
+    assert_eq!(
+        pic_row.gps_lat, None,
+        "batch empty shadows the owner value with emptiness"
+    );
+    assert_eq!(pic_row.gps_lng, None, "GPS components empty as a unit");
+    let ov = pic_row.local_exif_overrides.as_ref().unwrap();
+    assert_eq!(
+        ov.0.get("gps_lat"),
+        Some(&serde_json::Value::Null),
+        "empty is a present null claim"
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -629,6 +748,7 @@ async fn batch_exif_dry_run_partitions(db: PgPool) {
             orientation: Some(2),
             ..Default::default()
         },
+        vec![],
         vec![],
         BatchExifMode::Local,
         true,

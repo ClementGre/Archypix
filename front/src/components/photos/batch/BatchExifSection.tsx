@@ -302,7 +302,8 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
     const {exif: exifMutation} = useBatchMutations()
 
     // Draft: a field key present in `draft` (or a defined `gpsDraft`) means it's being changed;
-    // an empty value ⇒ clear, a non-empty value ⇒ set.
+    // an empty value ⇒ empty (owned: nulls the column; received: a `null` override claim), a
+    // non-empty value ⇒ set.
     const [draft, setDraft] = useState<Record<string, string>>({})
     const [gpsDraft, setGpsDraft] = useState<GpsStr | undefined>(undefined)
     const [mode, setMode] = useState<BatchExifMode>('local')
@@ -319,18 +320,18 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
         setGpsDraft(undefined)
     }
 
-    const {set, clear, dirty} = useMemo(() => {
+    const {set, empty, dirty} = useMemo(() => {
         const set: Partial<ExifOverrides> = {}
-        const clear: ExifField[] = []
+        const empty: ExifField[] = []
         const num = (s: string) => (s.trim() === '' || isNaN(Number(s)) ? null : Number(s))
         for (const [f, v] of Object.entries(draft)) {
             if (f === 'captured_at') {
-                v ? (set.captured_at = v) : clear.push('captured_at')
+                v ? (set.captured_at = v) : empty.push('captured_at')
             } else if (f === 'camera_brand' || f === 'camera_model') {
-                v.trim() ? ((set as Record<string, unknown>)[f] = v.trim()) : clear.push(f as ExifField)
+                v.trim() ? ((set as Record<string, unknown>)[f] = v.trim()) : empty.push(f as ExifField)
             } else {
                 const n = num(v)
-                n != null ? ((set as Record<string, unknown>)[f] = n) : clear.push(f as ExifField)
+                n != null ? ((set as Record<string, unknown>)[f] = n) : empty.push(f as ExifField)
             }
         }
         if (gpsDraft) {
@@ -342,15 +343,15 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
                 const alt = num(gpsDraft.alt)
                 if (alt != null) set.gps_alt = alt
             } else {
-                clear.push('gps_lat', 'gps_lng', 'gps_alt')
+                empty.push('gps_lat', 'gps_lng', 'gps_alt')
             }
         }
-        return {set, clear, dirty: Object.keys(draft).length > 0 || gpsDraft !== undefined}
+        return {set, empty, dirty: Object.keys(draft).length > 0 || gpsDraft !== undefined}
     }, [draft, gpsDraft])
 
     const apply = () => {
         exifMutation.mutate(
-            {selection, set, clear, mode},
+            {selection, set, empty, mode},
             {
                 onSuccess: (res) => {
                     if ('affected' in res) toast.success(`Edited EXIF on ${res.affected} ${res.affected === 1 ? 'photo' : 'photos'}`)
@@ -384,7 +385,7 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
                 title="Apply EXIF changes?"
                 description="Owned pictures are written through (the file reconciles in the background); received pictures get a local override."
                 confirmLabel="Apply"
-                dryRun={() => batchEditExif({selection, set, clear, mode, dry_run: true})}
+                dryRun={() => batchEditExif({selection, set, empty, mode, dry_run: true})}
                 dryRunKey={mode}
                 renderResult={(r: BatchDryRun) => {
                     const bits: string[] = []

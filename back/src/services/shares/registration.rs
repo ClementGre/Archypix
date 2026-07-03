@@ -64,16 +64,18 @@ pub async fn register_received_pictures(
         .await?;
 
         // Effective EXIF = owner snapshot merged with the recipient's preserved sticky overrides.
-        let overrides = received
-            .local_exif_overrides
-            .as_ref()
-            .map(|j| j.0.clone())
-            .unwrap_or_default();
-        let merged = pic.exif.merged_with(&overrides);
+        // Raw-JSON merge (via received_exif) so an empty/`null` claim stays sticky across re-announce
+        // (a typed `FullExif` merge would collapse the null back to the owner value — 10 §6.3).
+        let remote_val = serde_json::to_value(&pic.exif)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let merged = crate::domain::received_exif::materialize(
+            Some(&remote_val),
+            received.local_exif_overrides.as_ref().map(|j| &j.0),
+        );
         PictureRepository::apply_received_materialization(
             &mut *tx,
             received.id,
-            &merged.camera,
+            &merged.camera(),
             merged.captured_at,
             merged.gps_lat,
             merged.gps_lng,

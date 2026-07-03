@@ -214,7 +214,10 @@ computing SHA-256 inline**, then runs the existing upload-complete transaction. 
 hashing gives identity (§8) and a stable ETag immediately, before the worker runs.
 
 Any write that creates or replaces bytes enqueues **`gen_thumbnail`** (EXIF extraction,
-thumbnails, blurhash, final hash) — identical to the existing upload path.
+thumbnails, blurhash, final hash) — identical to the existing upload path. The initial-extraction
+job's idempotency key is scoped to the **whole-file hash** (`gen_thumbnail_extract:{picture_id}:{hash}`),
+so an overwrite with new bytes re-extracts EXIF while an accidental re-enqueue of the same version is
+deduped — the first-upload key would otherwise block the overwrite.
 
 ### 7.1 Operation taxonomy
 

@@ -62,12 +62,20 @@ IncomingShare.allow_exif_edit : bool   # propagated copy; drives the recipient U
 {
   "mode": "propose" | "local",     // default "local"
   "set":   { "gps_lat": 45.92, "gps_lng": 6.87 },
+  "empty": ["gps_alt"],            // local mode: claim-as-empty (see §6.3)
   "clear": ["orientation"]
 }
 ```
 
 - `mode: "local"` → write `local_exif_overrides`, recompute the merge, fire the local `metadata`
-  event ([09 §6.2](09_trash_and_exif_overrides.md)). Always permitted.
+  event ([09 §6.2](09_trash_and_exif_overrides.md)). Always permitted. Three per-field verbs:
+  `set` claims a value, `empty` claims the field as **empty/`null`** (shadows a present owner value
+  with emptiness — §6.3), `clear` drops the claim so the owner's value flows through again.
+  Overrides are stored as a raw canonical JSON object; a key present with `null` is the empty claim,
+  an absent key is un-claimed (`domain::received_exif`).
+- In `mode: "propose"` there is no recipient-local `empty`; emptying is proposed to the owner as a
+  `clear` (owner-side clear nulls the column — [04 §7.3](04_better_exif_support.md)), so any `empty`
+  fields are folded into `clear` before the proposal is sent.
 - `mode: "propose"` → **requires** the picture's `IncomingShare.allow_exif_edit = true` (else `403`).
   Send the delta to the owner (§5). On success, **clear those fields from `local_exif_overrides`** so
   the owner's value (arriving via re-announce) is authoritative. Returns `202 Accepted` (the
@@ -136,6 +144,21 @@ Bob (recipient)                     Alice (owner)                        all rec
 3. **Field both proposed and locally overridden later** → last action wins on that field: a new local
    override re-shadows; a new proposal re-clears the override. No `Option<Option<T>>` ambiguity
    (reuse [04 §7.3](04_better_exif_support.md) three-state set/clear).
+    - **Override-to-empty.** A recipient may shadow a *present* owner value with **emptiness** (e.g.
+      strip GPS the owner still carries). Because `local_exif_overrides` is a raw JSON object, this is
+      a key present with `null` — distinct from an absent key (un-claimed, owner value flows through).
+      The API `empty` list produces the null claim; `clear` removes the key. A sparse `FullExif` cannot
+      express this (its `None` is un-claimed), which is why the override store is raw `Value`, not
+      `FullExif`. The empty claim is sticky across owner re-announces exactly like a value claim.
+    - **One workflow.** Every recipient-override write — the single endpoint, the propose-escalate
+      clear, and the feature-14 batch — validates via `domain::validation::validate_exif_edit`, lowers
+      its `set`/`empty`/`clear` delta through `received_exif::override_patch`, and applies it with the
+      same set-based SQL merge `(local_exif_overrides − clear_keys) ‖ patch` (`patch` carries the
+      `null` empty-claims). The stored override additionally drops any set key already equal to the
+      owner's value ([09 §6.1](09_trash_and_exif_overrides.md)) — a redundant claim would needlessly
+      shadow a future owner edit — without changing the effective columns. The batch endpoint exposes
+      `empty` too; for owned pictures and propose-to-owner, `empty` folds into `clear` (nulls the
+      column).
 4. **Owner offline** → the federation call fails; surface a retryable error; the recipient may fall
    back to a local override meanwhile (and re-propose later).
 5. **Picture still in initial extraction** at the owner → reuse [04 §11.2](04_better_exif_support.md)
@@ -167,8 +190,10 @@ Bob (recipient)                     Alice (owner)                        all rec
 - [x] Wire re-announce of the resulting metadata change (provided by
   [04 §10.3](04_better_exif_support.md) — verified it fires for owner-applied recipient proposals via
   `edit_pictures_exif`).
-- [ ] Frontend: per-share "allow recipients to edit EXIF" toggle; received-picture EXIF editor with
-  "suggest to owner" (propose) vs "just for me" (local); reflect `IncomingShare.allow_exif_edit`.
+- [x] Frontend: received-picture EXIF editor with "suggest to owner" (propose) vs "just for me"
+  (local), reflecting `IncomingShare.allow_exif_edit`; three per-field verbs `set`/`empty`/`clear`
+  (`empty` claims a field as empty/`null` — `useExifDraft.buildPayload`). *(Per-share "allow
+  recipients to edit EXIF" toggle in the share dialog: still pending.)*
 - [x] Tests (`tests/recipient_exif_editing.rs`): grant gates propose (403 when off); proposal applies
   at owner + re-announces to the requester; escalate clears override; grant-revoked-in-flight
   rejected; uncovered requester rejected; owned-picture proposal rejected; same-backend short-circuit.

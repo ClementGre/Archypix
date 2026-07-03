@@ -29,7 +29,7 @@ export function OverwrittenBadge({onRemove}: { onRemove?: () => void }) {
                 </span>
             </TooltipTrigger>
             <TooltipContent side="left" className="max-w-[15rem] text-xs">
-                You overrode this field locally. The change is private to you — it is not written to the
+                You overrode this field locally. The change is private to you, it is not written to the
                 owner's file, so it is not visible in WebDAV (which serves the owner's picture directly,
                 without applying your overrides).
             </TooltipContent>

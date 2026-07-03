@@ -174,8 +174,11 @@ For a received row:
 
 - `remote_exif_data` — the owner's authoritative snapshot, refreshed on every announcement.
 - `local_exif_overrides` — sparse; the explicit **set of fields** the recipient claimed, with their
-  values. Store the explicit key set (not a diff of effective-vs-remote) so that an owner later
-  setting a field to the recipient's value does not silently transfer ownership of that field.
+  values. A field is claimed only when the recipient's value **differs from the owner's at write
+  time**: setting a field to the value the owner already has stores no override (and drops any stale
+  one), so it keeps tracking the owner. A claim that differs stays sticky thereafter — the merge on a
+  later announcement never re-prunes, so an owner subsequently editing that field to the recipient's
+  value does not silently transfer ownership.
 - `exif_data` (+ promoted columns) = `merge(remote_exif_data, local_exif_overrides)`, recomputed on
   every announcement and on every override change.
 

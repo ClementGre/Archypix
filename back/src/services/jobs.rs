@@ -17,14 +17,15 @@ use uuid::Uuid;
 
 /// Enqueue a thumbnail + EXIF extraction job for a picture.
 ///
-/// Pass `is_initial = true` for the first-ever run (worker also extracts EXIF).
-/// Pass `is_initial = false` to re-generate thumbnails without EXIF re-extraction.
+/// Pass `is_initial = true` for a run that (re-)extracts EXIF from the file (first upload, or a
+/// WebDAV overwrite whose bytes changed).
 #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, picture_id = %picture_id))]
 pub async fn enqueue_thumbnail_job<'e, E>(
     ex: E,
     owner_id: Uuid,
     picture_id: Uuid,
     is_initial: bool,
+    file_hash: Option<&str>,
 ) -> Result<Job, AppError>
 where
     E: Executor<'e, Database = Postgres>,
@@ -33,10 +34,10 @@ where
         picture_id,
         is_initial,
     });
-    let idempotency = if is_initial {
-        Some(format!("gen_thumbnail_initial:{picture_id}"))
-    } else {
-        None
+    let idempotency = match (is_initial, file_hash) {
+        (true, Some(hash)) => Some(format!("gen_thumbnail_extract:{picture_id}:{hash}")),
+        (true, None) => Some(format!("gen_thumbnail_initial:{picture_id}")),
+        (false, _) => None,
     };
     JobRepository::create(
         ex,
@@ -141,7 +142,8 @@ pub async fn edit_pictures_exif(
     if picture_ids.is_empty() {
         return Err(AppError::BadRequest("picture_ids must not be empty".into()));
     }
-    let clear = validate_exif_edit(&set, clear)?;
+    let (_empty, clear) = crate::domain::validation::validate_exif_edit(&set, vec![], clear)
+        .map_err(AppError::BadRequest)?;
 
     // ── Validate the whole batch before any mutation (reject on first violation) ──
     let mut pictures = Vec::with_capacity(picture_ids.len());
@@ -324,47 +326,6 @@ pub async fn resync_picture_exif(
 
 /// Field-level validation of an EXIF edit. Expands a GPS clear to lat+lng+alt, then rejects a field
 /// that appears in both `set` and `clear`, out-of-range GPS, and an invalid orientation.
-fn validate_exif_edit(set: &FullExif, clear: Vec<ExifField>) -> Result<Vec<ExifField>, AppError> {
-    // Clearing any GPS component clears all three together.
-    let mut clear = clear;
-    if clear
-        .iter()
-        .any(|f| matches!(f, ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt))
-    {
-        for f in [ExifField::GpsLat, ExifField::GpsLng, ExifField::GpsAlt] {
-            if !clear.contains(&f) {
-                clear.push(f);
-            }
-        }
-    }
-
-    for &f in &clear {
-        if set.has(f) {
-            return Err(AppError::BadRequest(format!(
-                "field {f:?} present in both set and clear"
-            )));
-        }
-    }
-    if let Some(lat) = set.gps_lat {
-        if !(-90.0..=90.0).contains(&lat) {
-            return Err(AppError::BadRequest("gps_lat out of range [-90,90]".into()));
-        }
-    }
-    if let Some(lng) = set.gps_lng {
-        if !(-180.0..=180.0).contains(&lng) {
-            return Err(AppError::BadRequest(
-                "gps_lng out of range [-180,180]".into(),
-            ));
-        }
-    }
-    if let Some(o) = set.orientation {
-        if !(1..=8).contains(&o) {
-            return Err(AppError::BadRequest("orientation must be 1..=8".into()));
-        }
-    }
-    Ok(clear)
-}
-
 /// Whether a batch EXIF edit applies locally or proposes to owners where the share allows (§6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -394,24 +355,6 @@ fn supported_mimes() -> Vec<String> {
     MIME_TYPES_EXIF.iter().map(|m| m.to_lowercase()).collect()
 }
 
-/// The flat-JSON key a `FullExif` uses for an `ExifField` (drives the received-override clear set).
-fn exif_field_key(f: ExifField) -> &'static str {
-    match f {
-        ExifField::CapturedAt => "captured_at",
-        ExifField::GpsLat => "gps_lat",
-        ExifField::GpsLng => "gps_lng",
-        ExifField::GpsAlt => "gps_alt",
-        ExifField::Orientation => "orientation",
-        ExifField::CameraBrand => "camera_brand",
-        ExifField::CameraModel => "camera_model",
-        ExifField::FocalLengthMm => "focal_length_mm",
-        ExifField::FNumber => "f_number",
-        ExifField::IsoSpeed => "iso_speed",
-        ExifField::ExposureTimeNum => "exposure_time_num",
-        ExifField::ExposureTimeDen => "exposure_time_den",
-    }
-}
-
 /// Batch EXIF edit over a [`ResolvedSelection`] (feature 14 §5–§6). Owned pictures take the
 /// **deferred-job** write-through (a single set-based UPDATE that stamps `pending_job_creation`; the
 /// drain creates the reconcile jobs). Received pictures take the recipient-local override merge (also
@@ -420,7 +363,7 @@ fn exif_field_key(f: ExifField) -> &'static str {
 /// With `dry_run` the call returns the §6.1 affected breakdown without mutating. The federation
 /// deps are only used by `Suggest`-mode proposals.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, config, federation, sel, set, clear), fields(user_id = %user_id, dry_run))]
+#[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, config, federation, sel, set, empty, clear), fields(user_id = %user_id, dry_run))]
 pub async fn batch_edit_exif_selection(
     db: &PgPool,
     pipeline_waker: &RoutineHandle<Uuid>,
@@ -432,11 +375,22 @@ pub async fn batch_edit_exif_selection(
     requester_username: &str,
     sel: &ResolvedSelection,
     set: FullExif,
+    empty: Vec<ExifField>,
     clear: Vec<ExifField>,
     mode: BatchExifMode,
     dry_run: bool,
 ) -> Result<ExifBatchOutcome, AppError> {
-    let clear = validate_exif_edit(&set, clear)?;
+    let (empty, clear) = crate::domain::validation::validate_exif_edit(&set, empty, clear)
+        .map_err(AppError::BadRequest)?;
+    // Where emptying == nulling the column — owned write-through and propose-to-owner — `empty` folds
+    // into `clear`. Only the received-local override keeps the empty/clear distinction (empty = a
+    // sticky `null` claim, clear = drop the claim so the owner's value flows through).
+    let mut null_clear = clear.clone();
+    for &f in &empty {
+        if !null_clear.contains(&f) {
+            null_clear.push(f);
+        }
+    }
     let mimes = supported_mimes();
 
     if dry_run {
@@ -463,11 +417,23 @@ pub async fn batch_edit_exif_selection(
     // ── Owned: deferred write-through, set-based (supported + unsupported partitions) ──
     let mut tx = db.begin().await.map_err(map_sqlx_error)?;
     let edited = PictureRepository::batch_apply_exif_owned_selection(
-        &mut *tx, user_id, sel, &set, &clear, true, &mimes,
+        &mut *tx,
+        user_id,
+        sel,
+        &set,
+        &null_clear,
+        true,
+        &mimes,
     )
     .await? as i64;
     let unsupported = PictureRepository::batch_apply_exif_owned_selection(
-        &mut *tx, user_id, sel, &set, &clear, false, &mimes,
+        &mut *tx,
+        user_id,
+        sel,
+        &set,
+        &null_clear,
+        false,
+        &mimes,
     )
     .await? as i64;
     tx.commit().await.map_err(map_sqlx_error)?;
@@ -481,17 +447,13 @@ pub async fn batch_edit_exif_selection(
     let mut local_override = 0i64;
     match mode {
         BatchExifMode::Local => {
-            let set_patch = serde_json::to_value(&set)
-                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-            let clear_keys: Vec<String> = clear
-                .iter()
-                .map(|f| exif_field_key(*f).to_string())
-                .collect();
+            let (patch, clear_keys) =
+                crate::domain::received_exif::override_patch(&set, &empty, &clear);
             local_override = PictureRepository::batch_apply_exif_received_local_selection(
                 db,
                 user_id,
                 sel,
-                &set_patch,
+                &patch,
                 &clear_keys,
             )
             .await? as i64;
@@ -516,7 +478,7 @@ pub async fn batch_edit_exif_selection(
                         requester_username,
                         pic_id,
                         set.clone(),
-                        clear.clone(),
+                        null_clear.clone(),
                     )
                     .await
                     {
@@ -532,6 +494,7 @@ pub async fn batch_edit_exif_selection(
                         user_id,
                         pic_id,
                         set.clone(),
+                        empty.clone(),
                         clear.clone(),
                     )
                     .await?;

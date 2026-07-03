@@ -392,41 +392,6 @@ impl PictureRepository {
         Ok(())
     }
 
-    /// Replace a received row's `local_exif_overrides` (the recipient's sticky per-field set) — used
-    /// by the local-override endpoint (09 §6.2). The caller re-materialises afterwards. `None` /
-    /// an empty object both clear all overrides. Returns the row's `remote_exif_data` so the caller
-    /// can recompute the merge without an extra read.
-    #[tracing::instrument(skip(ex, overrides), fields(user_id = %user_id, picture_id = %picture_id))]
-    pub async fn set_local_exif_overrides<'e, E>(
-        ex: E,
-        user_id: Uuid,
-        picture_id: Uuid,
-        overrides: &FullExif,
-    ) -> Result<Option<FullExif>, AppError>
-    where
-        E: Executor<'e, Database = Postgres>,
-    {
-        let overrides_json = serde_json::to_value(overrides)
-            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-        let row = sqlx::query!(
-            r#"UPDATE pictures
-               SET local_exif_overrides = $3
-               WHERE id = $1 AND local_user_id = $2 AND remote_picture_id IS NOT NULL
-               RETURNING remote_exif_data"#,
-            picture_id,
-            user_id,
-            overrides_json,
-        )
-        .fetch_optional(ex)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(row.map(|r| {
-            r.remote_exif_data
-                .and_then(|v| serde_json::from_value::<FullExif>(v).ok())
-                .unwrap_or_default()
-        }))
-    }
-
     /// Delete received-picture rows from `sender` for `recipient_id` that have no remaining
     /// `incoming_share` tags.
     ///
@@ -1809,9 +1774,10 @@ impl PictureRepository {
     }
 
     /// Apply a recipient-local EXIF override delta to the **received** pictures in a selection,
-    /// set-based (feature 14 §5). Merges `set`/`clear` into `local_exif_overrides`, then
-    /// re-materialises `exif_data` + the promoted columns from `merge(remote_exif_data, overrides)`
-    /// (override wins per field). DB-only; no file job. Returns rows changed.
+    /// set-based (feature 14 §5). Merges `set`/`clear` into `local_exif_overrides` — dropping any set
+    /// key already equal to the owner's value (09 §6.1) — then re-materialises `exif_data` + the
+    /// promoted columns from `merge(remote_exif_data, overrides)` (override wins per field). DB-only;
+    /// no file job. Returns rows changed.
     #[tracing::instrument(skip(ex, sel, set_patch, clear_keys), fields(user_id = %local_user_id))]
     pub async fn batch_apply_exif_received_local_selection<'e, E>(
         ex: E,
@@ -1826,14 +1792,17 @@ impl PictureRepository {
         if sel.is_empty() {
             return Ok(0);
         }
-        // new_ov = (overrides - clear_keys) || set_patch ; merged = remote || new_ov.
+        // new_ov = (overrides - clear_keys) || set_patch ; merged = remote || new_ov. The stored
+        // override additionally drops any set key already equal to the owner's value (redundant — it
+        // must not shadow a future owner edit, 09 §6.1); redundant keys don't change `merged`, so the
+        // column assignments below keep the un-pruned `remote || new_ov`.
         const NEW_OV: &str =
             "((COALESCE(p.local_exif_overrides, '{}'::jsonb) - $CLEAR::text[]) || $PATCH::jsonb)";
         const MERGED: &str = "(COALESCE(p.remote_exif_data, '{}'::jsonb) || NEW_OV)";
         // Build with real binds; we repeat the bind references, so push them via QueryBuilder.
         let mut q =
             sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET local_exif_overrides = ");
-        push_new_ov(&mut q, set_patch, clear_keys);
+        push_pruned_new_ov(&mut q, set_patch, clear_keys);
         q.push(", exif_data = (");
         push_merged(&mut q, set_patch, clear_keys);
         q.push(" - ARRAY['captured_at','gps_lat','gps_lng','gps_alt','orientation']::text[])");
@@ -1913,6 +1882,21 @@ fn push_new_ov(
         .push("::text[]) || ")
         .push_bind(set_patch.clone())
         .push("::jsonb)");
+}
+
+/// Push `new_ov` with the redundant `set` keys dropped: a set key whose value already equals the
+/// owner's `remote_exif_data` value is not stored as an override (it would needlessly shadow a future
+/// owner edit — 09 §6.1). Pre-existing overrides on untouched fields are left intact.
+fn push_pruned_new_ov(
+    q: &mut sqlx::QueryBuilder<Postgres>,
+    set_patch: &serde_json::Value,
+    clear_keys: &[String],
+) {
+    q.push("(");
+    push_new_ov(q, set_patch, clear_keys);
+    q.push(" - ARRAY(SELECT e.k FROM jsonb_each(")
+        .push_bind(set_patch.clone())
+        .push("::jsonb) AS e(k, v) WHERE COALESCE(p.remote_exif_data -> e.k, 'null'::jsonb) IS NOT DISTINCT FROM e.v))");
 }
 
 /// Push the `merged` JSONB expression `remote || new_ov` with fresh binds.

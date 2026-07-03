@@ -316,12 +316,14 @@ impl<'a> Vfs<'a> {
                     .await?;
                 // Set the new hash/size inline so the ETag is correct before gen_thumbnail re-extracts.
                 PictureRepository::set_file_hash(&self.state.db, pid, hash, Some(size)).await?;
-                // is_initial = true so the exif is extracted from the picture in case it has changed.
+                // is_initial = true so the exif is re-extracted from the new bytes. Keyed on the
+                // new file hash so the overwrite is not blocked by the first-upload extraction job.
                 crate::services::jobs::enqueue_thumbnail_job(
                     &self.state.db,
                     self.user_id,
                     pid,
                     true,
+                    Some(hash),
                 )
                 .await?;
                 self.state.routines.pipeline.trigger_debounced(self.user_id);
@@ -394,7 +396,14 @@ impl<'a> Vfs<'a> {
         .await?;
         // Persist the inline hash so the ETag is correct and a quick re-upload dedupes (§8).
         PictureRepository::set_file_hash(&mut *tx, new_id, hash, Some(size)).await?;
-        crate::services::jobs::enqueue_thumbnail_job(&mut *tx, self.user_id, new_id, true).await?;
+        crate::services::jobs::enqueue_thumbnail_job(
+            &mut *tx,
+            self.user_id,
+            new_id,
+            true,
+            Some(hash),
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;

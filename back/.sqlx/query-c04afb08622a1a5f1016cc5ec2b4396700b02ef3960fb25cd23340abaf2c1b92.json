@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH to_promote AS (\n                 SELECT t.id, t.picture_id, t.tag_path\n                 FROM tags t\n                 WHERE t.source_id = $1\n                   AND t.source IN ('rule'::tag_source, 'segment'::tag_source, 'share_mapping'::tag_source)\n               ),\n               -- Pipeline row whose exact path is already held manually → manual wins, drop it.\n               drop_collide AS (\n                 DELETE FROM tags t\n                 USING to_promote tp\n                 WHERE t.id = tp.id\n                   AND EXISTS (\n                     SELECT 1 FROM tags m\n                     WHERE m.picture_id = tp.picture_id\n                       AND m.tag_path = tp.tag_path\n                       AND m.source = 'manual'::tag_source\n                   )\n                 RETURNING t.id\n               ),\n               -- Existing manual ancestor made redundant by a deeper tag we are about to promote.\n               prune_ancestors AS (\n                 DELETE FROM tags m\n                 USING to_promote tp\n                 WHERE m.source = 'manual'::tag_source\n                   AND m.picture_id = tp.picture_id\n                   AND m.tag_path @> tp.tag_path\n                   AND m.tag_path <> tp.tag_path\n                   AND tp.id NOT IN (SELECT id FROM drop_collide)\n                 RETURNING m.id\n               ),\n               -- Promotion changes the manual set → re-dirty so the pipeline re-gates.\n               invalidate AS (\n                 UPDATE pictures SET last_pipeline_run_at = NULL\n                 WHERE id IN (SELECT DISTINCT picture_id FROM to_promote)\n               )\n               UPDATE tags t\n               SET source = 'manual'::tag_source, source_id = NULL\n               WHERE t.source_id = $1\n                 AND t.source IN ('rule'::tag_source, 'segment'::tag_source, 'share_mapping'::tag_source)\n                 AND NOT EXISTS (\n                   SELECT 1 FROM tags m\n                   WHERE m.picture_id = t.picture_id\n                     AND m.tag_path = t.tag_path\n                     AND m.source = 'manual'::tag_source\n                 )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c04afb08622a1a5f1016cc5ec2b4396700b02ef3960fb25cd23340abaf2c1b92"
+}
