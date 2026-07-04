@@ -105,9 +105,13 @@ async fn main() -> anyhow::Result<()> {
     );
     routine_joins.push(exif_drain_join);
 
-    // Tag-rename cascade (trigger-only).
+    // Tag-rename cascade (trigger-only) — wakes the pipeline to re-tag + re-announce.
     let (tag_rename_handle, tag_rename_join) = routine::spawn(
-        routine::tag_rename::TagRename::new(db.clone(), config.task_queue_concurrency),
+        routine::tag_rename::TagRename::new(
+            db.clone(),
+            pipeline_handle.clone(),
+            config.task_queue_concurrency,
+        ),
         shutdown_rx.clone(),
     );
     routine_joins.push(tag_rename_join);

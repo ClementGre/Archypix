@@ -192,6 +192,37 @@ impl TaggingServiceRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Overwrite `requires`, `excludes`, and `config` and bump `last_invalidated_at` in one step —
+    /// used by the tag-rename cascade (edge case §7) after rewriting a service's tag references. Any
+    /// gating/config change invalidates the service, so the pipeline re-derives its tags.
+    #[tracing::instrument(skip(ex, requires, excludes, config))]
+    pub async fn replace_gating_and_config<'e, E>(
+        ex: E,
+        service_id: Uuid,
+        requires: &[String],
+        excludes: &[String],
+        config: &serde_json::Value,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"UPDATE tagging_services
+               SET requires = $2::ltree[], excludes = $3::ltree[], config = $4,
+                   last_invalidated_at = now() AT TIME ZONE 'utc',
+                   updated_at = now() AT TIME ZONE 'utc'
+               WHERE id = $1"#,
+            service_id,
+            requires as &[String],
+            excludes as &[String],
+            config,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
     /// Bump `last_invalidated_at` on a specific service to NOW(), marking all pictures dirty.
     /// Called after any configuration change (config replace, enable/disable).
     #[tracing::instrument(skip(ex))]

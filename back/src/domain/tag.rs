@@ -164,6 +164,21 @@ impl TagPath {
         self.0.is_empty()
     }
 
+    /// Rewrite this path for a tag-rename cascade: if it is `old` (exact) or a descendant of `old`,
+    /// return it with the `old` prefix swapped for `new` (the suffix preserved). Returns `None` when
+    /// this path is unrelated to `old` (left unchanged). `Photos.Travel.Alps`.rename_under(
+    /// `Photos.Travel`, `Photos.Vacation`) → `Photos.Vacation.Alps`.
+    pub fn rename_under(&self, old: &TagPath, new: &TagPath) -> Option<TagPath> {
+        if self == old {
+            return Some(new.clone());
+        }
+        if old.is_ancestor_of(self) {
+            let suffix = &self.0[old.0.len() + 1..];
+            return Some(TagPath(format!("{}.{suffix}", new.0)));
+        }
+        None
+    }
+
     /// Reduce a collection of paths to its "deepest" form: drop exact duplicates and
     /// any path that is a proper ancestor of another path in the set.
     ///
@@ -256,6 +271,49 @@ mod tests {
     fn ancestors_empty_path_is_empty() {
         let t = TagPath::from_ltree("");
         assert_eq!(t.ancestors(), vec![]);
+    }
+
+    // ── TagPath::rename_under ─────────────────────────────────────────────────
+
+    #[test]
+    fn rename_under_exact_match() {
+        let p = TagPath::from_ltree("Photos.Travel");
+        let renamed = p.rename_under(
+            &TagPath::from_ltree("Photos.Travel"),
+            &TagPath::from_ltree("Photos.Vacation"),
+        );
+        assert_eq!(renamed, Some(TagPath::from_ltree("Photos.Vacation")));
+    }
+
+    #[test]
+    fn rename_under_descendant_keeps_suffix() {
+        let p = TagPath::from_ltree("Photos.Travel.Alps.Hiking");
+        let renamed = p.rename_under(
+            &TagPath::from_ltree("Photos.Travel"),
+            &TagPath::from_ltree("Trips.2024"),
+        );
+        assert_eq!(renamed, Some(TagPath::from_ltree("Trips.2024.Alps.Hiking")));
+    }
+
+    #[test]
+    fn rename_under_unrelated_is_none() {
+        let p = TagPath::from_ltree("Images.Icons");
+        assert_eq!(
+            p.rename_under(
+                &TagPath::from_ltree("Photos.Travel"),
+                &TagPath::from_ltree("Photos.Vacation")
+            ),
+            None
+        );
+        // A prefix that is not a label boundary (`Photos.Travels` vs `Photos.Travel`) must not match.
+        let sibling = TagPath::from_ltree("Photos.Travels");
+        assert_eq!(
+            sibling.rename_under(
+                &TagPath::from_ltree("Photos.Travel"),
+                &TagPath::from_ltree("Photos.Vacation")
+            ),
+            None
+        );
     }
 
     // ── TagPath::parse ────────────────────────────────────────────────────────

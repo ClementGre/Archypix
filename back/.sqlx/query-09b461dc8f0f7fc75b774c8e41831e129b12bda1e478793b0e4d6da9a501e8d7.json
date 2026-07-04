@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tags (picture_id, tag_path, source) VALUES ($1, 'Photos.Vacation'::ltree, 'manual')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09b461dc8f0f7fc75b774c8e41831e129b12bda1e478793b0e4d6da9a501e8d7"
+}

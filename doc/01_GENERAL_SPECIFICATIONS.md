@@ -364,8 +364,11 @@ unaffected; the broken
 
 ## 7. Important Edge Cases
 
-**Tag rename cascade.** Renaming a tag must update: all stored tag records on affected pictures, segment/hierarchy/share configurations. Must be an
-async job (via `TaskQueue::TagRename`), not a synchronous API call.
+**Tag rename cascade.** Renaming a tag subtree is a real search-and-replace across manual picture tags, outgoing-share tags, tagging-service gates +
+config (SharedTagMapping included), and hierarchy configs. Runs as an async job (`tag_rename` routine, triggered by `POST /tags/rename`), not inline.
+Changed services are invalidated and covered pictures marked dirty; the pipeline then re-derives service tags and re-announces shares under the new
+path. Shares need no special propagation — re-announcement rides the picture `updated_at` bump, and the share tracking table is left untouched so any
+pending announce/unannounce delta survives.
 
 **Dumb WebDAV client behaviour.** Clients (e.g. Cyberduck, rclone) that see a picture in multiple paths may delete it from all locations on a local
 delete. `safeDeleteMode: singleBranch` mitigates this — recommended default for hierarchies used with third-party sync clients.

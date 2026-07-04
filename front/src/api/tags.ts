@@ -41,3 +41,15 @@ export async function batchEditTags(
     const {data} = await apiClient.patch<{ ok: true; affected: number } | BatchDryRun>('/api/authenticated/tags', body)
     return data
 }
+
+/**
+ * Rename a tag subtree everywhere it is referenced (edge case §7). Both paths are wire form. The
+ * cascade (manual tags, shares, services, hierarchies) runs asynchronously; the response only acks.
+ */
+export async function renameTag(oldTag: string, newTag: string): Promise<{ ok: true }> {
+    const {data} = await apiClient.post<{ ok: true }>('/api/authenticated/tags/rename', {
+        old_tag: oldTag,
+        new_tag: newTag,
+    })
+    return data
+}

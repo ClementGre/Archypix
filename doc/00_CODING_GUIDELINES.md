@@ -12,7 +12,7 @@ architecture doc (03 §I backend/Rust, 05 §11 frontend), not here.
   or unsure of intended behaviour → read the relevant § of **01_GENERAL_SPECIFICATIONS.md** (see index).
 - Touching deployment topology, the resolver, or a cross-service invariant → read
   **02_INFRASTRUCTURE_DESIGN.md** (Invariants at L62).
-- Completing any task → update **99_ROADMAP_MVP.md** and the feature's Work-breakdown.
+- Completing any task → update **99_ROADMAP_MVP.md** and the feature's Work-breakdown (no more than one line per task).
 
 **By what you touch:**
 

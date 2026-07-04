@@ -1,13 +1,9 @@
 import {type MouseEvent, useEffect, useMemo, useRef, useState} from 'react'
 import {useQueryClient} from '@tanstack/react-query'
-import {Ban, Check, ChevronRight, Equal, Hash, Images, Loader2, MoreHorizontal, Plus} from 'lucide-react'
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import {Ban, Check, ChevronRight, Equal, Hash, Images, Loader2, MoreHorizontal, Pencil, Plus} from 'lucide-react'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {useAllTags} from '@/hooks/useTags'
+import {RenameTagDialog} from '@/components/tags/RenameTagDialog'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
@@ -100,6 +96,11 @@ function TagMenu({state, actions, path}: {
                     {state.excluded ? 'Remove exclude' : 'Exclude'}
                     {state.excluded && <Check className="ml-auto h-3.5 w-3.5"/>}
                 </DropdownMenuItem>
+                <DropdownMenuSeparator/>
+                <DropdownMenuItem onClick={() => actions.rename(path)}>
+                    <Pencil className="mr-2 h-3.5 w-3.5"/>
+                    Rename tag…
+                </DropdownMenuItem>
             </DropdownMenuContent>
         </DropdownMenu>
     )
@@ -112,6 +113,7 @@ interface TagActions {
     toggleExact: (path: string) => void
     toggleExclude: (path: string) => void
     remove: (path: string) => void
+    rename: (path: string) => void
 }
 
 function TreeRow({
@@ -213,6 +215,7 @@ export function TagTree() {
     const {params, update} = useGalleryParams()
     const queryClient = useQueryClient()
     const tree = useMemo(() => buildTree(tags ?? []), [tags])
+    const [renameTarget, setRenameTarget] = useState<string | null>(null)
 
     // The tag list can drift as the pipeline assigns/removes tags in the background; refresh it
     // on interaction so navigating the tree keeps it current.
@@ -306,6 +309,7 @@ export function TagTree() {
                 exact: without(params.exact, path),
             })
         },
+        rename: (path) => setRenameTarget(path),
     }
 
     const noFilter = !params.tag && !params.include.length && !params.exact.length && !params.exclude.length
@@ -347,6 +351,14 @@ export function TagTree() {
                     />
                 ))}
             </div>
+
+            {renameTarget && (
+                <RenameTagDialog
+                    oldTag={renameTarget}
+                    open={renameTarget !== null}
+                    onOpenChange={(o) => !o && setRenameTarget(null)}
+                />
+            )}
         </div>
     )
 }

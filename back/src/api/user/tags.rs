@@ -127,3 +127,42 @@ pub async fn edit(
         }
     }))
 }
+
+/// `POST /api/authenticated/tags/rename` — rename a tag subtree everywhere the user references it
+/// (edge case §7). Validates both paths, then triggers the async tag-rename cascade routine; the
+/// caller gets an immediate ack. Both paths must be non-reserved ltree paths.
+#[derive(Debug, Deserialize)]
+pub struct RenameTagRequest {
+    pub old_tag: String,
+    pub new_tag: String,
+}
+
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
+pub async fn rename(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(payload): Json<RenameTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let old = TagPath::parse(&payload.old_tag, false).map_err(AppError::BadRequest)?;
+    let new = TagPath::parse(&payload.new_tag, false).map_err(AppError::BadRequest)?;
+    if old == new {
+        return Err(AppError::BadRequest(
+            "old_tag and new_tag are identical".to_string(),
+        ));
+    }
+    if old.is_ancestor_of(&new) || new.is_ancestor_of(&old) {
+        return Err(AppError::BadRequest(
+            "cannot rename a tag into its own ancestor or descendant".to_string(),
+        ));
+    }
+    state
+        .routines
+        .tag_rename
+        .trigger(crate::infra::routine::tag_rename::TagRenameInput {
+            user_id,
+            old_tag: old.as_ltree().to_string(),
+            new_tag: new.as_ltree().to_string(),
+        });
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

@@ -238,6 +238,66 @@ impl TagRepository {
         Ok(())
     }
 
+    /// Rename a `manual` tag subtree for one user (tag-rename cascade, edge case §7): every manual
+    /// row whose `tag_path` is `old` or a descendant of it gets its `old` prefix swapped for `new`.
+    /// Rows whose renamed path would collide with an existing manual tag on the same picture are
+    /// dropped first (the unique `(picture_id, tag_path)` manual index). Returns the number of rows
+    /// renamed. Pipeline invalidation is left to the caller's broad pass.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id))]
+    pub async fn rename_manual_subtree<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        old_ltree: &str,
+        new_ltree: &str,
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        // Split into disjoint row sets so no row is both deleted and updated in one statement
+        // (Postgres leaves that unspecified): `dedup` drops source rows whose renamed path already
+        // exists on the picture; the main UPDATE renames only the rest (`NOT EXISTS` mirror of the
+        // dedup predicate). Callers must reject an ancestor/descendant rename so the target can never
+        // itself be under `old`.
+        let res = sqlx::query!(
+            r#"WITH mine AS (
+                 SELECT id FROM pictures WHERE local_user_id = $1
+               ),
+               dedup AS (
+                 DELETE FROM tags t
+                 WHERE t.source = 'manual'::tag_source
+                   AND t.tag_path <@ $2::text::ltree
+                   AND t.picture_id IN (SELECT id FROM mine)
+                   AND EXISTS (
+                     SELECT 1 FROM tags e
+                     WHERE e.picture_id = t.picture_id
+                       AND e.source = 'manual'::tag_source
+                       AND e.tag_path = CASE WHEN t.tag_path = $2::text::ltree THEN $3::text::ltree
+                                             ELSE $3::text::ltree || subpath(t.tag_path, nlevel($2::text::ltree)) END
+                   )
+               )
+               UPDATE tags
+               SET tag_path = CASE WHEN tag_path = $2::text::ltree THEN $3::text::ltree
+                                   ELSE $3::text::ltree || subpath(tag_path, nlevel($2::text::ltree)) END
+               WHERE source = 'manual'::tag_source
+                 AND tag_path <@ $2::text::ltree
+                 AND picture_id IN (SELECT id FROM mine)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM tags e
+                   WHERE e.picture_id = tags.picture_id
+                     AND e.source = 'manual'::tag_source
+                     AND e.tag_path = CASE WHEN tags.tag_path = $2::text::ltree THEN $3::text::ltree
+                                           ELSE $3::text::ltree || subpath(tags.tag_path, nlevel($2::text::ltree)) END
+                 )"#,
+            local_user_id,
+            old_ltree,
+            new_ltree,
+        )
+            .execute(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
     /// Distinct `manual` tag paths of a single picture. Used by the dedup "keep this copy" flow to
     /// mirror the previously-live picture's curated tag set onto the new survivor (feature 11 §5.5).
     #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]

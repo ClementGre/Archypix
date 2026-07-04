@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE outgoing_shares\n               SET tag_path = CASE WHEN tag_path = $2::text::ltree THEN $3::text::ltree\n                                   ELSE $3::text::ltree || subpath(tag_path, nlevel($2::text::ltree)) END\n               WHERE owner_id = $1 AND tag_path <@ $2::text::ltree",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c91c4d745701b868862597ed5d94a58b2291dfa6f69b5fdd0d76a215c0c1a955"
+}

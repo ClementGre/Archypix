@@ -45,8 +45,12 @@
   drain, frontend floating action bar + batch panel. See `doc/features/14_better_batch_editing.md`.
 - [x] **Dedup pictures at upload time** — batch presign hashes files up front, dedupes within-batch and against existing/trashed pictures.
 - [x] **Calendar segmentation & unified service config** — Calendar partition operator, unified `tagging_services.config` JSONB, uniform config
-  editing..
-- [ ] **Tag rename cascade** — API endpoint for `TaskQueue::TagRename`; cascade to shares, segments, hierarchies.
+  editing.
+- [x] **Tag rename cascade** — `POST /tags/rename` triggers the `tag_rename` routine: a real search-and-replace of a tag subtree across manual tags,
+  outgoing-share tags, tagging-service gates + config (SharedTagMapping included), and hierarchy configs; invalidates changed services + covered
+  pictures and wakes the pipeline (shares re-announce via the picture `updated_at` bump, tracking table untouched). Frontend: rename item in the tag
+  tree `…` menu → tag-selector + confirmation dialog. Follow-ups: durability (trigger-only, lost on crash); auto-generated segment tags can't be
+  renamed in place.
 - [ ] **Federation robustness** — don't 500 on failed remote presign, token refresh schedule, retry logic, presigned URL caching for remote pictures.
 
 ## To-do for v1.0

@@ -163,6 +163,39 @@ impl PipelineRepository {
         Ok(())
     }
 
+    /// Mark every picture of `user_id` carrying a tag at-or-under one of `tag_ltrees` dirty
+    /// (`last_pipeline_run_at = NULL`). The `BEFORE UPDATE` trigger also bumps `updated_at`, which
+    /// makes announce-stale any already-announced covered picture — the mechanism the tag-rename
+    /// cascade (edge case §7) relies on to re-announce shares under a renamed tag. Returns the number
+    /// of pictures marked.
+    #[tracing::instrument(skip(ex, tag_ltrees), fields(user_id = %user_id))]
+    pub async fn invalidate_under_tags<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        tag_ltrees: &[String],
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if tag_ltrees.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query!(
+            r#"UPDATE pictures p SET last_pipeline_run_at = NULL
+               WHERE p.local_user_id = $1
+                 AND EXISTS (
+                   SELECT 1 FROM tags t
+                   WHERE t.picture_id = p.id AND t.tag_path <@ ANY($2::text[]::ltree[])
+                 )"#,
+            user_id,
+            tag_ltrees as &[String],
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
     /// For each picture in the batch, return the set of `incoming_share_id` values
     /// from tags with `source = 'incoming_share'`. Used by the SharedTagMapping evaluator.
     #[tracing::instrument(skip(ex, picture_ids))]

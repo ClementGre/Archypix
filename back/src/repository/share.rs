@@ -287,6 +287,35 @@ impl OutgoingShareRepository {
         Ok(())
     }
 
+    /// Rename an owner's outgoing shares for a tag-rename cascade (edge case §7): every share whose
+    /// `tag_path` is `old` or a descendant of it gets its `old` prefix swapped for `new`. Returns the
+    /// number of shares renamed. Coverage is unchanged (the picture tags move with the share); the
+    /// caller re-announces the covered pictures so recipients see the new `SharedToMe` path.
+    #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
+    pub async fn rename_tag_subtree<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        old_ltree: &str,
+        new_ltree: &str,
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            r#"UPDATE outgoing_shares
+               SET tag_path = CASE WHEN tag_path = $2::text::ltree THEN $3::text::ltree
+                                   ELSE $3::text::ltree || subpath(tag_path, nlevel($2::text::ltree)) END
+               WHERE owner_id = $1 AND tag_path <@ $2::text::ltree"#,
+            owner_id,
+            old_ltree,
+            new_ltree,
+        )
+            .execute(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
     #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
     pub async fn list_by_owner<'e, E>(ex: E, owner_id: Uuid) -> Result<Vec<OutgoingShare>, AppError>
     where

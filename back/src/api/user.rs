@@ -54,6 +54,7 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/settings", get(settings::get_settings))
         .route("/settings", patch(settings::update_settings))
         .route("/tags", get(tags::list).patch(tags::edit))
+        .route("/tags/rename", post(tags::rename))
         .route(
             "/shares/outgoing",
             post(shares::create_outgoing).get(shares::list_outgoing),

@@ -935,6 +935,33 @@ Tag paths must not start with `SharedToMe` (protected prefix).
 
 **Side-effects:** Pipeline is invalidated for all affected pictures and woken.
 
+#### `POST /api/authenticated/tags/rename`
+
+Rename a tag subtree everywhere the user references it (edge case §7, "Tag rename cascade"). A real
+search-and-replace: manual picture tags, outgoing-share tags, tagging-service gates + config
+(SharedTagMapping included), and hierarchy configs all have the `old_tag` prefix swapped for
+`new_tag`. Changed services are invalidated and covered pictures marked dirty; the pipeline is woken
+to re-derive service tags and re-announce shares under the renamed tag (the share tracking table is
+untouched, so any pending announce/unannounce delta survives).
+
+**Request:**
+
+```ts
+{
+    old_tag: string;   // ltree path (dot-separated), non-reserved
+    new_tag: string;   // ltree path (dot-separated), non-reserved
+}
+```
+
+Both paths must be valid non-`SharedToMe` ltree paths, must differ, and neither may be an ancestor of
+the other.
+
+**Response `200`:** `{ ok: true }` — the cascade runs asynchronously (tag-rename routine); the ack is
+immediate.
+
+**Side-effects:** Runs the tag-rename cascade, then wakes the pipeline if any service/share changed or
+any picture was marked dirty.
+
 ---
 
 ### 6.8 Tagging Services
@@ -2177,8 +2204,8 @@ normal EXIF edit (`set: { orientation }`).
 items and avoid per-card round-trips.
 
 **Pipeline wakeup** — these mutations wake the tagging pipeline asynchronously: `POST /uploads/{id}/complete`, `PATCH /tags`,
-`PATCH /tagging-services/{id}`, `POST /tagging-services`, `DELETE /tagging-services/{id}`. Tags converge in the background; the frontend does not need
-to poll.
+`POST /tags/rename`, `PATCH /tagging-services/{id}`, `POST /tagging-services`, `DELETE /tagging-services/{id}`. Tags converge in the background; the
+frontend does not need to poll.
 
 **EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`.
 Use exponential backoff (1s, 2s, 4s, …, stop ~30s).

@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tagging_services\n               SET requires = $2::ltree[], excludes = $3::ltree[], config = $4,\n                   last_invalidated_at = now() AT TIME ZONE 'utc',\n                   updated_at = now() AT TIME ZONE 'utc'\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        },
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa6fac1092bc623ec050326a05eff15511156d9d9bb300b4656914a0e98fa195"
+}
