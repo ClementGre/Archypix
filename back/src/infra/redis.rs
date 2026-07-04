@@ -47,6 +47,11 @@ pub enum RedisKey<'a> {
     /// as pictures. Keyed by `(hierarchy_id, parent_path)`; value is a map of name → stored bytes
     /// (06_webdav.md §11).
     WebdavSidecar(Uuid, &'a str),
+    /// Atomic-save ("safe-save") scratch artifacts staged under `parent_path`: temp directories and
+    /// files a client writes then renames over the target. Keyed by `(hierarchy_id, parent_path)`;
+    /// value holds the staged sub-directory names + files (bytes live in the staging bucket) until a
+    /// terminal MOVE promotes them (08_webdav_issues.md §1).
+    WebdavStaging(Uuid, &'a str),
 }
 
 impl<'a> RedisKey<'a> {
@@ -64,6 +69,7 @@ impl<'a> RedisKey<'a> {
             Self::WebdavToken(hash) => format!("webdav:token:{hash}"),
             Self::WebdavPendingDir(h, parent) => format!("webdav:pendingdir:{h}:{parent}"),
             Self::WebdavSidecar(h, parent) => format!("webdav:sidecar:{h}:{parent}"),
+            Self::WebdavStaging(h, parent) => format!("webdav:staging:{h}:{parent}"),
         }
     }
 }

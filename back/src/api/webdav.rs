@@ -74,6 +74,21 @@ async fn dispatch(state: AppState, req: Request<Body>) -> Result<Response, AppEr
         return ignored(&state, &vfs, &method, &slug, &segments, &headers, req).await;
     }
 
+    // Atomic-save ("safe-save") scratch paths bypass the tag tree: their bytes are staged until a
+    // terminal rename promotes them to a real picture (08_webdav_issues.md §1).
+    if is_atomic_staging(&segments) {
+        return staging(&state, &vfs, &method, &slug, &segments, &headers, req).await;
+    }
+    // A real picture MOVEd/COPYd into a scratch path (the "move the original out of the way" step)
+    // records a backup reference and mutates nothing (§1.5).
+    if matches!(method.as_str(), "MOVE" | "COPY") {
+        let dest = destination_segments(&headers)?;
+        if is_atomic_staging(&dest) {
+            vfs.stage_backup_ref(&segments, &dest).await?;
+            return Ok(empty(StatusCode::CREATED));
+        }
+    }
+
     match method.as_str() {
         "PROPFIND" => propfind(&vfs, &slug, &segments, depth_header(&headers)).await,
         "GET" => read(&vfs, &segments, true).await,
@@ -349,6 +364,155 @@ fn options_response() -> Response {
         .header(header::CONTENT_LENGTH, 0)
         .body(Body::empty())
         .unwrap()
+}
+
+// ── Atomic-save staging (08_webdav_issues.md §1) ────────────────────────────────────
+
+/// Whether any path segment is an atomic-save scratch artifact — a temp directory or file a
+/// client writes then renames over the target (08_webdav_issues.md §1.4). Checked across all
+/// segments because macOS nests the real file inside a `.sb-…` temp directory.
+fn is_atomic_staging(segments: &[String]) -> bool {
+    segments.iter().any(|s| is_atomic_staging_name(s))
+}
+
+fn is_atomic_staging_name(name: &str) -> bool {
+    if is_macos_safe_save(name) {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    // Windows ReplaceFile / editors: temp file then rename over the target.
+    lower.ends_with(".tmp")
+        || name.ends_with('~')
+        // Browser / rsync / GVFS partial-download temporaries.
+        || lower.ends_with(".part")
+        || lower.ends_with(".partial")
+        || lower.ends_with(".crdownload")
+        || lower.ends_with(".download")
+        || name.starts_with(".goutputstream-")
+}
+
+/// macOS `NSDocument` safe-save scratch name: `<base>.sb-<8 hex>-<6 alnum>` (dir or file).
+fn is_macos_safe_save(name: &str) -> bool {
+    let Some(idx) = name.rfind(".sb-") else {
+        return false;
+    };
+    let Some((hex, rand)) = name[idx + 4..].split_once('-') else {
+        return false;
+    };
+    hex.len() == 8
+        && hex.bytes().all(|b| b.is_ascii_hexdigit())
+        && rand.len() == 6
+        && rand.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Handle a request whose target is an atomic-save scratch path (08_webdav_issues.md §1). Scratch
+/// bytes live in the staging bucket + a Redis marker; a terminal MOVE promotes them to a picture.
+async fn staging(
+    state: &AppState,
+    vfs: &Vfs<'_>,
+    method: &Method,
+    slug: &str,
+    segments: &[String],
+    headers: &HeaderMap,
+    req: Request<Body>,
+) -> Result<Response, AppError> {
+    match method.as_str() {
+        "PUT" => {
+            let content_type = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let (tmp, hash, size) =
+                stream_to_temp(req.into_body(), state.config.webdav_max_upload_bytes).await?;
+            // An empty placeholder PUT (Finder/Preview issue one first) — accept, stage nothing.
+            if size == 0 {
+                return Ok(empty(StatusCode::CREATED));
+            }
+            vfs.put_staging(
+                segments,
+                tmp.path(),
+                &hash,
+                size as i64,
+                content_type.as_deref(),
+            )
+            .await?;
+            Ok(empty(StatusCode::CREATED))
+        }
+        "GET" | "HEAD" => match vfs.read_staging(segments).await? {
+            Some(ReadTarget::Redirect(url)) => Ok(Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, url)
+                .body(Body::empty())
+                .unwrap()),
+            Some(ReadTarget::Bytes { data, mime }) => {
+                let ct = mime.unwrap_or_else(|| "application/octet-stream".to_string());
+                let len = data.len();
+                let body = if method == Method::GET {
+                    Body::from(data)
+                } else {
+                    Body::empty()
+                };
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, ct)
+                    .header(header::CONTENT_LENGTH, len)
+                    .body(body)
+                    .unwrap())
+            }
+            None => Ok(empty(StatusCode::NOT_FOUND)),
+        },
+        // PROPFIND/stat/list surface staged entries directly (see `services::vfs`). A missing
+        // scratch path (pre-PUT probe) returns 404 without a spurious warn.
+        "PROPFIND" => match propfind(vfs, slug, segments, depth_header(headers)).await {
+            Err(AppError::NotFound) => Ok(empty(StatusCode::NOT_FOUND)),
+            other => other,
+        },
+        "MKCOL" => {
+            vfs.add_staging_dir(segments).await?;
+            Ok(empty(StatusCode::CREATED))
+        }
+        "DELETE" => {
+            vfs.delete_staging(segments).await?;
+            Ok(empty(StatusCode::NO_CONTENT))
+        }
+        "MOVE" => {
+            let dest = destination_segments(headers)?;
+            trace!(dest = %dest.join("/"), "webdav staging: move");
+            if is_atomic_staging(&dest) {
+                // scratch → scratch: just relocate the marker.
+                vfs.move_staging(segments, &dest).await?;
+                Ok(empty(StatusCode::NO_CONTENT))
+            } else {
+                // scratch → real: the terminal rename. Promote the staged bytes.
+                let created = vfs.promote_staging(segments, &dest, true).await?;
+                Ok(empty(if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::NO_CONTENT
+                }))
+            }
+        }
+        "COPY" => {
+            let dest = destination_segments(headers)?;
+            if is_atomic_staging(&dest) {
+                Ok(empty(StatusCode::CREATED))
+            } else {
+                let created = vfs.promote_staging(segments, &dest, false).await?;
+                Ok(empty(if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::NO_CONTENT
+                }))
+            }
+        }
+        "LOCK" => Ok(lock_response()),
+        "UNLOCK" => Ok(empty(StatusCode::NO_CONTENT)),
+        "PROPPATCH" => Ok(proppatch_response(slug, segments)),
+        other => {
+            warn!("webdav staging: unsupported method {other}");
+            Ok(empty(StatusCode::METHOD_NOT_ALLOWED))
+        }
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────────
@@ -646,5 +810,44 @@ mod tests {
         }
         assert!(is_ignored(&["dir".into(), "._x.png".into()]));
         assert!(!is_ignored(&["dir".into(), "x.png".into()]));
+    }
+
+    #[test]
+    fn recognizes_atomic_save_scratch_names() {
+        for n in [
+            "phare.jpg.sb-93035015-3rqb93", // macOS temp dir
+            "phare.jpg.sb-93035015-oDc68c",
+            "report.docx.tmp", // Windows ReplaceFile
+            "notes.txt~",      // editor backup-then-rename
+            "movie.mp4.part",  // partial download
+            "movie.mp4.partial",
+            "song.crdownload",
+            ".goutputstream-AB12CD", // GVFS
+        ] {
+            assert!(is_atomic_staging_name(n), "{n} should be atomic-staging");
+        }
+    }
+
+    #[test]
+    fn does_not_treat_real_files_as_scratch() {
+        for n in [
+            "phare.jpg",
+            "phare.sb.jpg",            // not the `.sb-<hex>-<alnum>` shape
+            "phare.jpg.sb-xyz-123",    // hex/len wrong
+            "phare.jpg.sb-93035015-3", // rand too short
+            "temperature.png",         // not a `.tmp` suffix
+        ] {
+            assert!(
+                !is_atomic_staging_name(n),
+                "{n} should not be atomic-staging"
+            );
+        }
+        // Detection spans ancestors: the real file lives inside a `.sb-…` temp directory.
+        assert!(is_atomic_staging(&[
+            "Photos".into(),
+            "phare.jpg.sb-93035015-3rqb93".into(),
+            "phare.jpg".into(),
+        ]));
+        assert!(!is_atomic_staging(&["Photos".into(), "phare.jpg".into()]));
     }
 }

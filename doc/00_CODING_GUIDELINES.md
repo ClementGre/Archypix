@@ -137,3 +137,8 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   10 Storage: unified service config (L309) · 11 Migration of existing data (L393) · 12 Evaluation,
   API, frontend (L422) · 13 Out of scope: clustering (L478) · 14 What this does NOT change (L495)
 - **21_photos_fix_tools.md** — GPS fix (L5) · Capture date fix (L12)
+- **22_storage_quotas.md** — 1 Overview & goals (L3) · 2 Decisions (L20) · 3 What counts (L36) ·
+  4 Schema changes (L55) · 5 Delta accounting & upload race (L98) · 6 Enforcement points (L135) ·
+  7 Reconcile routine (L153) · 8 API (L163) · 9 Resolver seed (L210) · 10 Config (L223) ·
+  11 Frontend (L235) · 12 Edge cases (L247) · 13 Testing (L270) · 14 Doc updates (L282) ·
+  15 Work breakdown (L293)

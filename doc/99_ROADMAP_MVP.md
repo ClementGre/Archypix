@@ -23,7 +23,8 @@
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.
-- [x] **WebDAV** — per-hierarchy endpoint, proxy reads, tag write-back, hash-dedupe, versioning on overwrite. See `doc/features/06_webdav.md`.
+- [x] **WebDAV** — per-hierarchy endpoint, proxy reads, tag write-back, hash-dedupe, versioning on overwrite, atomic-save ("safe-save")
+  staging for Preview/Explorer edits. See `doc/features/06_webdav.md`, `doc/features/08_webdav_issues.md`.
 - [x] **Hierarchy improvements** — `drop` inbox nodes, per-node write-back tri-state, writable `matchUntagged`, mirror `maxDepth`/foreign excludes.
   See `doc/features/18_hierarchy_improvements.md`.
 - [x] **Better workers** — multi-backend support, global semaphore, burst-friendly polling.
@@ -57,8 +58,11 @@
 
 - [x] **Physical copy & content dedup** — rescue-copy into own library with `copy_source_*` provenance, `content_hash`-based dedup reconciler,
   boomerang guard. See `doc/features/11_physical_copy_and_dedup.md`.
-- [ ] **Storage quotas** — per-user storage quotas, WebDAV quota properties in PROPFIND, resolver and admin-updatable quotas.
+- [~] **Storage quotas** — per-user storage quotas, WebDAV quota properties in PROPFIND, resolver and admin-updatable quotas. Spec:
+  `doc/features/22_storage_quotas.md`.
 - [ ] **Photos fix tools** — Quick and useful tools for fixing missing exif infos in files (feature 21).
+- [ ] **Resolver’s admin dashboard** — allow the front to use the resolver as the admin’s dashboard/action endpoint, and allow resolver to communicate
+  with backends. Make the resolver smarter, build the resolver’s doc.
 - [ ] **Registration rules** — open registration vs invite-only (invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.

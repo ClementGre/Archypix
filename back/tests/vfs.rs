@@ -1301,3 +1301,253 @@ async fn new_top_level_dir_maps_to_hoisted_keep_dir_false_mirror(db: PgPool) {
         .expect("new picture");
     assert_eq!(tags_of(&state.db, user, pic.id).await, vec!["Photos.Trips"]);
 }
+
+// ── Atomic-save staging (08_webdav_issues.md §1) ──────────────────────────────────
+
+/// Stage scratch bytes the way the handler does: stream to a temp file, hash, then `put_staging`.
+async fn put_staging(vfs: &Vfs<'_>, segments: &[&str], bytes: &[u8], ct: Option<&str>) {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(bytes).unwrap();
+    tmp.flush().unwrap();
+    let path = tmp.path().to_path_buf();
+    let hash = archypix_common::hash::hash_file(&path).unwrap();
+    vfs.put_staging(&seg(segments), &path, &hash, bytes.len() as i64, ct)
+        .await
+        .unwrap();
+}
+
+async fn count_pictures(state: &AppState, user: Uuid) -> i64 {
+    sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM pictures WHERE local_user_id = $1",
+        user
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap()
+    .unwrap_or(0)
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn macos_safe_save_resolves_to_a_single_versioned_overwrite(db: PgPool) {
+    // The full Preview flow: MKCOL `<name>.sb-…` temp dir → stage the edited bytes inside it → the
+    // scratch round-trips under its exact name → terminal MOVE promotes it as an overwrite. No
+    // spurious tag, no duplicate picture (08_webdav_issues.md §1.1, §1.5–1.6).
+    let (state, storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(&state, user, "phare.jpg", "image/jpeg", b"orig", "Photos").await;
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
+        .await
+        .unwrap();
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let temp_dir = "phare.jpg.sb-93035015-3rqb93";
+    vfs.add_staging_dir(&seg(&["Photos", temp_dir]))
+        .await
+        .unwrap();
+    put_staging(
+        &vfs,
+        &["Photos", temp_dir, "phare.jpg"],
+        b"edited-bytes",
+        Some("image/jpeg"),
+    )
+    .await;
+
+    // Round-trips under the exact scratch name (this is what unblocks Preview's follow-up PROPFIND).
+    let listed = vfs.list_dir(&seg(&["Photos"])).await.unwrap();
+    let d = listed
+        .iter()
+        .find(|e| e.name == temp_dir)
+        .expect("scratch dir listed");
+    assert!(d.is_dir);
+    assert!(vfs.stat(&seg(&["Photos", temp_dir])).await.unwrap().is_dir);
+    let inner = vfs.list_dir(&seg(&["Photos", temp_dir])).await.unwrap();
+    assert!(inner.iter().any(|e| e.name == "phare.jpg" && !e.is_dir));
+
+    // The terminal rename over the original — the step that was previously lost.
+    let created = vfs
+        .promote_staging(
+            &seg(&["Photos", temp_dir, "phare.jpg"]),
+            &seg(&["Photos", "phare.jpg"]),
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !created,
+        "promotion over an existing picture is an overwrite"
+    );
+
+    // The original picture now holds the edited bytes, versioned; no new tag, no new picture.
+    assert_eq!(
+        storage.get(
+            &state.config.s3_bucket_pictures,
+            &s3::picture_key(user, pic)
+        ),
+        Some(b"edited-bytes".to_vec())
+    );
+    let row = PictureRepository::find_by_id(&state.db, pic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.file_hash,
+        archypix_common::hash::hash_bytes(&b"edited-bytes".to_vec())
+    );
+    let versions = PictureVersionRepository::list_by_picture(&state.db, pic)
+        .await
+        .unwrap();
+    assert_eq!(versions.len(), 1, "the pre-edit bytes were snapshotted");
+    assert_eq!(tags_of(&state.db, user, pic).await, vec!["Photos"]);
+    assert_eq!(
+        count_pictures(&state, user).await,
+        1,
+        "no duplicate picture"
+    );
+
+    // The scratch file marker is gone once promoted; the temp dir is cleaned by the client's DELETE.
+    assert!(
+        vfs.read_staging(&seg(&["Photos", temp_dir, "phare.jpg"]))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    vfs.delete_staging(&seg(&["Photos", temp_dir]))
+        .await
+        .unwrap();
+    let listed = vfs.list_dir(&seg(&["Photos"])).await.unwrap();
+    assert!(!listed.iter().any(|e| e.name == temp_dir));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn atomic_save_of_a_new_file_promotes_to_a_new_picture(db: PgPool) {
+    // A Windows-style temp file (`.tmp`) staged then renamed onto a brand-new path becomes a new
+    // picture with the mirror auto-tag (§1.6, §1.10).
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    // An existing picture keeps the mirror `Photos/` directory populated (the new file lands beside it).
+    seed_full_picture(
+        &state,
+        user,
+        "existing.jpg",
+        "image/jpeg",
+        b"existing",
+        "Photos",
+    )
+    .await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    put_staging(
+        &vfs,
+        &["Photos", "new.jpg.tmp"],
+        b"fresh",
+        Some("image/jpeg"),
+    )
+    .await;
+    let created = vfs
+        .promote_staging(
+            &seg(&["Photos", "new.jpg.tmp"]),
+            &seg(&["Photos", "new.jpg"]),
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(created, "a new path yields a new resource");
+
+    let hash = archypix_common::hash::hash_bytes(&b"fresh".to_vec()).unwrap();
+    let pic = PictureRepository::find_owned_by_hash(&state.db, user, &hash, false)
+        .await
+        .unwrap()
+        .expect("new picture");
+    assert_eq!(tags_of(&state.db, user, pic.id).await, vec!["Photos"]);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn staged_bytes_without_a_terminal_move_never_touch_the_original(db: PgPool) {
+    // Crash-before-MOVE: staging alone must not mutate the target picture. The marker/object are
+    // left to the TTL + staging bucket lifecycle (§1.8).
+    let (state, storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(&state, user, "phare.jpg", "image/jpeg", b"orig", "Photos").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    vfs.add_staging_dir(&seg(&["Photos", "phare.jpg.sb-aaaaaaaa-bbbbbb"]))
+        .await
+        .unwrap();
+    put_staging(
+        &vfs,
+        &["Photos", "phare.jpg.sb-aaaaaaaa-bbbbbb", "phare.jpg"],
+        b"never-committed",
+        Some("image/jpeg"),
+    )
+    .await;
+
+    // Original untouched: same bytes, same hash, no version, still one picture.
+    assert_eq!(
+        storage.get(
+            &state.config.s3_bucket_pictures,
+            &s3::picture_key(user, pic)
+        ),
+        Some(b"orig".to_vec())
+    );
+    let row = PictureRepository::find_by_id(&state.db, pic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.file_hash,
+        archypix_common::hash::hash_bytes(&b"orig".to_vec())
+    );
+    assert!(
+        !PictureVersionRepository::has_versions(&state.db, pic)
+            .await
+            .unwrap()
+    );
+    assert_eq!(count_pictures(&state, user).await, 1);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn backup_reference_move_then_delete_is_a_no_op(db: PgPool) {
+    // The "move the original out of the way" step (real → scratch): a reference is recorded, no
+    // picture mutated; a later DELETE of the backup discards it (§1.5).
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(&state, user, "phare.jpg", "image/jpeg", b"orig", "Photos").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    vfs.stage_backup_ref(
+        &seg(&["Photos", "phare.jpg"]),
+        &seg(&["Photos", "phare.jpg.tmp"]),
+    )
+    .await
+    .unwrap();
+    // The backup round-trips and serves the referenced picture's bytes (redirect mode here).
+    assert!(matches!(
+        vfs.read_staging(&seg(&["Photos", "phare.jpg.tmp"]))
+            .await
+            .unwrap(),
+        Some(ReadTarget::Redirect(_)) | Some(ReadTarget::Bytes { .. })
+    ));
+    // The real picture is untouched and still listed.
+    assert!(
+        vfs.list_dir(&seg(&["Photos"]))
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.name == "phare.jpg" && e.picture_id == Some(pic))
+    );
+
+    vfs.delete_staging(&seg(&["Photos", "phare.jpg.tmp"]))
+        .await
+        .unwrap();
+    assert!(
+        vfs.read_staging(&seg(&["Photos", "phare.jpg.tmp"]))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(count_pictures(&state, user).await, 1);
+}

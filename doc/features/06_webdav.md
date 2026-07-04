@@ -73,6 +73,13 @@ Scope of this spec:
   reuses an existing-cased tag; a case-colliding new tag is rejected (`409`).
 - **Dotfiles (§11).** `.DS_Store`, `._*`, `Thumbs.db`, etc. are **sidecar**ed in Redis
   (accepted so clients don't hang) and never become pictures.
+- **Atomic-save writes ([08_webdav_issues.md](08_webdav_issues.md) §1).** OS "safe-save"
+  scratch paths (macOS `.sb-…` temp dirs, Windows `.tmp`, …) are a third transient class
+  alongside pending-dirs (§9) and junk sidecars (§11): they never resolve through the tag
+  tree. Their bytes are **staged in the staging bucket** (not ingested) until the client's
+  **terminal rename** promotes them — an overwrite of the target picture (versioned) or a new
+  ingest. This is what makes editing a picture in Preview/Explorer land as one clean version
+  instead of a spurious tag + duplicate.
 - **Caching (§13).** The expanded directory tree per hierarchy is cached in Redis (the
   webapp caches client-side; WebDAV must cache server-side).
 
@@ -221,17 +228,18 @@ deduped — the first-upload key would otherwise block the overwrite.
 
 ### 7.1 Operation taxonomy
 
-| Method                    | Meaning                                    | Action                                                                                                                              |
-|---------------------------|--------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| `PUT` (new path)          | new picture, or a relocate as fresh upload | stream→staging + inline hash; dedupe (§8) → new picture (upload flow + target-dir `onAdd`/mirror auto-tag) or retag existing        |
-| `PUT` (existing path)     | overwrite                                  | new `picture_version` **iff** `versioning_mode` allows, else in-place; copy staging→pictures; enqueue `gen_thumbnail`; ETag changes |
-| `MOVE` (across dirs)      | re-file                                    | source-dir `onRemove` + target-dir `onAdd` (or mirror auto-tag); no body; identity = source path                                    |
-| `MOVE` (same dir, rename) | rename                                     | rename `pictures.filename` (naming=`original`); it is a real sync endpoint, not just a view                                         |
-| `COPY`                    | appear in two places                       | target-dir `onAdd` / mirror auto-tag (picture becomes multi-tagged); no byte copy                                                   |
-| `DELETE`                  | per `safeDeleteMode`                       | `singleBranch` → `onRemove` (may `409`, §7.2); `fullDelete` → `deleted_at` (received pictures always local-only)                    |
-| `MKCOL`                   | new directory                              | static/query → `405`; **drop → `405`** (leaf, feature 18 §4); mirror subtree → sidecar (§9)                                         |
-| `PROPPATCH`               | client sets mtime, etc.                    | accept as no-op (clients need a success)                                                                                            |
-| `LOCK`/`UNLOCK`           | Finder class 2                             | in-memory lock store                                                                                                                |
+| Method                    | Meaning                                    | Action                                                                                                                               |
+|---------------------------|--------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `PUT` (new path)          | new picture, or a relocate as fresh upload | stream→staging + inline hash; dedupe (§8) → new picture (upload flow + target-dir `onAdd`/mirror auto-tag) or retag existing         |
+| `PUT` (existing path)     | overwrite                                  | new `picture_version` **iff** `versioning_mode` allows, else in-place; copy staging→pictures; enqueue `gen_thumbnail`; ETag changes  |
+| `MOVE` (across dirs)      | re-file                                    | source-dir `onRemove` + target-dir `onAdd` (or mirror auto-tag); no body; identity = source path                                     |
+| `MOVE` (same dir, rename) | rename                                     | rename `pictures.filename` (naming=`original`); it is a real sync endpoint, not just a view                                          |
+| `MOVE`/`COPY` (scratch)   | atomic-save terminal rename                | a scratch source (08_webdav_issues.md §1.4) → **promote** staged bytes as overwrite/new; a scratch destination → record a backup ref |
+| `COPY`                    | appear in two places                       | target-dir `onAdd` / mirror auto-tag (picture becomes multi-tagged); no byte copy                                                    |
+| `DELETE`                  | per `safeDeleteMode`                       | `singleBranch` → `onRemove` (may `409`, §7.2); `fullDelete` → `deleted_at` (received pictures always local-only)                     |
+| `MKCOL`                   | new directory                              | static/query → `405`; **drop → `405`** (leaf, feature 18 §4); mirror subtree → sidecar (§9); scratch temp dir → staging (08 §1.5)    |
+| `PROPPATCH`               | client sets mtime, etc.                    | accept as no-op (clients need a success)                                                                                             |
+| `LOCK`/`UNLOCK`           | Finder class 2                             | in-memory lock store                                                                                                                 |
 
 ### 7.2 Write-back & conflicts
 
@@ -348,7 +356,9 @@ The webapp caches the tree client-side; WebDAV must cache server-side. Cache the
 directory tree** per hierarchy in Redis, keyed by `(hierarchy_id, config updated_at)` so a
 config edit invalidates it. PROPFIND directory listings and `stat` reuse this; per-directory
 picture **counts/listings** stay live (cheap predicate over `list_pictures`). The §3.3 auth
-entry, §9 pending-dir markers, and §11 sidecars are the other Redis keys.
+entry, §9 pending-dir markers, §11 sidecars, and the atomic-save staging markers
+(`webdav:staging:*`, pointing at bytes in the staging bucket — 08_webdav_issues.md §1.7) are
+the other Redis keys.
 
 ## 14. Database changes
 
@@ -486,6 +496,17 @@ support). It deviates from the design above in a few deliberate MVP simplificati
   path is folded onto an existing case-variant tag (`domain::hierarchy::reuse_existing_case`), so a
   case-insensitive client never mints a case-only-duplicate sibling. Authored sibling
   case-insensitivity (§10a) and the mirror collision tolerance (§10b) are also in place.
+- **Atomic-save ("safe-save") staging is implemented ([08_webdav_issues.md](08_webdav_issues.md) §1)** —
+  a fourth transient class next to pending-dirs (§9) and junk sidecars (§11). A recognizer
+  (`is_atomic_staging`, precedence junk → staging → tag-tree) matches OS scratch names (macOS
+  `<base>.sb-<hex>-<alnum>` temp dirs, Windows `.tmp`/`~`, browser/rsync `.part`/`.partial`/…). Such
+  paths bypass tag resolution: `MKCOL` records a scratch-dir marker, `PUT` streams the bytes to the
+  **staging bucket** with a `webdav:staging:*` Redis marker (never a picture/tag), and `GET`/`PROPFIND`
+  round-trip them under their exact name. The terminal `MOVE` **promotes** the staged bytes via the
+  shared `Vfs::finalize_write` (a `ByteSource::Staging` server-side `copy_object`, reusing the overwrite/
+  dedupe/versioning path) — an overwrite of the target picture (versioned) or a new ingest. A real
+  picture moved into a scratch path records a backup reference and mutates nothing. Crash-before-rename
+  needs no GC: the marker TTL and the staging bucket's lifecycle rule sweep orphans (§1.8).
 - **Frontend** token UI is not yet built (part of the broader "Full frontend" roadmap item).
 - **Integration tests** cover the pure helpers (auth parsing, naming/collision, slug, crypto,
   PROPFIND href/XML) and the end-to-end VFS read/write taxonomy against a seeded DB
