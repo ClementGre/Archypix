@@ -57,6 +57,7 @@ pub async fn register(
         &payload.display_name,
         &payload.password,
         false,
+        Some(state.config.default_storage_quota_bytes),
     )
     .await?;
     Ok(Json(UserResponse {
@@ -81,6 +82,17 @@ pub async fn get_public(
         email: user.email,
         display_name: user.display_name,
     }))
+}
+
+/// `GET /api/authenticated/me/storage` — the caller's storage quota, usage, and breakdown
+/// (feature 22 §8.1). Drives the footer bar, settings breakdown, and upload preflight.
+#[tracing::instrument(skip(auth, state), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
+pub async fn get_storage(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<services::storage::StorageInfo>, AppError> {
+    let info = services::storage::storage_info(&state.db, &state.config, auth.user_id()?).await?;
+    Ok(Json(info))
 }
 
 #[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]

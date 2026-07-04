@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO picture_versions (id, picture_id, version_number, file_size) VALUES ($1,$2,1,300)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d1b5019f6c253b8b9401fcd44d3d895603a657a063ebf19abafe8a6473bda04a"
+}

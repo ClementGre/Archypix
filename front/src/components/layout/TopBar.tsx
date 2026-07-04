@@ -60,7 +60,7 @@ export function TopBar() {
     // Manual catch-all refresh — for the residual cases proper invalidation can't cover
     // (asynchronous pipeline re-tagging / federated share delivery that lands after the settle pass).
     const refreshAll = () =>
-        ['pictures', 'tags', 'tagging', 'shares', 'hierarchies'].forEach((key) =>
+        ['pictures', 'tags', 'tagging', 'shares', 'hierarchies', 'storage'].forEach((key) =>
             queryClient.invalidateQueries({queryKey: [key]}),
         )
 

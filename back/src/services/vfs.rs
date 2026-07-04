@@ -11,6 +11,7 @@ use crate::infra::error::AppError;
 use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::s3;
 use crate::repository::picture::PictureRepository;
+use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
 use crate::repository::user_settings::UserSettingsRepository;
 use crate::services::hierarchy::{self, ResolvedDir};
@@ -168,6 +169,18 @@ impl<'a> Vfs<'a> {
 
     fn dir(&self, segments: &[String]) -> Option<&ResolvedDir> {
         hierarchy::find_dir(&self.root, segments)
+    }
+
+    /// RFC 4331 capacity numbers for a collection PROPFIND (feature 22 §8.2): the owner's billed
+    /// total (`quota-used-bytes`) and remaining space (`quota-available-bytes`; `None` = unlimited).
+    pub async fn quota_props(&self) -> Result<(i64, Option<i64>), AppError> {
+        let info = crate::services::storage::storage_info(
+            &self.state.db,
+            &self.state.config,
+            self.user_id,
+        )
+        .await?;
+        Ok((info.used_bytes, info.available_bytes))
     }
 
     /// List the pictures that are direct files of `dir`, projected to entries.
@@ -397,6 +410,36 @@ impl<'a> Vfs<'a> {
                 // versioning_mode before replacing them.
                 let settings =
                     UserSettingsRepository::get_or_default(&self.state.db, self.user_id).await?;
+
+                // Quota gate (feature 22 §6): bill the net delta — new bytes minus the replaced
+                // original, plus a version snapshot if one is taken. Only a growing overwrite is
+                // blocked; a neutral/shrinking one always proceeds.
+                {
+                    use crate::domain::user_settings::VersioningMode;
+                    let old_size = pic.file_size.unwrap_or(0);
+                    let will_snapshot = match settings.versioning_mode {
+                        VersioningMode::None => false,
+                        VersioningMode::OriginalCopy => {
+                            !PictureVersionRepository::has_versions(&self.state.db, pic.id).await?
+                        }
+                        VersioningMode::FullVersioning => true,
+                    };
+                    let net = size - old_size + if will_snapshot { old_size } else { 0 };
+                    if net > 0
+                        && !crate::services::storage::fits(
+                            self.state.cache.as_ref(),
+                            &self.state.db,
+                            self.user_id,
+                            net,
+                        )
+                        .await?
+                    {
+                        return Err(AppError::InsufficientStorage(
+                            "overwrite would exceed your storage quota".into(),
+                        ));
+                    }
+                }
+
                 pictures::snapshot_version_on_overwrite(
                     &self.state.db,
                     self.state.storage.as_ref(),
@@ -417,6 +460,11 @@ impl<'a> Vfs<'a> {
                     .await?;
                 // Set the new hash/size inline so the ETag is correct before gen_thumbnail re-extracts.
                 PictureRepository::set_file_hash(&self.state.db, pid, hash, Some(size)).await?;
+                crate::services::storage::invalidate_committed(
+                    self.state.cache.as_ref(),
+                    self.user_id,
+                )
+                .await;
                 // is_initial = true so the exif is re-extracted from the new bytes. Keyed on the
                 // new file hash so the overwrite is not blocked by the first-upload extraction job.
                 crate::services::jobs::enqueue_thumbnail_job(
@@ -460,6 +508,21 @@ impl<'a> Vfs<'a> {
             self.clear_pending_dir(parent).await;
             self.state.routines.pipeline.trigger_debounced(self.user_id);
             return Ok(true);
+        }
+
+        // Quota gate (feature 22 §6): a genuinely new picture bills its full size — reject before
+        // writing any bytes when over quota.
+        if !crate::services::storage::fits(
+            self.state.cache.as_ref(),
+            &self.state.db,
+            self.user_id,
+            size,
+        )
+        .await?
+        {
+            return Err(AppError::InsufficientStorage(
+                "upload would exceed your storage quota".into(),
+            ));
         }
 
         // Genuine new picture: stream bytes to S3, create the row + thumbnail job, then apply tags.
@@ -507,6 +570,8 @@ impl<'a> Vfs<'a> {
         tx.commit()
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        crate::services::storage::invalidate_committed(self.state.cache.as_ref(), self.user_id)
+            .await;
         self.apply_add_ops(&on_add, new_id).await?;
         // A real file now lives here, so the directory is a live tag — drop any pending marker.
         self.clear_pending_dir(parent).await;

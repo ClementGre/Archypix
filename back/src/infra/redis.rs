@@ -52,6 +52,13 @@ pub enum RedisKey<'a> {
     /// value holds the staged sub-directory names + files (bytes live in the staging bucket) until a
     /// terminal MOVE promotes them (08_webdav_issues.md §1).
     WebdavStaging(Uuid, &'a str),
+    /// Cached mirror of `user_storage.billed_total` — the storage-quota fast path (feature 22 §5.2).
+    StorageCommitted(Uuid),
+    /// One in-flight presigned-upload reservation (declared size), keyed by `(user_id, picture_id)`.
+    /// The set of live sub-keys under a user sums to `storage:reserved:{user}` (feature 22 §5.2).
+    StorageReservation(Uuid, Uuid),
+    /// Cached per-user S3 storage-audit result (admin, feature 22 §8.3). Short TTL.
+    StorageAudit(Uuid),
 }
 
 impl<'a> RedisKey<'a> {
@@ -70,8 +77,17 @@ impl<'a> RedisKey<'a> {
             Self::WebdavPendingDir(h, parent) => format!("webdav:pendingdir:{h}:{parent}"),
             Self::WebdavSidecar(h, parent) => format!("webdav:sidecar:{h}:{parent}"),
             Self::WebdavStaging(h, parent) => format!("webdav:staging:{h}:{parent}"),
+            Self::StorageCommitted(id) => format!("storage:committed:{id}"),
+            Self::StorageReservation(user, pic) => format!("storage:reserved:{user}:{pic}"),
+            Self::StorageAudit(id) => format!("storage:audit:{id}"),
         }
     }
+}
+
+/// Redis key prefix matching every in-flight upload reservation of `user_id`
+/// (`storage:reserved:{user}:*`). Used to sum the reserved bytes on the quota hot path.
+pub fn storage_reservation_prefix(user_id: Uuid) -> String {
+    format!("storage:reserved:{user_id}:")
 }
 
 impl<'a> fmt::Display for RedisKey<'a> {
@@ -105,6 +121,9 @@ pub trait Cache: Send + Sync {
     /// counter that resets after the window. The expiry is set only on creation, so a sustained
     /// burst cannot keep extending the window. Used by the rate limiter (`infra::ratelimit`).
     async fn incr_ex(&self, key: RedisKey<'_>, ttl_secs: u64) -> Result<u64, AppError>;
+    /// Sum the integer values of every key whose name starts with `prefix`. Non-integer or missing
+    /// values count as zero. Used to total a user's in-flight storage reservations (feature 22 §5.2).
+    async fn sum_int_by_prefix(&self, prefix: &str) -> Result<i64, AppError>;
 }
 
 // ── JSON helpers (free functions to preserve dyn-compatibility) ───────────────
@@ -217,6 +236,29 @@ impl Cache for RedisClient {
                 .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         }
         Ok(count.max(0) as u64)
+    }
+
+    async fn sum_int_by_prefix(&self, prefix: &str) -> Result<i64, AppError> {
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let keys: Vec<String> = conn
+            .keys(format!("{prefix}*"))
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        let values: Vec<Option<String>> = conn
+            .mget(&keys)
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        Ok(values
+            .into_iter()
+            .filter_map(|v| v.and_then(|s| s.parse::<i64>().ok()))
+            .sum())
     }
 }
 

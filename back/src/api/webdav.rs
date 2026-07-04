@@ -258,15 +258,17 @@ async fn propfind(
     }
 
     let here = vfs.stat(segments).await?;
+    // RFC 4331 quota properties are advertised on collections (feature 22 §8.2). Resolve them once.
+    let quota = vfs.quota_props().await.ok();
     let mut responses = String::new();
-    responses.push_str(&response_xml(slug, segments, &here));
+    responses.push_str(&response_xml(slug, segments, &here, quota));
 
     if matches!(depth, Depth::One) && here.is_dir {
         let entries = vfs.list_dir(segments).await?;
         for e in &entries {
             let mut child = segments.to_vec();
             child.push(e.name.clone());
-            responses.push_str(&response_xml(slug, &child, e));
+            responses.push_str(&response_xml(slug, &child, e, quota));
         }
     }
 
@@ -281,7 +283,12 @@ async fn propfind(
         .unwrap())
 }
 
-fn response_xml(slug: &str, segments: &[String], entry: &VfsEntry) -> String {
+fn response_xml(
+    slug: &str,
+    segments: &[String],
+    entry: &VfsEntry,
+    quota: Option<(i64, Option<i64>)>,
+) -> String {
     let href = href_for(slug, segments, entry.is_dir);
     let modified = entry
         .modified
@@ -298,6 +305,16 @@ fn response_xml(slug: &str, segments: &[String], entry: &VfsEntry) -> String {
     ));
     if entry.is_dir {
         props.push_str("<D:resourcetype><D:collection/></D:resourcetype>");
+        // RFC 4331 capacity bar. `quota-used-bytes` is the billed total; `quota-available-bytes` is
+        // omitted when the quota is unlimited.
+        if let Some((used, available)) = quota {
+            props.push_str(&format!("<D:quota-used-bytes>{used}</D:quota-used-bytes>"));
+            if let Some(avail) = available {
+                props.push_str(&format!(
+                    "<D:quota-available-bytes>{avail}</D:quota-available-bytes>"
+                ));
+            }
+        }
     } else {
         props.push_str("<D:resourcetype/>");
         props.push_str(&format!(

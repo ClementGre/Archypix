@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_storage SET originals_bytes = 999999 WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8ca41ee4708f7d1cb91c93c6a02ba5e3e98da6d101c19d8eaee464ef63f067e0"
+}

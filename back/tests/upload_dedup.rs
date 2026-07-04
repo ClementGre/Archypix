@@ -54,10 +54,12 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
         BatchUploadFile {
             filename: "dup.jpg".to_string(),
             file_hash: Some(existing_hash.clone()),
+            size: None,
         },
         BatchUploadFile {
             filename: "fresh.jpg".to_string(),
             file_hash: Some("b".repeat(64)),
+            size: None,
         },
     ];
     let tags = vec!["Photos.Trip".to_string()];
@@ -117,10 +119,12 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
         BatchUploadFile {
             filename: "first.jpg".to_string(),
             file_hash: Some(hash.clone()),
+            size: None,
         },
         BatchUploadFile {
             filename: "copy.jpg".to_string(),
             file_hash: Some(hash.clone()),
+            size: None,
         },
     ];
 
@@ -170,6 +174,7 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
     let files = vec![BatchUploadFile {
         filename: "again.jpg".to_string(),
         file_hash: Some(hash),
+        size: None,
     }];
 
     let outcomes = begin_upload_batch(
@@ -230,6 +235,7 @@ async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
     let files = vec![BatchUploadFile {
         filename: "again.jpg".to_string(),
         file_hash: Some(hash),
+        size: None,
     }];
 
     begin_upload_batch(

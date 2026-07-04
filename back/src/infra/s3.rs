@@ -18,6 +18,13 @@ use uuid::Uuid;
 
 // ── Storage trait ─────────────────────────────────────────────────────────────
 
+/// Measured usage of an S3 key prefix (feature 22 §8.3): a paginated `ListObjectsV2` walk.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct PrefixUsage {
+    pub object_count: i64,
+    pub total_bytes: i64,
+}
+
 /// Abstraction over the object storage layer. Implemented by `StorageClient` in production
 /// and `MockStorage` in tests.
 #[async_trait]
@@ -54,6 +61,9 @@ pub trait Storage: Send + Sync {
         path: &std::path::Path,
         content_type: Option<&str>,
     ) -> Result<(), AppError>;
+    /// Sum object count + bytes under a key prefix (paginated `ListObjectsV2`). Used by the admin
+    /// storage-audit (feature 22 §8.3).
+    async fn prefix_usage(&self, bucket: &str, prefix: &str) -> Result<PrefixUsage, AppError>;
 }
 
 pub fn picture_key(user_id: Uuid, picture_id: Uuid) -> String {
@@ -230,6 +240,36 @@ impl StorageClient {
             .map(|_| ())
             .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
+
+    #[tracing::instrument(skip(self), fields(otel.kind = "client", peer.service = "s3"))]
+    pub async fn prefix_usage(&self, bucket: &str, prefix: &str) -> Result<PrefixUsage, AppError> {
+        let mut usage = PrefixUsage::default();
+        let mut token: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .list_objects_v2()
+                .bucket(bucket)
+                .prefix(prefix)
+                .max_keys(1000);
+            if let Some(t) = &token {
+                req = req.continuation_token(t.clone());
+            }
+            let out = req
+                .send()
+                .await
+                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+            for obj in out.contents() {
+                usage.object_count += 1;
+                usage.total_bytes += obj.size().unwrap_or(0);
+            }
+            match out.next_continuation_token() {
+                Some(t) if out.is_truncated().unwrap_or(false) => token = Some(t.to_string()),
+                _ => break,
+            }
+        }
+        Ok(usage)
+    }
 }
 
 #[async_trait]
@@ -282,6 +322,9 @@ impl Storage for StorageClient {
         content_type: Option<&str>,
     ) -> Result<(), AppError> {
         self.put_object_file(bucket, key, path, content_type).await
+    }
+    async fn prefix_usage(&self, bucket: &str, prefix: &str) -> Result<PrefixUsage, AppError> {
+        self.prefix_usage(bucket, prefix).await
     }
 }
 

@@ -3,7 +3,7 @@ import {toast} from 'sonner'
 import {batchEditExif, type BatchExifBody, batchRestore, batchTrash} from '@/api/pictures'
 import {batchEditTags, type BatchEditTagsBody} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
-import {invalidatePicturesAndTags} from '@/lib/invalidation'
+import {invalidatePicturesAndTags, invalidateStorageDebounced} from '@/lib/invalidation'
 import type {PictureSelection} from '@/lib/types'
 
 /**
@@ -21,12 +21,18 @@ export function useBatchMutations() {
 
     const trash = useMutation({
         mutationFn: (selection: PictureSelection) => batchTrash(selection),
-        onSuccess: invalidate,
+        onSuccess: () => {
+            invalidate()
+            invalidateStorageDebounced(qc)
+        },
         onError: onError('Could not move to trash'),
     })
     const restore = useMutation({
         mutationFn: (selection: PictureSelection) => batchRestore(selection),
-        onSuccess: invalidate,
+        onSuccess: () => {
+            invalidate()
+            invalidateStorageDebounced(qc)
+        },
         onError: onError('Could not restore'),
     })
     const tags = useMutation({

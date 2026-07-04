@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT originals_bytes, originals_trashed_bytes, versions_bytes, versions_trashed_bytes\n               FROM user_storage WHERE user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "originals_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_storage",
+            "name": "originals_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "originals_trashed_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_storage",
+            "name": "originals_trashed_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "versions_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_storage",
+            "name": "versions_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "versions_trashed_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_storage",
+            "name": "versions_trashed_bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fb069d7cf80987aa7f43709a1365b06a51517bb5d512a3fd7712f485716e3f27"
+}

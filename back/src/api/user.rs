@@ -29,6 +29,7 @@ pub fn public_routes() -> Router<AppState> {
 pub fn authenticated_routes() -> Router<AppState> {
     Router::new()
         .route("/users/me", patch(users::update_me))
+        .route("/me/storage", get(users::get_storage))
         .route("/pictures/uploads", post(pictures::create_upload))
         .route(
             "/pictures/uploads/batch",

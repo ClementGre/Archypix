@@ -186,6 +186,10 @@ pub struct PictureDetails {
 pub struct BatchUploadFile {
     pub filename: String,
     pub file_hash: Option<String>,
+    /// Client-declared byte size, enabling the presign-time quota reservation (feature 22 §5.3).
+    /// When absent, only the coarse `at-or-over-quota` gate applies and the `complete_upload` hard
+    /// check is the backstop.
+    pub size: Option<i64>,
 }
 
 /// The outcome of one batch presign slot: either a fresh upload slot (PUT the bytes to
@@ -294,8 +298,16 @@ pub async fn begin_upload_batch(
                 continue;
             }
             // First time we see this hash — mint a slot and remember it as the canonical target.
-            let (picture_id, presigned_url) =
-                begin_upload(cache, storage, config, user_id, &file.filename).await?;
+            let (picture_id, presigned_url) = begin_upload(
+                db,
+                cache,
+                storage,
+                config,
+                user_id,
+                &file.filename,
+                file.size,
+            )
+            .await?;
             seen_hashes.insert(hash, (picture_id, false));
             outcomes.push(BatchUploadOutcome::New {
                 picture_id,
@@ -304,8 +316,16 @@ pub async fn begin_upload_batch(
             continue;
         }
         // No hash supplied — can't dedup; always a fresh slot.
-        let (picture_id, presigned_url) =
-            begin_upload(cache, storage, config, user_id, &file.filename).await?;
+        let (picture_id, presigned_url) = begin_upload(
+            db,
+            cache,
+            storage,
+            config,
+            user_id,
+            &file.filename,
+            file.size,
+        )
+        .await?;
         outcomes.push(BatchUploadOutcome::New {
             picture_id,
             presigned_url,
@@ -351,16 +371,37 @@ pub async fn begin_upload_batch(
     Ok(outcomes)
 }
 
-#[tracing::instrument(skip(cache, storage, config), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, storage, config), fields(user_id = %user_id))]
 pub async fn begin_upload(
+    db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
     config: &Config,
     user_id: Uuid,
     filename: &str,
+    declared_size: Option<i64>,
 ) -> Result<(Uuid, String), AppError> {
     if filename.trim().is_empty() {
         return Err(AppError::BadRequest("Filename cannot be empty".to_string()));
+    }
+
+    // Quota gate (feature 22 §5.3): with a declared size, reject if it would push the effective
+    // usage over quota, then reserve the slot; without one, apply the coarse at-quota gate.
+    match declared_size {
+        Some(size) => {
+            if !crate::services::storage::fits(cache, db, user_id, size).await? {
+                return Err(AppError::PayloadTooLarge(
+                    "upload would exceed your storage quota".to_string(),
+                ));
+            }
+        }
+        None => {
+            if crate::services::storage::at_or_over_quota(cache, db, user_id).await? {
+                return Err(AppError::PayloadTooLarge(
+                    "storage quota reached".to_string(),
+                ));
+            }
+        }
     }
 
     let picture_id = Uuid::new_v4();
@@ -369,6 +410,11 @@ pub async fn begin_upload(
     let presigned_url = storage
         .presign_put(&config.s3_bucket_staging, &s3_key_staging)
         .await?;
+
+    // Reserve the declared bytes for the presign→complete window (auto-releases on TTL).
+    if let Some(size) = declared_size {
+        crate::services::storage::reserve(cache, config, user_id, picture_id, size).await?;
+    }
 
     let session = UploadSession {
         user_id,
@@ -452,6 +498,21 @@ pub async fn complete_upload(
         }
     };
 
+    // Quota hard check (feature 22 §5.3): the authoritative size is known. Release this upload's
+    // reservation first (so it is not double-counted), then verify the committed usage plus this
+    // object fits. On overflow, delete the promoted object and abort — no orphan bytes, `413`.
+    crate::services::storage::release(cache, user_id, picture_id).await;
+    if let Some(size) = file_size {
+        if !crate::services::storage::fits(cache, db, user_id, size).await? {
+            let _ = storage
+                .delete_object(&config.s3_bucket_pictures, &pictures_key)
+                .await;
+            return Err(AppError::PayloadTooLarge(
+                "upload would exceed your storage quota".to_string(),
+            ));
+        }
+    }
+
     // Single DB transaction: create picture row, thumbnail job.
     let mut tx = db
         .begin()
@@ -494,6 +555,10 @@ pub async fn complete_upload(
 
     tx.commit().await.map_err(map_sqlx_error)?;
 
+    // The trigger just committed the new bytes → drop the cached committed mirror so the next
+    // quota check recomputes (feature 22 §5.2).
+    crate::services::storage::invalidate_committed(cache, user_id).await;
+
     // Cache cleanup is after commit. A failure here is non-fatal
     if let Err(e) = cache.del(RedisKey::UploadSession(picture_id)).await {
         tracing::warn!(picture_id = %picture_id, error = ?e, "failed to delete upload session from cache");
@@ -524,6 +589,14 @@ pub async fn copy_picture(
         .ok_or(AppError::NotFound)?;
     if source.local_user_id != user_id {
         return Err(AppError::NotFound);
+    }
+
+    // Quota gate (feature 22 §6): a copy becomes a new owned picture — bill it upfront. `507` before
+    // the S3 copy so no bytes are written when over quota.
+    if !crate::services::storage::fits(cache, db, user_id, source.file_size.unwrap_or(0)).await? {
+        return Err(AppError::InsufficientStorage(
+            "copying this picture would exceed your storage quota".to_string(),
+        ));
     }
 
     let new_id = Uuid::new_v4();
@@ -651,6 +724,9 @@ pub async fn copy_picture(
     // EXIF), but still compute file_size/hash, content_hash, dimensions and thumbnails.
     crate::services::jobs::enqueue_thumbnail_job(&mut *tx, user_id, new_id, false, None).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
+
+    // New owned bytes committed → drop the cached committed mirror (feature 22 §5.2).
+    crate::services::storage::invalidate_committed(cache, user_id).await;
 
     // Wake the pipeline so the new owned picture is tagged; the dedup reconcile runs again once
     // `gen_thumbnail` lands its `content_hash` (that completion wakes the pipeline too).

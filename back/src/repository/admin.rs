@@ -57,7 +57,14 @@ pub struct InstanceStats {
 pub struct UserStats {
     pub owned_picture_count: i64,
     pub received_picture_count: i64,
+    /// Billed total (maintained counter, feature 22).
     pub storage_bytes: i64,
+    pub quota_bytes: Option<i64>,
+    pub originals_bytes: i64,
+    pub originals_trashed_bytes: i64,
+    pub versions_bytes: i64,
+    pub versions_trashed_bytes: i64,
+    pub usage_ratio: Option<f64>,
     pub job_counts: HashMap<String, i64>,
     pub outgoing_share_counts: HashMap<String, i64>,
     pub incoming_share_counts: HashMap<String, i64>,
@@ -74,7 +81,13 @@ pub struct UserWithStorage {
     pub is_admin: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    /// Billed total (maintained counter, feature 22) — originals + versions, live + trashed.
     pub storage_bytes: i64,
+    pub quota_bytes: Option<i64>,
+    pub originals_bytes: i64,
+    pub originals_trashed_bytes: i64,
+    pub versions_bytes: i64,
+    pub versions_trashed_bytes: i64,
 }
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
@@ -168,11 +181,13 @@ impl AdminRepository {
             .map_err(map_sqlx_error)?;
 
         let total_storage_bytes: i64 = sqlx::query_scalar!(
-            "SELECT COALESCE(SUM(file_size), 0)::BIGINT AS \"bytes!\" FROM pictures WHERE owner_username IS NULL"
+            r#"SELECT COALESCE(SUM(originals_bytes + originals_trashed_bytes
+                                   + versions_bytes + versions_trashed_bytes), 0)::BIGINT
+                   AS "bytes!" FROM user_storage"#
         )
-            .fetch_one(db)
-            .await
-            .map_err(map_sqlx_error)?;
+        .fetch_one(db)
+        .await
+        .map_err(map_sqlx_error)?;
 
         let job_count_rows = sqlx::query_as!(
             JobCountRow,
@@ -255,14 +270,14 @@ impl AdminRepository {
         .await
         .map_err(map_sqlx_error)?;
 
-        let storage_bytes: i64 = sqlx::query_scalar!(
-            "SELECT COALESCE(SUM(file_size), 0)::BIGINT AS \"bytes!\" \
-             FROM pictures WHERE local_user_id = $1 AND owner_username IS NULL",
-            user_id
-        )
-        .fetch_one(db)
-        .await
-        .map_err(map_sqlx_error)?;
+        let storage =
+            crate::repository::user_storage::UserStorageRepository::get(db, user_id).await?;
+        let quota_bytes =
+            crate::repository::user_storage::UserStorageRepository::get_quota(db, user_id).await?;
+        let storage_bytes = storage.billed_total();
+        let usage_ratio = quota_bytes
+            .filter(|q| *q > 0)
+            .map(|q| storage_bytes as f64 / q as f64);
 
         let job_count_rows = sqlx::query_as!(
             JobCountRow,
@@ -327,6 +342,12 @@ impl AdminRepository {
             owned_picture_count,
             received_picture_count,
             storage_bytes,
+            quota_bytes,
+            originals_bytes: storage.originals_bytes,
+            originals_trashed_bytes: storage.originals_trashed_bytes,
+            versions_bytes: storage.versions_bytes,
+            versions_trashed_bytes: storage.versions_trashed_bytes,
+            usage_ratio,
             job_counts: counts_to_map(job_count_rows),
             outgoing_share_counts: counts_to_map(outgoing_rows),
             incoming_share_counts: counts_to_map(incoming_rows),
@@ -342,12 +363,16 @@ impl AdminRepository {
         sqlx::query_as!(
             UserWithStorage,
             r#"SELECT u.id, u.username, u.email, u.display_name, u.is_admin,
-                      u.created_at, u.updated_at,
-                      COALESCE(SUM(p.file_size), 0)::BIGINT AS "storage_bytes!"
+                      u.created_at, u.updated_at, u.storage_quota_bytes AS quota_bytes,
+                      COALESCE(us.originals_bytes, 0)         AS "originals_bytes!",
+                      COALESCE(us.originals_trashed_bytes, 0) AS "originals_trashed_bytes!",
+                      COALESCE(us.versions_bytes, 0)          AS "versions_bytes!",
+                      COALESCE(us.versions_trashed_bytes, 0)  AS "versions_trashed_bytes!",
+                      COALESCE(us.originals_bytes + us.originals_trashed_bytes
+                               + us.versions_bytes + us.versions_trashed_bytes, 0)::BIGINT
+                          AS "storage_bytes!"
                FROM users u
-               LEFT JOIN pictures p ON p.local_user_id = u.id AND p.owner_username IS NULL
-               GROUP BY u.id, u.username, u.email, u.display_name, u.is_admin,
-                        u.created_at, u.updated_at
+               LEFT JOIN user_storage us ON us.user_id = u.id
                ORDER BY u.created_at DESC"#
         )
         .fetch_all(db)

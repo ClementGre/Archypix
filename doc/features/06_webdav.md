@@ -196,6 +196,12 @@ implementation reuses `build_tree` / `predicate_for_path` (read) and the write-b
 projection driven by the directory's `naming` strategy and collision rules (§8 of the
 hierarchies spec).
 
+**Quota properties (RFC 4331, feature 22).** A collection PROPFIND also advertises
+`{DAV:}quota-used-bytes` (the owner's billed total) and, when a quota is set,
+`{DAV:}quota-available-bytes` (`max(0, quota − used)`; omitted when unlimited). Finder / Windows
+Explorer render a native capacity bar from these. Resolved once per PROPFIND via
+`services::storage::storage_info`.
+
 ## 6. Reads
 
 `GET`/`HEAD` on a file resolve `path` → `picture_id` (§8) and return the **original**
@@ -456,7 +462,8 @@ support). It deviates from the design above in a few deliberate MVP simplificati
   for GET and would fight the http/body types; since reads redirect and writes stream with
   inline hashing, a focused hand-rolled handler over `VirtualFs` is more controllable. The
   property set is fixed (displayname/resourcetype/getcontentlength/getlastmodified/
-  getcontenttype/getetag), so PROPFIND/PROPPATCH XML is built directly.
+  getcontenttype/getetag, plus RFC 4331 quota-used/available on collections — feature 22), so
+  PROPFIND/PROPPATCH XML is built directly.
 - **Key derivation (§3.2)** is SHA-256 domain-separated, not HKDF (avoids a second digest
   dependency); functionally equivalent for a high-entropy secret.
 - **Locking** is advisory/fake (LOCK returns a token, nothing is enforced) — enough for

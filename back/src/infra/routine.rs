@@ -22,6 +22,7 @@ pub mod exif_drain;
 pub mod job_watchdog;
 pub mod pipeline;
 pub mod purge_sweep;
+pub mod storage_reconcile;
 pub mod tag_rename;
 pub mod unannounce;
 

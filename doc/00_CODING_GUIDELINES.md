@@ -61,6 +61,9 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   (L45) · 4 Auth Endpoints (L60) · 5 Public Endpoints (L153) · 6 Authenticated User Endpoints (L212) ·
   7 Admin Endpoints (L1639) · 8 Federation & Worker (L2036) · 9 WebFinger (L2074) · 10 Shared Type
   Reference (L2109) · 11 Key Frontend Behaviours (L2167)
+- **07_RESOLVER_ARCHITECTURE.md** — factual read-doc for the `archypix-resolver` crate (current
+  state): A) Purpose · B) Module layout · C) AppState · D) Config env · E) DB schema · F) Endpoints ·
+  G) JWT auth · H) Cache/CORS/observability · I) Planned → feature 23. Read before `resolver/**`.
 - **99_ROADMAP_MVP.md** — Completed (L3) · To-do for the MVP (L14) · To-do for v1.0 (L52)
 
 ### Feature docs (`doc/features/`)
@@ -142,3 +145,9 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   7 Reconcile routine (L153) · 8 API (L163) · 9 Resolver seed (L210) · 10 Config (L223) ·
   11 Frontend (L235) · 12 Edge cases (L247) · 13 Testing (L270) · 14 Doc updates (L282) ·
   15 Work breakdown (L293)
+- **23_resolver_admin_and_runtime_config.md** — 1 Overview (L15) · 2 Decisions (L28) · 3 Auth: backend
+  delegation tokens (L47) · 4 Runtime config system (L88) · 5 Resolver admin dashboard (L134) ·
+  6 Registration rules (L168) · 7 Instance-selection strategies (L202) · 8 Routine framework lift
+  (L226) · 9 JWT & registration lift to common (L262) · 10 Schema changes (L275) · 11 API surface
+  (L302) · 12 Frontend (L313) · 13 Edge cases (L323) · 14 Testing (L336) · 15 Doc updates (L350) ·
+  16 Work breakdown (L362) · 17 Open questions (L376). Pairs with `doc/07_RESOLVER_ARCHITECTURE.md`.

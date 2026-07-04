@@ -471,6 +471,32 @@ export interface UserProfile {
     is_admin: boolean
 }
 
+// ---------- Storage quota (feature 22) ----------
+
+export type StorageWarnLevel = 'ok' | 'warn' | 'critical' | 'full'
+
+export interface StorageBreakdown {
+    originals_bytes: number
+    originals_trashed_bytes: number
+    versions_bytes: number
+    versions_trashed_bytes: number
+}
+
+export interface StorageInfo {
+    /** Quota in bytes; `null` = unlimited. */
+    quota_bytes: number | null
+    /** Billed total (originals + versions, live + trashed). */
+    used_bytes: number
+    /** Remaining bytes; `null` when unlimited. */
+    available_bytes: number | null
+    breakdown: StorageBreakdown
+    /** Trashed originals + versions — the "empty trash to reclaim X" figure. */
+    reclaimable_trash_bytes: number
+    /** used / quota; `null` when unlimited. */
+    usage_ratio: number | null
+    warn_level: StorageWarnLevel
+}
+
 // ---------- Jobs ----------
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed'

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures (id, local_user_id, file_size, remote_picture_id, owner_username, owner_instance_domain)\n         VALUES ($1,$2,$3,'remote-1','bob','other.test')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "862577464f3a3616cca3895e76a6312330598606e790ded6497defe4b48deedd"
+}

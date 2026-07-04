@@ -28,10 +28,12 @@ export interface UploadSlot {
     was_deleted: boolean
 }
 
-/** One file requested in a batch presign: its name and (for dedup) its SHA-256 lowercase hex. */
+/** One file requested in a batch presign: its name, (for dedup) its SHA-256 lowercase hex, and
+ *  (for the storage-quota reservation, feature 22) its byte size. */
 export interface BatchUploadFileInput {
     filename: string
     file_hash?: string
+    size?: number
 }
 
 export interface CompleteUploadBody {

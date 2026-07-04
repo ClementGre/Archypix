@@ -51,6 +51,9 @@ pub async fn find_local_user_id(
     Ok(found.map(|u| u.id))
 }
 
+/// Create a user. `initial_quota_bytes` seeds the storage quota (feature 22 §2.8) — the
+/// resolver-supplied value or `config.default_storage_quota_bytes`; `None`/`Some(0)` leaves the
+/// quota `NULL` (unlimited).
 #[tracing::instrument(skip(db, password))]
 pub async fn create_user(
     db: &PgPool,
@@ -59,6 +62,7 @@ pub async fn create_user(
     display_name: &str,
     password: &str,
     is_admin: bool,
+    initial_quota_bytes: Option<i64>,
 ) -> Result<User, AppError> {
     if username.trim().is_empty()
         || !username
@@ -77,6 +81,14 @@ pub async fn create_user(
     let mut tx = db.begin().await.map_err(map_sqlx_error)?;
     let user = UserRepository::create(&mut *tx, username, email, display_name, is_admin).await?;
     CredentialRepository::upsert_password(&mut *tx, user.id, &password_hash).await?;
+    if let Some(quota) = initial_quota_bytes.filter(|q| *q > 0) {
+        crate::repository::user_storage::UserStorageRepository::set_quota(
+            &mut *tx,
+            user.id,
+            Some(quota),
+        )
+        .await?;
+    }
     tx.commit().await.map_err(map_sqlx_error)?;
 
     Ok(user)

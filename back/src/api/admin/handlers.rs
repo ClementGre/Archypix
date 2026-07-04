@@ -44,6 +44,7 @@ pub async fn create_user(
         &payload.display_name,
         &payload.password,
         payload.is_admin.unwrap_or(false),
+        Some(state.config.default_storage_quota_bytes),
     )
     .await?;
     Ok(Json(AdminUserResponse {
@@ -53,6 +54,10 @@ pub async fn create_user(
         display_name: user.display_name,
         is_admin: user.is_admin,
         storage_bytes: 0,
+        quota_bytes: (state.config.default_storage_quota_bytes > 0)
+            .then_some(state.config.default_storage_quota_bytes),
+        breakdown: Default::default(),
+        usage_ratio: None,
     }))
 }
 
@@ -70,15 +75,101 @@ pub async fn update_user(
         payload.is_admin,
     )
     .await?;
-    // Storage is not available without an extra query here; return 0 for update responses.
+    // Quota update (feature 22 §8.3): `Some(v)` sets/clears the cap. Lowering below current usage
+    // leaves stored bytes intact and blocks new writes until the user frees space.
+    if let Some(quota) = payload.storage_quota_bytes {
+        crate::repository::user_storage::UserStorageRepository::set_quota(
+            &state.db, user_id, quota,
+        )
+        .await?;
+    }
+    let storage =
+        crate::repository::user_storage::UserStorageRepository::get(&state.db, user_id).await?;
+    let quota_bytes =
+        crate::repository::user_storage::UserStorageRepository::get_quota(&state.db, user_id)
+            .await?;
+    let storage_bytes = storage.billed_total();
+    let usage_ratio = quota_bytes
+        .filter(|q| *q > 0)
+        .map(|q| storage_bytes as f64 / q as f64);
     Ok(Json(AdminUserResponse {
         id: user.id,
         username: user.username,
         email: user.email,
         display_name: user.display_name,
         is_admin: user.is_admin,
-        storage_bytes: 0,
+        storage_bytes,
+        quota_bytes,
+        breakdown: storage,
+        usage_ratio,
     }))
+}
+
+const STORAGE_AUDIT_TTL: u64 = 300;
+
+/// `GET /api/admin/users/{id}/storage-audit` — the S3 truth check (feature 22 §8.3). Walks the
+/// `{user_id}/` prefix in each bucket and returns measured `(object_count, bytes)` per bucket
+/// alongside the DB breakdown and a drift figure. Redis-cached (listing cost scales with objects).
+#[tracing::instrument(skip(_auth, state), fields(user = %_auth.claims.sub, target_user_id = %user_id))]
+pub async fn storage_audit(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if let Some(cached) =
+        cache_get_json::<serde_json::Value>(state.cache.as_ref(), RedisKey::StorageAudit(user_id))
+            .await?
+    {
+        return Ok(Json(cached));
+    }
+
+    let prefix = format!("{user_id}/");
+    let staging_prefix = format!("staging/{user_id}/");
+    let cfg = &state.config;
+    let measure = |bucket: &str, pfx: String| {
+        let storage = state.storage.clone();
+        let bucket = bucket.to_string();
+        async move { storage.prefix_usage(&bucket, &pfx).await }
+    };
+
+    let pictures = measure(&cfg.s3_bucket_pictures, prefix.clone()).await?;
+    let versions = measure(&cfg.s3_bucket_versions, prefix.clone()).await?;
+    let small = measure(&cfg.s3_bucket_small, prefix.clone()).await?;
+    let medium = measure(&cfg.s3_bucket_medium, prefix.clone()).await?;
+    let large = measure(&cfg.s3_bucket_large, prefix.clone()).await?;
+    let staging = measure(&cfg.s3_bucket_staging, staging_prefix).await?;
+
+    let breakdown =
+        crate::repository::user_storage::UserStorageRepository::get(&state.db, user_id).await?;
+    let db_billed = breakdown.billed_total();
+    let s3_billed = pictures.total_bytes + versions.total_bytes;
+    let thumbnails_bytes = small.total_bytes + medium.total_bytes + large.total_bytes;
+
+    let body = serde_json::json!({
+        "buckets": {
+            "pictures": pictures,
+            "versions": versions,
+            "thumbnails_small": small,
+            "thumbnails_medium": medium,
+            "thumbnails_large": large,
+            "staging": staging,
+        },
+        "thumbnails_bytes": thumbnails_bytes,
+        "db_breakdown": breakdown,
+        "db_billed_bytes": db_billed,
+        "s3_billed_bytes": s3_billed,
+        // DB counter minus S3-measured originals+versions; nonzero → drift to reconcile.
+        "drift_bytes": db_billed - s3_billed,
+    });
+
+    let _ = cache_set_json_ex(
+        state.cache.as_ref(),
+        RedisKey::StorageAudit(user_id),
+        &body,
+        STORAGE_AUDIT_TTL,
+    )
+    .await;
+    Ok(Json(body))
 }
 
 #[tracing::instrument(skip(_auth, state), fields(user = %_auth.claims.sub, target_user_id = %user_id))]

@@ -3,13 +3,10 @@ import {HardDrive, Images, LayoutGrid, Wand2} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionCount} from '@/hooks/useAggregate'
 import {useTaggingServices} from '@/hooks/useTaggingServices'
+import {useStorage} from '@/hooks/useSettings'
+import {StorageBar} from '@/components/StorageBar'
 import {ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, useUIStore} from '@/stores/ui'
 import {formatBytes, TagPath} from '@/lib/utils'
-
-// Storage stats are not exposed by the backend yet — these are placeholder values
-// so the status bar shows its intended shape. TODO: wire to a user-stats endpoint.
-const STORAGE_USED_BYTES = 4.2 * 1024 ** 3
-const STORAGE_TOTAL_BYTES = 15 * 1024 ** 3
 
 /** Thin footer with user/storage stats, the current view, selection, and the thumbnail-size slider. */
 export function StatusBar() {
@@ -22,21 +19,40 @@ export function StatusBar() {
     const rowHeight = useUIStore((s) => s.rowHeight)
     const setRowHeight = useUIStore((s) => s.setRowHeight)
     const {data: services} = useTaggingServices()
+    const {data: storage} = useStorage()
 
-    const storagePct = Math.min(100, Math.round((STORAGE_USED_BYTES / STORAGE_TOTAL_BYTES) * 100))
+    const used = storage?.used_bytes ?? 0
+    const quota = storage?.quota_bytes ?? null
+    const storagePct =
+        quota && quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0
+    const storageTitle =
+        quota && quota > 0
+            ? `Storage: ${formatBytes(used)} of ${formatBytes(quota)} used (${storagePct}%)`
+            : `Storage: ${formatBytes(used)} used (unlimited)`
     const viewLabel = params.tag ? TagPath.toDisplay(params.tag) : 'All photos'
 
     return (
         <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-[11px] text-muted-foreground">
-            {/* Storage (placeholder — not yet wired to the backend) */}
-            <div className="flex items-center gap-1.5" title="Storage usage (preview)">
+            {/* Storage usage (feature 22): segmented bar (originals/versions/trashed). Quota total only shown when set. */}
+            <button
+                onClick={() => navigate('/settings')}
+                className="flex items-center gap-1.5 transition-colors hover:text-foreground"
+                title={storageTitle}
+            >
                 <HardDrive className="h-3 w-3"/>
-                <span className="tabular-nums">{formatBytes(STORAGE_USED_BYTES)}</span>
-                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary" style={{width: `${storagePct}%`}}/>
-                </div>
-                <span className="tabular-nums">{formatBytes(STORAGE_TOTAL_BYTES)}</span>
-            </div>
+                <span className="tabular-nums">{formatBytes(used)}</span>
+                {storage && (
+                    <>
+                        <StorageBar
+                            breakdown={storage.breakdown}
+                            quotaBytes={quota}
+                            usedBytes={used}
+                            className="w-20 rounded-full"
+                        />
+                        {quota && quota > 0 && <span className="tabular-nums">{formatBytes(quota)}</span>}
+                    </>
+                )}
+            </button>
 
             <button
                 onClick={() => navigate('/tagging')}

@@ -1,8 +1,14 @@
 import {apiClient} from '@/api/client'
-import type {UserProfile, UserSettings, VersioningMode} from '@/lib/types'
+import type {StorageInfo, UserProfile, UserSettings, VersioningMode} from '@/lib/types'
 
 export async function getSettings(): Promise<UserSettings> {
     const {data} = await apiClient.get<UserSettings>('/api/authenticated/settings')
+    return data
+}
+
+/** The caller's storage quota, usage, and breakdown (feature 22). */
+export async function getStorage(): Promise<StorageInfo> {
+    const {data} = await apiClient.get<StorageInfo>('/api/authenticated/me/storage')
     return data
 }
 

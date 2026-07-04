@@ -24,6 +24,11 @@ Two adjacent features are specified separately but **share this feature's single
 This doc references those only where needed. The local-override path here is the **fallback** the
 recipient uses when owner editing is not authorised (§6.2).
 
+> **Storage (feature 22).** Trashed owned content stays billed against the owner's quota until the
+> purge sweep frees its S3 objects — this is what powers the "empty trash to reclaim X" prompt. Trash
+> and restore are byte-neutral for the billed total (both live and trashed cells count) and are never
+> quota-gated.
+
 ## 2. The invariant
 
 Everything below follows from one rule:

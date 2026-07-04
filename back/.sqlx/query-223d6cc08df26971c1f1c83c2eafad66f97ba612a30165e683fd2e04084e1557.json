@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT u.id, u.username, u.email, u.display_name, u.is_admin,\n                      u.created_at, u.updated_at,\n                      COALESCE(SUM(p.file_size), 0)::BIGINT AS \"storage_bytes!\"\n               FROM users u\n               LEFT JOIN pictures p ON p.local_user_id = u.id AND p.owner_username IS NULL\n               GROUP BY u.id, u.username, u.email, u.display_name, u.is_admin,\n                        u.created_at, u.updated_at\n               ORDER BY u.created_at DESC",
+  "query": "SELECT u.id, u.username, u.email, u.display_name, u.is_admin,\n                      u.created_at, u.updated_at, u.storage_quota_bytes AS quota_bytes,\n                      COALESCE(us.originals_bytes, 0)         AS \"originals_bytes!\",\n                      COALESCE(us.originals_trashed_bytes, 0) AS \"originals_trashed_bytes!\",\n                      COALESCE(us.versions_bytes, 0)          AS \"versions_bytes!\",\n                      COALESCE(us.versions_trashed_bytes, 0)  AS \"versions_trashed_bytes!\",\n                      COALESCE(us.originals_bytes + us.originals_trashed_bytes\n                               + us.versions_bytes + us.versions_trashed_bytes, 0)::BIGINT\n                          AS \"storage_bytes!\"\n               FROM users u\n               LEFT JOIN user_storage us ON us.user_id = u.id\n               ORDER BY u.created_at DESC",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,41 @@
       },
       {
         "ordinal": 7,
+        "name": "quota_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "storage_quota_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "originals_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "originals_trashed_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "versions_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "versions_trashed_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
         "name": "storage_bytes!",
         "type_info": "Int8",
         "origin": "Expression"
@@ -98,8 +133,13 @@
       false,
       false,
       false,
+      true,
+      null,
+      null,
+      null,
+      null,
       null
     ]
   },
-  "hash": "f20d9cfaf6e03f13e83d2316ed2d5e63ffd97c4d8dd90645e88503c15464637b"
+  "hash": "223d6cc08df26971c1f1c83c2eafad66f97ba612a30165e683fd2e04084e1557"
 }

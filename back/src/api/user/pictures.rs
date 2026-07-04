@@ -17,6 +17,9 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct CreateUploadRequest {
     pub filename: String,
+    /// Client-declared byte size, enabling the presign-time storage-quota reservation (feature 22).
+    #[serde(default)]
+    pub size: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,11 +35,13 @@ pub async fn create_upload(
     Json(payload): Json<CreateUploadRequest>,
 ) -> Result<Json<CreateUploadResponse>, AppError> {
     let (picture_id, presigned_url) = services::pictures::begin_upload(
+        &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
         &state.config,
         auth.user_id()?,
         &payload.filename,
+        payload.size,
     )
     .await?;
     Ok(Json(CreateUploadResponse {

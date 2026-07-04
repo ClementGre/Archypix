@@ -9,22 +9,38 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn create_user_rejects_uppercase_username(db: PgPool) {
-    let result =
-        users::create_user(&db, "Alice", "alice@test.com", "Alice", "password", false).await;
+    let result = users::create_user(
+        &db,
+        "Alice",
+        "alice@test.com",
+        "Alice",
+        "password",
+        false,
+        None,
+    )
+    .await;
     assert!(matches!(result, Err(AppError::BadRequest(_))));
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn create_user_rejects_empty_password(db: PgPool) {
-    let result = users::create_user(&db, "alice", "alice@test.com", "Alice", "", false).await;
+    let result = users::create_user(&db, "alice", "alice@test.com", "Alice", "", false, None).await;
     assert!(matches!(result, Err(AppError::BadRequest(_))));
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn create_user_fails_on_duplicate_username(db: PgPool) {
-    users::create_user(&db, "alice", "alice@test.com", "Alice", "password1", false)
-        .await
-        .unwrap();
+    users::create_user(
+        &db,
+        "alice",
+        "alice@test.com",
+        "Alice",
+        "password1",
+        false,
+        None,
+    )
+    .await
+    .unwrap();
     let result = users::create_user(
         &db,
         "alice",
@@ -32,6 +48,7 @@ async fn create_user_fails_on_duplicate_username(db: PgPool) {
         "Alice2",
         "password2",
         false,
+        None,
     )
     .await;
     assert!(

@@ -127,6 +127,19 @@ pub struct Config {
     /// (never buffered in memory) and rejected with `413` past this limit. Default: 5 GiB.
     pub webdav_max_upload_bytes: u64,
 
+    // ── Storage quotas (feature 22) ───────────────────────────────────────────
+    /// Initial quota (bytes) for a new user when the resolver does not seed one. `0` = unlimited.
+    pub default_storage_quota_bytes: i64,
+    /// Period (seconds) of the storage-reconcile routine that recomputes the usage counters from
+    /// scratch. Default: 86400 (daily).
+    pub storage_reconcile_interval_secs: u64,
+    /// TTL (seconds) of an in-flight upload reservation sub-key, so an abandoned upload auto-releases.
+    /// Default: mirrors the upload-session window (`s3_presign_ttl_secs + 60`).
+    pub storage_reservation_ttl_secs: u64,
+    /// Usage ratios at which `GET /me/storage` reports `warn` / `critical`. Default: 0.8 / 0.9.
+    pub storage_warn_ratio: f64,
+    pub storage_critical_ratio: f64,
+
     // ── Observability ─────────────────────────────────────────────────────────
     /// Global domains of federation peers that share this operator's Jaeger instance.
     /// Trace context is propagated to/from these peers only; all others start a fresh root.
@@ -233,6 +246,15 @@ impl Config {
             s3_presign_cache_margin_secs: env_u64("S3_PRESIGN_CACHE_MARGIN_SECS", 600)?,
 
             webdav_max_upload_bytes: env_u64("WEBDAV_MAX_UPLOAD_BYTES", 5 * 1024 * 1024 * 1024)?,
+
+            default_storage_quota_bytes: env_i64("DEFAULT_STORAGE_QUOTA_BYTES", 0)?,
+            storage_reconcile_interval_secs: env_u64("STORAGE_RECONCILE_INTERVAL_SECS", 86_400)?,
+            storage_reservation_ttl_secs: env_u64(
+                "STORAGE_RESERVATION_TTL_SECS",
+                env_u64("S3_PRESIGN_TTL_SECS", 3600)? + 60,
+            )?,
+            storage_warn_ratio: env_f64("STORAGE_WARN_RATIO", 0.8)?,
+            storage_critical_ratio: env_f64("STORAGE_CRITICAL_RATIO", 0.9)?,
 
             rate_limit_login_max: env_u64("RATE_LIMIT_LOGIN_MAX", 10)?,
             rate_limit_login_window_secs: env_u64("RATE_LIMIT_LOGIN_WINDOW_SECS", 300)?,
@@ -389,6 +411,11 @@ impl Config {
             s3_presign_ttl_secs: 3600,
             s3_presign_cache_margin_secs: 600,
             webdav_max_upload_bytes: 5 * 1024 * 1024 * 1024,
+            default_storage_quota_bytes: 0,
+            storage_reconcile_interval_secs: 86_400,
+            storage_reservation_ttl_secs: 3660,
+            storage_warn_ratio: 0.8,
+            storage_critical_ratio: 0.9,
             rate_limit_login_max: 10,
             rate_limit_login_window_secs: 300,
             rate_limit_register_max: 5,
@@ -505,4 +532,11 @@ fn env_usize(name: &str, default: usize) -> anyhow::Result<usize> {
     val.trim()
         .parse()
         .map_err(|_| anyhow::anyhow!("{} must be a positive integer.", name))
+}
+
+fn env_f64(name: &str, default: f64) -> anyhow::Result<f64> {
+    let val = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    val.trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{} must be a number.", name))
 }

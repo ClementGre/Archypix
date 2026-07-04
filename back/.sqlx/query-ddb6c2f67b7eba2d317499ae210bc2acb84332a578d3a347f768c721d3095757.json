@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_storage (user_id, originals_bytes, originals_trashed_bytes,\n                                         versions_bytes, versions_trashed_bytes)\n               SELECT u.id,\n                      COALESCE(o.live, 0), COALESCE(o.trash, 0),\n                      COALESCE(v.live, 0), COALESCE(v.trash, 0)\n               FROM users u\n                        LEFT JOIN (SELECT local_user_id AS uid,\n                                          SUM(file_size) FILTER (WHERE deleted_at IS NULL)     AS live,\n                                          SUM(file_size) FILTER (WHERE deleted_at IS NOT NULL) AS trash\n                                   FROM pictures WHERE remote_picture_id IS NULL\n                                   GROUP BY local_user_id) o ON o.uid = u.id\n                        LEFT JOIN (SELECT p.local_user_id AS uid,\n                                          SUM(pv.file_size) FILTER (WHERE p.deleted_at IS NULL)     AS live,\n                                          SUM(pv.file_size) FILTER (WHERE p.deleted_at IS NOT NULL) AS trash\n                                   FROM picture_versions pv\n                                            JOIN pictures p ON p.id = pv.picture_id\n                                   WHERE p.remote_picture_id IS NULL\n                                   GROUP BY p.local_user_id) v ON v.uid = u.id\n               ON CONFLICT (user_id) DO UPDATE SET\n                   originals_bytes         = EXCLUDED.originals_bytes,\n                   originals_trashed_bytes = EXCLUDED.originals_trashed_bytes,\n                   versions_bytes          = EXCLUDED.versions_bytes,\n                   versions_trashed_bytes  = EXCLUDED.versions_trashed_bytes,\n                   updated_at              = (now() AT TIME ZONE 'utc')\n               RETURNING user_id,\n                         (originals_bytes + originals_trashed_bytes\n                          + versions_bytes + versions_trashed_bytes) AS \"billed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "user_storage",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "billed!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "ddb6c2f67b7eba2d317499ae210bc2acb84332a578d3a347f768c721d3095757"
+}

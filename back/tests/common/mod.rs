@@ -78,6 +78,17 @@ impl Cache for InMemoryCache {
         store.insert(k, next.to_string());
         Ok(next)
     }
+
+    async fn sum_int_by_prefix(&self, prefix: &str) -> Result<i64, AppError> {
+        Ok(self
+            .store
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .filter_map(|(_, v)| v.parse::<i64>().ok())
+            .sum())
+    }
 }
 
 // ── MockStorage ───────────────────────────────────────────────────────────────
@@ -187,6 +198,23 @@ impl Storage for MockStorage {
             .unwrap()
             .insert(Self::obj_key(bucket, key), body);
         Ok(())
+    }
+
+    async fn prefix_usage(
+        &self,
+        bucket: &str,
+        prefix: &str,
+    ) -> Result<archypix_back::infra::s3::PrefixUsage, AppError> {
+        let full = format!("{bucket}/{prefix}");
+        let store = self.objects.lock().unwrap();
+        let mut usage = archypix_back::infra::s3::PrefixUsage::default();
+        for (k, v) in store.iter() {
+            if k.starts_with(&full) {
+                usage.object_count += 1;
+                usage.total_bytes += v.len() as i64;
+            }
+        }
+        Ok(usage)
     }
 }
 
@@ -317,6 +345,7 @@ pub async fn seed_user(db: &PgPool, username: &str, password: &str) -> Uuid {
         username,
         &password,
         false,
+        None,
     )
     .await
     .unwrap()

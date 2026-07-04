@@ -278,6 +278,32 @@ Update settings. Both fields are optional; an omitted field keeps its current va
 
 ---
 
+#### `GET /api/authenticated/me/storage`
+
+The caller's storage quota, usage, and breakdown (feature 22). Drives the footer bar, the settings
+breakdown, and the upload preflight.
+
+**Response `200`:**
+
+```ts
+{
+  quota_bytes: number | null;          // null = unlimited
+  used_bytes: number;                  // billed total (originals + versions, live + trashed)
+  available_bytes: number | null;      // null when unlimited
+  breakdown: {
+    originals_bytes: number;
+    originals_trashed_bytes: number;
+    versions_bytes: number;
+    versions_trashed_bytes: number;
+  };
+  reclaimable_trash_bytes: number;     // originals_trashed + versions_trashed
+  usage_ratio: number | null;          // used / quota, null when unlimited
+  warn_level: "ok" | "warn" | "critical" | "full";  // 80% / 90% / 100% thresholds
+}
+```
+
+---
+
 ### 6.2 Pictures — Upload
 
 Upload is a three-step process for each file: begin (get a presigned S3 URL), PUT directly to S3, then complete. For batch uploads, step 1 can be
@@ -290,6 +316,7 @@ combined for all files in a single call.
 ```ts
 {
     filename: string;  // must be non-empty
+    size?: number;     // declared byte size — enables the storage-quota reservation (feature 22)
 }
 ```
 
@@ -302,6 +329,11 @@ combined for all files in a single call.
 }
 ```
 
+**Storage quota (feature 22).** When `size` is provided the backend rejects the presign with `413`
+if it would push the caller over quota, and otherwise reserves the bytes for the presign→complete
+window. Without `size`, only a coarse at-quota gate applies and the `complete` hard check is the
+backstop. `NULL` quota = unlimited.
+
 #### Step 1b (batch): `POST /api/authenticated/pictures/uploads/batch`
 
 Presigns multiple upload slots in one round-trip. Returns results in the same order as the input array. Capped at 100 files per call.
@@ -313,6 +345,7 @@ Presigns multiple upload slots in one round-trip. Returns results in the same or
   files: Array<{
     filename: string;       // non-empty
     file_hash?: string;     // SHA-256 lowercase hex of the bytes — enables upload-time dedup
+    size?: number;          // declared byte size — enables the storage-quota reservation (feature 22)
   }>;                         // 1–100 entries
   initial_tags ? : string[];    // ltree wire-form paths — assigned (manual) to deduplicated pictures
   upload_label ? : string;      // single ltree label (`Uploaded.YYYY_MM_DD_HH_MM`), fixed per batch
@@ -383,6 +416,10 @@ invalid path returns `400`. `file_size` is **advisory**: the backend reads the r
 (`HEAD`) and stores that, so a client cannot under-report it. `file_hash` should be the SHA-256
 (lowercase hex) of the uploaded bytes — the same digest the worker computes — and is stored as a
 provisional ETag/dedupe key until `gen_thumbnail` re-confirms it.
+
+**Storage quota (feature 22).** The authoritative S3 size drives a hard check: if it would exceed the
+caller's quota the backend deletes the promoted object, aborts the row, releases the reservation, and
+returns `413`. On success the trigger commits the bytes and the reservation is released.
 
 The completion wakes the pipeline through the **debounced** path, so a batch upload's per-file
 completions automatically coalesce into a single pipeline run (`PIPELINE_DEBOUNCE_MS` window) — no
@@ -1745,11 +1782,20 @@ interface AdminUserResponse {
     email: string;
     display_name: string;
     is_admin: boolean;
-    storage_bytes: number;
+    storage_bytes: number;            // billed total (maintained counter, feature 22)
+    quota_bytes: number | null;       // null = unlimited
+    breakdown: {                      // feature 22 four-cell breakdown
+        originals_bytes: number;
+        originals_trashed_bytes: number;
+        versions_bytes: number;
+        versions_trashed_bytes: number;
+    };
+    usage_ratio: number | null;       // storage_bytes / quota, null when unlimited
 }
 ```
 
-Returns `AdminUserResponse[]`.
+Returns `AdminUserResponse[]`. `storage_bytes` and `total_storage_bytes` (in `/admin/stats`) are the
+maintained `user_storage` counter, no longer a live `SUM(file_size)`.
 
 ---
 
@@ -1785,8 +1831,12 @@ Update a user's display name or admin role.
 {
     display_name ? : string;
     is_admin ? : boolean;
+    storage_quota_bytes ? : number | null;  // feature 22: omit = unchanged; null = unlimited; number = cap
 }
 ```
+
+Lowering `storage_quota_bytes` below current usage leaves stored bytes intact and blocks new writes
+until the user frees space.
 
 **Response `200`:** `AdminUserResponse`
 
@@ -1820,7 +1870,13 @@ Per-user analytics. **Cached for 120 seconds** in Redis.
 {
     owned_picture_count: number;
     received_picture_count: number;
-    storage_bytes: number;
+    storage_bytes: number;            // billed total (maintained counter, feature 22)
+    quota_bytes: number | null;
+    originals_bytes: number;
+    originals_trashed_bytes: number;
+    versions_bytes: number;
+    versions_trashed_bytes: number;
+    usage_ratio: number | null;
     job_counts: {
         pending: number;
         processing: number;
@@ -1836,6 +1892,37 @@ Per-user analytics. **Cached for 120 seconds** in Redis.
 ```
 
 **Errors:** 404 if user not found.
+
+---
+
+### `GET /api/admin/users/{id}/storage-audit`
+
+The S3 truth check (feature 22 §8.3). Walks the `{user_id}/` prefix in each bucket and returns
+measured `(object_count, bytes)` per bucket alongside the DB breakdown and a drift figure.
+**Redis-cached** (listing cost scales with object count); the only way to see thumbnail bytes
+(untracked in the DB).
+
+**Path params:** `id: string`
+
+**Response `200`:**
+
+```ts
+{
+    buckets: {
+        pictures: { object_count: number; total_bytes: number };
+        versions: { object_count: number; total_bytes: number };
+        thumbnails_small: { object_count: number; total_bytes: number };
+        thumbnails_medium: { object_count: number; total_bytes: number };
+        thumbnails_large: { object_count: number; total_bytes: number };
+        staging: { object_count: number; total_bytes: number };
+    };
+    thumbnails_bytes: number;         // small + medium + large (free, untracked)
+    db_breakdown: { originals_bytes; originals_trashed_bytes; versions_bytes; versions_trashed_bytes };
+    db_billed_bytes: number;
+    s3_billed_bytes: number;          // measured originals + versions
+    drift_bytes: number;              // db_billed - s3_billed; nonzero → drift to reconcile
+}
+```
 
 ---
 

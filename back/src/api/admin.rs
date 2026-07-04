@@ -24,6 +24,8 @@ pub fn routes() -> Router<AppState> {
         )
         // ── Per-user analytics (cached, 120 s TTL) ────────────────────────────
         .route("/users/{id}/stats", get(handlers::get_user_stats))
+        // ── Per-user S3 storage audit (cached) ────────────────────────────────
+        .route("/users/{id}/storage-audit", get(handlers::storage_audit))
         // ── Per-user shares ───────────────────────────────────────────────────
         .route("/users/{id}/shares", get(handlers::get_user_shares))
         // ── Per-user pipeline wake ────────────────────────────────────────────

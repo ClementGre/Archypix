@@ -2,7 +2,8 @@ import {useEffect} from 'react'
 import {useForm} from 'react-hook-form'
 import {zodResolver} from '@hookform/resolvers/zod'
 import {z} from 'zod'
-import {Loader2} from 'lucide-react'
+import {useNavigate} from 'react-router-dom'
+import {HardDrive, Loader2, Trash2} from 'lucide-react'
 import {toast} from 'sonner'
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card'
 import {Input} from '@/components/ui/input'
@@ -11,9 +12,11 @@ import {Button} from '@/components/ui/button'
 import {RadioGroup, RadioGroupItem} from '@/components/ui/radio-group'
 import {Skeleton} from '@/components/ui/skeleton'
 import {NumberInput} from '@/components/ui/number-input'
+import {STORAGE_SEGMENT_CLASS, StorageBar} from '@/components/StorageBar'
 import {useAuthStore} from '@/stores/auth'
 import {apiErrorMessage} from '@/api/client'
-import {useSettings, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
+import {useSettings, useStorage, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
+import {cn, formatBytes} from '@/lib/utils'
 import type {VersioningMode} from '@/lib/types'
 
 // ---------- Profile form ----------
@@ -222,6 +225,118 @@ function LibraryCard() {
     )
 }
 
+// ---------- Storage card (feature 22) ----------
+
+// These byte counts are always known numbers (never "no data yet"), so 0 should read as
+// "0 MB" rather than formatBytes' usual "—" for falsy/absent values.
+function formatUsage(bytes: number): string {
+    return bytes === 0 ? '0 KB' : formatBytes(bytes)
+}
+
+function BreakdownRow({label, bytes, swatchClassName}: { label: string; bytes: number; swatchClassName: string }) {
+    return (
+        <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-muted-foreground">
+                <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', swatchClassName)}/>
+                {label}
+            </span>
+            <span className="tabular-nums">{formatUsage(bytes)}</span>
+        </div>
+    )
+}
+
+function StorageCard() {
+    const navigate = useNavigate()
+    const {data: storage, isLoading} = useStorage()
+
+    if (isLoading || !storage) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle>Storage</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <Skeleton className="h-24 w-full"/>
+                </CardContent>
+            </Card>
+        )
+    }
+
+    const {quota_bytes, used_bytes, breakdown, reclaimable_trash_bytes, usage_ratio, warn_level} = storage
+    const pct =
+        quota_bytes && quota_bytes > 0
+            ? Math.min(100, Math.round((usage_ratio ?? 0) * 100))
+            : 0
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                    <HardDrive className="h-4 w-4"/>
+                    Storage
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+                {/* Usage headline + bar */}
+                <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                        <span>
+                            <span className="font-medium tabular-nums">{formatUsage(used_bytes)}</span>
+                            {quota_bytes && quota_bytes > 0 ? (
+                                <span className="text-muted-foreground"> of {formatBytes(quota_bytes)} used</span>
+                            ) : (
+                                <span className="text-muted-foreground"> used · unlimited</span>
+                            )}
+                        </span>
+                        {quota_bytes && quota_bytes > 0 && (
+                            <span className="tabular-nums text-muted-foreground">{pct}%</span>
+                        )}
+                    </div>
+                    <StorageBar
+                        breakdown={breakdown}
+                        quotaBytes={quota_bytes}
+                        usedBytes={used_bytes}
+                        className="rounded-full"
+                    />
+                    {warn_level === 'full' && (
+                        <p className="text-xs text-destructive">
+                            Storage is full. free up space (or empty your trash) before uploading more.
+                        </p>
+                    )}
+                    {warn_level === 'critical' && (
+                        <p className="text-xs text-amber-600 dark:text-amber-500">
+                            You are almost out of space.
+                        </p>
+                    )}
+                </div>
+
+                {/* Four-cell breakdown */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 sm:gap-x-8">
+                    <BreakdownRow label="Originals" bytes={breakdown.originals_bytes} swatchClassName={STORAGE_SEGMENT_CLASS.originals}/>
+                    <BreakdownRow label="Versions" bytes={breakdown.versions_bytes} swatchClassName={STORAGE_SEGMENT_CLASS.versions}/>
+                    <BreakdownRow label="Trashed originals" bytes={breakdown.originals_trashed_bytes}
+                                  swatchClassName={STORAGE_SEGMENT_CLASS.trashed}/>
+                    <BreakdownRow label="Trashed versions" bytes={breakdown.versions_trashed_bytes} swatchClassName={STORAGE_SEGMENT_CLASS.trashed}/>
+                </div>
+
+                {/* Reclaimable trash prompt */}
+                {reclaimable_trash_bytes > 0 && (
+                    <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
+                        <span className="text-sm text-muted-foreground">
+                            Empty your trash to reclaim{' '}
+                            <span className="font-medium text-foreground">{formatBytes(reclaimable_trash_bytes)}</span>
+                        </span>
+                        <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => navigate('/trash')}>
+                            <Trash2 className="h-3.5 w-3.5"/>
+                            Open trash
+                        </Button>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    )
+}
+
 // ---------- Page ----------
 
 export default function SettingsPage() {
@@ -230,6 +345,7 @@ export default function SettingsPage() {
             <div className="mx-auto max-w-2xl space-y-6">
                 <h1 className="text-xl font-semibold">Settings</h1>
                 <ProfileCard/>
+                <StorageCard/>
                 <LibraryCard/>
             </div>
         </div>

@@ -79,3 +79,19 @@ export function invalidatePicturesAndTags(qc: QueryClient): void {
     run()
     setTimeout(run, PIPELINE_SETTLE_MS)
 }
+
+const STORAGE_INVALIDATE_DEBOUNCE_MS = 6000
+let storageInvalidateTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Debounced storage-query invalidation (feature 22): trash/restore/upload can fire in bursts
+ * (batch actions, multi-file uploads), so instead of one refetch per picture this coalesces them
+ * into a single `['storage']` refetch 6s after the last call.
+ */
+export function invalidateStorageDebounced(qc: QueryClient): void {
+    if (storageInvalidateTimer) clearTimeout(storageInvalidateTimer)
+    storageInvalidateTimer = setTimeout(() => {
+        storageInvalidateTimer = undefined
+        void qc.invalidateQueries({queryKey: ['storage']})
+    }, STORAGE_INVALIDATE_DEBOUNCE_MS)
+}

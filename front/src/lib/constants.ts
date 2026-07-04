@@ -62,6 +62,7 @@ export const queryKeys = {
         ['hierarchies', 'browse', id, path, filters] as const,
     hierarchyWebdav: (id: string) => ['hierarchies', 'webdav', id] as const,
     settings: () => ['settings'] as const,
+    storage: () => ['storage'] as const,
     // admin
     adminInstanceHealth: () => ['admin', 'instance'] as const,
     adminStats: () => ['admin', 'stats'] as const,

@@ -7,10 +7,11 @@ import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {beginUploadBatch, completeUpload, restorePicture} from '@/api/pictures'
-import {invalidatePictures, invalidatePicturesAndTags} from '@/lib/invalidation'
+import {invalidatePictures, invalidatePicturesAndTags, invalidateStorageDebounced} from '@/lib/invalidation'
 import {cn, TagPath} from '@/lib/utils'
 import {filesFromDataTransfer, isHiddenFile} from '@/lib/uploadFiles'
 import {apiErrorMessage} from '@/api/client'
+import {useStorage} from '@/hooks/useSettings'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,15 @@ function formatBytes(bytes: number): string {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+/** A friendly over-quota message for a 413/507 (feature 22); otherwise the server's error text. */
+function uploadErrorMessage(e: unknown): string {
+    const status = (e as { response?: { status?: number } })?.response?.status
+    if (status === 413 || status === 507) {
+        return 'Not enough storage space — this would exceed your quota.'
+    }
+    return apiErrorMessage(e)
 }
 
 /**
@@ -164,6 +174,7 @@ export interface UploadDialogProps {
 
 export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogProps) {
     const queryClient = useQueryClient()
+    const {data: storage} = useStorage()
     const fileInputRef = useRef<HTMLInputElement>(null)
     const folderInputRef = useRef<HTMLInputElement>(null)
     const dropzoneRef = useRef<HTMLDivElement>(null)
@@ -252,13 +263,13 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             try {
                 slot = (
                     await beginUploadBatch(
-                        [{filename: file.name, file_hash: hash}],
+                        [{filename: file.name, file_hash: hash, size: file.size}],
                         tags.length ? tags : undefined,
                         uploadLabel.current || undefined,
                     )
                 )[0]
             } catch (e) {
-                patchItem(key, {status: 'error', error: apiErrorMessage(e)})
+                patchItem(key, {status: 'error', error: uploadErrorMessage(e)})
                 return false
             }
             if (!slot) {
@@ -296,7 +307,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 }
                 return true
             } catch (e) {
-                patchItem(key, {status: 'error', error: e instanceof Error ? e.message : 'Upload failed'})
+                patchItem(key, {status: 'error', error: uploadErrorMessage(e)})
                 return false
             }
         },
@@ -324,7 +335,12 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     // Uploads can dedup onto existing pictures (re-tagging them) and trigger background re-tagging,
     // so refresh pictures + tags broadly — `['tags']` also refreshes per-picture tag caches (e.g. an
     // already-existing picture open in the sidebar), which the old narrow keys missed.
-    const invalidateAll = useCallback(() => invalidatePicturesAndTags(queryClient), [queryClient])
+    const invalidateAll = useCallback(() => {
+        invalidatePicturesAndTags(queryClient)
+        // Uploads change billed usage → refresh the storage bar/breakdown (feature 22), debounced
+        // since this fires once per file/batch during a multi-file upload.
+        invalidateStorageDebounced(queryClient)
+    }, [queryClient])
 
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
@@ -388,6 +404,15 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const isBusy = phase === 'uploading'
     const settledCount = doneCount + dedupCount + errorCount
     const label = uploadLabel.current.replaceAll('.', '/')
+
+    // Storage preflight (feature 22): the selected bytes vs remaining quota. `available` is null when
+    // unlimited. Duplicates may not actually consume space, so this is an upper bound — a conservative
+    // warning, not a hard client-side block beyond the "quota full" case.
+    const selectedBytes = files.reduce((sum, f) => sum + f.size, 0)
+    const available = storage?.available_bytes ?? null
+    const quotaFull = storage?.warn_level === 'full'
+    const projectedOver = available !== null && selectedBytes > available
+    const uploadBlocked = phase === 'idle' && files.length > 0 && quotaFull
 
     const undeleteExisting = async () => {
         if (!deletedItems.length || restoring) return
@@ -717,6 +742,34 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                             </div>
                         </div>
                     )}
+
+                    {/* ── Storage preflight (feature 22) ───────────────────── */}
+                    {phase === 'idle' && storage && (storage.quota_bytes ?? 0) > 0 && (
+                        <div
+                            className={cn(
+                                'rounded-md border px-3 py-2 text-xs',
+                                quotaFull || projectedOver
+                                    ? 'border-destructive/40 bg-destructive/5 text-destructive'
+                                    : storage.warn_level === 'critical' || storage.warn_level === 'warn'
+                                        ? 'border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-500'
+                                        : 'border-border bg-muted/30 text-muted-foreground',
+                            )}
+                        >
+                            {quotaFull ? (
+                                <span>Storage is full. Free up space or empty your trash before uploading.</span>
+                            ) : projectedOver ? (
+                                <span>
+                                    Selected {formatBytes(selectedBytes)} exceeds your remaining{' '}
+                                    {formatBytes(available ?? 0)} — some files may fail. Free up space first.
+                                </span>
+                            ) : (
+                                <span>
+                                    {formatBytes(available ?? 0)} free of {formatBytes(storage.quota_bytes ?? 0)}
+                                    {files.length > 0 && <> · selected {formatBytes(selectedBytes)}</>}
+                                </span>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* ── Footer ──────────────────────────────────────────────── */}
@@ -739,12 +792,18 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                             </Button>
                             <Button
                                 onClick={startUpload}
-                                disabled={files.length === 0 || isBusy}
+                                disabled={files.length === 0 || isBusy || uploadBlocked}
+                                title={uploadBlocked ? 'Storage is full' : undefined}
                             >
                                 {isBusy ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
                                         Uploading…
+                                    </>
+                                ) : uploadBlocked ? (
+                                    <>
+                                        <AlertCircle className="mr-2 h-4 w-4"/>
+                                        Storage full
                                     </>
                                 ) : (
                                     <>

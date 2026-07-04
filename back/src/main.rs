@@ -160,6 +160,15 @@ async fn main() -> anyhow::Result<()> {
         shutdown_rx.clone(),
     );
     routine_joins.push(purge_sweep_join);
+    let (_sr, storage_reconcile_join) = routine::spawn(
+        routine::storage_reconcile::StorageReconcileTask::new(
+            db.clone(),
+            cache.clone(),
+            Duration::from_secs(config.storage_reconcile_interval_secs),
+        ),
+        shutdown_rx.clone(),
+    );
+    routine_joins.push(storage_reconcile_join);
 
     let routines = Routines {
         pipeline: pipeline_handle,

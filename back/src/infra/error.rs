@@ -25,6 +25,8 @@ pub enum AppError {
     MethodNotAllowed(String),
     #[error("Payload too large: {0}")]
     PayloadTooLarge(String),
+    #[error("Insufficient storage: {0}")]
+    InsufficientStorage(String),
     #[error("Too many requests: {0}")]
     TooManyRequests(String),
 }
@@ -41,6 +43,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::InsufficientStorage(_) => StatusCode::INSUFFICIENT_STORAGE,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
         };
         let body = serde_json::json!({ "error": self.to_string() });

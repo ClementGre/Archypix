@@ -19,6 +19,11 @@ across a share graph so the user sees one picture, not many.
 the `picture_deleted_reason` values `content_dedupe`/`boomerang`, and `idx_pictures_content_hash` are
 all already in `001_initial_schema.up.sql` via [09 §4](09_trash_and_exif_overrides.md).
 
+> **Storage (feature 22).** A copy becomes a new **owned** picture, so its bytes are billed against
+> the caller's quota (checked upfront, `507` before the S3 copy). Dedup siblings hidden as
+> `content_dedupe`/`boomerang` are soft-deleted but retain their S3 objects until purge, so they are
+> billed as trashed — consistent with the "trash still costs" rule.
+
 ## 2. Decisions (settled)
 
 - **A copy is a new, independent picture** `(copier, new_id)`. **Never reuse the original

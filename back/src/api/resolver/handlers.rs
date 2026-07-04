@@ -32,6 +32,7 @@ pub async fn create_user(
         &payload.display_name,
         &payload.password,
         false,
+        Some(state.config.default_storage_quota_bytes),
     )
     .await?;
     Ok(Json(UserResponse::from(user)))

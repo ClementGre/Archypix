@@ -47,6 +47,7 @@ domain/
 
 repository/
   user.rs / picture.rs / picture_version.rs / user_settings.rs
+  user_storage.rs # feature 22: read the trigger-maintained billed breakdown; reconcile recompute
   tag.rs          # per-source tag CRUD, service-tag promotion/removal helpers
   picture.rs      # picture CRUD + list/count; push_filters renders TagPredicate + legacy `tag`
   hierarchy.rs    # hierarchy CRUD SQL (load/store config JSONB)
@@ -64,6 +65,8 @@ clients/
 
 services/
   auth.rs / users.rs / pictures.rs / user_settings.rs / jobs.rs
+  storage.rs        # feature 22: storage-quota enforcement math (committed+reserved), reservations,
+                    #   warn levels, GET /me/storage payload
   selection.rs      # feature 14: PictureSelection/PictureFilter → ResolvedSelection (membership term)
   aggregate.rs      # feature 14: type-aware summary/tags/exif aggregation + dry-run shape
   hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration; load_resolved + WebDAV token mgmt
@@ -97,6 +100,8 @@ infra/
     job_watchdog.rs  # JobWatchdogTask + JobCleanupTask routines (sweep-only)
     purge_sweep.rs   # PurgeSweepTask routine (sweep-only): physically purge owned, retention-expired
                      # trashed pictures — unannounce + delete tracking, S3 cleanup, hard-delete
+    storage_reconcile.rs # feature 22: StorageReconcileTask (sweep-only) — recompute user_storage
+                     # counters from scratch + refresh the Redis committed mirror
     pipeline/
       evaluation.rs  # per-user tag service evaluation + reconciliation, then announcement
       dedup.rs       # feature 11: content-dedup reconciler (serial per user) — survivor selection,
@@ -250,6 +255,17 @@ The recovery sweep re-wakes users whose groups need a promotion/collapse. An adm
 `POST /admin/pictures/regenerate-thumbnails` bulk-(re)enqueues `gen_thumbnail` (which recomputes
 `content_hash`) for missing-thumbnail or all owned pictures. See
 `doc/features/11_physical_copy_and_dedup.md`.
+
+**Storage quotas (22)** — authoritative per-user usage lives in `user_storage` (four billed cells:
+originals/versions × live/trashed), maintained by row triggers on `pictures`/`picture_versions` so it
+stays correct across every code path that touches `file_size`/`deleted_at`/`remote_picture_id` (the
+picture-delete case is a `BEFORE DELETE` trigger, reading the picture's versions before the FK cascade
+removes them). Received pictures (`remote_picture_id IS NOT NULL`) are never billed. Redis holds the
+fast path: a cached `committed` mirror + per-upload `reserved` sub-keys; enforcement math is
+`committed + reserved + incoming ≤ quota` (`services::storage`), applied at upload presign/complete,
+WebDAV `PUT` (net delta), and `copy_picture`. The `storage_reconcile` routine recomputes the counters
+daily (drift safety net). `Storage::prefix_usage` (paginated `ListObjectsV2`) backs the admin S3
+storage-audit. `NULL`/`0` quota = unlimited. See `doc/features/22_storage_quotas.md`.
 
 ## F) API Conventions
 

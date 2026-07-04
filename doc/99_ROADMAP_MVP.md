@@ -58,12 +58,20 @@
 
 - [x] **Physical copy & content dedup** — rescue-copy into own library with `copy_source_*` provenance, `content_hash`-based dedup reconciler,
   boomerang guard. See `doc/features/11_physical_copy_and_dedup.md`.
-- [~] **Storage quotas** — per-user storage quotas, WebDAV quota properties in PROPFIND, resolver and admin-updatable quotas. Spec:
+- [x] **Storage quotas** — trigger-maintained per-user `user_storage` counters (originals/versions × live/trashed), Redis committed+reserved fast
+  path,
+  enforcement at upload presign/complete + WebDAV PUT + copy, daily reconcile routine, `GET /me/storage`, admin quota PATCH + S3 storage-audit, WebDAV
+  RFC 4331 PROPFIND props, and the front (footer bar, settings breakdown, upload preflight). Resolver quota seed (§9) is a later phase. See
   `doc/features/22_storage_quotas.md`.
+- [~] **Resolver’s admin dashboard** — front uses the resolver as the fleet admin dashboard (native aggregate/self-monitoring endpoints + a thin
+  per-instance proxy to each backend’s `/api/admin/*`); backend-signed delegation-token auth delivered by a backend heartbeat; smarter placement
+  strategies. Spec: `doc/features/23_resolver_admin_and_runtime_config.md`; resolver read-doc: `doc/07_RESOLVER_ARCHITECTURE.md`.
+- [~] **Registration rules** — open / invite / admin-invite modes, invite codes/links, instance-pinned invites, `users.invited_by` graph. Domain logic
+  shared via `common::registration` so a standalone backend runs it locally. Spec: `doc/features/23_resolver_admin_and_runtime_config.md` §6–7.
+- [~] **Admin config instead of envs** — env-only core (secrets/topology); everything operational layered
+  `default → env(locks the field) → DB override`, hot-swapped via `ArcSwap` and editable from the dashboard (backend `/admin` or resolver config
+  fan-out with a diff view). Shared engine `common::settings`. Spec: `doc/features/23_resolver_admin_and_runtime_config.md` §4.
 - [ ] **Photos fix tools** — Quick and useful tools for fixing missing exif infos in files (feature 21).
-- [ ] **Resolver’s admin dashboard** — allow the front to use the resolver as the admin’s dashboard/action endpoint, and allow resolver to communicate
-  with backends. Make the resolver smarter, build the resolver’s doc.
-- [ ] **Registration rules** — open registration vs invite-only (invite code/link).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.

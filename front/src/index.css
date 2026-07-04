@@ -94,3 +94,15 @@
     background-size: 16px 16px;
     background-position: 0 0, 8px 8px;
 }
+
+/* Diagonal-stripe overlay — layered over a segment's own background-color to mark
+   billed-but-reclaimable storage (trash, feature 22). */
+.bg-diagonal-stripes {
+    background-image: repeating-linear-gradient(
+            45deg,
+            rgb(255 255 255 / 35%) 0,
+            rgb(255 255 255 / 35%) 3px,
+            transparent 3px,
+            transparent 7px
+    );
+}
