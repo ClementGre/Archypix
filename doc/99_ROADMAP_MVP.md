@@ -61,8 +61,8 @@
 - [x] **Storage quotas** — trigger-maintained per-user `user_storage` counters (originals/versions × live/trashed), Redis committed+reserved fast
   path,
   enforcement at upload presign/complete + WebDAV PUT + copy, daily reconcile routine, `GET /me/storage`, admin quota PATCH + S3 storage-audit, WebDAV
-  RFC 4331 PROPFIND props, and the front (footer bar, settings breakdown, upload preflight). Resolver quota seed (§9) is a later phase. See
-  `doc/features/22_storage_quotas.md`.
+  RFC 4331 PROPFIND props, and the front (footer bar, settings breakdown, upload preflight, admin per-user storage bar/breakdown + quota editor +
+  storage-audit dialog). Resolver quota seed (§9) is a later phase. See `doc/features/22_storage_quotas.md`.
 - [~] **Resolver’s admin dashboard** — front uses the resolver as the fleet admin dashboard (native aggregate/self-monitoring endpoints + a thin
   per-instance proxy to each backend’s `/api/admin/*`); backend-signed delegation-token auth delivered by a backend heartbeat; smarter placement
   strategies. Spec: `doc/features/23_resolver_admin_and_runtime_config.md`; resolver read-doc: `doc/07_RESOLVER_ARCHITECTURE.md`.

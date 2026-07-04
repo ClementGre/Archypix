@@ -70,6 +70,7 @@ export const queryKeys = {
     adminUsers: () => ['admin', 'users'] as const,
     adminUserStats: (id: string) => ['admin', 'users', id, 'stats'] as const,
     adminUserShares: (id: string) => ['admin', 'users', id, 'shares'] as const,
+    adminUserStorageAudit: (id: string) => ['admin', 'users', id, 'storage-audit'] as const,
     adminJobs: (params?: unknown) => ['admin', 'jobs', params] as const,
     adminStaleJobs: () => ['admin', 'jobs', 'stale'] as const,
     adminErroredShares: () => ['admin', 'shares', 'errored'] as const,

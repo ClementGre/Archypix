@@ -557,13 +557,25 @@ export interface AdminUserResponse {
     email: string
     display_name: string
     is_admin: boolean
+    /** Billed total (maintained counter, feature 22). */
     storage_bytes: number
+    /** Quota in bytes; `null` = unlimited. */
+    quota_bytes: number | null
+    breakdown: StorageBreakdown
+    /** storage_bytes / quota_bytes; `null` when unlimited. */
+    usage_ratio: number | null
 }
 
 export interface UserStats {
     owned_picture_count: number
     received_picture_count: number
     storage_bytes: number
+    quota_bytes: number | null
+    originals_bytes: number
+    originals_trashed_bytes: number
+    versions_bytes: number
+    versions_trashed_bytes: number
+    usage_ratio: number | null
     job_counts: {
         pending: number
         processing: number
@@ -574,6 +586,32 @@ export interface UserStats {
     incoming_share_counts: Record<ShareStatus, number>
     dirty_picture_count: number
     errored_share_count: number
+}
+
+// ---------- Storage audit (feature 22 §8.3, admin) ----------
+
+export interface PrefixUsage {
+    object_count: number
+    total_bytes: number
+}
+
+export interface StorageAuditResponse {
+    buckets: {
+        pictures: PrefixUsage
+        versions: PrefixUsage
+        thumbnails_small: PrefixUsage
+        thumbnails_medium: PrefixUsage
+        thumbnails_large: PrefixUsage
+        staging: PrefixUsage
+    }
+    /** Free/untracked in the DB — the only place these bytes are visible. */
+    thumbnails_bytes: number
+    db_breakdown: StorageBreakdown
+    db_billed_bytes: number
+    /** Measured originals + versions. */
+    s3_billed_bytes: number
+    /** db_billed_bytes - s3_billed_bytes; nonzero -> drift to reconcile. */
+    drift_bytes: number
 }
 
 export interface OutgoingShareRow {

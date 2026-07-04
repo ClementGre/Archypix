@@ -354,8 +354,10 @@ Mirror the new vars into `Config::test_default()`.
    payloads.
 7. [x] WebDAV RFC 4331 PROPFIND properties (collection `quota-used-bytes`/`quota-available-bytes`).
 8. [x] Frontend: footer storage bar (colour by warn level), settings breakdown + reclaim-trash
-   prompt, upload preflight (declared size, warn/block, friendly `413`/`507`). (Admin quota
-   editor/audit UI intentionally deferred.)
+   prompt, upload preflight (declared size, warn/block, friendly `413`/`507`). Admin `UsersTab`:
+   per-user storage bar + breakdown, quota editor (unlimited toggle or GB cap) in the edit dialog,
+   and a storage-audit dialog (Info button / row action / detail-dialog button) surfacing the
+   `storage-audit` endpoint's per-bucket bytes and DB/S3 drift.
 9. [ ] (Optional, later) resolver `quota_bytes` seed.
 10. [x] Tests (`tests/storage_quotas.rs`: triggers, reconcile, effective math, complete hard check);
     doc updates (§14).

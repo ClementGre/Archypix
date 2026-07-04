@@ -9,6 +9,7 @@ import type {
     InstanceStats,
     JobStatus,
     JobType,
+    StorageAuditResponse,
     UserSharesResponse,
     UserStats,
 } from '@/lib/types'
@@ -46,7 +47,7 @@ export async function createAdminUser(body: {
 
 export async function updateAdminUser(
     id: string,
-    body: { display_name?: string; is_admin?: boolean },
+    body: { display_name?: string; is_admin?: boolean; storage_quota_bytes?: number | null },
 ): Promise<AdminUserResponse> {
     const {data} = await apiClient.patch(`/api/admin/users/${id}`, body)
     return data
@@ -63,6 +64,12 @@ export async function getUserStats(id: string): Promise<UserStats> {
 
 export async function getUserShares(id: string): Promise<UserSharesResponse> {
     const {data} = await apiClient.get(`/api/admin/users/${id}/shares`)
+    return data
+}
+
+/** The S3 truth check (feature 22 §8.3) — per-bucket object counts/bytes + DB-vs-S3 drift. */
+export async function getUserStorageAudit(id: string): Promise<StorageAuditResponse> {
+    const {data} = await apiClient.get(`/api/admin/users/${id}/storage-audit`)
     return data
 }
 

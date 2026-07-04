@@ -11,6 +11,7 @@ import {
     getStaleJobs,
     getUserShares,
     getUserStats,
+    getUserStorageAudit,
     listAdminJobs,
     listAdminUsers,
     listFederationInstances,
@@ -68,6 +69,15 @@ export function useUserShares(id: string | null) {
     })
 }
 
+export function useUserStorageAudit(id: string | null) {
+    return useQuery({
+        queryKey: queryKeys.adminUserStorageAudit(id ?? ''),
+        queryFn: () => getUserStorageAudit(id!),
+        enabled: !!id,
+        staleTime: 60_000,
+    })
+}
+
 export function useAdminJobs(params: ListJobsParams = {}) {
     return useQuery({
         queryKey: queryKeys.adminJobs(params),
@@ -110,8 +120,10 @@ export function useAdminUserMutations() {
     })
 
     const update = useMutation({
-        mutationFn: ({id, body}: { id: string; body: { display_name?: string; is_admin?: boolean } }) =>
-            updateAdminUser(id, body),
+        mutationFn: ({id, body}: {
+            id: string
+            body: { display_name?: string; is_admin?: boolean; storage_quota_bytes?: number | null }
+        }) => updateAdminUser(id, body),
         onSuccess: invalidateUsers,
     })
 
