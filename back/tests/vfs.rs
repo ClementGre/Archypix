@@ -7,9 +7,8 @@
 mod common;
 
 use archypix_back::domain::user_settings::VersioningMode;
-use archypix_back::infra::config::Config;
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::s3;
+use archypix_back::infra::settings::keys;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::picture_version::PictureVersionRepository;
 use archypix_back::repository::tag::TagRepository;
@@ -17,6 +16,7 @@ use archypix_back::repository::user_settings::UserSettingsRepository;
 use archypix_back::services::hierarchy;
 use archypix_back::services::vfs::{ReadTarget, Vfs};
 use archypix_back::state::AppState;
+use archypix_common::error::AppError;
 use common::MockStorage;
 use sqlx::PgPool;
 use std::io::Write;
@@ -25,13 +25,9 @@ use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-fn config() -> Config {
-    Config::test_defaults()
-}
-
 /// Build an `AppState` whose storage is an inspectable `MockStorage`.
 fn state_with_storage(db: PgPool) -> (AppState, Arc<MockStorage>) {
-    let cfg = config();
+    let cfg = archypix_back::infra::settings::test_settings_with(&[]);
     let storage = Arc::new(MockStorage::new());
     let cache: Arc<dyn archypix_back::infra::redis::Cache> = Arc::new(common::InMemoryCache::new());
     let dyn_storage: Arc<dyn archypix_back::infra::s3::Storage> = storage.clone();
@@ -70,7 +66,7 @@ async fn seed_full_picture(
     state
         .storage
         .put_object(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, id),
             bytes.to_vec(),
             Some(mime),
@@ -90,7 +86,7 @@ async fn put(
     segments: &[&str],
     bytes: &[u8],
     ct: Option<&str>,
-) -> Result<bool, archypix_back::infra::error::AppError> {
+) -> Result<bool, AppError> {
     let mut tmp = tempfile::NamedTempFile::new().unwrap();
     tmp.write_all(bytes).unwrap();
     tmp.flush().unwrap();
@@ -271,7 +267,7 @@ async fn put_new_picture_ingests_and_tags(db: PgPool) {
     // Bytes streamed to the pictures bucket.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic.id)
         ),
         Some(b"brandnewbytes".to_vec())
@@ -349,7 +345,7 @@ async fn put_overwrite_replaces_bytes_no_version_when_none(db: PgPool) {
     // Bytes replaced in place; hash updated inline; no version snapshot under `none`.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic)
         ),
         Some(b"v2-newer-bytes".to_vec())
@@ -411,7 +407,7 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
     let v = &versions[0];
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_versions,
+            &state.settings.get(keys::S3_BUCKET_VERSIONS),
             &s3::version_key(user, pic, v.id)
         ),
         Some(b"original-v1".to_vec()),
@@ -420,7 +416,7 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
     // Live picture now has the new bytes.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic)
         ),
         Some(b"overwrite-v2".to_vec())
@@ -467,7 +463,7 @@ async fn put_overwrite_identical_hash_is_noop(db: PgPool) {
     // Bytes untouched in place.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic)
         ),
         Some(b"identical-bytes".to_vec())
@@ -838,7 +834,7 @@ async fn delete_single_branch_conflicts_on_non_manual_tag(db: PgPool) {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, archypix_back::infra::error::AppError::Conflict(_)),
+        matches!(err, AppError::Conflict(_)),
         "expected 409 when a service still asserts the tag, got {err:?}"
     );
 }
@@ -874,7 +870,7 @@ async fn delete_empty_directory_is_noop_but_nonempty_conflicts(db: PgPool) {
     // A non-empty directory (Photos has the Travel child) is refused with 409.
     let err = vfs.delete(&seg(&["Photos"])).await.unwrap_err();
     assert!(
-        matches!(err, archypix_back::infra::error::AppError::Conflict(_)),
+        matches!(err, AppError::Conflict(_)),
         "non-empty directory delete should 409, got {err:?}"
     );
 }
@@ -1010,7 +1006,7 @@ async fn mkcol_then_put_mints_tag_and_lists_pending(db: PgPool) {
         vfs.mkcol(&seg(&["Photos", "Travel", "Pending"]))
             .await
             .unwrap_err(),
-        archypix_back::infra::error::AppError::Conflict(_)
+        AppError::Conflict(_)
     ));
 
     // A file landing in it mints the real tag.
@@ -1110,10 +1106,7 @@ async fn mkcol_outside_mirror_is_forbidden(db: PgPool) {
 
     // The mount root is a container, not a mirror — cannot create a brand-new top-level directory.
     let err = vfs.mkcol(&seg(&["NewTop"])).await.unwrap_err();
-    assert!(
-        matches!(err, archypix_back::infra::error::AppError::Forbidden(_)),
-        "got {err:?}"
-    );
+    assert!(matches!(err, AppError::Forbidden(_)), "got {err:?}");
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -1381,7 +1374,7 @@ async fn macos_safe_save_resolves_to_a_single_versioned_overwrite(db: PgPool) {
     // The original picture now holds the edited bytes, versioned; no new tag, no new picture.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic)
         ),
         Some(b"edited-bytes".to_vec())
@@ -1487,7 +1480,7 @@ async fn staged_bytes_without_a_terminal_move_never_touch_the_original(db: PgPoo
     // Original untouched: same bytes, same hash, no version, still one picture.
     assert_eq!(
         storage.get(
-            &state.config.s3_bucket_pictures,
+            &state.settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(user, pic)
         ),
         Some(b"orig".to_vec())

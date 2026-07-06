@@ -12,11 +12,11 @@
 
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::tag::TagPath;
-use crate::infra::error::AppError;
 use crate::repository::picture::{
     PictureListFilter, PictureSortField, ResolvedSelection, SortOrder,
 };
 use crate::services::hierarchy;
+use archypix_common::error::AppError;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;

@@ -10,7 +10,10 @@
 
 use crate::domain::tag::TagPath;
 use crate::infra::routine::{Routine, RoutineHandle};
+use crate::infra::settings::keys;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Payload **and** dedup key. Identical renames in flight collapse to one rerun (idempotent).
@@ -24,24 +27,24 @@ pub struct TagRenameInput {
 
 /// Renames a tag across tags, shares, tagging-service configs, and hierarchies, then wakes the
 /// pipeline so the re-tag + re-announce work runs.
-pub struct TagRename {
+pub struct TagRenameRoutine {
     db: PgPool,
     pipeline: RoutineHandle<Uuid>,
-    concurrency: usize,
+    settings: Arc<Settings>,
 }
 
-impl TagRename {
-    pub fn new(db: PgPool, pipeline: RoutineHandle<Uuid>, concurrency: usize) -> Self {
+impl TagRenameRoutine {
+    pub fn new(db: PgPool, pipeline: RoutineHandle<Uuid>, settings: Arc<Settings>) -> Self {
         Self {
             db,
             pipeline,
-            concurrency,
+            settings,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Routine for TagRename {
+impl Routine for TagRenameRoutine {
     type Input = TagRenameInput;
     type Key = TagRenameInput;
 
@@ -54,7 +57,7 @@ impl Routine for TagRename {
     }
 
     fn concurrency(&self) -> usize {
-        self.concurrency
+        self.settings.get(keys::TASK_QUEUE_CONCURRENCY)
     }
 
     async fn run(&self, input: TagRenameInput) -> anyhow::Result<()> {

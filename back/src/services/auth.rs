@@ -1,14 +1,15 @@
 use crate::domain::auth::TokenType;
 use crate::domain::user::User;
-use crate::infra::config::Config;
 use crate::infra::crypto::{
-    JwtService, generate_refresh_token, hash_refresh_token, verify_password, verify_password_dummy,
+    generate_refresh_token, hash_refresh_token, verify_password, verify_password_dummy, JwtService,
 };
-use crate::infra::error::AppError;
 use crate::infra::ratelimit;
 use crate::infra::redis::Cache;
+use crate::infra::settings::keys;
 use crate::repository::auth::{CredentialRepository, RefreshTokenRepository};
 use crate::repository::user::UserRepository;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -18,12 +19,12 @@ pub struct AuthTokens {
     pub refresh_token: String,
 }
 
-#[tracing::instrument(skip(db, cache, jwt, config, password))]
+#[tracing::instrument(skip(db, cache, jwt, settings, password))]
 pub async fn login(
     db: &PgPool,
     cache: &dyn Cache,
     jwt: &JwtService,
-    config: &Config,
+    settings: &Settings,
     username: &str,
     password: &str,
 ) -> Result<AuthTokens, AppError> {
@@ -31,8 +32,8 @@ pub async fn login(
     ratelimit::check(
         cache,
         &format!("login:{username}"),
-        config.rate_limit_login_max,
-        config.rate_limit_login_window_secs,
+        settings.get(keys::RATE_LIMIT_LOGIN_MAX),
+        settings.get(keys::RATE_LIMIT_LOGIN_WINDOW_SECS),
     )
     .await?;
 
@@ -52,16 +53,16 @@ pub async fn login(
     };
 
     match (user, valid) {
-        (Some(user), true) => issue_tokens(db, jwt, config, &user).await,
+        (Some(user), true) => issue_tokens(db, jwt, settings, &user).await,
         _ => Err(AppError::Unauthorized("Invalid credentials".to_string())),
     }
 }
 
-#[tracing::instrument(skip(db, jwt, config, refresh_token_raw))]
+#[tracing::instrument(skip(db, jwt, settings, refresh_token_raw))]
 pub async fn refresh(
     db: &PgPool,
     jwt: &JwtService,
-    config: &Config,
+    settings: &Settings,
     refresh_token_raw: &str,
 ) -> Result<AuthTokens, AppError> {
     let token_hash = hash_refresh_token(refresh_token_raw);
@@ -75,7 +76,7 @@ pub async fn refresh(
         .await?
         .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
 
-    issue_tokens(db, jwt, config, &user).await
+    issue_tokens(db, jwt, settings, &user).await
 }
 
 #[tracing::instrument(skip(db, refresh_token_raw), fields(user_id = ?user_id))]
@@ -98,22 +99,22 @@ pub async fn logout(
 async fn issue_tokens(
     db: &PgPool,
     jwt: &JwtService,
-    config: &Config,
+    settings: &Settings,
     user: &User,
 ) -> Result<AuthTokens, AppError> {
     let access_token = jwt.issue(
         &user.username,
         Some(user.id),
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         TokenType::User,
         user.is_admin,
-        &config.back_domain,
-        config.access_token_ttl_secs,
+        &settings.get(keys::BACK_DOMAIN),
+        settings.get(keys::ACCESS_TOKEN_TTL_SECS),
     )?;
 
     let refresh_token_raw = generate_refresh_token();
     let refresh_hash = hash_refresh_token(&refresh_token_raw);
-    let expires_at = Utc::now() + Duration::seconds(config.refresh_token_ttl_secs);
+    let expires_at = Utc::now() + Duration::seconds(settings.get(keys::REFRESH_TOKEN_TTL_SECS));
     RefreshTokenRepository::create(db, user.id, &refresh_hash, expires_at).await?;
 
     Ok(AuthTokens {

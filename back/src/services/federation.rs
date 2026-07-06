@@ -1,12 +1,12 @@
-use crate::clients::federation::FederationClient;
 use crate::clients::federation::models::AnnouncedPicture;
+use crate::clients::federation::FederationClient;
 use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
 use crate::infra::redis::Cache;
+use crate::infra::routine;
 use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
+use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use crate::repository::share_announcement::ShareAnnouncementRepository;
@@ -14,7 +14,10 @@ use crate::repository::user::UserRepository;
 use crate::services::pictures::PictureVariant;
 use crate::services::shares::{register_received_pictures, unregister_announced_pictures};
 use crate::services::users::find_local_user_id;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -26,10 +29,10 @@ pub struct PresignTokenItem {
 /// Validate and record an inbound share announcement from a remote instance.
 /// Returns incoming share ID and a boolean indicating if the share was automatically accepted.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, config, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
+#[tracing::instrument(skip(db, settings, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_announcement(
     db: &PgPool,
-    config: &Config,
+    settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     sender_username: &str,
@@ -45,7 +48,7 @@ pub async fn receive_share_announcement(
     future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<(Uuid, bool), AppError> {
-    if recipient_instance != config.global_domain {
+    if recipient_instance != settings.get(keys::GLOBAL_DOMAIN) {
         warn!(
             sender_instance,
             recipient_instance, "federation: announce_share rejected — invalid recipient instance"
@@ -77,7 +80,7 @@ pub async fn receive_share_announcement(
         .into_iter()
         .filter(|s| s.status == ShareStatus::Pending)
         .count();
-    if pending_incoming >= config.max_pending_incoming_shares {
+    if pending_incoming >= settings.get(keys::MAX_PENDING_INCOMING_SHARES) {
         warn!(
             recipient = recipient_username,
             pending_incoming,
@@ -188,15 +191,13 @@ pub async fn receive_share_accept(
 
 /// Received a share revocation from the sender; clean up the matching IncomingShare.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
+#[tracing::instrument(skip(db, cache, federation, settings, task_queue, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_revoke(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
-    task_queue: &crate::infra::routine::RoutineHandle<
-        crate::infra::routine::unannounce::UnannounceInput,
-    >,
+    settings: &Settings,
+    task_queue: &RoutineHandle<routine::unannounce::UnannounceInput>,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     outgoing_share_id: Uuid,
@@ -212,7 +213,7 @@ pub async fn receive_share_revoke(
         db,
         cache,
         federation,
-        config,
+        &settings,
         task_queue,
         pipeline_waker,
         &share,
@@ -262,11 +263,11 @@ pub async fn receive_share_reject(
 /// Loop prevention: pictures whose owner is a local user (the relayed picture is our own) are
 /// skipped.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, config, pipeline_waker, pictures), fields(outgoing_share_id = %outgoing_share_id))]
+#[tracing::instrument(skip(db, cache, settings, pipeline_waker, pictures), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_pictures_announcement(
     db: &PgPool,
     cache: &dyn Cache,
-    config: &Config,
+    settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     sender_username: &str,
@@ -310,7 +311,7 @@ pub async fn receive_pictures_announcement(
         if let Some(owner_id) = find_local_user_id(
             cache,
             db,
-            config,
+            settings,
             &pic.owner_username,
             &pic.owner_instance_domain,
         )
@@ -431,11 +432,11 @@ pub async fn receive_picture_edit_request(
 
 /// Resolve per-picture tokens to owned pictures and presign each. The token *is* the
 /// authorization — no federation JWT is required. An unknown token yields 401.
-#[tracing::instrument(skip(db, storage, config, items))]
+#[tracing::instrument(skip(db, storage, settings, items))]
 pub async fn presign_by_picture_tokens(
     db: &PgPool,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     items: &[PresignTokenItem],
 ) -> Result<Vec<(Uuid, String)>, AppError> {
     let mut results = Vec::with_capacity(items.len());
@@ -454,7 +455,7 @@ pub async fn presign_by_picture_tokens(
         }
         let variant: PictureVariant = item.variant.as_deref().unwrap_or("original").parse()?;
         let key = s3::picture_key(picture.local_user_id, picture.id);
-        let url = storage.presign_get(variant.bucket(config), &key).await?;
+        let url = storage.presign_get(&variant.bucket(settings), &key).await?;
         results.push((item.picture_token, url));
     }
     Ok(results)

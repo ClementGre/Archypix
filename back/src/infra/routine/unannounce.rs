@@ -6,9 +6,11 @@
 //! lost to a crash is lost. The pipeline handles all other (un)announcement inline.
 
 use crate::clients::federation::FederationClient;
-use crate::infra::config::Config;
 use crate::infra::routine::{Routine, RoutineHandle};
+use crate::infra::settings::keys;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Payload **and** dedup key. Two distinct unannounces (different fields) both run; two identical
@@ -26,31 +28,31 @@ pub struct UnannounceInput {
 
 /// Delivers `UnannounceInput`s. Holds the pipeline handle so a same-backend unregister can wake the
 /// recipient's pipeline.
-pub struct Unannounce {
+pub struct UnannounceRoutine {
     db: PgPool,
     federation: FederationClient,
-    config: Config,
+    settings: Arc<Settings>,
     pipeline: RoutineHandle<Uuid>,
 }
 
-impl Unannounce {
+impl UnannounceRoutine {
     pub fn new(
         db: PgPool,
         federation: FederationClient,
-        config: Config,
+        settings: Arc<Settings>,
         pipeline: RoutineHandle<Uuid>,
     ) -> Self {
         Self {
             db,
             federation,
-            config,
+            settings,
             pipeline,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Routine for Unannounce {
+impl Routine for UnannounceRoutine {
     type Input = UnannounceInput;
     type Key = UnannounceInput;
 
@@ -63,14 +65,14 @@ impl Routine for Unannounce {
     }
 
     fn concurrency(&self) -> usize {
-        self.config.task_queue_concurrency
+        self.settings.get(keys::TASK_QUEUE_CONCURRENCY)
     }
 
     async fn run(&self, input: UnannounceInput) -> anyhow::Result<()> {
         crate::services::shares::deliver_unannounce(
             &self.db,
             &self.federation,
-            &self.config,
+            &self.settings,
             &self.pipeline,
             input,
         )

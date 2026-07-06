@@ -1,7 +1,8 @@
 use super::bearer_token;
 use crate::domain::auth::{JwtClaims, TokenType};
-use crate::infra::error::AppError;
+use crate::infra::settings::keys;
 use crate::state::AppState;
+use archypix_common::error::AppError;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
@@ -18,7 +19,9 @@ impl FromRequestParts<AppState> for AuthFederation {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let token = bearer_token(&parts.headers)?;
-        let claims = state.jwt.decode(&token, &state.config.back_domain)?;
+        let claims = state
+            .jwt
+            .decode(&token, &state.settings.get(keys::BACK_DOMAIN))?;
 
         if claims.token_type != TokenType::Federation {
             return Err(AppError::Unauthorized(

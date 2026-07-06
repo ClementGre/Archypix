@@ -1,10 +1,10 @@
 mod common;
 
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::repository::picture::ResolvedSelection;
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::tags;
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use uuid::Uuid;
 

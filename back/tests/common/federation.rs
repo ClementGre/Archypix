@@ -1,75 +1,74 @@
 //! Helpers shared by federation integration tests.
 //!
 //! Provides:
-//! - [`config_a`] / [`config_b`]   — two-domain test configurations
-//! - [`spawn_backend`]             — real Axum server on an OS-assigned port
-//! - [`make_client`]               — FederationClient sharing a server's cache
-//! - [`seed_backend_url`]          — bypass WebFinger by pre-seeding the cache
-//! - [`federation_jwt`]            — forge a federation JWT for a given server
-//! - [`user_jwt`]                  — forge a user access JWT for a given server
+//! - [`settings_a`] / [`settings_b`] — two-domain test settings
+//! - [`spawn_backend`]               — real Axum server on an OS-assigned port
+//! - [`make_client`]                 — FederationClient sharing a server's cache
+//! - [`seed_backend_url`]            — bypass WebFinger by pre-seeding the cache
+//! - [`federation_jwt`]              — forge a federation JWT for a given server
+//! - [`user_jwt`]                    — forge a user access JWT for a given server
 
+use super::InMemoryCache;
 use archypix_back::clients::federation::FederationClient;
 use archypix_back::domain::auth::TokenType;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::redis::{Cache, RedisKey};
+use archypix_back::infra::settings::keys;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::InMemoryCache;
+// ── Settings ───────────────────────────────────────────────────────────────────
 
-// ── Configs ───────────────────────────────────────────────────────────────────
-
-/// Config for "backend A" (alice's home instance): `global_domain = "a.test"`.
+/// Settings for "backend A" (alice's home instance): `global_domain = "a.test"`.
 /// `back_domain` is a placeholder replaced by [`spawn_backend`] after binding.
-pub fn config_a() -> Config {
-    Config {
-        global_domain: "a.test".to_string(),
-        back_domain: "a.test:0".to_string(),
-        ..Config::test_defaults()
-    }
+pub fn settings_a() -> Arc<Settings> {
+    archypix_back::infra::settings::test_settings_with(&[
+        ("GLOBAL_DOMAIN", "a.test"),
+        ("BACK_DOMAIN", "a.test:0"),
+    ])
 }
 
-/// Config for "backend B" (bob's home instance): `global_domain = "b.test"`.
-pub fn config_b() -> Config {
-    Config {
-        global_domain: "b.test".to_string(),
-        back_domain: "b.test:0".to_string(),
-        ..Config::test_defaults()
-    }
+/// Settings for "backend B" (bob's home instance): `global_domain = "b.test"`.
+pub fn settings_b() -> Arc<Settings> {
+    archypix_back::infra::settings::test_settings_with(&[
+        ("GLOBAL_DOMAIN", "b.test"),
+        ("BACK_DOMAIN", "b.test:0"),
+    ])
 }
 
 // ── Server lifecycle ──────────────────────────────────────────────────────────
 
 /// Spawn a full Axum server on an OS-assigned port.
 ///
-/// Updates `config.back_domain` to match the bound port so all JWTs issued or
+/// Updates `settings.get(keys::BACK_DOMAIN)` to match the bound port so all JWTs issued or
 /// verified by this server use the correct audience. Returns
-/// `(socket_addr, cache_handle, final_config)`.
+/// `(socket_addr, cache_handle, final_settings)`.
 ///
 /// **Pre-seed the returned cache with [`seed_backend_url`] entries for any
 /// remote domain before making federation calls**, so WebFinger resolution is
 /// bypassed without a real resolver.
 pub async fn spawn_backend(
     db: PgPool,
-    mut config: Config,
-) -> (SocketAddr, Arc<InMemoryCache>, Config) {
+    mut settings: Arc<Settings>,
+) -> (SocketAddr, Arc<InMemoryCache>, Arc<Settings>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().unwrap();
 
-    // Fix the audience to the real port.
-    config.back_domain = format!("127.0.0.1:{}", addr.port());
-    // Generous federation timeout to survive slow CI machines.
-    config.federation_request_timeout_ms = 5_000;
+    // Fix the audience to the real port + a generous federation timeout for slow CI.
+    let final_settings = Arc::new(settings.cloned_with(&[
+        ("BACK_DOMAIN", format!("127.0.0.1:{}", addr.port())),
+        ("FEDERATION_REQUEST_TIMEOUT_MS", "5000".to_string()),
+    ]));
 
     let cache = Arc::new(InMemoryCache::new());
     let cache_dyn: Arc<dyn Cache> = cache.clone();
-    let state = super::test_app_state_with_cache(db, &config, cache_dyn);
-    let app = archypix_back::api::routes(&config).with_state(state);
+    let state = super::test_app_state_with_cache(db, &final_settings, cache_dyn);
+    let app = archypix_back::api::routes(final_settings.clone()).with_state(state);
 
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -77,7 +76,7 @@ pub async fn spawn_backend(
             .expect("federation test server crashed");
     });
 
-    (addr, cache, config)
+    (addr, cache, final_settings)
 }
 
 // ── Client helper ─────────────────────────────────────────────────────────────
@@ -88,11 +87,14 @@ pub async fn spawn_backend(
 /// by the server's `/api/federation/auth/grant` handler are immediately visible
 /// to this client's poll loop, and backend-URL seeds written via [`seed_backend_url`]
 /// are resolved without a real WebFinger lookup.
-pub fn make_client(config: &Config, cache: &Arc<InMemoryCache>) -> FederationClient {
+pub fn make_client(settings: &Arc<Settings>, cache: &Arc<InMemoryCache>) -> FederationClient {
     FederationClient::new(
         reqwest::Client::new(),
-        config.clone(),
-        JwtService::new(&config.jwt_secret, &config.back_domain),
+        settings.clone(),
+        JwtService::new(
+            &settings.get(keys::JWT_SECRET),
+            &settings.get(keys::BACK_DOMAIN),
+        ),
         cache.clone() as Arc<dyn Cache>,
     )
 }
@@ -131,35 +133,41 @@ pub async fn seed_auth_nonce(cache: &InMemoryCache, domain: &str, nonce: &str) {
 
 // ── JWT helpers ───────────────────────────────────────────────────────────────
 
-/// Issue a federation JWT that `server_config`'s auth middleware would accept.
+/// Issue a federation JWT that `settings`'s auth middleware would accept.
 ///
 /// Mirrors what `FederationClient::issue_federation_token` produces on the server:
 /// signed with the server's `jwt_secret`, audience = `back_domain`,
 /// subject = `authenticated_as` (the calling instance's global domain).
-pub fn federation_jwt(server_config: &Config, authenticated_as: &str) -> String {
-    let jwt = JwtService::new(&server_config.jwt_secret, &server_config.back_domain);
+pub fn federation_jwt(settings: &Arc<Settings>, authenticated_as: &str) -> String {
+    let jwt = JwtService::new(
+        &settings.get(keys::JWT_SECRET),
+        &settings.get(keys::BACK_DOMAIN),
+    );
     jwt.issue(
         authenticated_as,
         None,
-        &server_config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         TokenType::Federation,
         false,
-        &server_config.back_domain,
+        &settings.get(keys::BACK_DOMAIN),
         3_600,
     )
     .unwrap()
 }
 
-/// Issue a user access JWT accepted by a server running `server_config`.
-pub fn user_jwt(server_config: &Config, username: &str, user_id: Uuid) -> String {
-    let jwt = JwtService::new(&server_config.jwt_secret, &server_config.back_domain);
+/// Issue a user access JWT accepted by a server running `settings`.
+pub fn user_jwt(settings: &Settings, username: &str, user_id: Uuid) -> String {
+    let jwt = JwtService::new(
+        &settings.get(keys::JWT_SECRET),
+        &settings.get(keys::BACK_DOMAIN),
+    );
     jwt.issue(
         username,
         Some(user_id),
-        &server_config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         TokenType::User,
         false,
-        &server_config.back_domain,
+        &settings.get(keys::BACK_DOMAIN),
         900,
     )
     .unwrap()

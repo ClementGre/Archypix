@@ -1,6 +1,6 @@
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::PgPool;
 use uuid::Uuid;
 

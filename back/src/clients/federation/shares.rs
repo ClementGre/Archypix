@@ -4,7 +4,7 @@ use crate::clients::federation::models::{
     PresignRequestItem, PresignResponse, ShareAcceptRequest, ShareAnnouncementRequest,
     ShareAnnouncementResponse, ShareRejectRequest, ShareRevokeRequest,
 };
-use crate::infra::error::AppError;
+use archypix_common::error::AppError;
 use std::collections::HashMap;
 use tracing::{debug, warn};
 use uuid::Uuid;

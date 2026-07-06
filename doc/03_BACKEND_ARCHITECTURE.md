@@ -13,7 +13,7 @@
 | `api`        | HTTP handlers, auth extraction, request/response models.                      | `services`, `repository`, `domain`, `infra` | External connectivity details.    |
 | `services`   | Multi-step workflows and transaction boundaries.                              | `repository`, `clients`, `domain`, `infra`  | Axum types, HTTP-specific models. |
 | `clients`    | Outbound HTTP adapters (federation backends, resolver, S3).                   | `infra`, `domain`                           | `services`, `repository`, `api`.  |
-| `repository` | SQL operations only — no business logic.                                      | `domain`, `infra::error`                    | `services`, `clients`.            |
+| `repository` | SQL operations only — no business logic.                                      | `domain`                                    | `services`, `clients`.            |
 | `domain`     | Business types, invariants, pure transformations, tagging pipeline evaluator. | std + lightweight crates only               | `repository`, `infra`, clients.   |
 | `infra`      | Raw connectivity primitives: config, error, Redis, S3, crypto (JWT, hashing). | External SDKs                               | `api`, `services`, `clients`.     |
 | `state`      | `AppState` — bootstrap, holds all composed handles.                           | `infra`, `clients`                          | `services`, `repository`, `api`.  |
@@ -113,7 +113,7 @@ infra/
 
 ```rust
 pub struct AppState {
-    pub config: Config,
+    pub settings: Arc<Settings>,  // feature 23: layered runtime config (Config = Arc<Settings>)
     pub db: PgPool,
     pub redis: RedisClient,
     pub jwt: JwtService,
@@ -124,6 +124,18 @@ pub struct AppState {
    pub routines: Routines,   // feature 17: pipeline / exif_drain / tag_rename / unannounce trigger handles
 }
 ```
+
+**Runtime configuration (feature 23 §4).** `Config` is now `Arc<Settings>` — the layered
+[`common::settings`](../common/src/settings.rs) engine (`default → env(locks) → DB override`,
+`ArcSwap`-hot-swapped). **Core** secrets/topology stay env-only; **operational** fields (retention,
+rate-limit + share caps, routine intervals/batches, `default_storage_quota_bytes`, trace peers, CORS
+origins, `registration_mode`) are DB-editable from `/admin` and read live (`settings.get(keys::X)`).
+Overrides live in `app_settings`; a `PATCH` rebuilds the snapshot. CORS is a dynamic middleware reading
+the live origin list per request. Three primitives are shared with the resolver in `common`:
+[`common::auth`](../common/src/auth.rs) (`JwtService`/claims/`TokenType`, incl. `ResolverDelegation` +
+`ResolverAdminSession`), `common::routine`, and `common::settings`. **`AuthAdmin` is dual-issuer**: it
+accepts a direct user-admin token **or** a backend-signed `ResolverDelegation` replayed by the resolver
+proxy (`sub="resolver"`).
 
 ## E) Tagging pipeline
 
@@ -363,6 +375,15 @@ its `OutgoingShare` to `pending_first_announcement`.
 2. Bob's backend propagates revocation downstream to any transitive recipients.
 
 ## H) Routine framework (feature 17)
+
+The generic core (the `Routine` trait, `RoutineHandle`, scheduler, `spawn`) was **lifted to
+[`common::routine`](../common/src/routine.rs)** (feature 23 §8) behind a `routine` cargo feature so the
+resolver reuses it; `back/src/infra/routine.rs` re-exports it and keeps the concrete backend routines.
+Routines read their `interval()` from the live settings snapshot each tick, so an interval change from
+the dashboard takes effect after the current wait (no re-spawn). When `USE_RESOLVER=true`, `main` also
+spawns the **`ResolverHeartbeat`** routine (startup + `resolver_heartbeat_interval_secs`), which mints a
+fresh backend-signed `ResolverDelegation` token, gathers fleet metrics, and pushes them to the resolver
+(feature 23 §3.2).
 
 All background work runs on one generic runtime, `infra/routine.rs`. A **`Routine`** is a named unit
 of work triggerable three ways: recurrently (every `interval()`), at startup (`run_on_startup()`),

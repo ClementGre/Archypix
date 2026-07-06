@@ -3,6 +3,7 @@ import {useMutation} from '@tanstack/react-query'
 import {AlertTriangle, Loader2, RefreshCw, RotateCcw, XCircle} from 'lucide-react'
 import {toast} from 'sonner'
 import {regenerateThumbnails} from '@/api/admin'
+import {useAdminClient} from '@/api/adminClient'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
@@ -215,8 +216,9 @@ function StaleJobsView() {
 /** Bulk thumbnail / content-hash regeneration (feature 11). */
 function RegenPanel() {
     const [reextract, setReextract] = useState(false)
+    const {client} = useAdminClient()
     const regen = useMutation({
-        mutationFn: regenerateThumbnails,
+        mutationFn: (body: { scope: 'missing' | 'all'; reextract_exif?: boolean }) => regenerateThumbnails(client, body),
         onSuccess: (r) => toast.success(`Enqueued ${r.enqueued} thumbnail job${r.enqueued !== 1 ? 's' : ''}`),
         onError: (e: unknown) => toast.error('Could not enqueue', {description: apiErrorMessage(e)}),
     })

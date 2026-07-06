@@ -1,6 +1,6 @@
 use crate::domain::user_settings::{UserSettings, VersioningMode};
-use crate::infra::error::AppError;
 use crate::repository::user_settings::UserSettingsRepository;
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use uuid::Uuid;
 

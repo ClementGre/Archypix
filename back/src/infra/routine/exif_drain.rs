@@ -8,7 +8,10 @@
 //! backstop. Each `run` drains until empty, so a single trigger covers an arbitrary backlog.
 
 use crate::infra::routine::{Routine, RoutineHandle};
+use crate::infra::settings::keys;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
@@ -17,24 +20,19 @@ use tracing::debug;
 pub type ExifDrainHandle = RoutineHandle<()>;
 
 /// Turns `pending_job_creation` rows (stamped by batch EXIF edits) into `edit_picture` reconcile jobs.
-pub struct ExifDrain {
+pub struct ExifDrainRoutine {
     db: PgPool,
-    interval: Duration,
-    batch: i64,
+    settings: Arc<Settings>,
 }
 
-impl ExifDrain {
-    pub fn new(db: PgPool, interval: Duration, batch: i64) -> Self {
-        Self {
-            db,
-            interval,
-            batch,
-        }
+impl ExifDrainRoutine {
+    pub fn new(db: PgPool, settings: Arc<Settings>) -> Self {
+        Self { db, settings }
     }
 }
 
 #[async_trait::async_trait]
-impl Routine for ExifDrain {
+impl Routine for ExifDrainRoutine {
     type Input = ();
     type Key = ();
 
@@ -45,7 +43,9 @@ impl Routine for ExifDrain {
     fn key(_input: &()) {}
 
     fn interval(&self) -> Option<Duration> {
-        Some(self.interval)
+        Some(Duration::from_secs(
+            self.settings.get(keys::EXIF_DRAIN_INTERVAL_SECS),
+        ))
     }
 
     fn run_on_startup(&self) -> bool {
@@ -55,13 +55,13 @@ impl Routine for ExifDrain {
     /// Drain repeatedly until a pass creates fewer than `batch` jobs (a single trigger may cover more
     /// than one batch worth of `pending_job_creation` rows).
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
+        let batch = self.settings.get(keys::EXIF_DRAIN_BATCH);
         loop {
-            let created =
-                crate::services::jobs::create_deferred_exif_jobs(&self.db, self.batch).await?;
+            let created = crate::services::jobs::create_deferred_exif_jobs(&self.db, batch).await?;
             if created > 0 {
                 debug!(created, "exif drain created reconcile jobs");
             }
-            if (created as i64) < self.batch {
+            if (created as i64) < batch {
                 break;
             }
         }

@@ -1,14 +1,14 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::hierarchy::HierarchyConfig;
-use crate::infra::error::AppError;
 use crate::repository::hierarchy::HierarchyRow;
 use crate::repository::picture::{PictureSortField, SortOrder};
 use crate::services;
 use crate::services::hierarchy::{BrowseParams, TreeResult};
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, Query, State};
+use axum::Json;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -183,7 +183,8 @@ pub async fn webdav_get(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebdavResponse>, AppError> {
     let info =
-        services::hierarchy::get_webdav_info(&state.db, &state.config, auth.user_id()?, id).await?;
+        services::hierarchy::get_webdav_info(&state.db, &state.settings, auth.user_id()?, id)
+            .await?;
     Ok(Json(info.into()))
 }
 
@@ -194,9 +195,13 @@ pub async fn webdav_regenerate(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebdavResponse>, AppError> {
-    let info =
-        services::hierarchy::regenerate_webdav_token(&state.db, &state.config, auth.user_id()?, id)
-            .await?;
+    let info = services::hierarchy::regenerate_webdav_token(
+        &state.db,
+        &state.settings,
+        auth.user_id()?,
+        id,
+    )
+        .await?;
     Ok(Json(info.into()))
 }
 
@@ -216,7 +221,8 @@ pub async fn webdav_patch(
     let user_id = auth.user_id()?;
     services::hierarchy::set_webdav_use_redirect(&state.db, user_id, id, payload.use_redirect)
         .await?;
-    let info = services::hierarchy::get_webdav_info(&state.db, &state.config, user_id, id).await?;
+    let info =
+        services::hierarchy::get_webdav_info(&state.db, &state.settings, user_id, id).await?;
     Ok(Json(info.into()))
 }
 
@@ -308,7 +314,7 @@ pub async fn browse(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         &state.federation,
         auth.user_id()?,
         id,

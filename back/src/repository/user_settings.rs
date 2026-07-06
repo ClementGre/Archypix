@@ -1,5 +1,5 @@
 use crate::domain::user_settings::{UserSettings, VersioningMode};
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 

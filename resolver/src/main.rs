@@ -1,35 +1,11 @@
-mod config;
-mod database;
-mod error;
-mod handler;
-
-use crate::database::init_database;
-use crate::handler::{
-    health_handler, list_backends_handler, register_backend_handler, register_handler,
-    update_handler, webfinger_handler,
-};
-use axum::{
-    Router,
-    http::HeaderValue,
-    routing::{get, post},
-};
-use config::Config;
-use moka::future::Cache;
-use sqlx::PgPool;
+use archypix_resolver::config::setting_keys as sk;
+use archypix_resolver::state::AppState;
+use archypix_resolver::{api, config, routine, services};
+use axum::http::HeaderValue;
 use sqlx::postgres::PgPoolOptions;
-use std::time::Duration;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
-
-#[derive(Clone)]
-struct AppState {
-    db: PgPool,
-    cache: Cache<String, String>,
-    global_domain: String,
-    resolver_jwt_secret: String,
-    reqwest_client: reqwest::Client,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,73 +16,115 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::from_env()?;
+    let config = config::load_env_only()?;
     info!("Starting Archypix Resolver");
-    info!("Listen address:    {}", config.listen_addr);
-    info!("Global domain:     {}", config.global_domain);
-    info!("Database:          {}", config.database_url_masked());
-    info!("Cache TTL:         {}s", config.cache_ttl_secs);
-    info!("Cache max entries: {}", config.cache_max_capacity);
+    info!("Listen address: {}", config.get(sk::LISTEN_ADDR));
+    info!("Global domain:  {}", config.get(sk::GLOBAL_DOMAIN));
+    info!("Database:       {}", config::database_url_masked(&config));
 
-    let db_pool = PgPoolOptions::new()
+    let db = PgPoolOptions::new()
         .max_connections(10)
-        .connect(&config.database_url())
+        .connect(&config::database_url(&config))
         .await?;
     info!("Connected to database");
+    sqlx::migrate!("./migrations").run(&db).await?;
+    config::reload_from_db(&config, &db).await?;
 
-    init_database(&db_pool).await?;
+    // Seed / verify the operator dashboard credential (feature 23 §5.1).
+    services::operator::ensure_seeded(&db, &config).await?;
 
-    let cache = Cache::builder()
-        .time_to_live(Duration::from_secs(config.cache_ttl_secs))
-        .max_capacity(config.cache_max_capacity)
-        .build();
+    // ── Routines (feature 23 §8.3) — spawn first so their status/trigger handles feed the registry ──
+    use archypix_common::routine::{RoutineStatus, spawn_with_status};
+    use archypix_resolver::state::{RoutineEntry, RoutineRegistry};
+    use std::sync::Arc;
 
-    let reqwest_client = reqwest::Client::new();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut joins = Vec::new();
+    let mut routine_entries: Vec<RoutineEntry> = Vec::new();
 
-    let state = AppState {
-        db: db_pool,
-        global_domain: config.global_domain,
-        cache,
-        resolver_jwt_secret: config.resolver_jwt_secret,
-        reqwest_client,
+    let (prune_handle, prune_status, pj) = spawn_with_status(
+        routine::StaleBackendPrune {
+            db: db.clone(),
+            config: config.clone(),
+        },
+        RoutineStatus::default(),
+        shutdown_rx.clone(),
+    );
+    joins.push(pj);
+    routine_entries.push(RoutineEntry {
+        name: "stale_backend_prune",
+        status: prune_status,
+        trigger: Arc::new(prune_handle),
+    });
+
+    let (cleanup_handle, cleanup_status, cj) = spawn_with_status(
+        routine::InviteCleanup {
+            db: db.clone(),
+            config: config.clone(),
+        },
+        RoutineStatus::default(),
+        shutdown_rx.clone(),
+    );
+    joins.push(cj);
+    routine_entries.push(RoutineEntry {
+        name: "invite_cleanup",
+        status: cleanup_status,
+        trigger: Arc::new(cleanup_handle),
+    });
+
+    let (reconcile_handle, reconcile_status, rj) = spawn_with_status(
+        routine::MappingReconcile {
+            db: db.clone(),
+            config: config.clone(),
+            backends: archypix_resolver::clients::BackendClient::new(db.clone(), reqwest::Client::new()),
+        },
+        RoutineStatus::default(),
+        shutdown_rx.clone(),
+    );
+    joins.push(rj);
+    routine_entries.push(RoutineEntry {
+        name: "mapping_reconcile",
+        status: reconcile_status,
+        trigger: Arc::new(reconcile_handle),
+    });
+
+    let routine_registry = RoutineRegistry {
+        entries: Arc::new(routine_entries),
     };
+    let state = AppState::new(db.clone(), config.clone(), routine_registry);
 
-    let allow_origin = build_cors_origin(&config.cors_origins);
+    // Dynamic CORS (feature 23 §4.4) — reads allowed origins from the live snapshot per request.
+    let cors_config = config.clone();
     let cors = CorsLayer::new()
         .allow_methods(Any)
-        .allow_origin(allow_origin)
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
+            let allowed = cors_config.get(sk::CORS_ORIGINS);
+            allowed.iter().any(|o| o == "*")
+                || origin
+                .to_str()
+                .map(|o| allowed.iter().any(|a| a == o))
+                .unwrap_or(false)
+        }));
 
-    let app = Router::new()
-        .route("/.well-known/webfinger", get(webfinger_handler))
-        .route("/api/update", post(update_handler))
-        // Mirrors the standalone backend's registration route, so the frontend uses one
-        // URL regardless of whether the global domain is a resolver or a standalone backend.
-        .route("/api/public/register", post(register_handler))
-        .route(
-            "/api/backends",
-            post(register_backend_handler).get(list_backends_handler),
-        )
-        .route("/health", get(health_handler))
+    let app = api::routes()
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
-    info!("Server listening on {}", config.listen_addr);
+    let listen_addr = config.get(sk::LISTEN_ADDR);
+    let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
+    info!("Server listening on {}", listen_addr);
 
-    axum::serve(listener, app).await?;
-    Ok(())
-}
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = shutdown_tx.send(true);
+        })
+        .await?;
 
-fn build_cors_origin(origins: &[String]) -> tower_http::cors::AllowOrigin {
-    if origins.iter().any(|o| o == "*") {
-        tower_http::cors::AllowOrigin::any()
-    } else {
-        let list: Vec<HeaderValue> = origins
-            .iter()
-            .filter_map(|o| o.parse::<HeaderValue>().ok())
-            .collect();
-        tower_http::cors::AllowOrigin::list(list)
+    for j in joins {
+        let _ = j.await;
     }
+    Ok(())
 }

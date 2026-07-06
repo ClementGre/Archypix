@@ -3,9 +3,9 @@ use crate::api::worker::models::{ClaimJobResponse, CompleteJobRequest, FailJobRe
 use crate::domain::job::{EditPictureConfig, ExifEdit, JobConfig, JobStatus, JobType};
 use crate::domain::picture::ExifSyncStatus;
 use crate::domain::user_settings::VersioningMode;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::observability;
 use crate::infra::s3;
+use crate::infra::settings::keys;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
@@ -13,11 +13,12 @@ use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::user_settings::UserSettingsRepository;
 use crate::state::AppState;
+use archypix_common::error::{map_sqlx_error, AppError};
 use archypix_common::transfer::ClaimQuery;
 use archypix_common::transfer::PresignedWrites;
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::Json;
 use tracing::debug;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -74,7 +75,7 @@ pub async fn claim_next_job(
     let original_key = s3::picture_key(picture.local_user_id, picture_id);
     let presigned_read = state
         .storage
-        .presign_get_worker(&state.config.s3_bucket_pictures, &original_key)
+        .presign_get_worker(&state.settings.get(keys::S3_BUCKET_PICTURES), &original_key)
         .await?;
 
     let config = job
@@ -103,9 +104,9 @@ pub async fn claim_next_job(
             state
                 .storage
                 .copy_object(
-                    &state.config.s3_bucket_pictures,
+                    &state.settings.get(keys::S3_BUCKET_PICTURES),
                     &original_key,
-                    &state.config.s3_bucket_versions,
+                    &state.settings.get(keys::S3_BUCKET_VERSIONS),
                     &s3::version_key(picture.local_user_id, picture_id, version_id),
                 )
                 .await?;
@@ -134,36 +135,36 @@ pub async fn claim_next_job(
         JobConfig::GenThumbnail(_) => PresignedWrites::thumbnails(
             state
                 .storage
-                .presign_put_worker(&state.config.s3_bucket_small, &thumb_key)
+                .presign_put_worker(&state.settings.get(keys::S3_BUCKET_SMALL), &thumb_key)
                 .await?,
             state
                 .storage
-                .presign_put_worker(&state.config.s3_bucket_medium, &thumb_key)
+                .presign_put_worker(&state.settings.get(keys::S3_BUCKET_MEDIUM), &thumb_key)
                 .await?,
             state
                 .storage
-                .presign_put_worker(&state.config.s3_bucket_large, &thumb_key)
+                .presign_put_worker(&state.settings.get(keys::S3_BUCKET_LARGE), &thumb_key)
                 .await?,
         ),
         JobConfig::EditPicture(edit_cfg) => {
             let output = state
                 .storage
-                .presign_put_worker(&state.config.s3_bucket_pictures, &original_key)
+                .presign_put_worker(&state.settings.get(keys::S3_BUCKET_PICTURES), &original_key)
                 .await?;
             if edit_cfg.visual.is_some() {
                 PresignedWrites::edit_with_visual(
                     output,
                     state
                         .storage
-                        .presign_put_worker(&state.config.s3_bucket_small, &thumb_key)
+                        .presign_put_worker(&state.settings.get(keys::S3_BUCKET_SMALL), &thumb_key)
                         .await?,
                     state
                         .storage
-                        .presign_put_worker(&state.config.s3_bucket_medium, &thumb_key)
+                        .presign_put_worker(&state.settings.get(keys::S3_BUCKET_MEDIUM), &thumb_key)
                         .await?,
                     state
                         .storage
-                        .presign_put_worker(&state.config.s3_bucket_large, &thumb_key)
+                        .presign_put_worker(&state.settings.get(keys::S3_BUCKET_LARGE), &thumb_key)
                         .await?,
                 )
             } else {

@@ -3,10 +3,10 @@
 
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tagging::ServiceType;
-use crate::infra::error::AppError;
 use crate::infra::routine::RoutineHandle;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tagging::TaggingServiceRepository;
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use uuid::Uuid;
 

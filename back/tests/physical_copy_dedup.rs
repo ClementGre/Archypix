@@ -5,11 +5,11 @@
 
 mod common;
 
-use archypix_back::infra::config::Config;
 use archypix_back::infra::redis::Cache;
-use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline::{self, dedup};
+use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::s3::Storage;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::services::pictures;
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
@@ -17,10 +17,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 // ── Seeding ────────────────────────────────────────────────────────────────────
 
@@ -88,9 +84,9 @@ async fn reason(db: &PgPool, id: Uuid) -> Option<String> {
 
 /// Run one full pipeline pass (includes the dedup reconcile) for `user`.
 async fn run_pipeline(db: &PgPool, user: Uuid) {
-    let cfg = config();
+    let cfg = test_settings_with(&[]);
     let (fed, cache) = common::make_federation(&cfg);
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
     pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &waker, user)
         .await
         .unwrap();
@@ -147,7 +143,7 @@ async fn delete_makes_owned_copy_the_trash_representative(db: PgPool) {
     // hidden as content_dedupe.
     let received = seed_received(&db, user, "hashA", None).await;
     let owned = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     // The user deletes the content (trashes the survivor — the received one they see).
     pictures::trash_picture(&db, &waker, user, received)
@@ -176,7 +172,7 @@ async fn rejected_content_promotes_representative_on_purge(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
     let a = seed_owned(&db, user, "hashA", None).await;
     let b = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     // Delete the content → one `manual` representative, the other `boomerang` (neither live).
     pictures::trash_picture(&db, &waker, user, a).await.unwrap();
@@ -213,7 +209,7 @@ async fn restore_lifts_rejection_and_re_enables_rescue(db: PgPool) {
     // Received survivor + owned hidden copy, so the representative is deterministic (the owned one).
     let received = seed_received(&db, user, "hashA", None).await;
     let owned = seed_owned(&db, user, "hashA", Some("content_dedupe")).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     // Delete → the owned copy is the manual representative, the received one boomerang.
     pictures::trash_picture(&db, &waker, user, received)
@@ -335,7 +331,7 @@ async fn keep_copy_replaces_manual_tags_from_old_live(db: PgPool) {
         .unwrap();
 
     // Switch the live copy to the previously-hidden one.
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
     pictures::set_picture_survivor(&db, &waker, user, hidden)
         .await
         .unwrap();
@@ -414,7 +410,7 @@ async fn arrival_with_live_survivor_is_not_boomeranged(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
-    let cfg = config();
+    let cfg = test_settings_with(&[]);
     let user = common::seed_user(&db, "alice", "pass").await;
 
     // Seed a received picture (owner @owner:other.com) + its source bytes in S3.
@@ -427,7 +423,7 @@ async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
     let owned_source = seed_owned(&db, user, "hashOwned", None).await;
     storage
         .put_object(
-            &cfg.s3_bucket_pictures,
+            &cfg.get(archypix_back::infra::settings::keys::S3_BUCKET_PICTURES),
             &archypix_back::infra::s3::picture_key(user, owned_source),
             b"original-bytes".to_vec(),
             Some("image/jpeg"),
@@ -436,7 +432,7 @@ async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
         .unwrap();
 
     let (fed, cache) = common::make_federation(&cfg);
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
     let storage_dyn: Arc<dyn Storage> = storage.clone();
 
     let copy = pictures::copy_picture(
@@ -463,13 +459,16 @@ async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
     assert_eq!(copy.copy_source_owner_username.as_deref(), Some("alice"));
     assert_eq!(
         copy.copy_source_owner_instance.as_deref(),
-        Some(cfg.global_domain.as_str())
+        Some(
+            cfg.get(archypix_back::infra::settings::keys::GLOBAL_DOMAIN)
+                .as_str()
+        )
     );
     // Bytes were copied to the caller's new key.
     assert!(
         storage
             .get(
-                &cfg.s3_bucket_pictures,
+                &cfg.get(archypix_back::infra::settings::keys::S3_BUCKET_PICTURES),
                 &archypix_back::infra::s3::picture_key(user, copy.id)
             )
             .is_some(),

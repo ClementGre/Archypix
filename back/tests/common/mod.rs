@@ -4,14 +4,15 @@ use archypix_back::clients::federation::FederationClient;
 use archypix_back::clients::resolver::ResolverClient;
 use archypix_back::domain::tag::encode_sender_label;
 use archypix_back::domain::validation::MIN_PASSWORD_LEN;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::crypto::JwtService;
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::redis::{Cache, RedisKey};
-use archypix_back::infra::routine::unannounce::{Unannounce, UnannounceInput};
+use archypix_back::infra::routine::unannounce::{UnannounceInput, UnannounceRoutine};
 use archypix_back::infra::routine::{self, RoutineHandle};
 use archypix_back::infra::s3::Storage;
-use archypix_back::state::{AppState, Routines};
+use archypix_back::infra::settings::keys;
+use archypix_back::state::{AppState, RoutineRegistry, Routines};
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -222,12 +223,15 @@ impl Storage for MockStorage {
 
 /// Build a FederationClient backed by a fresh InMemoryCache.
 /// Returns the client and its underlying cache so tests can inspect/mutate it.
-pub fn make_federation(config: &Config) -> (FederationClient, Arc<InMemoryCache>) {
+pub fn make_federation(settings: &Arc<Settings>) -> (FederationClient, Arc<InMemoryCache>) {
     let cache = Arc::new(InMemoryCache::new());
     let fed = FederationClient::new(
         reqwest::Client::new(),
-        config.clone(),
-        JwtService::new(&config.jwt_secret, &config.back_domain),
+        settings.clone(),
+        JwtService::new(
+            &settings.get(keys::JWT_SECRET),
+            &settings.get(keys::BACK_DOMAIN),
+        ),
         cache.clone(),
     );
     (fed, cache)
@@ -240,10 +244,10 @@ pub fn make_federation(config: &Config) -> (FederationClient, Arc<InMemoryCache>
 /// via `run_once_for_user`.
 pub fn test_task_queue(
     db: &PgPool,
-    config: &Config,
+    settings: &Arc<Settings>,
 ) -> (RoutineHandle<UnannounceInput>, RoutineHandle<Uuid>) {
-    let (fed, _cache) = make_federation(config);
-    test_task_queue_with_federation(db, config, fed)
+    let (fed, _cache) = make_federation(settings);
+    test_task_queue_with_federation(db, settings, fed)
 }
 
 /// Like [`test_task_queue`] but uses the supplied `FederationClient` — pass one that shares a
@@ -251,13 +255,13 @@ pub fn test_task_queue(
 /// delivery can resolve the remote backend and reuse granted tokens.
 pub fn test_task_queue_with_federation(
     db: &PgPool,
-    config: &Config,
+    settings: &Arc<Settings>,
     federation: FederationClient,
 ) -> (RoutineHandle<UnannounceInput>, RoutineHandle<Uuid>) {
     let pipeline = RoutineHandle::<Uuid>::disconnected();
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (queue, runtime) = routine::spawn(
-        Unannounce::new(db.clone(), federation, config.clone(), pipeline.clone()),
+        UnannounceRoutine::new(db.clone(), federation, settings.clone(), pipeline.clone()),
         shutdown_rx,
     );
     // Keep the runtime alive for the test process and let same-backend / cross-instance unannounces run.
@@ -273,32 +277,50 @@ pub fn test_task_queue_with_federation(
 /// Useful when the test needs to inspect or pre-seed the cache before and after
 /// requests (e.g., federation contract tests where backend URLs are pre-seeded
 /// so WebFinger calls are bypassed).
-pub fn test_app_state_with_cache(db: PgPool, config: &Config, cache: Arc<dyn Cache>) -> AppState {
-    test_app_state_with_storage(db, config, cache, Arc::new(MockStorage::new()))
+pub fn test_app_state_with_cache(
+    db: PgPool,
+    settings: &Arc<Settings>,
+    cache: Arc<dyn Cache>,
+) -> AppState {
+    test_app_state_with_storage(db, settings, cache, Arc::new(MockStorage::new()))
 }
 
 /// Like [`test_app_state_with_cache`] but with a caller-supplied storage backend, so a test can
 /// hold an `Arc<MockStorage>` and inspect the bytes written (used by the WebDAV VFS tests).
 pub fn test_app_state_with_storage(
     db: PgPool,
-    config: &Config,
+    settings: &Arc<Settings>,
     cache: Arc<dyn Cache>,
     storage: Arc<dyn Storage>,
 ) -> AppState {
-    let jwt = JwtService::new(&config.jwt_secret, &config.back_domain);
-    let worker_jwt = JwtService::new(&config.worker_jwt_secret, &config.back_domain);
-    let resolver_jwt = JwtService::new(&config.resolver_jwt_secret, &config.back_domain);
+    let jwt = JwtService::new(
+        &settings.get(keys::JWT_SECRET),
+        &settings.get(keys::BACK_DOMAIN),
+    );
+    let worker_jwt = JwtService::new(
+        &settings.get(keys::WORKER_JWT_SECRET),
+        &settings.get(keys::BACK_DOMAIN),
+    );
+    let resolver_jwt = JwtService::new(
+        &settings.get(keys::RESOLVER_JWT_SECRET).unwrap_or_default(),
+        &settings.get(keys::BACK_DOMAIN),
+    );
 
     let federation = FederationClient::new(
         reqwest::Client::new(),
-        config.clone(),
+        settings.clone(),
         jwt.clone(),
         cache.clone(),
     );
-    let resolver = ResolverClient::new(reqwest::Client::new(), config.clone(), resolver_jwt);
+    let resolver = ResolverClient::new(
+        reqwest::Client::new(),
+        settings.clone(),
+        resolver_jwt,
+        jwt.clone(),
+    );
 
     // Run the unannounce routine so same-backend / cross-instance unannounce triggers execute.
-    let (unannounce, pipeline) = test_task_queue_with_federation(&db, config, federation.clone());
+    let (unannounce, pipeline) = test_task_queue_with_federation(&db, settings, federation.clone());
     let routines = Routines {
         pipeline,
         exif_drain: RoutineHandle::disconnected(),
@@ -307,7 +329,7 @@ pub fn test_app_state_with_storage(
     };
 
     AppState::new(
-        config.clone(),
+        settings.clone(),
         db,
         cache,
         jwt,
@@ -316,6 +338,7 @@ pub fn test_app_state_with_storage(
         federation,
         resolver,
         routines,
+        RoutineRegistry::empty(),
     )
 }
 
@@ -323,9 +346,9 @@ pub fn test_app_state_with_storage(
 ///
 /// Uses `MockStorage` (no S3). The task-queue runner is dropped immediately —
 /// tasks submitted during tests are silently ignored.
-pub fn test_app_state(db: PgPool, config: &Config) -> AppState {
+pub fn test_app_state(db: PgPool, settings: &Arc<Settings>) -> AppState {
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
-    test_app_state_with_cache(db, config, cache)
+    test_app_state_with_cache(db, settings, cache)
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -345,6 +368,7 @@ pub async fn seed_user(db: &PgPool, username: &str, password: &str) -> Uuid {
         username,
         &password,
         false,
+        None,
         None,
     )
     .await

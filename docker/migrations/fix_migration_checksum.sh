@@ -14,14 +14,9 @@ set -euo pipefail
 
 CONTAINER="${PG_CONTAINER:-archypix-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UP_SQL1="${SCRIPT_DIR}/../../back/migrations/0001_initial_schema.up.sql"
-UP_SQL2="${SCRIPT_DIR}/../../back/migrations/0002_better_rules.up.sql"
-UP_SQL6="${SCRIPT_DIR}/../../back/migrations/0006_unified_service_config.up.sql"
+UP_SQL7="${SCRIPT_DIR}/../../back/migrations/0007_storage_quotas.up.sql"
 
-CHECKSUM1="$(shasum -a 384 "$UP_SQL1" | awk '{print $1}')"
-CHECKSUM2="$(shasum -a 384 "$UP_SQL2" | awk '{print $1}')"
-CHECKSUM6="$(shasum -a 384 "$UP_SQL6" | awk '{print $1}')"
-echo "current up.sql SHA-384: ${CHECKSUM1} and ${CHECKSUM2}"
+CHECKSUM7="$(shasum -a 384 "$UP_SQL7" | awk '{print $1}')"
 
 # The dev DB (archypix_back) is rebuilt via `sqlx migrate revert/run`; only the seeded test DBs
 # need patching. Override with e.g. `DBS="archypix_back archypix_back1"` if needed.
@@ -30,11 +25,7 @@ DBS="${DBS:-archypix_back archypix_back1 archypix_back2 archypix_back3}"
 for db in $DBS; do
   echo "==> patching ${db} _sqlx_migrations version 1"
   docker exec -i "$CONTAINER" psql -U archypix -d "$db" -v ON_ERROR_STOP=1 \
-    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM1}', 'hex') WHERE version = 1;"
-  docker exec -i "$CONTAINER" psql -U archypix -d "$db" -v ON_ERROR_STOP=1 \
-    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM2}', 'hex') WHERE version = 2;"
-  docker exec -i "$CONTAINER" psql -U archypix -d "$db" -v ON_ERROR_STOP=1 \
-    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM6}', 'hex') WHERE version = 6;"
+    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM7}', 'hex') WHERE version = 7;"
 done
 
 echo "Migration checksums updated."

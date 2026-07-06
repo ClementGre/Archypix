@@ -1,6 +1,6 @@
 import {Link, NavLink, useLocation, useNavigate} from 'react-router-dom'
 import {useQueryClient} from '@tanstack/react-query'
-import {Images, LogOut, Moon, PanelLeft, PanelRight, RefreshCw, Settings, Shield, Sun, Trash2, Upload, User as UserIcon, Wand2,} from 'lucide-react'
+import {Images, LogOut, Moon, Network, PanelLeft, PanelRight, RefreshCw, Shield, Sun, Trash2, Upload, User as UserIcon, Wand2,} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Avatar, AvatarFallback} from '@/components/ui/avatar'
 import {
@@ -32,7 +32,6 @@ const NAV: NavItem[] = [
     {to: '/', label: 'Gallery', icon: Images, end: true},
     {to: '/tagging', label: 'Tagging services', icon: Wand2},
     {to: '/trash', label: 'Trash', icon: Trash2},
-    {to: '/admin', label: 'Admin', icon: Shield, adminOnly: true},
 ]
 
 function initials(name: string): string {
@@ -201,9 +200,21 @@ export function TopBar() {
                         </div>
 
                         <DropdownMenuItem onClick={() => navigate('/settings')}>
-                            <Settings className="mr-2 h-4 w-4"/>
-                            Settings
+                            <UserIcon className="mr-2 h-4 w-4"/>
+                            Profile
                         </DropdownMenuItem>
+                        {user?.is_admin && (
+                            <>
+                                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                                    <Shield className="mr-2 h-4 w-4"/>
+                                    Admin
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate('/admin/resolver')}>
+                                    <Network className="mr-2 h-4 w-4"/>
+                                    Fleet dashboard
+                                </DropdownMenuItem>
+                            </>
+                        )}
                         <DropdownMenuSeparator/>
                         <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
                             <LogOut className="mr-2 h-4 w-4"/>

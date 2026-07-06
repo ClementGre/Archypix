@@ -410,7 +410,7 @@ The pipeline re-announce it triggers via `PipelineWaker` starts its own root (ou
 ### 4.5 Hop B — backend → backend (federation), allowlist-gated
 
 **Config.** Add `trace_propagation_peers: Vec<String>` to
-[`back/src/infra/config.rs`](../../back/src/infra/config.rs) `Config` (parse a comma-separated
+[`back/src/infra/config.rs`](../../back/src/infra/settings.rs) `Config` (parse a comma-separated
 `TRACE_PROPAGATION_PEERS` env var of **global domains**; default empty). These are the peers that
 share this operator's Jaeger.
 

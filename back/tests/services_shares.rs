@@ -2,20 +2,20 @@ mod common;
 
 use archypix_back::clients::federation::models::AnnouncedPicture;
 use archypix_back::domain::share::ShareStatus;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::services::shares;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
+use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 /// Accept a same-backend incoming share, then drive the sender's pipeline so its pictures are
 /// announced (the initial announce is pipeline-driven: accept moves the OutgoingShare to
@@ -23,19 +23,19 @@ fn config() -> Config {
 /// and the spawned task runner registers the received pictures).
 async fn accept_and_announce(
     db: &PgPool,
-    config: &Config,
-    acceptor_id: uuid::Uuid,
+    settings: &Arc<Settings>,
+    acceptor_id: Uuid,
     acceptor_name: &str,
-    incoming_id: uuid::Uuid,
-    sender_id: uuid::Uuid,
+    incoming_id: Uuid,
+    sender_id: Uuid,
 ) {
-    let (fed, cache) = common::make_federation(config);
-    let (_queue, notify) = common::test_task_queue(db, config);
+    let (fed, cache) = common::make_federation(settings);
+    let (_queue, notify) = common::test_task_queue(db, settings);
     shares::accept_incoming_share(
         db,
         cache.as_ref(),
         &fed,
-        config,
+        settings,
         &notify,
         acceptor_id,
         acceptor_name,
@@ -43,7 +43,7 @@ async fn accept_and_announce(
     )
     .await
     .unwrap();
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), config, &notify, sender_id)
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), settings, &notify, sender_id)
         .await
         .unwrap();
 }
@@ -51,18 +51,18 @@ async fn accept_and_announce(
 /// Share Alice's `tag_path` with Bob (same backend — recipient_instance = global_domain).
 async fn alice_shares_with_bob(
     db: &PgPool,
-    alice_id: uuid::Uuid,
+    alice_id: Uuid,
     tag_path: &str,
 ) -> archypix_back::domain::share::OutgoingShare {
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let notify = archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     shares::create_outgoing_share(
         db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -109,15 +109,15 @@ async fn create_outgoing_share_same_backend_creates_incoming_share(db: PgPool) {
 async fn create_outgoing_share_propagates_name_and_message_same_backend(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     common::seed_user(&db, "bob", "pass").await;
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     let share = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -151,15 +151,15 @@ async fn create_outgoing_share_propagates_name_and_message_same_backend(db: PgPo
 async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     common::seed_user(&db, "bob", "pass").await;
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     let result = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -175,10 +175,7 @@ async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
     )
     .await;
     assert!(
-        matches!(
-            result,
-            Err(archypix_back::infra::error::AppError::BadRequest(_))
-        ),
+        matches!(result, Err(AppError::BadRequest(_))),
         "blank share name must be rejected, got {result:?}"
     );
 }
@@ -186,16 +183,16 @@ async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     // `localhost` is a forbidden federation target (SSRF guard, 07_security_audit.md §2.4).
     let result = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -211,10 +208,7 @@ async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
     )
     .await;
     assert!(
-        matches!(
-            result,
-            Err(archypix_back::infra::error::AppError::BadRequest(_))
-        ),
+        matches!(result, Err(AppError::BadRequest(_))),
         "localhost recipient must be rejected, got {result:?}"
     );
 }
@@ -224,17 +218,16 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     common::seed_user(&db, "bob", "pass").await;
 
-    let mut config = config();
-    config.max_pending_outgoing_shares = 1;
-    let (fed, cache) = common::make_federation(&config);
-    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[("MAX_PENDING_OUTGOING_SHARES", "1")]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     // First pending share is accepted.
     shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -256,7 +249,7 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -272,10 +265,7 @@ async fn create_outgoing_share_enforces_pending_cap(db: PgPool) {
     )
     .await;
     assert!(
-        matches!(
-            result,
-            Err(archypix_back::infra::error::AppError::TooManyRequests(_))
-        ),
+        matches!(result, Err(AppError::TooManyRequests(_))),
         "second pending share must hit the cap, got {result:?}"
     );
 }
@@ -296,7 +286,15 @@ async fn accept_incoming_share_registers_pictures(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    accept_and_announce(&db, &config(), bob_id, "bob", incoming.id, alice_id).await;
+    accept_and_announce(
+        &db,
+        &test_settings_with(&[]),
+        bob_id,
+        "bob",
+        incoming.id,
+        alice_id,
+    )
+        .await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob_id).await,
@@ -325,19 +323,19 @@ async fn accept_incoming_share_is_idempotent(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
 
     // First accept → announces the picture via the pipeline.
-    accept_and_announce(&db, &config, bob_id, "bob", incoming.id, alice_id).await;
+    accept_and_announce(&db, &settings, bob_id, "bob", incoming.id, alice_id).await;
 
     // Second accept — must be a no-op (share already Active; no duplicate pictures).
     shares::accept_incoming_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
-        &archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected(),
+        &settings,
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         "bob",
         incoming.id,
@@ -366,20 +364,20 @@ async fn revoke_outgoing_share_removes_shared_tags(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
 
     // Bob accepts → pipeline announces → picture + tag appear
-    accept_and_announce(&db, &config, bob_id, "bob", incoming.id, alice_id).await;
+    accept_and_announce(&db, &settings, bob_id, "bob", incoming.id, alice_id).await;
     assert_eq!(common::count_received_pictures(&db, bob_id).await, 1);
 
     // Alice revokes → tag removed, unreachable received picture deleted
-    let (tq, notify) = common::test_task_queue(&db, &config);
+    let (tq, notify) = common::test_task_queue(&db, &settings);
     shares::revoke_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &tq,
         &notify,
         alice_id,
@@ -412,16 +410,16 @@ async fn revoke_outgoing_share_before_accept_leaves_no_incoming_tags(db: PgPool)
     let _bob_id = common::seed_user(&db, "bob", "pass").await;
 
     let share = alice_shares_with_bob(&db, alice_id, "vacation").await;
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
 
     // Revoke immediately, before Bob accepts (no received pictures yet)
-    let (tq, notify) = common::test_task_queue(&db, &config);
+    let (tq, notify) = common::test_task_queue(&db, &settings);
     shares::revoke_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &tq,
         &notify,
         alice_id,
@@ -451,16 +449,16 @@ async fn reject_incoming_share_pending_tombstones_outgoing(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
 
     // Bob rejects a pending share
-    let (tq, notify) = common::test_task_queue(&db, &config);
+    let (tq, notify) = common::test_task_queue(&db, &settings);
     shares::reject_incoming_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &tq,
         &notify,
         bob_id,
@@ -496,20 +494,20 @@ async fn reject_incoming_share_active_removes_tags(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
 
     // Bob accepts first → pipeline announces the picture
-    accept_and_announce(&db, &config, bob_id, "bob", incoming.id, alice_id).await;
+    accept_and_announce(&db, &settings, bob_id, "bob", incoming.id, alice_id).await;
     assert_eq!(common::count_received_pictures(&db, bob_id).await, 1);
 
     // Then rejects → cleanup must run
-    let (tq, notify) = common::test_task_queue(&db, &config);
+    let (tq, notify) = common::test_task_queue(&db, &settings);
     shares::reject_incoming_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &tq,
         &notify,
         bob_id,
@@ -717,16 +715,16 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
         .unwrap()
         .unwrap();
 
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let notify = archypix_back::infra::routine::RoutineHandle::<uuid::Uuid>::disconnected();
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     // Share 2: "trip" → Bob (different tag — no unique-constraint conflict)
     let share2 = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -749,8 +747,8 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
 
     // Bob accepts both → same received picture row, two incoming_share tags (announced by the
     // sender's pipeline).
-    accept_and_announce(&db, &config, bob_id, "bob", incoming1.id, alice_id).await;
-    accept_and_announce(&db, &config, bob_id, "bob", incoming2.id, alice_id).await;
+    accept_and_announce(&db, &settings, bob_id, "bob", incoming1.id, alice_id).await;
+    accept_and_announce(&db, &settings, bob_id, "bob", incoming2.id, alice_id).await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob_id).await,
@@ -759,12 +757,12 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
     );
 
     // Revoke share1 → removes its incoming_share tag, but share2's tag remains
-    let (tq, notify) = common::test_task_queue(&db, &config);
+    let (tq, notify) = common::test_task_queue(&db, &settings);
     shares::revoke_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &tq,
         &notify,
         alice_id,

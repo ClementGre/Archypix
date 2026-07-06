@@ -41,6 +41,8 @@ x-workspace-volumes: &workspace-volumes
   - ../common/src:/workspace/common/src
   - ../common/Cargo.toml:/workspace/common/Cargo.toml
   # Resolver source
+  - ../resolver/.sqlx:/workspace/resolver/.sqlx
+  - ../resolver/migrations:/workspace/resolver/migrations
   - ../resolver/src:/workspace/resolver/src
   - ../resolver/Cargo.toml:/workspace/resolver/Cargo.toml
   # Workspace root

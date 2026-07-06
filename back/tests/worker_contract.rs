@@ -16,10 +16,11 @@ mod common;
 
 use archypix_back::domain::auth::TokenType;
 use archypix_back::domain::job::JobStatus;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::crypto::JwtService;
+use archypix_back::infra::settings::{keys, test_settings_with};
 use archypix_back::repository::job::JobRepository;
 use archypix_back::services::jobs::enqueue_thumbnail_job;
+use archypix_common::settings::Settings;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use serde_json::Value;
@@ -32,15 +33,18 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /// Issue a short-lived worker JWT for `worker_id`.
-fn worker_token(config: &Config) -> String {
-    let jwt = JwtService::new(&config.worker_jwt_secret, &config.back_domain);
+fn worker_token(settings: &Settings) -> String {
+    let jwt = JwtService::new(
+        &settings.get(keys::WORKER_JWT_SECRET),
+        &settings.get(keys::BACK_DOMAIN),
+    );
     jwt.issue(
         "test-worker-01",
         None,
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         TokenType::Worker,
         false,
-        &config.back_domain,
+        &settings.get(keys::BACK_DOMAIN),
         3600,
     )
     .unwrap()
@@ -79,8 +83,8 @@ async fn json_body(response: axum::response::Response) -> Value {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_claim_complete_cycle(db: PgPool) {
-    let config = Config::test_defaults();
-    let token = worker_token(&config);
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
 
     // Seed: user + picture + pending gen_thumbnail job
     let alice_id = common::seed_user(&db, "alice", "pass").await;
@@ -89,8 +93,8 @@ async fn worker_claim_complete_cycle(db: PgPool) {
         .await
         .unwrap();
 
-    let app =
-        archypix_back::api::routes(&config).with_state(common::test_app_state(db.clone(), &config));
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
 
     // ── 1. Claim the job ──────────────────────────────────────────────────────
     let resp = app
@@ -193,8 +197,8 @@ async fn worker_claim_complete_cycle(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
-    let config = Config::test_defaults();
-    let token = worker_token(&config);
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
 
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
@@ -202,8 +206,8 @@ async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
         .await
         .unwrap();
 
-    let app =
-        archypix_back::api::routes(&config).with_state(common::test_app_state(db.clone(), &config));
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
 
     // Claim
     let resp = app
@@ -244,8 +248,8 @@ async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_fail_wrong_token_returns_conflict(db: PgPool) {
-    let config = Config::test_defaults();
-    let token = worker_token(&config);
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
 
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
@@ -253,8 +257,8 @@ async fn worker_fail_wrong_token_returns_conflict(db: PgPool) {
         .await
         .unwrap();
 
-    let app =
-        archypix_back::api::routes(&config).with_state(common::test_app_state(db.clone(), &config));
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
 
     // Claim (discard the real claim_token)
     app.clone()

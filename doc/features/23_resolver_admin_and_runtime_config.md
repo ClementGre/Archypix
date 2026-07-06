@@ -109,7 +109,7 @@ first heartbeat delivers the first delegation token. Until then the backend is *
 endpoints + credentials, `JWT_SECRET` / `WORKER_JWT_SECRET` / `RESOLVER_JWT_SECRET`, resolver admin
 secret, `LISTEN_ADDR`, `BACK_DOMAIN` / `GLOBAL_DOMAIN` / `BACK_USE_HTTPS`, `USE_RESOLVER`,
 `RESOLVER_INTERNAL_URL` / `BACK_INTERNAL_URL`, `CONFIG_FILE`-style bootstrap. These stay on the existing
-immutable [`Config`](../../back/src/infra/config.rs).
+immutable [`Config`](../../back/src/infra/settings.rs).
 
 **Runtime — layered & dashboard-editable:** retention days, all rate-limit + pending-share caps, all
 routine intervals/batches (pipeline/job/purge/exif-drain), `default_storage_quota_bytes`, trace
@@ -326,6 +326,11 @@ the worker lacks today.)
   `ResolverDelegation` and `ResolverAdminSession`.
 - **Registration:** `RegistrationMode`, `Invite`, and validation/redemption logic move to
   `common::registration`, used identically by the resolver and by a standalone backend.
+- **Error:** `AppError` (+ `map_sqlx_error`, the `From<AuthError>`/`From<SettingsError>`/
+  `From<sqlx::Error>`/`From<anyhow::Error>` conversions) moves to `common::error` (feature-gated
+  `error`, with `sqlx`/`auth`/`settings` further gating the conversions that need those types),
+  unifying the backend's and resolver's near-identical hand-rolled enums. Both crates' `infra/error.rs`
+  / `error.rs` are now thin re-export shims.
 
 ---
 

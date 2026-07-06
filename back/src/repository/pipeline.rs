@@ -5,7 +5,7 @@
 //! bulk tag-assignment logic specific to pipeline output.
 
 use crate::domain::job::CameraExif;
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::NaiveDateTime;
 use sqlx::types::Json;
 use sqlx::{Executor, PgPool, Postgres};

@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code, max_uses, uses, expires_at, created_by FROM invites ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "max_uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "max_uses"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "uses"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "created_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0b4f4ea728454410b12725b449a4eaa47391e1ce66c38f7c005a5ef46334e3af"
+}

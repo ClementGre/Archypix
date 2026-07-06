@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT token_hash, refresh_token_hash, refresh_expires_at FROM resolver_admin WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "token_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "resolver_admin",
+            "name": "token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "refresh_token_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "resolver_admin",
+            "name": "refresh_token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "refresh_expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "resolver_admin",
+            "name": "refresh_expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "27f1da0aa9a6814cd1e84c604db77060055c59d0c2df5ce05286a6b8f327ee00"
+}

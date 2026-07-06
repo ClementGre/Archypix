@@ -7,9 +7,9 @@
 
 use crate::domain::hierarchy::{NamingStrategy, SafeDeleteMode, TagOp, TagOpKind};
 use crate::domain::tag::TagPath;
-use crate::infra::error::AppError;
-use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
+use crate::infra::redis::{cache_get_json, cache_set_json_ex, RedisKey};
 use crate::infra::s3;
+use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
@@ -17,6 +17,7 @@ use crate::repository::user_settings::UserSettingsRepository;
 use crate::services::hierarchy::{self, ResolvedDir};
 use crate::services::pictures::{self, PictureVariant};
 use crate::state::AppState;
+use archypix_common::error::AppError;
 use base64::Engine as _;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -75,7 +76,12 @@ impl ByteSource<'_> {
             ByteSource::Staging { key } => {
                 state
                     .storage
-                    .copy_object(&state.config.s3_bucket_staging, key, dst_bucket, dst_key)
+                    .copy_object(
+                        &state.settings.get(keys::S3_BUCKET_STAGING),
+                        key,
+                        dst_bucket,
+                        dst_key,
+                    )
                     .await
             }
         }
@@ -176,7 +182,7 @@ impl<'a> Vfs<'a> {
     pub async fn quota_props(&self) -> Result<(i64, Option<i64>), AppError> {
         let info = crate::services::storage::storage_info(
             &self.state.db,
-            &self.state.config,
+            &self.state.settings,
             self.user_id,
         )
         .await?;
@@ -303,7 +309,7 @@ impl<'a> Vfs<'a> {
                 &self.state.db,
                 self.state.cache.as_ref(),
                 self.state.storage.as_ref(),
-                &self.state.config,
+                &self.state.settings,
                 &self.state.federation,
                 self.user_id,
                 pid,
@@ -318,7 +324,7 @@ impl<'a> Vfs<'a> {
             let data = self
                 .state
                 .storage
-                .get_object(&self.state.config.s3_bucket_pictures, &key)
+                .get_object(&self.state.settings.get(keys::S3_BUCKET_PICTURES), &key)
                 .await?;
             Ok(ReadTarget::Bytes {
                 data,
@@ -443,7 +449,7 @@ impl<'a> Vfs<'a> {
                 pictures::snapshot_version_on_overwrite(
                     &self.state.db,
                     self.state.storage.as_ref(),
-                    &self.state.config,
+                    &self.state.settings,
                     settings.versioning_mode,
                     &pic,
                 )
@@ -453,7 +459,7 @@ impl<'a> Vfs<'a> {
                 source
                     .copy_to(
                         self.state,
-                        &self.state.config.s3_bucket_pictures,
+                        &self.state.settings.get(keys::S3_BUCKET_PICTURES),
                         &key,
                         content_type,
                     )
@@ -533,7 +539,7 @@ impl<'a> Vfs<'a> {
         source
             .copy_to(
                 self.state,
-                &self.state.config.s3_bucket_pictures,
+                &self.state.settings.get(keys::S3_BUCKET_PICTURES),
                 &key,
                 content_type,
             )
@@ -1110,7 +1116,7 @@ impl<'a> Vfs<'a> {
         self.state
             .storage
             .put_object_file(
-                &self.state.config.s3_bucket_staging,
+                &self.state.settings.get(keys::S3_BUCKET_STAGING),
                 &staging_key,
                 temp_path,
                 content_type,
@@ -1134,7 +1140,7 @@ impl<'a> Vfs<'a> {
                 let _ = self
                     .state
                     .storage
-                    .delete_object(&self.state.config.s3_bucket_staging, &key)
+                    .delete_object(&self.state.settings.get(keys::S3_BUCKET_STAGING), &key)
                     .await;
             }
         }
@@ -1193,14 +1199,14 @@ impl<'a> Vfs<'a> {
             let url = self
                 .state
                 .storage
-                .presign_get(&self.state.config.s3_bucket_staging, &key)
+                .presign_get(&self.state.settings.get(keys::S3_BUCKET_STAGING), &key)
                 .await?;
             Ok(Some(ReadTarget::Redirect(url)))
         } else {
             let data = self
                 .state
                 .storage
-                .get_object(&self.state.config.s3_bucket_staging, &key)
+                .get_object(&self.state.settings.get(keys::S3_BUCKET_STAGING), &key)
                 .await?;
             Ok(Some(ReadTarget::Bytes {
                 data,
@@ -1220,7 +1226,7 @@ impl<'a> Vfs<'a> {
                 let _ = self
                     .state
                     .storage
-                    .delete_object(&self.state.config.s3_bucket_staging, &key)
+                    .delete_object(&self.state.settings.get(keys::S3_BUCKET_STAGING), &key)
                     .await;
             }
             trace!("vfs staging: dropped scratch file");
@@ -1236,7 +1242,7 @@ impl<'a> Vfs<'a> {
                     let _ = self
                         .state
                         .storage
-                        .delete_object(&self.state.config.s3_bucket_staging, key)
+                        .delete_object(&self.state.settings.get(keys::S3_BUCKET_STAGING), key)
                         .await;
                 }
             }
@@ -1288,7 +1294,7 @@ impl<'a> Vfs<'a> {
             let _ = self
                 .state
                 .storage
-                .delete_object(&self.state.config.s3_bucket_staging, &key)
+                .delete_object(&self.state.settings.get(keys::S3_BUCKET_STAGING), &key)
                 .await;
         }
         Ok(created)

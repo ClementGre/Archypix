@@ -4,15 +4,16 @@ use crate::api::admin::models::{
     InstanceStatsResponse, ListJobsQuery, UpdateUserRequest, UserStatsResponse,
 };
 use crate::api::middleware::auth_admin::AuthAdmin;
-use crate::infra::error::AppError;
-use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
+use crate::infra::redis::{cache_get_json, cache_set_json_ex, RedisKey};
+use crate::infra::settings::keys;
 use crate::repository::admin::AdminRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use crate::repository::user::UserRepository;
 use crate::services;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, Query, State};
+use axum::Json;
 use uuid::Uuid;
 
 const INSTANCE_STATS_TTL: u64 = 60;
@@ -44,7 +45,8 @@ pub async fn create_user(
         &payload.display_name,
         &payload.password,
         payload.is_admin.unwrap_or(false),
-        Some(state.config.default_storage_quota_bytes),
+        Some(state.settings.get(keys::DEFAULT_STORAGE_QUOTA_BYTES)),
+        None,
     )
     .await?;
     Ok(Json(AdminUserResponse {
@@ -54,8 +56,8 @@ pub async fn create_user(
         display_name: user.display_name,
         is_admin: user.is_admin,
         storage_bytes: 0,
-        quota_bytes: (state.config.default_storage_quota_bytes > 0)
-            .then_some(state.config.default_storage_quota_bytes),
+        quota_bytes: (state.settings.get(keys::DEFAULT_STORAGE_QUOTA_BYTES) > 0)
+            .then_some(state.settings.get(keys::DEFAULT_STORAGE_QUOTA_BYTES)),
         breakdown: Default::default(),
         usage_ratio: None,
     }))
@@ -125,19 +127,19 @@ pub async fn storage_audit(
 
     let prefix = format!("{user_id}/");
     let staging_prefix = format!("staging/{user_id}/");
-    let cfg = &state.config;
+    let cfg = &state.settings;
     let measure = |bucket: &str, pfx: String| {
         let storage = state.storage.clone();
         let bucket = bucket.to_string();
         async move { storage.prefix_usage(&bucket, &pfx).await }
     };
 
-    let pictures = measure(&cfg.s3_bucket_pictures, prefix.clone()).await?;
-    let versions = measure(&cfg.s3_bucket_versions, prefix.clone()).await?;
-    let small = measure(&cfg.s3_bucket_small, prefix.clone()).await?;
-    let medium = measure(&cfg.s3_bucket_medium, prefix.clone()).await?;
-    let large = measure(&cfg.s3_bucket_large, prefix.clone()).await?;
-    let staging = measure(&cfg.s3_bucket_staging, staging_prefix).await?;
+    let pictures = measure(&cfg.get(keys::S3_BUCKET_PICTURES), prefix.clone()).await?;
+    let versions = measure(&cfg.get(keys::S3_BUCKET_VERSIONS), prefix.clone()).await?;
+    let small = measure(&cfg.get(keys::S3_BUCKET_SMALL), prefix.clone()).await?;
+    let medium = measure(&cfg.get(keys::S3_BUCKET_MEDIUM), prefix.clone()).await?;
+    let large = measure(&cfg.get(keys::S3_BUCKET_LARGE), prefix.clone()).await?;
+    let staging = measure(&cfg.get(keys::S3_BUCKET_STAGING), staging_prefix).await?;
 
     let breakdown =
         crate::repository::user_storage::UserStorageRepository::get(&state.db, user_id).await?;
@@ -209,8 +211,8 @@ pub async fn get_instance(
         });
 
     Ok(Json(InstanceHealthResponse {
-        global_domain: state.config.global_domain.clone(),
-        back_domain: state.config.back_domain.clone(),
+        global_domain: state.settings.get(keys::GLOBAL_DOMAIN).clone(),
+        back_domain: state.settings.get(keys::BACK_DOMAIN).clone(),
         db_connected,
         redis_connected,
         last_worker_activity_at,
@@ -370,9 +372,11 @@ pub async fn list_stale_jobs(
     _auth: AuthAdmin,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AdminJobResponse>>, AppError> {
-    let jobs =
-        AdminRepository::list_stale_jobs(&state.db, state.config.job_processing_timeout_secs)
-            .await?;
+    let jobs = AdminRepository::list_stale_jobs(
+        &state.db,
+        state.settings.get(keys::JOB_PROCESSING_TIMEOUT_SECS),
+    )
+        .await?;
     Ok(Json(jobs))
 }
 

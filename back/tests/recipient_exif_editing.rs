@@ -8,21 +8,17 @@
 mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
-use archypix_back::infra::config::Config;
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline::{self};
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::share::IncomingShareRepository;
 use archypix_back::services::{federation, pictures, shares};
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 /// Alice shares `tag` with Bob (same backend), `allow_exif_edit = allow_edit`, Bob accepts, and
 /// Alice's pipeline announces the coverage. The owner picture is marked extraction-complete and
@@ -32,7 +28,7 @@ async fn editable_share(
     tag: &str,
     allow_edit: bool,
 ) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let alice_id = common::seed_user(db, "alice", "pass").await;
     let bob_id = common::seed_user(db, "bob", "pass").await;
     let alice_pic = common::seed_picture_with_tag(db, alice_id, tag).await;
@@ -45,14 +41,14 @@ async fn editable_share(
         .await
         .unwrap();
 
-    let (fed, cache) = common::make_federation(&cfg);
-    let (_queue, notify) = common::test_task_queue(db, &cfg);
+    let (fed, cache) = common::make_federation(&settings);
+    let (_queue, notify) = common::test_task_queue(db, &settings);
 
     let share = shares::create_outgoing_share(
         db,
         cache.as_ref(),
         &fed,
-        &cfg,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -79,7 +75,7 @@ async fn editable_share(
         db,
         cache.as_ref(),
         &fed,
-        &cfg,
+        &settings,
         &notify,
         bob_id,
         "bob",
@@ -87,7 +83,7 @@ async fn editable_share(
     )
     .await
     .unwrap();
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &notify, alice_id)
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &settings, &notify, alice_id)
         .await
         .unwrap();
 
@@ -96,10 +92,10 @@ async fn editable_share(
 }
 
 async fn run_alice(db: &PgPool, alice_id: Uuid) {
-    let cfg = config();
-    let (fed, cache) = common::make_federation(&cfg);
-    let (_queue, notify) = common::test_task_queue(db, &cfg);
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &notify, alice_id)
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let (_queue, notify) = common::test_task_queue(db, &settings);
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &settings, &notify, alice_id)
         .await
         .unwrap();
 }
@@ -125,14 +121,14 @@ async fn propose(
     set: FullExif,
     clear: Vec<ExifField>,
 ) -> Result<archypix_back::domain::picture::Picture, AppError> {
-    let cfg = config();
-    let (fed, cache) = common::make_federation(&cfg);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
     pictures::propose_received_exif(
         db,
         cache.as_ref(),
-        &cfg,
+        &settings,
         &fed,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         "bob",
         bob_pic,
@@ -223,7 +219,7 @@ async fn escalate_clears_local_override(db: PgPool) {
     // Bob first overrides gps_lat locally (private).
     pictures::override_received_exif(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif {
@@ -298,7 +294,7 @@ async fn owner_rejects_when_grant_revoked_in_flight(db: PgPool) {
     // The owner-side handler re-verifies the grant (never trusts the wire) → 403.
     let err = federation::receive_picture_edit_request(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         &alice_pic.to_string(),
         "bob",
         "test.com",
@@ -323,7 +319,7 @@ async fn owner_rejects_edit_for_uncovered_recipient(db: PgPool) {
         editable_share(&db, "vacation", true).await;
     let err = federation::receive_picture_edit_request(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         &alice_pic.to_string(),
         "mallory",
         "evil.com",

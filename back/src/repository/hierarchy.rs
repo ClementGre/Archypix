@@ -1,4 +1,4 @@
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::NaiveDateTime;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;

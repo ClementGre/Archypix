@@ -12,7 +12,7 @@
 //!   • pictures on a Pending share       → 404
 
 use crate::common;
-use crate::{cfg_a, cfg_b, post_fed};
+use crate::{post_fed, settings_a, settings_b};
 
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use axum::http::StatusCode;
@@ -27,10 +27,11 @@ pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migratio
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
-    let cfg = cfg_b();
+    let cfg = settings_b();
     common::seed_user(&db, "bob", "pass").await;
     let token = common::federation::federation_jwt(&cfg, "a.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -53,11 +54,12 @@ async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn announce_share_rejects_sender_instance_mismatch(db: PgPool) {
-    let cfg = cfg_b();
+    let cfg = settings_b();
     common::seed_user(&db, "bob", "pass").await;
     // JWT sub is "c.test" but payload claims sender_instance "a.test".
     let token = common::federation::federation_jwt(&cfg, "c.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -80,9 +82,10 @@ async fn announce_share_rejects_sender_instance_mismatch(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn announce_share_rejects_unknown_recipient(db: PgPool) {
-    let cfg = cfg_b();
+    let cfg = settings_b();
     let token = common::federation::federation_jwt(&cfg, "a.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -107,9 +110,10 @@ async fn announce_share_rejects_unknown_recipient(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn revoke_share_not_found_for_unknown_id(db: PgPool) {
-    let cfg = cfg_b();
+    let cfg = settings_b();
     let token = common::federation::federation_jwt(&cfg, "a.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -127,7 +131,7 @@ async fn revoke_share_not_found_for_unknown_id(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn reject_share_rejects_instance_mismatch(db: PgPool) {
-    let cfg = cfg_a();
+    let cfg = settings_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let share = OutgoingShareRepository::create(
         &db,
@@ -147,7 +151,8 @@ async fn reject_share_rejects_instance_mismatch(db: PgPool) {
 
     // JWT sub "c.test" ≠ share.recipient_instance "b.test".
     let token = common::federation::federation_jwt(&cfg, "c.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -165,7 +170,7 @@ async fn reject_share_rejects_instance_mismatch(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn accept_share_rejects_instance_mismatch(db: PgPool) {
-    let cfg = cfg_a();
+    let cfg = settings_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let share = OutgoingShareRepository::create(
         &db,
@@ -185,7 +190,8 @@ async fn accept_share_rejects_instance_mismatch(db: PgPool) {
 
     // JWT sub "c.test" ≠ share.recipient_instance "b.test".
     let token = common::federation::federation_jwt(&cfg, "c.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(
@@ -203,7 +209,7 @@ async fn accept_share_rejects_instance_mismatch(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn announce_pictures_rejects_pending_share(db: PgPool) {
-    let cfg = cfg_b();
+    let cfg = settings_b();
     let bob_id = common::seed_user(&db, "bob", "pass").await;
     let outgoing_id = Uuid::new_v4();
 
@@ -226,7 +232,8 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
     .unwrap();
 
     let token = common::federation::federation_jwt(&cfg, "a.test");
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_fed(

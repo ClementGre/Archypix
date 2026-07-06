@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (username, email, display_name, is_admin)\n               VALUES ($1, $2, $3, $4)\n               RETURNING id, username, email, display_name, is_admin, created_at, updated_at",
+  "query": "INSERT INTO users (username, email, display_name, is_admin, invited_by)\n               VALUES ($1, $2, $3, $4, $5)\n               RETURNING id, username, email, display_name, is_admin, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -86,7 +86,8 @@
         "Varchar",
         "Varchar",
         "Varchar",
-        "Bool"
+        "Bool",
+        "Varchar"
       ]
     },
     "nullable": [
@@ -99,5 +100,5 @@
       false
     ]
   },
-  "hash": "b212700edcf857ccf368676c42d1acd4c7e53c78e2379a0201f86e594dfdc108"
+  "hash": "202c4737d4f8e5f6ee453798bdfb34082fc3550f0713e2317362d7d5d44a57da"
 }

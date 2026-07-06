@@ -1,0 +1,208 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM backends WHERE back_domain = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "back_domain",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "back_domain"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "use_https",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "use_https"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "internal_url",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "internal_url"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "delegation_token",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "delegation_token"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "delegation_expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "delegation_expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "user_count",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "user_count"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "picture_count",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "picture_count"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "storage_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "storage_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "last_heartbeat_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "last_heartbeat_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "healthy",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "healthy"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "reachable",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "reachable"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "accepting_registrations",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "accepting_registrations"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "max_users",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "max_users"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "last_selected_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backends",
+            "name": "last_selected_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "44c0ded9980148e86a6a0c9184181958783e4de32bb30ba196a79100733ab64e"
+}

@@ -5,16 +5,17 @@
 //! PROPFIND/PROPPATCH XML small enough to build directly. Locking is advisory/fake (class 2 for
 //! Finder): LOCK returns a token, nothing is enforced.
 
-use crate::infra::error::AppError;
+use crate::infra::settings::keys;
 use crate::services::vfs::{ReadTarget, Vfs, VfsEntry};
 use crate::services::webdav;
 use crate::state::AppState;
-use axum::Router;
+use archypix_common::error::AppError;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use axum::Router;
 use base64::Engine as _;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -174,8 +175,11 @@ async fn put(
     // Stream the body to a temp file (never buffered in memory), then hash it with the common
     // crate's chunked hasher — we need the SHA-256 before deciding whether to upload to S3 or
     // just retag an existing picture (06_webdav.md §7–8).
-    let (tmp, hash, size) =
-        stream_to_temp(req.into_body(), state.config.webdav_max_upload_bytes).await?;
+    let (tmp, hash, size) = stream_to_temp(
+        req.into_body(),
+        state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES),
+    )
+        .await?;
 
     let created = vfs
         .put_file(
@@ -439,8 +443,11 @@ async fn staging(
                 .get(header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
-            let (tmp, hash, size) =
-                stream_to_temp(req.into_body(), state.config.webdav_max_upload_bytes).await?;
+            let (tmp, hash, size) = stream_to_temp(
+                req.into_body(),
+                state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES),
+            )
+                .await?;
             // An empty placeholder PUT (Finder/Preview issue one first) — accept, stage nothing.
             if size == 0 {
                 return Ok(empty(StatusCode::CREATED));
@@ -578,7 +585,7 @@ async fn ignored(
             // Sidecars are tiny; buffer with a small cap (oversized bodies are accepted but not stored).
             let bytes = axum::body::to_bytes(
                 req.into_body(),
-                state.config.webdav_max_upload_bytes as usize,
+                state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES) as usize,
             )
             .await
             .map_err(|e| AppError::BadRequest(format!("failed to read body: {e}")))?;

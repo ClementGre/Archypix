@@ -1,20 +1,16 @@
 mod common;
 
-use archypix_back::infra::config::Config;
-use archypix_back::infra::error::AppError;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::picture::{PictureSortField, SortOrder};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::hierarchy::{self, BrowseParams};
 use archypix_back::state::AppState;
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 /// Insert a picture and assign it manual tags.
 async fn pic_with_tags(db: &PgPool, user: Uuid, tags: &[&str]) -> Uuid {
@@ -58,12 +54,11 @@ fn browse_params() -> BrowseParams {
 }
 
 async fn browse_ids(state: &AppState, user: Uuid, id: Uuid, path: &str) -> HashSet<Uuid> {
-    let cfg = config();
     let res = hierarchy::browse(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &cfg,
+        &test_settings_with(&[]),
         &state.federation,
         user,
         id,
@@ -207,8 +202,7 @@ async fn mirror_keep_dir_false_strips_root_label(db: PgPool) {
 async fn root_has_no_direct_files(db: PgPool) {
     // The synthetic root is a pure container: browsing "" surfaces no pictures, even pictures
     // not covered by any node and even for an empty hierarchy (it carries no predicate).
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     pic_with_tags(&db, user, &["Photos.Travel"]).await;
@@ -225,8 +219,7 @@ async fn root_has_no_direct_files(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_browse_most_specific_wins(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let alps = pic_with_tags(&db, user, &["Photos.Travel.Alps"]).await;
@@ -254,8 +247,7 @@ async fn mirror_browse_most_specific_wins(db: PgPool) {
 async fn mirror_multi_source_deepest_wins(db: PgPool) {
     // A picture with manual Photos.Travel AND rule Photos.Travel.France belongs to France,
     // not directly to Travel (§5.3 governing case).
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let p = pic_with_tags(&db, user, &["Photos.Travel"]).await;
@@ -279,8 +271,7 @@ async fn mirror_multi_source_deepest_wins(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_collapsed_rolls_up(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let day1 = pic_with_tags(&db, user, &["Photos.Travel.Alps.Hiking.Day1"]).await;
@@ -307,8 +298,7 @@ async fn mirror_collapsed_rolls_up(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_exclude_prunes(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let only_outdoor = pic_with_tags(&db, user, &["Photos.Outdoor.Trees"]).await;
@@ -344,8 +334,7 @@ async fn mirror_exclude_prunes(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn query_nested_inherits_ancestor_predicate(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let both = pic_with_tags(&db, user, &["Starred", "Photos.Travel"]).await;
@@ -379,8 +368,7 @@ async fn keep_dir_false_mirror_bubbles_root_tag_into_query_parent(db: PgPool) {
     // that picture surfaces as a direct file of the query: the query has a predicate, and the
     // mirror never contributes a tagRoot `own_for_parent` term for the parent to subtract.
     // Deeper-tag pictures still go to their own hoisted subdirectory (most-specific-wins).
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let exact = pic_with_tags(&db, user, &["Photos"]).await;
@@ -420,8 +408,7 @@ async fn keep_dir_false_mirror_bubbles_root_tag_into_query_parent(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn query_match_untagged(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let untagged = common::seed_picture(&db, user).await;
@@ -488,8 +475,7 @@ async fn tree_bad_path_is_not_found(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn drop_dir_always_shown_empty_and_writable(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
     // A picture exists but the drop dir never lists it.
     pic_with_tags(&db, user, &["Inbox"]).await;
@@ -518,8 +504,7 @@ async fn drop_dir_always_shown_empty_and_writable(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_max_depth_collapse_rolls_up(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let deep = pic_with_tags(&db, user, &["Photos.Travel.Alps.Hiking"]).await;
@@ -546,8 +531,7 @@ async fn mirror_max_depth_collapse_rolls_up(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_max_depth_exclude_drops_deeper(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let deep_only = pic_with_tags(&db, user, &["Photos.Travel.Alps.Hiking"]).await;
@@ -573,8 +557,7 @@ async fn mirror_max_depth_exclude_drops_deeper(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn mirror_foreign_exclude_cuts_pictures_not_dirs(db: PgPool) {
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let clean = pic_with_tags(&db, user, &["Photos.Travel"]).await;
@@ -682,8 +665,7 @@ async fn mirror_exclude_cuts_picture_from_ancestor_dir(db: PgPool) {
     // directory, even when the picture independently carries the exact ancestor tag from another
     // source (a rule/segment `Photos` row) — otherwise it leaks into /Photos despite excluding
     // /Photos/Test (matches the query-node behaviour). Sibling branches are unaffected.
-    let cfg = config();
-    let state = common::test_app_state(db.clone(), &cfg);
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let excluded = pic_with_tags(&db, user, &["Photos.Test"]).await;

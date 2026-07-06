@@ -1,5 +1,5 @@
 use crate::domain::user::User;
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
@@ -60,19 +60,21 @@ impl UserRepository {
         email: &str,
         display_name: &str,
         is_admin: bool,
+        invited_by: Option<&str>,
     ) -> Result<User, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
         sqlx::query_as!(
             User,
-            r#"INSERT INTO users (username, email, display_name, is_admin)
-               VALUES ($1, $2, $3, $4)
+            r#"INSERT INTO users (username, email, display_name, is_admin, invited_by)
+               VALUES ($1, $2, $3, $4, $5)
                RETURNING id, username, email, display_name, is_admin, created_at, updated_at"#,
             username,
             email,
             display_name,
-            is_admin
+            is_admin,
+            invited_by
         )
         .fetch_one(ex)
         .await

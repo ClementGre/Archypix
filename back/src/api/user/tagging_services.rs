@@ -4,14 +4,14 @@ use crate::domain::tag::TagPath;
 use crate::domain::tagging::{
     RuleItem, ServiceConfig, ServiceType, SharedMappingConfig, TaggingService,
 };
-use crate::infra::error::AppError;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use crate::services;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, Query, State};
+use axum::Json;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

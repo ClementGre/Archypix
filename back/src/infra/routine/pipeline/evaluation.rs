@@ -3,11 +3,12 @@
 use crate::domain::pipeline::PipelineInput;
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceConfig;
-use crate::infra::error::AppError;
-use crate::infra::routine::pipeline::{PipelineRun, announcement, dedup};
+use crate::infra::routine::pipeline::{announcement, dedup, PipelineRun};
+use crate::infra::settings::keys;
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
+use archypix_common::error::AppError;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -15,7 +16,6 @@ use uuid::Uuid;
 
 pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), AppError> {
     let db = run.db;
-    let config = run.config;
     let run_at = Utc::now().naive_utc();
 
     // ── Content dedup reconcile (feature 11 §5) ─────────────────────────────────
@@ -182,8 +182,11 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
         }
 
         // Optional backpressure between batches.
-        if config.pipeline_batch_sleep_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(config.pipeline_batch_sleep_ms)).await;
+        if run.settings.get(keys::PIPELINE_BATCH_SLEEP_MS) > 0 {
+            tokio::time::sleep(Duration::from_millis(
+                run.settings.get(keys::PIPELINE_BATCH_SLEEP_MS),
+            ))
+                .await;
         }
     }
 

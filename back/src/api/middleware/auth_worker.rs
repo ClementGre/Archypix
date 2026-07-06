@@ -1,7 +1,8 @@
 use super::bearer_token;
 use crate::domain::auth::{JwtClaims, TokenType};
-use crate::infra::error::AppError;
+use crate::infra::settings::keys;
 use crate::state::AppState;
+use archypix_common::error::AppError;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
@@ -33,7 +34,7 @@ impl FromRequestParts<AppState> for AuthWorker {
         // decode_any_issuer: skip issuer check (worker may be on any host).
         let claims = state
             .worker_jwt
-            .decode_any_issuer(&token, &state.config.back_domain)?;
+            .decode_any_issuer(&token, &state.settings.get(keys::BACK_DOMAIN))?;
 
         if claims.token_type != TokenType::Worker {
             return Err(AppError::Unauthorized(

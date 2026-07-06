@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO backends (back_domain, use_https, internal_url) VALUES ($1, $2, $3)\n         ON CONFLICT (back_domain) DO UPDATE SET use_https = $2, internal_url = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Bool",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b21a6c3677046d2d86af8724b1d23b24aae26e1b462386a2595045f1e32b4da7"
+}

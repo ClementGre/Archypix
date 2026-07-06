@@ -20,8 +20,8 @@ RUN for pkg in common back resolver worker; do \
 
 COPY back/.sqlx ./back/.sqlx
 COPY back/migrations ./back/migrations
-COPY common/src ./common/src
 COPY back/src ./back/src
+COPY common/src ./common/src
 RUN find common/src back/src -type f -exec touch {} + && cargo build --release -p archypix-back
 
 # ---- production runtime ----

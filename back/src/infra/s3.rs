@@ -1,9 +1,9 @@
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
+use crate::infra::settings::keys;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
@@ -11,11 +11,12 @@ use aws_sdk_s3::types::{
     BucketLifecycleConfiguration, ExpirationStatus, LifecycleExpiration, LifecycleRule,
     LifecycleRuleFilter,
 };
+use aws_sdk_s3::Client;
 use base64::Engine as _;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
-
 // ── Storage trait ─────────────────────────────────────────────────────────────
 
 /// Measured usage of an S3 key prefix (feature 22 §8.3): a paginated `ListObjectsV2` walk.
@@ -328,12 +329,12 @@ impl Storage for StorageClient {
     }
 }
 
-pub async fn connect(config: &Config) -> anyhow::Result<StorageClient> {
-    let region = Region::new(config.s3_region.clone());
+pub async fn connect(settings: &Arc<Settings>) -> anyhow::Result<StorageClient> {
+    let region = Region::new(settings.get(keys::S3_REGION).clone());
     let region_provider = RegionProviderChain::first_try(region);
     let credentials = Credentials::new(
-        config.s3_access_key.clone(),
-        config.s3_secret_key.clone(),
+        settings.get(keys::S3_ACCESS_KEY).clone(),
+        settings.get(keys::S3_SECRET_KEY).clone(),
         None,
         None,
         "static",
@@ -354,13 +355,15 @@ pub async fn connect(config: &Config) -> anyhow::Result<StorageClient> {
         )
     };
 
-    let client = mk_client(&config.s3_endpoint);
-    let presign_client = mk_client(&config.s3_public_endpoint);
-    let worker_presign_client = mk_client(&config.s3_workers_endpoint);
+    let client = mk_client(&settings.get(keys::S3_ENDPOINT));
+    let presign_client = mk_client(&settings.get(keys::S3_PUBLIC_ENDPOINT));
+    let worker_presign_client = mk_client(&settings.get(keys::S3_WORKERS_ENDPOINT));
 
     info!(
         "Connecting to MinIO/S3: {} (public: {}, workers: {})",
-        config.s3_endpoint, config.s3_public_endpoint, config.s3_workers_endpoint
+        settings.get(keys::S3_ENDPOINT),
+        settings.get(keys::S3_PUBLIC_ENDPOINT),
+        settings.get(keys::S3_WORKERS_ENDPOINT)
     );
     client
         .list_buckets()
@@ -369,33 +372,36 @@ pub async fn connect(config: &Config) -> anyhow::Result<StorageClient> {
         .map_err(|e| match e.as_service_error() {
             Some(svc) => anyhow::anyhow!(
                 "Failed to connect to MinIO/S3 at {}: {} (code: {}, message: {})",
-                config.s3_endpoint,
+                settings.get(keys::S3_ENDPOINT),
                 svc,
                 svc.meta().code().unwrap_or("unknown"),
                 svc.meta().message().unwrap_or("no message"),
             ),
             None => anyhow::anyhow!(
                 "Failed to connect to MinIO/S3 at {}: {}",
-                config.s3_endpoint,
+                settings.get(keys::S3_ENDPOINT),
                 e
             ),
         })?;
     info!("Connected to MinIO/S3");
 
-    let buckets = [
-        config.s3_bucket_staging.as_str(),
-        config.s3_bucket_pictures.as_str(),
-        config.s3_bucket_versions.as_str(),
-        config.s3_bucket_small.as_str(),
-        config.s3_bucket_medium.as_str(),
-        config.s3_bucket_large.as_str(),
+    use keys;
+    let bucket_names = [
+        settings.get(keys::S3_BUCKET_STAGING),
+        settings.get(keys::S3_BUCKET_PICTURES),
+        settings.get(keys::S3_BUCKET_VERSIONS),
+        settings.get(keys::S3_BUCKET_SMALL),
+        settings.get(keys::S3_BUCKET_MEDIUM),
+        settings.get(keys::S3_BUCKET_LARGE),
     ];
+    let buckets: Vec<&str> = bucket_names.iter().map(String::as_str).collect();
     ensure_buckets(&client, &buckets).await?;
-    if let Err(e) = ensure_staging_lifecycle(&client, &config.s3_bucket_staging).await {
+    if let Err(e) = ensure_staging_lifecycle(&client, &settings.get(keys::S3_BUCKET_STAGING)).await
+    {
         warn!("{}", e);
         warn!(
             "Staging bucket '{}' will not auto-expire — orphaned objects must be cleaned manually.",
-            config.s3_bucket_staging
+            settings.get(keys::S3_BUCKET_STAGING)
         );
     }
 
@@ -403,7 +409,7 @@ pub async fn connect(config: &Config) -> anyhow::Result<StorageClient> {
         client,
         presign_client,
         worker_presign_client,
-        Duration::from_secs(config.s3_presign_ttl_secs),
+        Duration::from_secs(settings.get(keys::S3_PRESIGN_TTL_SECS)),
     ))
 }
 

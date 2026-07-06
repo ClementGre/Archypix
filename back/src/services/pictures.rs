@@ -2,11 +2,10 @@ use crate::clients::federation::FederationClient;
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::picture::{Picture, PictureVersion, UploadSession};
 use crate::domain::tag::TagPath;
-use crate::infra::config::Config;
-use crate::infra::error::{AppError, map_sqlx_error};
-use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
+use crate::infra::redis::{cache_get_json, cache_set_json_ex, Cache, RedisKey};
 use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
+use crate::infra::settings::keys;
 use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
     PictureListFilter, PictureRepository, PictureSortField, ResolvedSelection, SortOrder,
@@ -14,12 +13,15 @@ use crate::repository::picture::{
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
+use archypix_common::error::{map_sqlx_error, AppError};
 use archypix_common::job::{ExifField, FullExif};
+use archypix_common::settings::Settings;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::trace;
 use uuid::Uuid;
 
@@ -34,12 +36,12 @@ pub enum PictureVariant {
 }
 
 impl PictureVariant {
-    pub fn bucket<'a>(&self, config: &'a Config) -> &'a str {
+    pub fn bucket(&self, settings: &Settings) -> String {
         match self {
-            PictureVariant::Original => &config.s3_bucket_pictures,
-            PictureVariant::Small => &config.s3_bucket_small,
-            PictureVariant::Medium => &config.s3_bucket_medium,
-            PictureVariant::Large => &config.s3_bucket_large,
+            PictureVariant::Original => settings.get(keys::S3_BUCKET_PICTURES),
+            PictureVariant::Small => settings.get(keys::S3_BUCKET_SMALL),
+            PictureVariant::Medium => settings.get(keys::S3_BUCKET_MEDIUM),
+            PictureVariant::Large => settings.get(keys::S3_BUCKET_LARGE),
         }
     }
 
@@ -223,12 +225,12 @@ fn upload_marker_tags(label: &str) -> Result<(String, String, String), AppError>
     ))
 }
 
-#[tracing::instrument(skip(db, cache, storage, config, files, initial_tags, waker), fields(user_id = %user_id, count = files.len()))]
+#[tracing::instrument(skip(db, cache, storage, settings, files, initial_tags, waker), fields(user_id = %user_id, count = files.len()))]
 pub async fn begin_upload_batch(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     files: &[BatchUploadFile],
     initial_tags: &[String],
@@ -302,7 +304,7 @@ pub async fn begin_upload_batch(
                 db,
                 cache,
                 storage,
-                config,
+                settings,
                 user_id,
                 &file.filename,
                 file.size,
@@ -320,7 +322,7 @@ pub async fn begin_upload_batch(
             db,
             cache,
             storage,
-            config,
+            settings,
             user_id,
             &file.filename,
             file.size,
@@ -371,12 +373,12 @@ pub async fn begin_upload_batch(
     Ok(outcomes)
 }
 
-#[tracing::instrument(skip(db, cache, storage, config), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, storage, settings), fields(user_id = %user_id))]
 pub async fn begin_upload(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     filename: &str,
     declared_size: Option<i64>,
@@ -408,12 +410,12 @@ pub async fn begin_upload(
     let s3_key_staging = format!("staging/{}/{}", user_id, picture_id);
 
     let presigned_url = storage
-        .presign_put(&config.s3_bucket_staging, &s3_key_staging)
+        .presign_put(&settings.get(keys::S3_BUCKET_STAGING), &s3_key_staging)
         .await?;
 
     // Reserve the declared bytes for the presign→complete window (auto-releases on TTL).
     if let Some(size) = declared_size {
-        crate::services::storage::reserve(cache, config, user_id, picture_id, size).await?;
+        crate::services::storage::reserve(cache, settings, user_id, picture_id, size).await?;
     }
 
     let session = UploadSession {
@@ -426,19 +428,19 @@ pub async fn begin_upload(
         cache,
         RedisKey::UploadSession(picture_id),
         &session,
-        config.s3_presign_ttl_secs + 60,
+        settings.get(keys::S3_PRESIGN_TTL_SECS) + 60,
     )
     .await?;
 
     Ok((picture_id, presigned_url))
 }
 
-#[tracing::instrument(skip(db, cache, storage, config, meta), fields(user_id = %user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, meta), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn complete_upload(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     picture_id: Uuid,
     meta: UploadMetadata,
@@ -476,19 +478,22 @@ pub async fn complete_upload(
     let pictures_key = s3::picture_key(user_id, picture_id);
     storage
         .copy_object(
-            &config.s3_bucket_staging,
+            &settings.get(keys::S3_BUCKET_STAGING),
             &session.s3_key_staging,
-            &config.s3_bucket_pictures,
+            &settings.get(keys::S3_BUCKET_PICTURES),
             &pictures_key,
         )
         .await?;
     storage
-        .delete_object(&config.s3_bucket_staging, &session.s3_key_staging)
+        .delete_object(
+            &settings.get(keys::S3_BUCKET_STAGING),
+            &session.s3_key_staging,
+        )
         .await?;
 
     // Authoritative size: read it back from S3 rather than trusting the client value
     let file_size = match storage
-        .object_size(&config.s3_bucket_pictures, &pictures_key)
+        .object_size(&settings.get(keys::S3_BUCKET_PICTURES), &pictures_key)
         .await
     {
         Ok(size) => Some(size),
@@ -505,7 +510,7 @@ pub async fn complete_upload(
     if let Some(size) = file_size {
         if !crate::services::storage::fits(cache, db, user_id, size).await? {
             let _ = storage
-                .delete_object(&config.s3_bucket_pictures, &pictures_key)
+                .delete_object(&settings.get(keys::S3_BUCKET_PICTURES), &pictures_key)
                 .await;
             return Err(AppError::PayloadTooLarge(
                 "upload would exceed your storage quota".to_string(),
@@ -572,14 +577,14 @@ pub async fn complete_upload(
 /// local source, presign+fetch for a cross-instance owner), seeded effective EXIF, and a
 /// `gen_thumbnail` enqueue. See doc/features/11 §3.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, storage, config, federation, waker), fields(user_id = %user_id, source_id = %source_picture_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, waker), fields(user_id = %user_id, source_id = %source_picture_id))]
 pub async fn copy_picture(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
-    waker: &crate::infra::routine::RoutineHandle<uuid::Uuid>,
+    waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     caller_username: &str,
     source_picture_id: Uuid,
@@ -606,9 +611,9 @@ pub async fn copy_picture(
     if source.is_owned() {
         storage
             .copy_object(
-                &config.s3_bucket_pictures,
+                &settings.get(keys::S3_BUCKET_PICTURES),
                 &s3::picture_key(user_id, source.id),
-                &config.s3_bucket_pictures,
+                &settings.get(keys::S3_BUCKET_PICTURES),
                 &new_key,
             )
             .await?;
@@ -623,13 +628,13 @@ pub async fn copy_picture(
                 AppError::InternalServerError("received picture missing remote_picture_id".into())
             })?;
         if let Some(owner_id) =
-            find_local_user_id(cache, db, config, owner_username, owner_instance).await?
+            find_local_user_id(cache, db, settings, owner_username, owner_instance).await?
         {
             storage
                 .copy_object(
-                    &config.s3_bucket_pictures,
+                    &settings.get(keys::S3_BUCKET_PICTURES),
                     &s3::picture_key(owner_id, remote_id),
-                    &config.s3_bucket_pictures,
+                    &settings.get(keys::S3_BUCKET_PICTURES),
                     &new_key,
                 )
                 .await?;
@@ -662,7 +667,7 @@ pub async fn copy_picture(
                 .to_vec();
             storage
                 .put_object(
-                    &config.s3_bucket_pictures,
+                    &settings.get(keys::S3_BUCKET_PICTURES),
                     &new_key,
                     bytes,
                     source.mime_type.as_deref(),
@@ -681,7 +686,7 @@ pub async fn copy_picture(
     } else if source.is_owned() {
         (
             Some(caller_username.to_string()),
-            Some(config.global_domain.clone()),
+            Some(settings.get(keys::GLOBAL_DOMAIN).clone()),
             Some(source.id.to_string()),
         )
     } else {
@@ -745,11 +750,11 @@ pub async fn copy_picture(
 /// Reuses the version-snapshot machinery of the worker edit path: S3 copy first (no DB record
 /// exists yet, so it is safe outside a transaction), then the version row in a transaction so
 /// `version_number` is computed and stored atomically. Returns whether a snapshot was taken.
-#[tracing::instrument(skip(db, storage, config, picture), fields(picture_id = %picture.id))]
+#[tracing::instrument(skip(db, storage, settings, picture), fields(picture_id = %picture.id))]
 pub async fn snapshot_version_on_overwrite(
     db: &PgPool,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     versioning_mode: crate::domain::user_settings::VersioningMode,
     picture: &Picture,
 ) -> Result<bool, AppError> {
@@ -768,9 +773,9 @@ pub async fn snapshot_version_on_overwrite(
     let version_id = Uuid::new_v4();
     storage
         .copy_object(
-            &config.s3_bucket_pictures,
+            &settings.get(keys::S3_BUCKET_PICTURES),
             &s3::picture_key(picture.local_user_id, picture.id),
-            &config.s3_bucket_versions,
+            &settings.get(keys::S3_BUCKET_VERSIONS),
             &s3::version_key(picture.local_user_id, picture.id, version_id),
         )
         .await?;
@@ -981,11 +986,11 @@ const ALL_EXIF_FIELDS: [ExifField; 12] = {
 /// authoritative change lands asynchronously (owner reconcile + re-announce), so the caller returns
 /// `202`. Returns the locally-updated picture (overrides cleared for the proposed fields).
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, config, federation, waker), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, settings, federation, waker), fields(user_id = %user_id))]
 pub async fn propose_received_exif(
     db: &PgPool,
     cache: &dyn Cache,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
@@ -1029,7 +1034,7 @@ pub async fn propose_received_exif(
     // share-announce same-backend short-circuit); cross-instance → federation. The owner validates
     // the fields and re-checks the grant, so an invalid/forbidden proposal errors here *before* we
     // clear any local override.
-    if find_local_user_id(cache, db, config, &owner_username, &owner_instance)
+    if find_local_user_id(cache, db, settings, &owner_username, &owner_instance)
         .await?
         .is_some()
     {
@@ -1038,7 +1043,7 @@ pub async fn propose_received_exif(
             waker,
             &remote_id,
             requester_username,
-            &config.global_domain,
+            &settings.get(keys::GLOBAL_DOMAIN),
             set.clone(),
             clear.clone(),
         )
@@ -1052,7 +1057,7 @@ pub async fn propose_received_exif(
                 &crate::clients::federation::models::PictureEditRequest {
                     picture_id: remote_id,
                     requester_username: requester_username.to_string(),
-                    requester_instance: config.global_domain.clone(),
+                    requester_instance: settings.get(keys::GLOBAL_DOMAIN).clone(),
                     set: set.clone(),
                     clear: clear.clone(),
                     idempotency_key: Uuid::new_v4().to_string(),
@@ -1249,12 +1254,12 @@ fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicat
     }))
 }
 
-#[tracing::instrument(skip(db, cache, storage, config, federation, params), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, params), fields(user_id = %user_id))]
 pub async fn list_pictures(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     user_id: Uuid,
     params: PictureListParams,
@@ -1284,7 +1289,7 @@ pub async fn list_pictures(
         db,
         cache,
         storage,
-        config,
+        settings,
         federation,
         user_id,
         filter,
@@ -1297,12 +1302,12 @@ pub async fn list_pictures(
 /// returned page. Shared by the public `GET /pictures` list and the hierarchy `browse` endpoint
 /// (which builds its `filter.predicate` server-side from the resolver).
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, storage, config, federation, filter), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, filter), fields(user_id = %user_id))]
 pub async fn list_with_filter(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     user_id: Uuid,
     filter: PictureListFilter,
@@ -1318,7 +1323,7 @@ pub async fn list_with_filter(
     let thumbnail_urls = if let Some(variant) = thumbnail {
         Some(
             presign_for_picture_list(
-                db, cache, storage, config, federation, user_id, &pictures, variant,
+                db, cache, storage, &settings, federation, user_id, &pictures, variant,
             )
             .await?,
         )
@@ -1367,20 +1372,20 @@ pub async fn list_with_filter(
 /// 2. Owned + same-backend cache misses: individual local S3 presigns (cheap, no network hop).
 /// 3. Cross-instance cache misses: grouped by (owner_username, owner_instance) → one HTTP call
 ///    per remote owner backend instead of one call per picture.
-#[tracing::instrument(skip(db, cache, storage, config, federation, pictures, _local_user_id), fields(user_id = %_local_user_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, pictures, _local_user_id), fields(user_id = %_local_user_id))]
 async fn presign_for_picture_list(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     _local_user_id: Uuid,
     pictures: &[Picture],
     variant: PictureVariant,
 ) -> Result<HashMap<Uuid, String>, AppError> {
-    let ttl = config
-        .s3_presign_ttl_secs
-        .saturating_sub(config.s3_presign_cache_margin_secs);
+    let ttl = settings
+        .get(keys::S3_PRESIGN_TTL_SECS)
+        .saturating_sub(settings.get(keys::S3_PRESIGN_CACHE_MARGIN_SECS));
 
     let mut urls: HashMap<Uuid, String> = HashMap::new();
     let mut misses: Vec<&Picture> = Vec::new();
@@ -1419,7 +1424,7 @@ async fn presign_for_picture_list(
             let owner_username = pic.owner_username.as_deref().unwrap_or_default();
             let owner_instance = pic.owner_instance_domain.as_deref().unwrap_or_default();
             if let Some(owner_id) =
-                find_local_user_id(cache, db, config, owner_username, owner_instance).await?
+                find_local_user_id(cache, db, settings, owner_username, owner_instance).await?
             {
                 same_backend_misses.push((pic, owner_id));
             } else {
@@ -1434,7 +1439,7 @@ async fn presign_for_picture_list(
     // Step 3: presign owned pictures locally
     for pic in owned_misses {
         let key = s3::picture_key(pic.local_user_id, pic.id);
-        let url = storage.presign_get(variant.bucket(config), &key).await?;
+        let url = storage.presign_get(&variant.bucket(settings), &key).await?;
         if ttl > 0 {
             let _ = cache
                 .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)
@@ -1453,7 +1458,7 @@ async fn presign_for_picture_list(
                 AppError::InternalServerError("received picture missing remote_picture_id".into())
             })?;
         let key = s3::picture_key(owner_id, remote_id);
-        let url = storage.presign_get(variant.bucket(config), &key).await?;
+        let url = storage.presign_get(&variant.bucket(settings), &key).await?;
         if ttl > 0 {
             let _ = cache
                 .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)
@@ -1497,12 +1502,12 @@ async fn presign_for_picture_list(
     Ok(urls)
 }
 
-#[tracing::instrument(skip(db, cache, storage, config, federation), fields(user_id = %local_user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation), fields(user_id = %local_user_id, picture_id = %picture_id))]
 pub async fn presign_picture_variant(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     local_user_id: Uuid,
     picture_id: Uuid,
@@ -1533,7 +1538,9 @@ pub async fn presign_picture_variant(
 
     let url = if pic.is_owned() {
         let key = s3::picture_key(pic.local_user_id, pic.id);
-        storage.presign_get(variant.bucket(config), &key).await?
+        storage
+            .presign_get(&variant.bucket(&settings), &key)
+            .await?
     } else {
         let owner_username = pic.owner_username.as_deref().unwrap_or_default();
         let owner_instance = pic.owner_instance_domain.as_deref().unwrap_or_default();
@@ -1549,11 +1556,11 @@ pub async fn presign_picture_variant(
         // Check if the owner lives on this backend (resolver setup allows multiple backends per
         // global domain). Cache the lookup to avoid a DB hit on every picture in a listing.
         if let Some(owner_id) =
-            find_local_user_id(cache, db, config, owner_username, owner_instance).await?
+            find_local_user_id(cache, db, settings, owner_username, owner_instance).await?
         {
             // Owner is on this backend — derive S3 key from their user_id + original picture id.
             let key = s3::picture_key(owner_id, remote_id);
-            storage.presign_get(variant.bucket(config), &key).await?
+            storage.presign_get(&variant.bucket(settings), &key).await?
         } else {
             // Owner is on a different backend — authorise via the picture's own token and call remote.
             let picture_token = TagRepository::find_active_picture_token(db, pic.id)
@@ -1582,9 +1589,9 @@ pub async fn presign_picture_variant(
         }
     };
 
-    let ttl = config
-        .s3_presign_ttl_secs
-        .saturating_sub(config.s3_presign_cache_margin_secs);
+    let ttl = settings
+        .get(keys::S3_PRESIGN_TTL_SECS)
+        .saturating_sub(settings.get(keys::S3_PRESIGN_CACHE_MARGIN_SECS));
     if ttl > 0 {
         cache
             .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)

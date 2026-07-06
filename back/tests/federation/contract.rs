@@ -8,12 +8,13 @@ use crate::common;
 
 use archypix_back::clients::federation::FederationClient;
 use archypix_back::domain::share::ShareStatus;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::services::shares::{
     accept_incoming_share, create_outgoing_share, reject_incoming_share, revoke_outgoing_share,
 };
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -22,14 +23,19 @@ pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migratio
 /// Run the sender's pipeline so a `pending_first_announcement` share announces its pictures. The
 /// pipeline delivers cross-instance announcements inline via `fed` (which resolves the recipient
 /// backend from its pre-seeded cache), so the round-trip completes synchronously.
-async fn settle_sender(db: &PgPool, cfg: &Config, fed: &FederationClient, sender_id: Uuid) {
+async fn settle_sender(
+    db: &PgPool,
+    settings: &Arc<Settings>,
+    fed: &FederationClient,
+    sender_id: Uuid,
+) {
     let cache = Arc::new(common::InMemoryCache::new());
     let waker = RoutineHandle::<Uuid>::disconnected();
     archypix_back::infra::routine::pipeline::run_once_for_user(
         db,
         fed,
         cache.as_ref(),
-        cfg,
+        settings,
         &waker,
         sender_id,
     )
@@ -39,7 +45,7 @@ async fn settle_sender(db: &PgPool, cfg: &Config, fed: &FederationClient, sender
 
 /// A throwaway pipeline notify for accept calls whose same-backend wake path is unused.
 fn dummy_notify() -> RoutineHandle<Uuid> {
-    RoutineHandle::<uuid::Uuid>::disconnected()
+    RoutineHandle::<Uuid>::disconnected()
 }
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -52,16 +58,16 @@ async fn spawn_pair(
     db: PgPool,
 ) -> (
     Arc<common::InMemoryCache>,
-    Config,
+    Arc<Settings>,
     Arc<common::InMemoryCache>,
-    Config,
+    Arc<Settings>,
     Uuid,
     Uuid,
 ) {
     let (addr_a, cache_a, cfg_a) =
-        common::federation::spawn_backend(db.clone(), common::federation::config_a()).await;
+        common::federation::spawn_backend(db.clone(), common::federation::settings_a()).await;
     let (addr_b, cache_b, cfg_b) =
-        common::federation::spawn_backend(db.clone(), common::federation::config_b()).await;
+        common::federation::spawn_backend(db.clone(), common::federation::settings_b()).await;
 
     common::federation::seed_backend_url(&cache_a, "bob", "b.test", &format!("http://{addr_b}"))
         .await;
@@ -106,10 +112,7 @@ async fn auth_grant_rejects_unsolicited_nonce(db: PgPool) {
         .store_federation_token("b.test", "attacker-token", 60, "bogus-nonce")
         .await;
     assert!(
-        matches!(
-            unsolicited,
-            Err(archypix_back::infra::error::AppError::Unauthorized(_))
-        ),
+        matches!(unsolicited, Err(AppError::Unauthorized(_))),
         "unsolicited grant must be rejected, got {unsolicited:?}"
     );
 
@@ -136,7 +139,7 @@ async fn cross_instance_share_announce_and_accept_propagates_pictures(db: PgPool
         &*cache_a,
         &fed_a,
         &cfg_a,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         "alice",
         "vacation",
@@ -202,7 +205,7 @@ async fn cross_instance_revoke_removes_received_pictures(db: PgPool) {
         &*cache_a,
         &fed_a,
         &cfg_a,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         "alice",
         "vacation",
@@ -276,7 +279,7 @@ async fn cross_instance_reject_active_share_cleans_up_received_pictures(db: PgPo
         &*cache_a,
         &fed_a,
         &cfg_a,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         "alice",
         "vacation",
@@ -362,7 +365,7 @@ async fn cross_instance_shareback_auto_accepts_without_deadlock(db: PgPool) {
     let (cache_a, cfg_a, cache_b, cfg_b, alice_id, bob_id) = spawn_pair(db.clone()).await;
     let fed_a = common::federation::make_client(&cfg_a, &cache_a);
     let fed_b = common::federation::make_client(&cfg_b, &cache_b);
-    let notify = RoutineHandle::<uuid::Uuid>::disconnected();
+    let notify = RoutineHandle::<Uuid>::disconnected();
 
     // Alice shares "vacation" to Bob with ShareBack allowed.
     common::seed_picture_with_tag(&db, alice_id, "vacation").await;
@@ -458,7 +461,7 @@ async fn cross_instance_reject_tombstones_outgoing_share(db: PgPool) {
         &*cache_a,
         &fed_a,
         &cfg_a,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         "alice",
         "vacation",

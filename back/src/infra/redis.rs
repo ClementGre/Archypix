@@ -1,12 +1,14 @@
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
+use crate::infra::settings;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use async_trait::async_trait;
 use bb8_redis::{
-    RedisConnectionManager, bb8,
-    redis::{AsyncCommands, cmd},
+    bb8, redis::{cmd, AsyncCommands},
+    RedisConnectionManager,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt;
+use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -262,9 +264,12 @@ impl Cache for RedisClient {
     }
 }
 
-pub async fn connect(config: &Config) -> anyhow::Result<RedisClient> {
-    info!("Connecting to Redis: {}", config.redis_url_masked());
-    let manager = RedisConnectionManager::new(config.redis_url())?;
+pub async fn connect(settings: &Arc<Settings>) -> anyhow::Result<RedisClient> {
+    info!(
+        "Connecting to Redis: {}",
+        settings::redis_url_masked(&settings)
+    );
+    let manager = RedisConnectionManager::new(settings::redis_url(&settings))?;
     let pool = bb8::Pool::builder()
         .connection_timeout(std::time::Duration::from_secs(5))
         .build(manager)

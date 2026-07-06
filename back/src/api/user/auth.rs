@@ -1,10 +1,10 @@
 use crate::api::middleware::auth_user::AuthUser;
-use crate::infra::error::AppError;
 use crate::repository::user::UserRepository;
 use crate::services;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::State;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -38,7 +38,7 @@ pub async fn login(
         &state.db,
         state.cache.as_ref(),
         &state.jwt,
-        &state.config,
+        &state.settings,
         &payload.username,
         &payload.password,
     )
@@ -54,9 +54,13 @@ pub async fn refresh(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    let tokens =
-        services::auth::refresh(&state.db, &state.jwt, &state.config, &payload.refresh_token)
-            .await?;
+    let tokens = services::auth::refresh(
+        &state.db,
+        &state.jwt,
+        state.settings.as_ref(),
+        &payload.refresh_token,
+    )
+        .await?;
     Ok(Json(TokenResponse {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
@@ -87,5 +91,7 @@ pub async fn me(
         "email": user.email,
         "display_name": user.display_name,
         "is_admin": user.is_admin,
+        // Whether this instance sits behind a resolver — the frontend only offers the fleet dashboard then.
+        "use_resolver": state.settings.get(crate::infra::settings::keys::USE_RESOLVER),
     })))
 }

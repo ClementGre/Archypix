@@ -3,16 +3,17 @@ use crate::domain::job::{
     EditPictureConfig, ExifEdit, ExifField, FullExif, GenThumbnailConfig, Job, JobConfig,
 };
 use crate::domain::picture::ExifSyncStatus;
-use crate::infra::config::Config;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::redis::Cache;
 use crate::infra::routine::RoutineHandle;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
 use crate::services::aggregate::DryRun;
-use archypix_common::mime::{MIME_TYPES_EXIF, supports_exif};
+use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::mime::{supports_exif, MIME_TYPES_EXIF};
+use archypix_common::settings::Settings;
 use sqlx::{Executor, PgPool, Postgres};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Enqueue a thumbnail + EXIF extraction job for a picture.
@@ -363,13 +364,13 @@ fn supported_mimes() -> Vec<String> {
 /// With `dry_run` the call returns the §6.1 affected breakdown without mutating. The federation
 /// deps are only used by `Suggest`-mode proposals.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, config, federation, sel, set, empty, clear), fields(user_id = %user_id, dry_run))]
+#[tracing::instrument(skip(db, pipeline_waker, exif_drain, cache, settings, federation, sel, set, empty, clear), fields(user_id = %user_id, dry_run))]
 pub async fn batch_edit_exif_selection(
     db: &PgPool,
     pipeline_waker: &RoutineHandle<Uuid>,
     exif_drain: &RoutineHandle<()>,
     cache: &dyn Cache,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     user_id: Uuid,
     requester_username: &str,
@@ -471,7 +472,7 @@ pub async fn batch_edit_exif_selection(
                     match crate::services::pictures::propose_received_exif(
                         db,
                         cache,
-                        config,
+                        settings,
                         federation,
                         pipeline_waker,
                         user_id,

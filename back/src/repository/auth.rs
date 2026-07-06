@@ -1,5 +1,5 @@
 use crate::domain::user::{RefreshToken, UserCredential};
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::{DateTime, Utc};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;

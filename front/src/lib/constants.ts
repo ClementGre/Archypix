@@ -63,7 +63,12 @@ export const queryKeys = {
     hierarchyWebdav: (id: string) => ['hierarchies', 'webdav', id] as const,
     settings: () => ['settings'] as const,
     storage: () => ['storage'] as const,
-    // admin
+    invites: () => ['invites'] as const,
+    invitations: () => ['invitations'] as const,
+    // admin (backend runtime config, feature 23/24)
+    adminSettings: () => ['admin', 'settings'] as const,
+    adminRoutines: () => ['admin', 'routines'] as const,
+    adminInvites: () => ['admin', 'invites'] as const,
     adminInstanceHealth: () => ['admin', 'instance'] as const,
     adminStats: () => ['admin', 'stats'] as const,
     adminConsistency: () => ['admin', 'consistency'] as const,
@@ -75,4 +80,14 @@ export const queryKeys = {
     adminStaleJobs: () => ['admin', 'jobs', 'stale'] as const,
     adminErroredShares: () => ['admin', 'shares', 'errored'] as const,
     adminFederationInstances: () => ['admin', 'federation', 'instances'] as const,
+    // resolver fleet admin (feature 24)
+    resolverAdmin: {
+        overview: () => ['resolverAdmin', 'overview'] as const,
+        backends: () => ['resolverAdmin', 'backends'] as const,
+        settings: () => ['resolverAdmin', 'settings'] as const,
+        routines: () => ['resolverAdmin', 'routines'] as const,
+        invites: () => ['resolverAdmin', 'invites'] as const,
+        configMatrix: () => ['resolverAdmin', 'config-matrix'] as const,
+        proxy: (backDomain: string, path: string) => ['resolverAdmin', 'proxy', backDomain, path] as const,
+    },
 }

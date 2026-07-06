@@ -2,10 +2,10 @@ mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::domain::picture::ExifSyncStatus;
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::services::jobs;
+use archypix_common::error::AppError;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -53,7 +53,7 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let bob_id = common::seed_user(&db, "bob", "pass").await;
     let alice_pic_id = common::seed_picture(&db, alice_id).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     // Create a received picture for Bob that points at Alice's picture.
     let received = PictureRepository::create_received(
@@ -92,7 +92,7 @@ async fn enqueue_edit_rejects_picture_not_owned_by_user(db: PgPool) {
     let bob_id = common::seed_user(&db, "bob", "pass").await;
     let alice_pic_id = common::seed_picture(&db, alice_id).await;
     make_editable(&db, alice_pic_id).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
     let result = jobs::edit_pictures_exif(&db, &waker, bob_id, &[alice_pic_id], set, clear).await;
@@ -106,7 +106,7 @@ async fn enqueue_edit_rejects_picture_not_owned_by_user(db: PgPool) {
 async fn enqueue_edit_rejects_still_processing_picture(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await; // no thumbnails_generated_at
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
     let result = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear).await;
@@ -121,7 +121,7 @@ async fn edit_for_owned_picture_creates_job_and_marks_pending(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
     make_editable(&db, pic_id).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
     let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
@@ -162,7 +162,7 @@ async fn edit_unsupported_format_is_db_only_no_job(db: PgPool) {
     .execute(&db)
     .await
     .unwrap();
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
     let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
@@ -188,7 +188,7 @@ async fn set_and_clear_conflict_is_rejected(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
     make_editable(&db, pic_id).await;
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let set = FullExif {
         gps_lat: Some(45.0),

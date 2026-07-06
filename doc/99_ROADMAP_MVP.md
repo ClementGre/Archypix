@@ -23,8 +23,8 @@
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.
-- [x] **WebDAV** — per-hierarchy endpoint, proxy reads, tag write-back, hash-dedupe, versioning on overwrite, atomic-save ("safe-save")
-  staging for Preview/Explorer edits. See `doc/features/06_webdav.md`, `doc/features/08_webdav_issues.md`.
+- [x] **WebDAV** — per-hierarchy endpoint, proxy reads, tag write-back, hash-dedupe, versioning, atomic-save staging. See `doc/features/06_webdav.md`,
+  `doc/features/08_webdav_issues.md`.
 - [x] **Hierarchy improvements** — `drop` inbox nodes, per-node write-back tri-state, writable `matchUntagged`, mirror `maxDepth`/foreign excludes.
   See `doc/features/18_hierarchy_improvements.md`.
 - [x] **Better workers** — multi-backend support, global semaphore, burst-friendly polling.
@@ -47,36 +47,29 @@
 - [x] **Dedup pictures at upload time** — batch presign hashes files up front, dedupes within-batch and against existing/trashed pictures.
 - [x] **Calendar segmentation & unified service config** — Calendar partition operator, unified `tagging_services.config` JSONB, uniform config
   editing.
-- [x] **Tag rename cascade** — `POST /tags/rename` triggers the `tag_rename` routine: a real search-and-replace of a tag subtree across manual tags,
-  outgoing-share tags, tagging-service gates + config (SharedTagMapping included), and hierarchy configs; invalidates changed services + covered
-  pictures and wakes the pipeline (shares re-announce via the picture `updated_at` bump, tracking table untouched). Frontend: rename item in the tag
-  tree `…` menu → tag-selector + confirmation dialog. Follow-ups: durability (trigger-only, lost on crash); auto-generated segment tags can't be
-  renamed in place.
+- [x] **Tag rename cascade** — `POST /tags/rename` search-and-replaces a tag subtree across manual tags, shares, pipeline configs, hierarchy configs;
+  invalidates + wakes pipeline. Frontend rename dialog in tag tree menu.
 - [ ] **Federation robustness** — don't 500 on failed remote presign, token refresh schedule, retry logic, presigned URL caching for remote pictures.
 
 ## To-do for v1.0
 
-- [x] **Physical copy & content dedup** — rescue-copy into own library with `copy_source_*` provenance, `content_hash`-based dedup reconciler,
-  boomerang guard. See `doc/features/11_physical_copy_and_dedup.md`.
-- [x] **Storage quotas** — trigger-maintained per-user `user_storage` counters (originals/versions × live/trashed), Redis committed+reserved fast
-  path,
-  enforcement at upload presign/complete + WebDAV PUT + copy, daily reconcile routine, `GET /me/storage`, admin quota PATCH + S3 storage-audit, WebDAV
-  RFC 4331 PROPFIND props, and the front (footer bar, settings breakdown, upload preflight, admin per-user storage bar/breakdown + quota editor +
-  storage-audit dialog). Resolver quota seed (§9) is a later phase. See `doc/features/22_storage_quotas.md`.
-- [~] **Resolver’s admin dashboard** — front uses the resolver as the fleet admin dashboard (native aggregate/self-monitoring endpoints + a thin
-  per-instance proxy to each backend’s `/api/admin/*`); backend-signed delegation-token auth delivered by a backend heartbeat; smarter placement
-  strategies. Spec: `doc/features/23_resolver_admin_and_runtime_config.md`; resolver read-doc: `doc/07_RESOLVER_ARCHITECTURE.md`.
-- [~] **Registration rules** — open / invite / admin-invite modes, invite codes/links, instance-pinned invites, `users.invited_by` graph. Domain logic
-  shared via `common::registration` so a standalone backend runs it locally. Spec: `doc/features/23_resolver_admin_and_runtime_config.md` §6–7.
-- [~] **Admin config instead of envs** — env-only core (secrets/topology); everything operational layered
-  `default → env(locks the field) → DB override`, hot-swapped via `ArcSwap` and editable from the dashboard (backend `/admin` or resolver config
-  fan-out with a diff view). Shared engine `common::settings`. Spec: `doc/features/23_resolver_admin_and_runtime_config.md` §4.
-- [ ] **Photos fix tools** — Quick and useful tools for fixing missing exif infos in files (feature 21).
+- [x] **Physical copy & content dedup** — rescue-copy into own library with provenance, content-hash dedup reconciler, boomerang guard. See
+  `doc/features/11_physical_copy_and_dedup.md`.
+- [x] **Storage quotas** — trigger-maintained per-user counters, Redis fast path, enforcement at upload/WebDAV/copy, daily reconcile, admin quota +
+  audit UI. See `doc/features/22_storage_quotas.md`.
+- [x] **Resolver's admin dashboard** — backend+resolver+frontend done: layered resolver rebuild, delegation-token auth, operator sessions,
+  `/api/resolver-admin/*` (overview/backends/settings/invites/config-matrix), placement strategies. See
+  `doc/features/23_resolver_admin_and_runtime_config.md`, `doc/features/24_resolver_admin_frontend.md`.
+- [x] **Registration rules** — open/invite/admin-invite modes, invite codes, instance-pinned invites, invite graph; backend+resolver+frontend. Spec
+  §6–7.
+- [x] **Admin config instead of envs** — unified `common::settings` engine (typed keys, env-locks, DB override, hot-swap) across
+  backend/worker/resolver + metadata-driven `SettingsPanel`. Spec §4.
+- [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.
 - [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Rate limiting & validators** — more rate limiting.
-- [~] **Video & audio playback** — **Tier 1 done:** inline progressive playback via `@vidstack/react`. **Tier 2 todo:** ffmpeg transcode worker for
-  non-decodable formats. **Tier 3 later:** HLS adaptive streaming. See `doc/05_FRONTEND_ARCHITECTURE.md §9`.
+- [~] **Video & audio playback** — Tier 1 done (inline playback via `@vidstack/react`); Tier 2 todo (ffmpeg transcode worker); Tier 3 later (HLS). See
+  `doc/05_FRONTEND_ARCHITECTURE.md §9`.

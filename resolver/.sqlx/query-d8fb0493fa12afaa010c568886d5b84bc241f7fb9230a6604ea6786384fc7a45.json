@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_mappings WHERE username = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8fb0493fa12afaa010c568886d5b84bc241f7fb9230a6604ea6786384fc7a45"
+}

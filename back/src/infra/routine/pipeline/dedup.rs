@@ -6,9 +6,9 @@
 
 use super::PipelineRun;
 use crate::domain::picture::DeletedReason;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::repository::dedup::{DedupRepository, DedupRow};
 use crate::repository::tag::TagRepository;
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 

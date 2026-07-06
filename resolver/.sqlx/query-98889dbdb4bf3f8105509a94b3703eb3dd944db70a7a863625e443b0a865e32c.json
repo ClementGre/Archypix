@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM invites\n         WHERE (expires_at IS NOT NULL AND expires_at <= now())\n            OR (max_uses IS NOT NULL AND max_uses > 0 AND uses >= max_uses)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "98889dbdb4bf3f8105509a94b3703eb3dd944db70a7a863625e443b0a865e32c"
+}

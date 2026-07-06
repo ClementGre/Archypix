@@ -6,22 +6,18 @@
 
 mod common;
 
-use archypix_back::infra::config::Config;
-use archypix_back::infra::error::AppError;
 use archypix_back::infra::redis::Cache;
 use archypix_back::infra::s3::Storage;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::user_storage::UserStorageRepository;
 use archypix_back::services::storage;
+use archypix_common::error::AppError;
 use common::{InMemoryCache, MockStorage};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 /// Insert an owned picture with a concrete `file_size`.
 async fn seed_sized_picture(db: &PgPool, user_id: Uuid, size: i64) -> Uuid {
@@ -154,7 +150,7 @@ async fn reconcile_matches_trigger_counters(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn quota_and_reservation_math(db: PgPool) {
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let user = common::seed_user(&db, "alice", "pw").await;
     seed_sized_picture(&db, user, 1000).await;
 
@@ -175,7 +171,7 @@ async fn quota_and_reservation_math(db: PgPool) {
 
     // A reservation counts against the effective usage: reserve 400 → only 100 headroom left.
     let pic = Uuid::new_v4();
-    storage::reserve(cache.as_ref(), &cfg, user, pic, 400)
+    storage::reserve(cache.as_ref(), &settings, user, pic, 400)
         .await
         .unwrap();
     assert!(storage::fits(cache.as_ref(), &db, user, 100).await.unwrap());
@@ -189,7 +185,7 @@ async fn quota_and_reservation_math(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let storage_mock = MockStorage::new();
     let user = common::seed_user(&db, "alice", "pw").await;
 
@@ -202,7 +198,7 @@ async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
         &db,
         cache.as_ref(),
         &storage_mock,
-        &cfg,
+        &settings,
         user,
         "big.jpg",
         None, // no declared size → coarse gate only, hard check is the backstop
@@ -211,7 +207,12 @@ async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
     .unwrap();
     let staging_key = format!("staging/{}/{}", user, picture_id);
     storage_mock
-        .put_object(&cfg.s3_bucket_staging, &staging_key, vec![0u8; 800], None)
+        .put_object(
+            &settings.get(archypix_back::infra::settings::keys::S3_BUCKET_STAGING),
+            &staging_key,
+            vec![0u8; 800],
+            None,
+        )
         .await
         .unwrap();
 
@@ -219,7 +220,7 @@ async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
         &db,
         cache.as_ref(),
         &storage_mock,
-        &cfg,
+        &settings,
         user,
         picture_id,
         archypix_back::services::pictures::UploadMetadata {
@@ -250,7 +251,10 @@ async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
     let pics_key = format!("{}/{}", user, picture_id);
     assert!(
         storage_mock
-            .get(&cfg.s3_bucket_pictures, &pics_key)
+            .get(
+                &settings.get(archypix_back::infra::settings::keys::S3_BUCKET_PICTURES),
+                &pics_key
+            )
             .is_none()
     );
 }

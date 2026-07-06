@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE resolver_admin SET refresh_token_hash = $1, refresh_expires_at = $2 WHERE id = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "05b6ead74f0874109fc04180e45e971b63db8b4d365a363fe516487265fd21b2"
+}

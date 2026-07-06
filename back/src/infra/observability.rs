@@ -1,7 +1,10 @@
+use crate::infra::settings::keys;
+use archypix_common::settings::Settings;
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::{Tracer, TracerProvider};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 
 pub struct ObservabilityGuard {
@@ -169,11 +172,11 @@ pub fn extract_from_headers(headers: &axum::http::HeaderMap) -> opentelemetry::C
 pub fn maybe_set_remote_parent(
     headers: &http::HeaderMap,
     peer_global_domain: &str,
-    cfg: &crate::infra::config::Config,
+    settings: &Arc<Settings>,
 ) {
     use tracing_opentelemetry::OpenTelemetrySpanExt;
-    if !cfg
-        .trace_propagation_peers
+    if !settings
+        .get(keys::TRACE_PROPAGATION_PEERS)
         .iter()
         .any(|p| p == peer_global_domain)
     {

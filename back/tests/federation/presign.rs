@@ -5,7 +5,7 @@
 //! A single in-process server via `oneshot` is sufficient.
 
 use crate::common;
-use crate::{body_json, cfg_a, post_no_auth};
+use crate::{body_json, post_no_auth, settings_a};
 
 use archypix_back::repository::share::OutgoingShareRepository;
 use archypix_back::repository::share_announcement::ShareAnnouncementRepository;
@@ -19,7 +19,7 @@ pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migratio
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn presign_valid_token_returns_mock_urls(db: PgPool) {
-    let cfg = cfg_a();
+    let cfg = settings_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
 
@@ -43,7 +43,8 @@ async fn presign_valid_token_returns_mock_urls(db: PgPool) {
         .await
         .unwrap();
 
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_no_auth(
@@ -75,10 +76,11 @@ async fn presign_valid_token_returns_mock_urls(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn presign_invalid_token_returns_unauthorized(db: PgPool) {
-    let cfg = cfg_a();
+    let cfg = settings_a();
     let _alice_id = common::seed_user(&db, "alice", "pass").await;
 
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_no_auth(
@@ -95,7 +97,7 @@ async fn presign_invalid_token_returns_unauthorized(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn presign_revoked_share_token_is_dead(db: PgPool) {
-    let cfg = cfg_a();
+    let cfg = settings_a();
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let pic_id = common::seed_picture(&db, alice_id).await;
 
@@ -123,7 +125,8 @@ async fn presign_revoked_share_token_is_dead(db: PgPool) {
         .await
         .unwrap();
 
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
 
     let resp = app
         .oneshot(post_no_auth(

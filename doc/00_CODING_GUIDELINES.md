@@ -151,3 +151,7 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   (L226) · 9 JWT & registration lift to common (L262) · 10 Schema changes (L275) · 11 API surface
   (L302) · 12 Frontend (L313) · 13 Edge cases (L323) · 14 Testing (L336) · 15 Doc updates (L350) ·
   16 Work breakdown (L362) · 17 Open questions (L376). Pairs with `doc/07_RESOLVER_ARCHITECTURE.md`.
+- **24_resolver_admin_frontend.md** — the frontend half of feature 23 (spec-only; built separately):
+  1 Overview (L11) · 2 Decisions (L22) · 3 Routing (L35) · 4 Resolver auth & client (L47) · 5 Dashboard
+  surface (L57) · 6 Shared `SettingsPanel` (L78) · 7 Invitation graph (L92) · 8 Edge cases (L99) ·
+  9 Out of scope (L111) · 10 Work breakdown (L119) · 11 Doc updates (L129).

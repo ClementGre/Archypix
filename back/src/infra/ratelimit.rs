@@ -5,8 +5,8 @@
 //! window (the counter's TTL is set only on the first hit), so the limit naturally resets after
 //! the window elapses rather than sliding forever under sustained load.
 
-use crate::infra::error::AppError;
 use crate::infra::redis::{Cache, RedisKey};
+use archypix_common::error::AppError;
 
 /// Increment the counter for `bucket` and fail with `TooManyRequests` if it now exceeds `max`.
 ///

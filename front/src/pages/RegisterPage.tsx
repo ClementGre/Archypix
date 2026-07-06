@@ -1,9 +1,10 @@
 import {useEffect, useState} from 'react'
 import {useForm} from 'react-hook-form'
 import {zodResolver} from '@hookform/resolvers/zod'
-import {Link, useNavigate} from 'react-router-dom'
-import {Loader2, Pencil} from 'lucide-react'
+import {Link, useNavigate, useSearchParams} from 'react-router-dom'
+import {Loader2, Pencil, Ticket} from 'lucide-react'
 import {toast} from 'sonner'
+import {useQuery} from '@tanstack/react-query'
 import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
@@ -13,12 +14,23 @@ import {cn} from '@/lib/utils'
 import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type RegisterForm, registerFormSchema} from '@/lib/schemas'
 import {login, register as registerUser} from '@/api/auth'
+import {getRegistrationInfo, previewInvite} from '@/api/invites'
 import {apiErrorMessage} from '@/api/client'
+
+/** Accept a pasted invite link or a grouped code (`ABC-DEF-GHI`) → the bare lowercase code. */
+function normalizeInviteInput(s: string): string {
+    const m = s.match(/invite=([A-Za-z0-9-]+)/)
+    const raw = m ? m[1] : s
+    return raw.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+}
 
 export default function RegisterPage() {
     const navigate = useNavigate()
+    const [searchParams, setSearchParams] = useSearchParams()
+    const inviteCode = searchParams.get('invite') ?? undefined
 
     const [editingInstance, setEditingInstance] = useState(false)
+    const [codeInput, setCodeInput] = useState('')
 
     const {
         register,
@@ -32,13 +44,34 @@ export default function RegisterPage() {
 
     const instance = watch('instance')
 
+    // Preview the invite so we can show "X invited you to join …" (best-effort — a bad code just
+    // registers without provenance, the backend re-validates).
+    const {data: invite} = useQuery({
+        queryKey: ['invite-preview', inviteCode, instance],
+        queryFn: () => previewInvite(inviteCode!, instance),
+        enabled: !!inviteCode,
+        retry: false,
+    })
+
+    // The instance's registration mode — to hide the form when it's invite-only and no valid invite.
+    const {data: regInfo} = useQuery({
+        queryKey: ['registration-info', instance],
+        queryFn: () => getRegistrationInfo(instance),
+        retry: false,
+    })
+
+    // Invite-only and no valid invite ⇒ the form can't succeed, so show a message instead.
+    const inviteRequired = regInfo ? regInfo.mode !== 'open' : false
+    const hasValidInvite = !!inviteCode && invite?.valid !== false
+    const blocked = inviteRequired && !hasValidInvite
+
     // Persist the chosen instance so login and register stay in sync.
     useEffect(() => setPreferredInstance(instance), [instance])
 
     const onSubmit = async (values: RegisterForm) => {
         try {
             const {instance: domain, ...payload} = values
-            await registerUser(payload, domain)
+            await registerUser({...payload, invite_code: inviteCode}, domain)
             await login(values.username, values.password, domain)
             toast.success('Account created')
             navigate('/', {replace: true})
@@ -57,6 +90,76 @@ export default function RegisterPage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
+                    {blocked ? (
+                        <div className="space-y-4">
+                            {inviteCode ? (
+                                // The link exists but isn't usable here (expired / used up / a tracking referral
+                                // in an invite-only instance) → it's simply invalid.
+                                <div
+                                    className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                    <span>This invite link is invalid or has expired. Ask whoever invited you for a fresh one.</span>
+                                </div>
+                            ) : (
+                                <div
+                                    className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-500">
+                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                    <span>Registration on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span> is invite-only — you need an invitation link to join.</span>
+                                </div>
+                            )}
+
+                            {/* Let the user paste an invite link or type the code (ABC-DEF-GHI). */}
+                            <form
+                                className="space-y-2"
+                                onSubmit={(e) => {
+                                    e.preventDefault()
+                                    const code = normalizeInviteInput(codeInput)
+                                    if (code) setSearchParams({invite: code})
+                                }}
+                            >
+                                <Label htmlFor="invite-code">Have an invite?</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        id="invite-code"
+                                        value={codeInput}
+                                        onChange={(e) => setCodeInput(e.target.value)}
+                                        placeholder="ABC-DEF-GHI"
+                                        autoCapitalize="characters"
+                                        spellCheck={false}
+                                        className="font-mono uppercase tracking-wider placeholder:tracking-wider"
+                                    />
+                                    <Button type="submit" disabled={!normalizeInviteInput(codeInput)}>Continue</Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">Paste the invite link or enter the code.</p>
+                            </form>
+
+                            <p className="text-center text-sm text-muted-foreground">
+                                Already have an account?{' '}
+                                <Link to="/login" className="text-primary hover:underline">Sign in</Link>
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            {inviteCode && (
+                                <div className={cn(
+                                    'mb-4 flex items-start gap-2 rounded-md border px-3 py-2 text-sm',
+                                    invite?.valid === false
+                                        ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                                        : 'border-primary/30 bg-primary/10',
+                                )}>
+                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                    {invite?.valid === false ? (
+                                        <span>This invite link is invalid or has expired — but registration is open, so you can still create an account.</span>
+                                    ) : invite?.invited_by ? (
+                                        <span>
+                                    <span className="font-medium">@{invite.invited_by}</span> invited you to join Archypix on{' '}
+                                            <span className="font-medium">{instance || GLOBAL_DOMAIN}</span>. Create an account to get started.
+                                </span>
+                                    ) : (
+                                        <span>You've been invited to join Archypix on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span>.</span>
+                                    )}
+                                </div>
+                            )}
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
                         {/* Handle field: @username:instance, instance editable on click */}
                         <div className="space-y-1.5">
@@ -138,6 +241,8 @@ export default function RegisterPage() {
                             Sign in
                         </Link>
                     </p>
+                        </>
+                    )}
                 </CardContent>
             </Card>
         </div>

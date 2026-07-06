@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS invites;
+ALTER TABLE users
+    DROP COLUMN IF EXISTS invited_by;
+DROP TABLE IF EXISTS app_settings;

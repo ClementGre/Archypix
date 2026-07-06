@@ -1,15 +1,28 @@
 # Infrastructure Design
 
-- Resolver (Rust service)
+- Resolver (Rust service) — also the **fleet admin control plane** (feature 23). Full read-doc:
+  [`07_RESOLVER_ARCHITECTURE.md`](07_RESOLVER_ARCHITECTURE.md).
     - Purpose: map username → owning backend domain (implements WebFinger). Enables multiple backends to share one global identity domain.
   - Roles:
       - WebFinger endpoint: answer `/.well-known/webfinger` requests with the resolved backend URL.
     - User registration routing: `POST /api/public/register` (the same path the standalone backend serves, so the frontend uses one URL across
-      topologies) — picks least-loaded backend, forwards registration, stores `username → back_domain` mapping.
+      topologies) — enforces the **registration mode + invites**, picks a backend by the configured **selection strategy** (least users/pictures/
+      storage, round-robin, static; honouring an invite's `instance_pin` and hard capacity/reachability gates), forwards registration, stores
+      `username → back_domain` mapping.
       - Backend self-registration: `POST /api/backends` — backends call this at startup; the resolver stores `back_domain`, `use_https`, and
         `internal_url`.
       - Mapping update: `POST /api/update` — called by backends when a user migrates to another instance.
-    - Key env vars: `GLOBAL_DOMAIN`, `RESOLVER_JWT_SECRET`, `DB_HOST/DB_USER/DB_PASSWORD/DB_NAME`.
+      - Heartbeat consumer: `POST /api/backends/heartbeat` — each backend periodically pushes a fresh **backend-signed delegation token** + fleet
+        metrics (users/pictures/storage); the resolver stores them and marks the backend reachable. Metric selection strategies read these metrics.
+      - Fleet admin dashboard (`/api/resolver-admin/*`, operator-token auth): aggregate/self-monitoring views, resolver-own runtime config, invite +
+        selection + capacity policy, a config-matrix across backends, and a **per-instance proxy** to each backend's `/api/admin/*` — every proxied
+        call
+        **replays** that backend's stored delegation token (the backend is the sole token authority; the resolver never mints a token a backend
+        trusts).
+    - Key env vars: `GLOBAL_DOMAIN`, `RESOLVER_JWT_SECRET`, `RESOLVER_ADMIN_TOKEN`, `DB_HOST/DB_USER/DB_PASSWORD/DB_NAME`. `RESOLVER_JWT_SECRET` now
+      authenticates the backend→resolver *push* direction only (self-register / update / heartbeat); it no longer authenticates resolver→backend
+      calls.
+      Most operational config is runtime-editable from the dashboard, not env (feature 23 §4).
 
 - Backend (Rust backend instance, per domain)
     - Purpose: authoritative per-instance application server and metadata store.

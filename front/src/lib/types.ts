@@ -855,3 +855,118 @@ export interface BatchExifResult {
     local_override: number
     unsupported: number
 }
+
+// ---------- Runtime settings (feature 23/24) ----------
+
+export type SettingSource = 'default' | 'env' | 'db'
+
+/** A single runtime-config field's metadata + value (backend/resolver `GET …/settings`). */
+export interface FieldMeta {
+    key: string
+    /** The env var that would set (and lock) this field. */
+    env: string
+    /** UI grouping label. */
+    group: string
+    /** Current effective value (omitted for unset secrets). */
+    value?: unknown
+    is_set: boolean
+    default_value?: unknown
+    source: SettingSource
+    /** `source === 'env'` — read-only, "defined by environment". */
+    locked: boolean
+    /** `false` = core/env-only field (never rendered as editable). */
+    runtime_editable: boolean
+    restart_required: boolean
+    secret: boolean
+    /** May be empty/None (an `Option<T>` setting). */
+    nullable: boolean
+    /** Rust-ish type tag: `string` | `bool` | `u16` | `i64` | `usize` | `f64` | `enum` | … */
+    kind: string
+    /** Present for enum kinds. */
+    variants?: string[]
+    /** The routine this field tunes, if any. */
+    routine?: string
+    description: string
+    example: string
+}
+
+/** A background routine's live status + its tuning settings (`GET …/routines`). */
+export interface RoutineInfo {
+    name: string
+    last_started_at: number | null
+    last_finished_at: number | null
+    last_error: string | null
+    in_flight: number
+    total_runs: number
+    settings: FieldMeta[]
+}
+
+// ---------- Invites (feature 23 §6) ----------
+
+export type RegistrationMode = 'open' | 'invite' | 'admin_invite'
+
+export interface RegistrationInfo {
+    mode: RegistrationMode
+}
+
+export interface Invite {
+    code: string
+    /** `null` = unlimited; `0` = tracking-only (open-mode referral). */
+    max_uses: number | null
+    uses: number
+    expires_at: string | null
+    created_by: string
+    /** Resolver-only: the pinned backend the invitee joins. */
+    instance_pin?: string | null
+}
+
+export interface InvitationGraph {
+    invited_by: string | null
+    invited: string[]
+}
+
+export interface InvitePreview {
+    valid: boolean
+    invited_by: string | null
+}
+
+// ---------- Resolver fleet admin (feature 24) ----------
+
+export interface ResolverBackend {
+    back_domain: string
+    use_https: boolean
+    delegation_expires_at: string | null
+    user_count: number
+    picture_count: number
+    storage_bytes: number
+    last_heartbeat_at: string | null
+    healthy: boolean
+    reachable: boolean
+    accepting_registrations: boolean
+    max_users: number | null
+    version: string | null
+    last_selected_at: string | null
+    created_at: string
+}
+
+export interface ResolverOverview {
+    total_users: number
+    total_pictures: number
+    total_storage_bytes: number
+    backend_count: number
+    reachable_count: number
+    backends: ResolverBackend[]
+}
+
+export interface ResolverSession {
+    session_token: string
+    refresh_token: string
+    expires_in_secs: number
+}
+
+/** One backend's outcome in a config-matrix fan-out PATCH. */
+export interface ConfigMatrixPatchResult {
+    ok: boolean
+    status?: number
+    error?: string
+}

@@ -18,13 +18,14 @@ pub mod dedup;
 pub mod evaluation;
 
 use crate::clients::federation::FederationClient;
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
 use crate::infra::redis::Cache;
 use crate::infra::routine::{Routine, RoutineHandle};
+use crate::infra::settings::keys;
 use crate::repository::dedup::DedupRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -38,7 +39,7 @@ pub struct PipelineRun<'a> {
     pub db: &'a PgPool,
     pub federation: &'a FederationClient,
     pub cache: &'a dyn Cache,
-    pub config: &'a Config,
+    pub settings: &'a Arc<Settings>,
     pub waker: &'a RoutineHandle<Uuid>,
 }
 
@@ -46,26 +47,26 @@ pub struct PipelineRun<'a> {
 
 /// The tagging pipeline as a routine. Holds its own handle (wired after [`spawn`](crate::infra::routine::spawn)
 /// via [`set_handle`](Self::set_handle)) so a run can wake same-backend recipients.
-pub struct Pipeline {
+pub struct PipelineRoutine {
     db: PgPool,
     federation: FederationClient,
     cache: Arc<dyn Cache>,
-    config: Config,
+    settings: Arc<Settings>,
     handle: Arc<OnceLock<RoutineHandle<Uuid>>>,
 }
 
-impl Pipeline {
+impl PipelineRoutine {
     pub fn new(
         db: PgPool,
         federation: FederationClient,
         cache: Arc<dyn Cache>,
-        config: Config,
+        settings: Arc<Settings>,
     ) -> Self {
         Self {
             db,
             federation,
             cache,
-            config,
+            settings,
             handle: Arc::new(OnceLock::new()),
         }
     }
@@ -77,7 +78,7 @@ impl Pipeline {
 }
 
 #[async_trait::async_trait]
-impl Routine for Pipeline {
+impl Routine for PipelineRoutine {
     type Input = Uuid;
     type Key = Uuid;
 
@@ -90,7 +91,9 @@ impl Routine for Pipeline {
     }
 
     fn interval(&self) -> Option<Duration> {
-        Some(Duration::from_secs(self.config.pipeline_poll_interval_secs))
+        Some(Duration::from_secs(
+            self.settings.get(keys::PIPELINE_POLL_INTERVAL_SECS),
+        ))
     }
 
     fn run_on_startup(&self) -> bool {
@@ -98,11 +101,12 @@ impl Routine for Pipeline {
     }
 
     fn debounce(&self) -> Duration {
-        Duration::from_millis(self.config.pipeline_debounce_ms)
+        Duration::from_millis(self.settings.get(keys::PIPELINE_DEBOUNCE_MS))
     }
 
+    // Concurrency sizes the semaphore at spawn (restart-required setting).
     fn concurrency(&self) -> usize {
-        self.config.pipeline_concurrency
+        self.settings.get(keys::PIPELINE_CONCURRENCY).max(1)
     }
 
     /// Recovery/poll sweep: re-mark announce-stale rows dirty, then trigger every user with dirty
@@ -136,7 +140,7 @@ impl Routine for Pipeline {
             db: &self.db,
             federation: &self.federation,
             cache: self.cache.as_ref(),
-            config: &self.config,
+            settings: &self.settings,
             waker: handle,
         };
         evaluation::run_for_user(&run, user_id).await?;
@@ -149,7 +153,7 @@ pub async fn run_once_for_user(
     db: &PgPool,
     federation: &FederationClient,
     cache: &dyn Cache,
-    config: &Config,
+    settings: &Arc<Settings>,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
 ) -> Result<(), AppError> {
@@ -157,7 +161,7 @@ pub async fn run_once_for_user(
         db,
         federation,
         cache,
-        config,
+        settings,
         waker,
     };
     evaluation::run_for_user(&run, user_id).await

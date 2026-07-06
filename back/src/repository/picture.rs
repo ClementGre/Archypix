@@ -1,7 +1,7 @@
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::job::{CameraExif, FullExif};
 use crate::domain::picture::{ExifSyncStatus, Picture};
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use sqlx::{Executor, PgPool, Postgres};

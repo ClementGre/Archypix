@@ -3,15 +3,14 @@
 //! functions only manage share state and hand work to the pipeline (via the
 //! `pending_first_announcement` status) and the task queue.
 
-use crate::clients::federation::FederationClient;
 use crate::clients::federation::models::ShareAnnouncementRequest;
+use crate::clients::federation::FederationClient;
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
-use crate::infra::config::Config;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::redis::Cache;
-use crate::infra::routine::RoutineHandle;
 use crate::infra::routine::unannounce::UnannounceInput;
+use crate::infra::routine::RoutineHandle;
+use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
@@ -20,9 +19,12 @@ use crate::repository::tag::TagRepository;
 use crate::repository::user::UserRepository;
 use crate::services::shares::shareback::auto_accept_shareback_local;
 use crate::services::users::find_local_user_id;
+use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Remove tags, delete unreachable received pictures, set the share to `final_status` (which makes
@@ -33,12 +35,12 @@ use uuid::Uuid;
 /// See doc/features/01_better_sharing_support.md §8 for the full sequence. Returns the number of
 /// received pictures deleted.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker, share), fields(share_id = %share.id))]
+#[tracing::instrument(skip(db, cache, federation, settings, task_queue, pipeline_waker, share), fields(share_id = %share.id))]
 pub async fn cleanup_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
+    settings: &Settings,
     task_queue: &RoutineHandle<UnannounceInput>,
     pipeline_waker: &RoutineHandle<Uuid>,
     share: &IncomingShare,
@@ -108,10 +110,15 @@ pub async fn cleanup_incoming_share(
     for (os_id, (recipient_username, recipient_instance, picture_ids)) in by_share {
         // Same-backend ⇔ the recipient user resolves locally — not merely the same global domain
         // (multiple backends can share a global domain). See doc/features/02 §5.
-        let is_same_backend =
-            find_local_user_id(cache, db, config, &recipient_username, &recipient_instance)
-                .await?
-                .is_some();
+        let is_same_backend = find_local_user_id(
+            cache,
+            db,
+            settings,
+            &recipient_username,
+            &recipient_instance,
+        )
+            .await?
+            .is_some();
         task_queue.trigger(UnannounceInput {
             outgoing_share_id: os_id,
             sender_username: relayer_username.clone(),
@@ -133,7 +140,7 @@ pub async fn cleanup_incoming_share(
                     db,
                     cache,
                     federation,
-                    config,
+                    settings,
                     task_queue,
                     pipeline_waker,
                     share.recipient_id,
@@ -150,12 +157,12 @@ pub async fn cleanup_incoming_share(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %rejector_id))]
+#[tracing::instrument(skip(db, cache, federation, settings, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %rejector_id))]
 pub async fn reject_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
+    settings: &Settings,
     task_queue: &RoutineHandle<UnannounceInput>,
     pipeline_waker: &RoutineHandle<Uuid>,
     rejector_id: Uuid,
@@ -181,7 +188,7 @@ pub async fn reject_incoming_share(
                 db,
                 cache,
                 federation,
-                config,
+                settings,
                 task_queue,
                 pipeline_waker,
                 &incoming,
@@ -195,7 +202,7 @@ pub async fn reject_incoming_share(
     if find_local_user_id(
         cache,
         db,
-        config,
+        settings,
         &incoming.sender_username,
         &incoming.sender_instance,
     )
@@ -225,12 +232,12 @@ pub async fn reject_incoming_share(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, federation, config, pipeline_waker), fields(user_id = %owner_id))]
+#[tracing::instrument(skip(db, cache, federation, settings, pipeline_waker), fields(user_id = %owner_id))]
 pub async fn create_outgoing_share(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
+    settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     owner_id: Uuid,
     sender_username: &str,
@@ -257,15 +264,15 @@ pub async fn create_outgoing_share(
         .into_iter()
         .filter(|s| s.status == ShareStatus::Pending)
         .count();
-    if pending_outgoing >= config.max_pending_outgoing_shares {
+    if pending_outgoing >= settings.get(keys::MAX_PENDING_OUTGOING_SHARES) {
         return Err(AppError::TooManyRequests(format!(
             "You have too many pending shares ({} max). Wait for some to be accepted or revoke them.",
-            config.max_pending_outgoing_shares
+            settings.get(keys::MAX_PENDING_OUTGOING_SHARES)
         )));
     }
 
     let recipient_local_id =
-        find_local_user_id(cache, db, config, recipient_username, recipient_instance).await?;
+        find_local_user_id(cache, db, settings, recipient_username, recipient_instance).await?;
 
     let mut tx = db
         .begin()
@@ -294,14 +301,14 @@ pub async fn create_outgoing_share(
         // path so the recipient sees the target tag even before the first announcement.
         let shared_tag = TagPath::shared_to_me(
             sender_username,
-            &config.global_domain,
+            &settings.get(keys::GLOBAL_DOMAIN),
             &TagPath::from_ltree(tag_path),
         );
         let incoming = IncomingShareRepository::create(
             &mut *tx,
             recipient_id,
             sender_username,
-            &config.global_domain,
+            &settings.get(keys::GLOBAL_DOMAIN),
             name,
             message,
             share.id,
@@ -326,7 +333,7 @@ pub async fn create_outgoing_share(
                 &token,
                 &ShareAnnouncementRequest {
                     sender_username: sender_username.to_string(),
-                    sender_instance: config.global_domain.clone(),
+                    sender_instance: settings.get(keys::GLOBAL_DOMAIN).clone(),
                     recipient_username: recipient_username.to_string(),
                     recipient_instance: recipient_instance.to_string(),
                     outgoing_share_id: share.id,
@@ -372,7 +379,7 @@ pub async fn create_outgoing_share(
         if let Some(original) = OutgoingShareRepository::get_by_id(db, original_os_id).await? {
             let verified = original.owner_id == recipient_id
                 && original.recipient_username == sender_username
-                && original.recipient_instance == config.global_domain
+                && original.recipient_instance == settings.get(keys::GLOBAL_DOMAIN)
                 && original.allow_share_back;
             if verified {
                 match auto_accept_shareback_local(
@@ -414,12 +421,12 @@ pub async fn create_outgoing_share(
 /// announce path):
 /// - Same-backend: move the sender's OutgoingShare to `pending_first_announcement`.
 /// - Cross-instance: notify the sender, who moves *its* OutgoingShare and announces back.
-#[tracing::instrument(skip(db, cache, federation, config, pipeline_waker), fields(share_id = %share_id, user_id = %acceptor_id))]
+#[tracing::instrument(skip(db, cache, federation, settings, pipeline_waker), fields(share_id = %share_id, user_id = %acceptor_id))]
 pub async fn accept_incoming_share(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
+    settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     acceptor_id: Uuid,
     acceptor_username: &str,
@@ -447,7 +454,7 @@ pub async fn accept_incoming_share(
     let sender_local_id = find_local_user_id(
         cache,
         db,
-        config,
+        settings,
         &incoming.sender_username,
         &incoming.sender_instance,
     )
@@ -490,12 +497,12 @@ pub async fn accept_incoming_share(
 
 /// Revoke an outgoing share owned by `owner_id`.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, federation, config, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %owner_id))]
+#[tracing::instrument(skip(db, cache, federation, settings, task_queue, pipeline_waker), fields(share_id = %share_id, user_id = %owner_id))]
 pub async fn revoke_outgoing_share(
     db: &PgPool,
     cache: &dyn Cache,
     federation: &FederationClient,
-    config: &Config,
+    settings: &Settings,
     task_queue: &RoutineHandle<UnannounceInput>,
     pipeline_waker: &RoutineHandle<Uuid>,
     owner_id: Uuid,
@@ -520,7 +527,7 @@ pub async fn revoke_outgoing_share(
     if find_local_user_id(
         cache,
         db,
-        config,
+        settings,
         &share.recipient_username,
         &share.recipient_instance,
     )
@@ -529,9 +536,12 @@ pub async fn revoke_outgoing_share(
     {
         // ── Same-backend path ─────────────────────────────────────────────────
         // The IncomingShare may not exist yet (e.g. share created and immediately revoked).
-        if let Some(incoming) =
-            IncomingShareRepository::find_by_outgoing_share(db, share_id, &config.global_domain)
-                .await?
+        if let Some(incoming) = IncomingShareRepository::find_by_outgoing_share(
+            db,
+            share_id,
+            &settings.get(keys::GLOBAL_DOMAIN),
+        )
+            .await?
         {
             if incoming.status != ShareStatus::Revoked && incoming.status != ShareStatus::Tombstoned
             {
@@ -539,7 +549,7 @@ pub async fn revoke_outgoing_share(
                     db,
                     cache,
                     federation,
-                    config,
+                    settings,
                     task_queue,
                     pipeline_waker,
                     &incoming,

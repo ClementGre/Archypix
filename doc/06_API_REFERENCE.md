@@ -160,6 +160,11 @@ resolver (`USE_RESOLVER=true`) this route returns 400 — but the frontend targe
 Passwords
 must be at least 8 characters and the email must be syntactically valid (`400` otherwise). Rate-limited per source IP (`429` past the window).
 
+**Registration mode (feature 23 §6).** The current `registration_mode` runtime setting gates signup: `open` (no invite), `invite` / `admin_invite`
+(a valid `invite_code` is required — `400` otherwise). Standalone backends enforce this here; behind a resolver the resolver enforces it and this
+route
+is not the one the frontend hits. A redeemed invite's minter becomes the new user's `invited_by` (the invitation graph, §6 `/me/invitations`).
+
 **Auth:** None
 
 **Request:**
@@ -170,6 +175,7 @@ must be at least 8 characters and the email must be syntactically valid (`400` o
     email: string;
     display_name: string;
     password: string;
+    invite_code?: string;   // required in invite / admin_invite mode (feature 23 §6)
 }
 ```
 
@@ -206,6 +212,22 @@ Get a user's public profile.
 ```
 
 **Errors:** 404 if not found.
+
+### `GET /api/public/registration-info`
+
+The effective registration mode where signups land (feature 23 §6) — lets the register/profile UIs adapt (invite required? tracking vs. gated
+invites?)
+without admin auth. A standalone backend reports its own `registration_mode`; behind a resolver the resolver serves this path with the resolver's
+mode.
+
+**Auth:** None · **Response `200`:** `{ mode: "open" | "invite" | "admin_invite" }`
+
+### `GET /api/public/invites/{code}`
+
+Unauthenticated preview of an invite code so the register page can show "@X invited you to join …" (feature 23 §6). Served at the same path by a
+standalone backend and the resolver.
+
+**Auth:** None · **Response `200`:** `{ valid: boolean, invited_by: string | null }` (`valid` folds expiry/exhaustion; unknown code ⇒ `false`/`null`).
 
 ---
 
@@ -1701,6 +1723,56 @@ drives the remove affordance (batch remove only deletes `manual` rows).
 
 ---
 
+### Invites & the invitation graph (feature 23 §6)
+
+Per-user invite management, gated by the current `registration_mode`: `open`/`invite` → any user, `admin_invite` → admins only. **In resolver mode
+these calls transparently forward to the resolver** (invites live in the resolver's DB; the invitee is `instance_pin`ned to the caller's backend), so
+the frontend uses one surface across topologies.
+
+**Invite-code semantics.** A `code` is 9 lowercase base36 chars, shown grouped (`ABC-DEF-GHI`). `max_uses`: `n>0` capped, `0` uncapped invitation,
+`null` a **tracking referral link** — unlimited but valid only in `open` mode (a pure provenance link; inactive otherwise).
+
+#### `POST /api/authenticated/invites`
+
+Mint an invite. `403` if the current mode forbids the caller from minting. In **open** mode the body is ignored and a single, never-expiring tracking
+referral link is returned (the caller's existing one if any — one referral per user). In gated modes a proper invitation is created. **Behind a
+resolver
+the resolver's `registration_mode` is authoritative** — the backend queries it (`/api/public/registration-info`) rather than trusting its own
+standalone-only setting.
+
+**Request:** `{ max_uses?: number | null; expires_in_days?: number | null }` (`max_uses` per the semantics above; `expires_in_days` null/omitted =
+never).
+
+**Response `200`:**
+
+```ts
+interface InviteResponse {
+    code: string;
+    max_uses: number | null;     // null = tracking referral, 0 = unlimited, n = capped
+    uses: number;
+    expires_at: string | null;   // ISO 8601
+    created_by: string;          // minter username → the redeemer's invited_by
+}
+```
+
+#### `GET /api/authenticated/invites`
+
+List the caller's own invites. Returns `InviteResponse[]`.
+
+#### `DELETE /api/authenticated/invites/{code}`
+
+Revoke an invite. `403` unless the caller is the minter.
+
+**Response `200`:** `{ "revoked": true }`.
+
+#### `GET /api/authenticated/me/invitations`
+
+The caller's invitation trace.
+
+**Response `200`:** `{ invited_by: string | null; invited: string[] }`.
+
+---
+
 ## 7. Admin Endpoints
 
 All endpoints require a user JWT with `is_admin = true`. The admin check is on the `is_admin` JWT claim — there is no separate admin token type.
@@ -2148,6 +2220,92 @@ Returns `FederationInstanceResponse[]`.
 
 ---
 
+### Runtime settings (feature 23 §4)
+
+The operational half of the backend's config lives in a layered runtime engine (`default → env(locks) → DB override`), hot-swapped and editable from
+the admin dashboard. Core secrets/topology stay env-only. See [`03_BACKEND_ARCHITECTURE.md`](03_BACKEND_ARCHITECTURE.md) and
+[`doc/features/23_resolver_admin_and_runtime_config.md`](features/23_resolver_admin_and_runtime_config.md).
+
+#### `GET /api/admin/settings`
+
+Every runtime field with its value, provenance and metadata for the dashboard.
+
+**Response `200`:** `FieldMeta[]`, each:
+
+```ts
+interface FieldMeta {
+    key: string;
+    env: string;                                  // the env var that sets/locks it
+    group: string;                                // UI grouping ("Routines", "Sharing", …)
+    value?: unknown;                              // omitted for a secret
+    is_set: boolean;
+    default_value: unknown | null;
+    source: "default" | "env" | "db";
+    locked: boolean;                              // source == "env" → read-only ("defined by environment")
+    runtime_editable: boolean;                    // false = core/env-only (secrets, topology)
+    restart_required: boolean;
+    secret: boolean;
+    nullable: boolean;
+    kind: string;                                 // "string" | "u64" | "bool" | "enum" | …
+    variants?: string[];                          // for enum fields
+    routine?: string;                             // the routine this field tunes, if any
+    description: string;
+    example: string;
+}
+```
+
+#### `PATCH /api/admin/settings`
+
+Set a DB override for one field. Rejects unknown (`400`), core/non-editable (`400`), env-locked (`409`), or mistyped (`400`) values; otherwise
+coerces, persists, and hot-swaps the snapshot.
+
+**Request:** `{ key: string; value: unknown }` **Response `200`:** the refreshed `FieldMeta[]`.
+
+#### `DELETE /api/admin/settings/{key}`
+
+Clear a field's DB override (revert to env/default). `409` if the field is env-locked (no override to clear).
+
+**Response `200`:** the refreshed `FieldMeta[]`.
+
+#### `GET /api/admin/routines`
+
+Live status of every background routine plus the settings fields that tune it (for inline editing).
+
+**Response `200`:**
+
+```ts
+interface RoutineInfo {
+    name: string;
+    last_started_at: number | null;   // epoch seconds
+    last_finished_at: number | null;
+    last_error: string | null;
+    in_flight: number;
+    total_runs: number;
+    settings: FieldMeta[];            // the routine's interval/batch fields
+}
+```
+
+Returns `RoutineInfo[]`.
+
+#### `POST /api/admin/routines/{name}/trigger`
+
+Manually fire a routine's sweep now (e.g. the purge sweep or pipeline). `404` for an unknown routine name.
+
+**Response `200`:** `{ "triggered": true, "routine": string }`.
+
+### Invites (feature 24)
+
+#### `GET /api/admin/invites`
+
+Every **local** invite (the dashboard groups them by `created_by`). In resolver mode invites live on the resolver, so this is empty and invites are
+managed from the fleet dashboard. Returns `InviteResponse[]` (see §6 Invites).
+
+#### `DELETE /api/admin/invites/{code}`
+
+Revoke **any** local invite (admin). **Response `200`:** `{ "revoked": true }`.
+
+---
+
 ## 8. Federation & Worker Endpoints (for reference only)
 
 These endpoints are called by other backend instances and workers respectively. The frontend **never calls these directly**. They are documented here
@@ -2183,6 +2341,14 @@ All require a worker JWT (`WORKER_JWT_SECRET`, 300s TTL).
 | `GET`  | `/api/worker/jobs/next`          | Claim next pending job; returns job + presigned S3 URLs + `claim_token`  |
 | `POST` | `/api/worker/jobs/{id}/complete` | Report success; backend applies picture updates atomically               |
 | `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true` |
+
+### Resolver provisioning (`/api/resolver/*`) & heartbeat (feature 23 §3)
+
+Called by the resolver, not the frontend. As of feature 23 these are authed by a **backend-signed `ResolverDelegation`** token (the backend is the
+token authority; the resolver replays the token it received via its last heartbeat), not the old shared-secret. The backend also runs a
+`ResolverHeartbeat` routine that `POST`s a fresh delegation token + fleet metrics to the resolver's `POST /api/backends/heartbeat`. The full resolver
+surface (`/api/resolver-admin/*`, WebFinger, registration routing, config-matrix, per-instance proxy) is catalogued in
+[`07_RESOLVER_ARCHITECTURE.md`](07_RESOLVER_ARCHITECTURE.md).
 
 ---
 

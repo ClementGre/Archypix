@@ -1,5 +1,6 @@
 mod auth;
 mod hierarchies;
+pub mod invites;
 mod jobs;
 mod pictures;
 mod settings;
@@ -9,8 +10,8 @@ mod tags;
 mod users;
 
 use crate::state::AppState;
-use axum::Router;
 use axum::routing::{get, patch, post, put};
+use axum::Router;
 
 pub fn auth_routes() -> Router<AppState> {
     Router::new()
@@ -24,12 +25,24 @@ pub fn public_routes() -> Router<AppState> {
     Router::new()
         .route("/register", post(users::register))
         .route("/users/{username}", get(users::get_public))
+        .route("/invites/{code}", get(invites::preview_invite))
+        .route("/registration-info", get(invites::registration_info))
 }
 
 pub fn authenticated_routes() -> Router<AppState> {
     Router::new()
         .route("/users/me", patch(users::update_me))
         .route("/me/storage", get(users::get_storage))
+        // Invites + invitation graph (feature 23 §6)
+        .route(
+            "/invites",
+            post(invites::mint_invite).get(invites::list_invites),
+        )
+        .route(
+            "/invites/{code}",
+            axum::routing::delete(invites::revoke_invite),
+        )
+        .route("/me/invitations", get(invites::my_invitations))
         .route("/pictures/uploads", post(pictures::create_upload))
         .route(
             "/pictures/uploads/batch",

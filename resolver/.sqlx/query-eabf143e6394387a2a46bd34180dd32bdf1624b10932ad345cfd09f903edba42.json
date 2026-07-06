@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backends SET reachable = false\n         WHERE reachable = true AND (delegation_expires_at IS NULL OR delegation_expires_at < now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "eabf143e6394387a2a46bd34180dd32bdf1624b10932ad345cfd09f903edba42"
+}

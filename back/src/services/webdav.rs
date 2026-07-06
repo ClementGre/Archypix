@@ -6,11 +6,12 @@
 //! never a Redis key.
 
 use crate::infra::crypto;
-use crate::infra::error::AppError;
-use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
+use crate::infra::redis::{cache_get_json, cache_set_json_ex, RedisKey};
+use crate::infra::settings::keys;
 use crate::repository::hierarchy::HierarchyRepository;
 use crate::repository::user::UserRepository;
 use crate::state::AppState;
+use archypix_common::error::AppError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -61,7 +62,7 @@ pub async fn authenticate(
         let Some(blob) = row.webdav_token_enc else {
             continue;
         };
-        let stored = crypto::decrypt_webdav_token(&state.config.jwt_secret, &blob)?;
+        let stored = crypto::decrypt_webdav_token(&state.settings.get(keys::JWT_SECRET), &blob)?;
         if constant_time_eq(stored.as_bytes(), token.as_bytes()) {
             let session = WebdavSession {
                 user_id: user.id,

@@ -1,7 +1,9 @@
 pub mod admin;
+pub mod app_settings;
 pub mod auth;
 pub mod dedup;
 pub mod hierarchy;
+pub mod invite;
 pub mod job;
 pub mod picture;
 pub mod picture_version;

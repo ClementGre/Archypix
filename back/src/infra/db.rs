@@ -1,13 +1,18 @@
-use crate::infra::config::Config;
-use sqlx::PgPool;
+use crate::infra::settings;
+use archypix_common::settings::Settings;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
+use std::sync::Arc;
 use tracing::info;
 
-pub async fn connect(config: &Config) -> anyhow::Result<PgPool> {
-    info!("Connecting to database: {}", config.database_url_masked());
+pub async fn connect(settings: &Arc<Settings>) -> anyhow::Result<PgPool> {
+    info!(
+        "Connecting to database: {}",
+        settings::database_url_masked(&settings)
+    );
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect(&config.database_url())
+        .connect(&settings::database_url(&settings))
         .await?;
     info!("Connected to database");
     Ok(pool)

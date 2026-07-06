@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS user_mappings;
+DROP TABLE IF EXISTS backends;

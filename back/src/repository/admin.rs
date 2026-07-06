@@ -1,6 +1,6 @@
 use crate::domain::job::{JobStatus, JobType};
 use crate::domain::share::ShareStatus;
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -158,6 +158,31 @@ impl StatusRow for ShareStatusCount {
 
 impl AdminRepository {
     // ── Instance-wide stats ───────────────────────────────────────────────────
+
+    /// Lean metrics for the resolver heartbeat (feature 23 §3.2): total users, owned live pictures,
+    /// and total billed storage. Cheaper than [`instance_stats`] (no job/share histograms).
+    #[tracing::instrument(skip(db))]
+    pub async fn fleet_metrics(db: &PgPool) -> Result<(i64, i64, i64), AppError> {
+        let user_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM users")
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)?;
+        let picture_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM pictures WHERE owner_username IS NULL AND deleted_at IS NULL"
+        )
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)?;
+        let storage_bytes: i64 = sqlx::query_scalar!(
+            r#"SELECT COALESCE(SUM(originals_bytes + originals_trashed_bytes
+                                   + versions_bytes + versions_trashed_bytes), 0)::BIGINT
+                   AS "bytes!" FROM user_storage"#
+        )
+            .fetch_one(db)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok((user_count, picture_count, storage_bytes))
+    }
 
     #[tracing::instrument(skip(db))]
     pub async fn instance_stats(db: &PgPool) -> Result<InstanceStats, AppError> {

@@ -19,7 +19,8 @@ For a full overview of the project, see the [root README](https://github.com/Cle
 
 ## Configuration
 
-Copy `.env.example` to `.env`. The file is fully commented and lists all available variables with their defaults.
+Copy `.env.example` to `.env`. The file contains minimal configuration. The rest of the configuration can be done through the admin dashboard, or
+adding more env variables.
 
 ```bash
 cp .env.example .env
@@ -33,13 +34,10 @@ A few key concepts to be aware of:
 - **`USE_RESOLVER`**: set to `true` when multiple backends share the same `GLOBAL_DOMAIN` via a Resolver. Set to `false` for a standalone instance.
 
 Log level:
-
 ```bash
-RUST_LOG=info,archypix_back=debug    # default
+RUST_LOG=info,archypix_back=debug    # default. SQLx query logs appear at the `sqlx=debug` level.
 RUST_LOG=info,archypix_back=trace    # verbose: service calls, cache hits
 ```
-
-SQLx query logs appear at the `sqlx=debug` level.
 
 ## Building
 
@@ -104,7 +102,7 @@ cache seeding).
 - `repository/` — SQL queries only, no business logic
 - `services/` — multi-step workflows with explicit transaction boundaries
 - `clients/` — outbound HTTP adapters (federation, resolver)
-- `infra/` — raw connectivity primitives (config, DB, Redis, S3, crypto, error)
+- `infra/` — raw connectivity primitives (settings, DB, Redis, S3, crypto, error)
 - `state.rs` — `AppState`: holds all infra handles, no business logic
 - `api/` — HTTP handlers, auth extractors, request/response models
   - `middleware/` — JWT extractors for each token type (user, resolver, federation, worker)

@@ -1,6 +1,8 @@
 use super::FederationClient;
-use crate::infra::error::AppError;
 use crate::infra::redis::RedisKey;
+use crate::infra::settings;
+use crate::infra::settings::keys;
+use archypix_common::error::AppError;
 use serde::Deserialize;
 use tracing::{debug, trace, warn};
 
@@ -9,8 +11,7 @@ impl FederationClient {
     ///
     /// Queries `{webfinger_scheme}://{global_domain}/.well-known/webfinger` and returns the
     /// full `backend_url` link href (e.g. `https://backend1.example.com`), which already
-    /// includes the correct scheme as advertised by the resolver.  All subsequent federation
-    /// API calls are built directly from this URL — no separate scheme config needed.
+    /// includes the correct scheme as advertised by the resolver.
     ///
     /// Result is cached under `FederationBackend(username, global_domain)`.
     #[tracing::instrument(skip(self), fields(otel.kind = "client", username = %username, global_domain = %global_domain))]
@@ -33,7 +34,7 @@ impl FederationClient {
         debug!("federation: resolving backend URL via WebFinger");
         let webfinger_url = format!(
             "{}://{}/.well-known/webfinger",
-            self.config.webfinger_scheme(),
+            settings::webfinger_scheme(&self.settings),
             global_domain
         );
         let response = self
@@ -74,7 +75,7 @@ impl FederationClient {
             .set_str_ex(
                 RedisKey::FederationBackend(username, global_domain),
                 &backend_url,
-                self.config.federation_backend_cache_ttl_secs,
+                self.settings.get(keys::FEDERATION_BACKEND_CACHE_TTL_SECS),
             )
             .await;
 

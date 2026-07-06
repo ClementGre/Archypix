@@ -521,16 +521,23 @@ function UserActionsMenu({user}: { user: AdminUserResponse }) {
 
 // ---------- Tab ----------
 
-export function UsersTab() {
+/**
+ * Single-instance user management. Transport comes from `useAdminClient` (the enclosing
+ * `AdminClientProvider`), so the fleet dashboard reuses this verbatim per backend by wrapping it in a
+ * proxy provider (feature 24) — `title` labels which backend, `showCreate` can hide the create button.
+ */
+export function UsersTab({title, showCreate = true}: { title?: React.ReactNode; showCreate?: boolean } = {}) {
     const {data: users, isLoading} = useAdminUsers()
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">
+                    {title ? <span className="font-mono font-medium text-foreground">{title}</span> : null}
+                    {title ? ' · ' : ''}
                     {users ? `${users.length} user${users.length !== 1 ? 's' : ''}` : ''}
                 </p>
-                <CreateUserDialog/>
+                {showCreate && <CreateUserDialog/>}
             </div>
 
             <div className="rounded-md border">

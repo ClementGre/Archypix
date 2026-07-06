@@ -8,12 +8,12 @@
 
 use crate::domain::picture::ExifSyncStatus;
 use crate::domain::tag::TagPath;
-use crate::infra::error::AppError;
 use crate::repository::picture::PictureRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::selection::{self, PictureSelection};
+use archypix_common::error::AppError;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 

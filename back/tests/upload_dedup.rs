@@ -7,9 +7,9 @@
 
 mod common;
 
-use archypix_back::infra::config::Config;
 use archypix_back::infra::redis::Cache;
 use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::services::pictures::{BatchUploadFile, BatchUploadOutcome, begin_upload_batch};
 use common::{InMemoryCache, MockStorage};
@@ -18,10 +18,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-fn config() -> Config {
-    Config::test_defaults()
-}
 
 /// Distinct tag paths (ltree wire form) stored on a picture.
 async fn picture_tags(db: &PgPool, picture_id: Uuid) -> Vec<String> {
@@ -36,10 +32,10 @@ async fn picture_tags(db: &PgPool, picture_id: Uuid) -> Vec<String> {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let user = common::seed_user(&db, "alice", "pw").await;
 
@@ -68,7 +64,7 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
         &db,
         cache.as_ref(),
         &storage,
-        &cfg,
+        &settings,
         user,
         &files,
         &tags,
@@ -106,10 +102,10 @@ async fn batch_presign_dedups_known_hash_and_tags_existing(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let user = common::seed_user(&db, "carol", "pw").await;
 
@@ -132,7 +128,7 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
         &db,
         cache.as_ref(),
         &storage,
-        &cfg,
+        &settings,
         user,
         &files,
         &[],
@@ -155,10 +151,10 @@ async fn batch_presign_dedups_identical_files_within_one_batch(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: PgPool) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let user = common::seed_user(&db, "bob", "pw").await;
 
@@ -181,7 +177,7 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
         &db,
         cache.as_ref(),
         &storage,
-        &cfg,
+        &settings,
         user,
         &files,
         &[],
@@ -219,10 +215,9 @@ async fn batch_presign_flags_and_tags_trashed_duplicate_without_restoring(db: Pg
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
-    let cfg = config();
     let cache: Arc<dyn Cache> = Arc::new(InMemoryCache::new());
     let storage = MockStorage::new();
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
+    let waker = RoutineHandle::<Uuid>::disconnected();
 
     let user = common::seed_user(&db, "dave", "pw").await;
 
@@ -242,7 +237,7 @@ async fn batch_presign_tags_live_duplicate_already_existing(db: PgPool) {
         &db,
         cache.as_ref(),
         &storage,
-        &cfg,
+        &test_settings_with(&[]),
         user,
         &files,
         &[],

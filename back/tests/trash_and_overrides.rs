@@ -6,10 +6,11 @@
 mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
-use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::Routine;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline::{self};
+use archypix_back::infra::routine::purge_sweep::PurgeSweepRoutine;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::share::IncomingShareRepository;
 use archypix_back::repository::share_announcement::ShareAnnouncementRepository;
@@ -19,26 +20,22 @@ use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-fn config() -> Config {
-    Config::test_defaults()
-}
-
 /// Alice shares `tag` with Bob (same backend) with `future = true`, Bob accepts, and Alice's
 /// pipeline announces the coverage. Returns `(alice_pic_id, bob_id, alice_id)`.
 async fn share_and_announce(db: &PgPool, tag: &str) -> (Uuid, Uuid, Uuid) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let alice_id = common::seed_user(db, "alice", "pass").await;
     let bob_id = common::seed_user(db, "bob", "pass").await;
     let alice_pic = common::seed_picture_with_tag(db, alice_id, tag).await;
 
-    let (fed, cache) = common::make_federation(&cfg);
-    let (_queue, notify) = common::test_task_queue(db, &cfg);
+    let (fed, cache) = common::make_federation(&settings);
+    let (_queue, notify) = common::test_task_queue(db, &settings);
 
     let share = shares::create_outgoing_share(
         db,
         cache.as_ref(),
         &fed,
-        &cfg,
+        &settings,
         &notify,
         alice_id,
         "alice",
@@ -62,7 +59,7 @@ async fn share_and_announce(db: &PgPool, tag: &str) -> (Uuid, Uuid, Uuid) {
         db,
         cache.as_ref(),
         &fed,
-        &cfg,
+        &settings,
         &notify,
         bob_id,
         "bob",
@@ -70,7 +67,7 @@ async fn share_and_announce(db: &PgPool, tag: &str) -> (Uuid, Uuid, Uuid) {
     )
     .await
     .unwrap();
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &notify, alice_id)
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &settings, &notify, alice_id)
         .await
         .unwrap();
 
@@ -78,10 +75,10 @@ async fn share_and_announce(db: &PgPool, tag: &str) -> (Uuid, Uuid, Uuid) {
 }
 
 async fn run_alice(db: &PgPool, alice_id: Uuid) {
-    let cfg = config();
-    let (fed, cache) = common::make_federation(&cfg);
-    let (_queue, notify) = common::test_task_queue(db, &cfg);
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &cfg, &notify, alice_id)
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let (_queue, notify) = common::test_task_queue(db, &settings);
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &settings, &notify, alice_id)
         .await
         .unwrap();
 }
@@ -113,7 +110,7 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     // Owner trashes the shared picture → kept in coverage, re-announced with the lifecycle flag.
     pictures::trash_picture(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,
     )
@@ -143,7 +140,7 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     // Owner restores before purge → re-announce clears the lifecycle flag.
     pictures::restore_picture(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,
     )
@@ -169,7 +166,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob overrides gps_lat locally (DB-only; no edit_picture job).
     pictures::override_received_exif(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif {
@@ -227,7 +224,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob clears the override → the owner's value flows through again.
     pictures::override_received_exif(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
         FullExif::default(),
@@ -264,7 +261,7 @@ async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
     // Bob overrides gps_lat to *empty* (not just un-claim) — the owner still has a value.
     pictures::override_received_exif(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic.id,
         FullExif::default(),
@@ -319,7 +316,7 @@ async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
     // Bob clears the empty claim → the owner's value flows through again.
     pictures::override_received_exif(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic.id,
         FullExif::default(),
@@ -420,11 +417,9 @@ async fn find_purgeable_respects_retention_and_owner_only(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
-    use archypix_back::infra::routine::purge_sweep::PurgeSweepTask;
     use std::sync::Arc;
-    use std::time::Duration;
 
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let (alice_pic, _bob_id, alice_id) = share_and_announce(&db, "vacation").await;
     // A tracking row must exist after the announce.
     let tracked_before: i64 =
@@ -438,7 +433,7 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
     // Trash and backdate past retention.
     pictures::trash_picture(
         &db,
-        &RoutineHandle::<uuid::Uuid>::disconnected(),
+        &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,
     )
@@ -452,16 +447,14 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
         .await
         .unwrap();
 
-    let (queue, _notify) = common::test_task_queue(&db, &cfg);
+    let (queue, _notify) = common::test_task_queue(&db, &settings);
     let cache: Arc<dyn archypix_back::infra::redis::Cache> = Arc::new(common::InMemoryCache::new());
-    let task = PurgeSweepTask::new(
+    let task = PurgeSweepRoutine::new(
         db.clone(),
         Arc::new(common::MockStorage::new()),
         cache,
-        cfg.clone(),
         queue,
-        Duration::from_secs(3600),
-        100,
+        settings.clone(),
     );
     task.run(()).await.unwrap();
 

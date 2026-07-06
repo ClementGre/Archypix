@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT invited_by FROM users WHERE username = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "invited_by",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "invited_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f598aea43fc0b6685f8514fee329b724b230dfc3aec0ea03b833e9bf10327ade"
+}

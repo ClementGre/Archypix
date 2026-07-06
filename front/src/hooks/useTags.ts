@@ -35,10 +35,16 @@ export function useRenameTag() {
     return useMutation({
         mutationFn: ({oldTag, newTag}: { oldTag: string; newTag: string }) => renameTag(oldTag, newTag),
         onSuccess: () => {
-            invalidatePicturesAndTags(queryClient)
-            void queryClient.invalidateQueries({queryKey: ['tagging']})
-            void queryClient.invalidateQueries({queryKey: ['hierarchies']})
-            void queryClient.invalidateQueries({queryKey: ['shares']})
+            const run = () => {
+                void queryClient.invalidateQueries({queryKey: ['pictures']})
+                void queryClient.invalidateQueries({queryKey: ['tags']})
+                void queryClient.invalidateQueries({queryKey: ['tagging']})
+                void queryClient.invalidateQueries({queryKey: ['hierarchies']})
+                void queryClient.invalidateQueries({queryKey: ['shares']})
+            }
+            run()
+            setTimeout(run, 2000)
+            setTimeout(run, 6000)
         },
     })
 }

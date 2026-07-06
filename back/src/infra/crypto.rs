@@ -1,74 +1,12 @@
-use crate::domain::auth::{JwtClaims, TokenType};
-use crate::infra::error::AppError;
+use archypix_common::error::AppError;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use chrono::Utc;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
-/// Stateful JWT service — held in AppState, shared across requests.
-#[derive(Clone)]
-pub struct JwtService {
-    encoding_key: EncodingKey,
-    decoding_key: DecodingKey,
-    issuer: String,
-}
-
-impl JwtService {
-    pub fn new(secret: &str, issuer: &str) -> Self {
-        Self {
-            encoding_key: EncodingKey::from_secret(secret.as_bytes()),
-            decoding_key: DecodingKey::from_secret(secret.as_bytes()),
-            issuer: issuer.to_string(),
-        }
-    }
-
-    pub fn issue(
-        &self,
-        subject: &str,
-        uid: Option<Uuid>,
-        instance: &str,
-        token_type: TokenType,
-        is_admin: bool,
-        audience: &str,
-        ttl_secs: i64,
-    ) -> Result<String, AppError> {
-        let now = Utc::now().timestamp();
-        let claims = JwtClaims {
-            sub: subject.to_string(),
-            uid,
-            instance: instance.to_string(),
-            token_type,
-            is_admin,
-            aud: audience.to_string(),
-            iss: self.issuer.clone(),
-            exp: now + ttl_secs,
-            iat: now,
-            jti: Uuid::new_v4().to_string(),
-        };
-        encode(&Header::new(Algorithm::HS256), &claims, &self.encoding_key)
-            .map_err(|e| AppError::InternalServerError(e.to_string()))
-    }
-
-    pub fn decode(&self, token: &str, audience: &str) -> Result<JwtClaims, AppError> {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.set_audience(&[audience]);
-        validation.set_issuer(&[self.issuer.clone()]);
-        decode::<JwtClaims>(token, &self.decoding_key, &validation)
-            .map(|d| d.claims)
-            .map_err(|e| AppError::Unauthorized(e.to_string()))
-    }
-
-    /// Decode without issuer check — used for resolver tokens issued by the resolver service.
-    pub fn decode_any_issuer(&self, token: &str, audience: &str) -> Result<JwtClaims, AppError> {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.set_audience(&[audience]);
-        decode::<JwtClaims>(token, &self.decoding_key, &validation)
-            .map(|d| d.claims)
-            .map_err(|e| AppError::Unauthorized(e.to_string()))
-    }
-}
+// `JwtService` + claims live in `archypix_common::auth` (feature 23 §9). Re-exported so existing
+// `crate::infra::crypto::JwtService` imports keep working. `AuthError` maps to `AppError` below so
+// call sites keep their `?`-into-`AppError` ergonomics (encode → 500, verify → 401).
+pub use archypix_common::auth::{AuthError, JwtService};
 
 pub fn hash_password(password: &str) -> Result<String, AppError> {
     let salt = argon2::password_hash::SaltString::generate(argon2::password_hash::rand_core::OsRng);

@@ -4,10 +4,11 @@
 //! path: a cached mirror of the committed billed total plus the in-flight reservation counter.
 //! Enforcement math on any byte-adding write is `committed + reserved + incoming ≤ quota`.
 
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
-use crate::infra::redis::{Cache, RedisKey, storage_reservation_prefix};
+use crate::infra::redis::{storage_reservation_prefix, Cache, RedisKey};
+use crate::infra::settings::keys;
 use crate::repository::user_storage::{UserStorage, UserStorageRepository};
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -92,7 +93,7 @@ pub async fn at_or_over_quota(
 /// Add a reservation sub-key for an in-flight presigned upload (§5.2). Auto-releases on TTL.
 pub async fn reserve(
     cache: &dyn Cache,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     picture_id: Uuid,
     bytes: i64,
@@ -101,7 +102,7 @@ pub async fn reserve(
         .set_str_ex(
             RedisKey::StorageReservation(user_id, picture_id),
             &bytes.max(0).to_string(),
-            config.storage_reservation_ttl_secs,
+            settings.get(keys::STORAGE_RESERVATION_TTL_SECS),
         )
         .await
 }
@@ -130,12 +131,12 @@ pub enum WarnLevel {
 }
 
 /// Classify a usage ratio against the configured thresholds. Unlimited (`ratio = None`) is `Ok`.
-pub fn warn_level(ratio: Option<f64>, config: &Config) -> WarnLevel {
+pub fn warn_level(ratio: Option<f64>, settings: &Settings) -> WarnLevel {
     match ratio {
         None => WarnLevel::Ok,
         Some(r) if r >= 1.0 => WarnLevel::Full,
-        Some(r) if r >= config.storage_critical_ratio => WarnLevel::Critical,
-        Some(r) if r >= config.storage_warn_ratio => WarnLevel::Warn,
+        Some(r) if r >= settings.get(keys::STORAGE_CRITICAL_RATIO) => WarnLevel::Critical,
+        Some(r) if r >= settings.get(keys::STORAGE_WARN_RATIO) => WarnLevel::Warn,
         Some(_) => WarnLevel::Ok,
     }
 }
@@ -154,10 +155,10 @@ pub struct StorageInfo {
 
 /// Build the storage report for a user. `used` is the authoritative billed total (read straight
 /// from Postgres, not the cached mirror).
-#[tracing::instrument(skip(db, config), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, settings), fields(user_id = %user_id))]
 pub async fn storage_info(
     db: &PgPool,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
 ) -> Result<StorageInfo, AppError> {
     let breakdown = UserStorageRepository::get(db, user_id).await?;
@@ -177,6 +178,6 @@ pub async fn storage_info(
         breakdown,
         reclaimable_trash_bytes,
         usage_ratio,
-        warn_level: warn_level(usage_ratio, config),
+        warn_level: warn_level(usage_ratio, settings),
     })
 }

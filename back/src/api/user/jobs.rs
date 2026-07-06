@@ -1,14 +1,14 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::job::{ExifField, FullExif, Job};
-use crate::infra::error::AppError;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::PictureRepository;
 use crate::services;
 use crate::services::jobs::{BatchExifMode, ExifBatchOutcome};
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, State};
+use axum::Json;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -108,7 +108,7 @@ pub async fn batch_edit_exif(
         &state.routines.pipeline,
         &state.routines.exif_drain,
         state.cache.as_ref(),
-        &state.config,
+        &state.settings,
         &state.federation,
         user_id,
         &auth.claims.sub,

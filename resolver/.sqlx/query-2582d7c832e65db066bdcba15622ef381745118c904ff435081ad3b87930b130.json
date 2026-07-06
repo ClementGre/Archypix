@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backends SET last_selected_at = now() WHERE back_domain = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2582d7c832e65db066bdcba15622ef381745118c904ff435081ad3b87930b130"
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT CASE WHEN b.use_https THEN 'https://' ELSE 'http://' END || b.back_domain\n         FROM user_mappings u JOIN backends b ON u.back_domain = b.back_domain\n         WHERE u.username = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "fe471303e3cfc0b79a4065df850a6a78a6e7d0be257f71310682ea4740695ec4"
+}

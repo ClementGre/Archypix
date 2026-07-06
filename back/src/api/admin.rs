@@ -1,9 +1,11 @@
 mod handlers;
+mod invites;
 mod models;
+mod settings;
 
 use crate::state::AppState;
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
-use axum::routing::{get, patch, post};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -58,4 +60,16 @@ pub fn routes() -> Router<AppState> {
             "/federation/connections",
             get(handlers::list_active_federation_connections),
         )
+        // ── Runtime settings (feature 23 §4.5) ──────────────────────────────────
+        .route(
+            "/settings",
+            get(settings::get_settings).patch(settings::patch_setting),
+        )
+        .route("/settings/{key}", delete(settings::reset_setting))
+        // ── Routines (feature 23 §5.2) ────────────────────────────────────────
+        .route("/routines", get(settings::get_routines))
+        .route("/routines/{name}/trigger", post(settings::trigger_routine))
+        // ── Invites (feature 24) — all local invites, grouped by creator in the UI ────────────
+        .route("/invites", get(invites::list_invites))
+        .route("/invites/{code}", delete(invites::revoke_invite))
 }

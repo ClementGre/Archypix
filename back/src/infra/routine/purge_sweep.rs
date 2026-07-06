@@ -8,17 +8,18 @@
 //! has no FK to `pictures`, so this task explicitly unannounces and deletes the tracking rows itself,
 //! mirroring the revocation cascade (`cleanup_incoming_share`).
 
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
 use crate::infra::redis::{Cache, RedisKey};
 use crate::infra::routine::unannounce::UnannounceInput;
 use crate::infra::routine::{Routine, RoutineHandle};
 use crate::infra::s3::{self, Storage};
+use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::user::UserRepository;
 use crate::services::users::find_local_user_id;
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,35 +28,28 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Periodically purges owned, retention-expired soft-deleted pictures.
-pub struct PurgeSweepTask {
+pub struct PurgeSweepRoutine {
     db: PgPool,
     storage: Arc<dyn Storage>,
     cache: Arc<dyn Cache>,
-    config: Config,
     unannounce: RoutineHandle<UnannounceInput>,
-    interval: Duration,
-    batch: i64,
+    settings: Arc<Settings>,
 }
 
-impl PurgeSweepTask {
-    #[allow(clippy::too_many_arguments)]
+impl PurgeSweepRoutine {
     pub fn new(
         db: PgPool,
         storage: Arc<dyn Storage>,
         cache: Arc<dyn Cache>,
-        config: Config,
         unannounce: RoutineHandle<UnannounceInput>,
-        interval: Duration,
-        batch: i64,
+        settings: Arc<Settings>,
     ) -> Self {
         Self {
             db,
             storage,
             cache,
-            config,
             unannounce,
-            interval,
-            batch,
+            settings,
         }
     }
 
@@ -102,7 +96,7 @@ impl PurgeSweepTask {
             let is_same_backend = find_local_user_id(
                 self.cache.as_ref(),
                 &self.db,
-                &self.config,
+                &self.settings,
                 &recipient_username,
                 &recipient_instance,
             )
@@ -121,10 +115,10 @@ impl PurgeSweepTask {
         // ── S3 cleanup (best-effort: a missing object is not an error) ──
         let key = s3::picture_key(user_id, picture_id);
         for bucket in [
-            &self.config.s3_bucket_pictures,
-            &self.config.s3_bucket_small,
-            &self.config.s3_bucket_medium,
-            &self.config.s3_bucket_large,
+            &self.settings.get(keys::S3_BUCKET_PICTURES),
+            &self.settings.get(keys::S3_BUCKET_SMALL),
+            &self.settings.get(keys::S3_BUCKET_MEDIUM),
+            &self.settings.get(keys::S3_BUCKET_LARGE),
         ] {
             if let Err(e) = self.storage.delete_object(bucket, &key).await {
                 warn!(picture_id = %picture_id, bucket, error = ?e, "purge: failed to delete S3 object");
@@ -134,7 +128,7 @@ impl PurgeSweepTask {
             let vkey = s3::version_key(user_id, picture_id, v.id);
             if let Err(e) = self
                 .storage
-                .delete_object(&self.config.s3_bucket_versions, &vkey)
+                .delete_object(&self.settings.get(keys::S3_BUCKET_VERSIONS), &vkey)
                 .await
             {
                 warn!(picture_id = %picture_id, version = %v.id, error = ?e, "purge: failed to delete version object");
@@ -153,7 +147,7 @@ impl PurgeSweepTask {
 }
 
 #[async_trait::async_trait]
-impl Routine for PurgeSweepTask {
+impl Routine for PurgeSweepRoutine {
     type Input = ();
     type Key = ();
 
@@ -164,11 +158,14 @@ impl Routine for PurgeSweepTask {
     fn key(_input: &()) {}
 
     fn interval(&self) -> Option<Duration> {
-        Some(self.interval)
+        Some(Duration::from_secs(
+            self.settings.get(keys::PURGE_SWEEP_INTERVAL_SECS),
+        ))
     }
 
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
-        let purgeable = PictureRepository::find_purgeable(&self.db, self.batch).await?;
+        let batch = self.settings.get(keys::PURGE_SWEEP_BATCH);
+        let purgeable = PictureRepository::find_purgeable(&self.db, batch).await?;
         if purgeable.is_empty() {
             return Ok(());
         }

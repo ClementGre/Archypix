@@ -9,6 +9,8 @@ export interface RegisterPayload {
     email: string
     display_name: string
     password: string
+    /** Invite code from a `/register?invite=…` link (required in invite modes, optional pinning in open). */
+    invite_code?: string
 }
 
 /**

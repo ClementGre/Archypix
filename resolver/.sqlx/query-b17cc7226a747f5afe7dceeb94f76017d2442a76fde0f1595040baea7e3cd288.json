@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_mappings (username, back_domain, updated_at) VALUES ($1, $2, now())\n         ON CONFLICT (username) DO UPDATE SET back_domain = $2, updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b17cc7226a747f5afe7dceeb94f76017d2442a76fde0f1595040baea7e3cd288"
+}

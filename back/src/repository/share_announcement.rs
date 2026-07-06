@@ -6,7 +6,7 @@
 //! against this table to decide what to announce / unannounce; revoking a share deletes
 //! its rows (immediately invalidating every token it held).
 
-use crate::infra::error::{AppError, map_sqlx_error};
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 

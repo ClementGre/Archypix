@@ -16,17 +16,21 @@ COPY back/Cargo.toml ./back/Cargo.toml
 COPY resolver/Cargo.toml ./resolver/Cargo.toml
 COPY worker/Cargo.toml ./worker/Cargo.toml
 
+ENV SQLX_OFFLINE=true
 # Stub out every workspace member so cargo can resolve the dependency graph.
 RUN for pkg in common back resolver worker; do \
       mkdir -p $pkg/src && echo 'fn main(){}' > $pkg/src/main.rs; \
     done && \
     touch common/src/lib.rs back/src/lib.rs resolver/src/lib.rs && \
     cargo build --release -p archypix-resolver && \
-    rm -rf resolver/src
+    rm -rf common/src resolver/src
 
 # Copy real source and rebuild only resolver (common/back/worker are not linked).
+COPY resolver/.sqlx ./resolver/.sqlx
+COPY resolver/migrations ./resolver/migrations
 COPY resolver/src ./resolver/src
-RUN find resolver/src -type f -exec touch {} + && cargo build --release -p archypix-resolver
+COPY common/src ./common/src
+RUN find common/src resolver/src -type f -exec touch {} + && cargo build --release -p archypix-resolver
 
 # Runtime stage
 FROM debian:trixie-slim AS prod

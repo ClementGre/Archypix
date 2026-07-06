@@ -13,19 +13,20 @@ use crate::domain::hierarchy::{
     TagOpKind, TagPredicate, WriteBack,
 };
 use crate::domain::tag::TagPath;
-use crate::infra::config::Config;
-use crate::infra::error::AppError;
 use crate::infra::redis::Cache;
 use crate::infra::s3::Storage;
+use crate::infra::settings;
+use crate::infra::settings::keys;
 use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
 use crate::repository::picture::{PictureListFilter, PictureSortField, SortOrder};
 use crate::repository::tag::TagRepository;
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
+use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-
 // ─── Resolved directory tree ────────────────────────────────────────────────────
 
 /// A resolved directory: a pure function of the config and the tag set. Picture membership is
@@ -671,12 +672,12 @@ pub struct BrowseParams {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, cache, storage, config, federation, params), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, params), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn browse(
     db: &PgPool,
     cache: &dyn Cache,
     storage: &dyn Storage,
-    config: &Config,
+    settings: &Settings,
     federation: &FederationClient,
     user_id: Uuid,
     hierarchy_id: Uuid,
@@ -723,7 +724,7 @@ pub async fn browse(
         db,
         cache,
         storage,
-        config,
+        settings,
         federation,
         user_id,
         filter,
@@ -871,21 +872,21 @@ pub struct WebdavInfo {
     pub enabled: bool,
 }
 
-fn webdav_url(config: &Config, name: &str) -> String {
+fn webdav_url(settings: &Settings, name: &str) -> String {
     format!(
         "{}://{}/webdav/{}",
-        config.back_scheme(),
-        config.back_domain,
+        settings::back_scheme(&settings),
+        settings.get(keys::BACK_DOMAIN),
         crate::domain::hierarchy::slugify(name),
     )
 }
 
 /// Get the WebDAV mount info, minting a token on first access (so `GET …/webdav` always
 /// returns a usable credential).
-#[tracing::instrument(skip(db, config), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
+#[tracing::instrument(skip(db, settings), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn get_webdav_info(
     db: &PgPool,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     hierarchy_id: Uuid,
 ) -> Result<WebdavInfo, AppError> {
@@ -893,16 +894,21 @@ pub async fn get_webdav_info(
         .await?
         .ok_or(AppError::NotFound)?;
     let token = match row.webdav_token_enc {
-        Some(blob) => crate::infra::crypto::decrypt_webdav_token(&config.jwt_secret, &blob)?,
+        Some(blob) => {
+            crate::infra::crypto::decrypt_webdav_token(&settings.get(keys::JWT_SECRET), &blob)?
+        }
         None => {
             let token = crate::infra::crypto::generate_webdav_token();
-            let blob = crate::infra::crypto::encrypt_webdav_token(&config.jwt_secret, &token)?;
+            let blob = crate::infra::crypto::encrypt_webdav_token(
+                &settings.get(keys::JWT_SECRET),
+                &token,
+            )?;
             HierarchyRepository::set_webdav_token(db, user_id, hierarchy_id, &blob).await?;
             token
         }
     };
     Ok(WebdavInfo {
-        url: webdav_url(config, &row.name),
+        url: webdav_url(settings, &row.name),
         token,
         use_redirect: row.webdav_use_redirect,
         enabled: row.enabled,
@@ -910,10 +916,10 @@ pub async fn get_webdav_info(
 }
 
 /// Rotate the WebDAV token (invalidates any mounted client).
-#[tracing::instrument(skip(db, config), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
+#[tracing::instrument(skip(db, settings), fields(user_id = %user_id, hierarchy_id = %hierarchy_id))]
 pub async fn regenerate_webdav_token(
     db: &PgPool,
-    config: &Config,
+    settings: &Settings,
     user_id: Uuid,
     hierarchy_id: Uuid,
 ) -> Result<WebdavInfo, AppError> {
@@ -921,10 +927,10 @@ pub async fn regenerate_webdav_token(
         .await?
         .ok_or(AppError::NotFound)?;
     let token = crate::infra::crypto::generate_webdav_token();
-    let blob = crate::infra::crypto::encrypt_webdav_token(&config.jwt_secret, &token)?;
+    let blob = crate::infra::crypto::encrypt_webdav_token(&settings.get(keys::JWT_SECRET), &token)?;
     HierarchyRepository::set_webdav_token(db, user_id, hierarchy_id, &blob).await?;
     Ok(WebdavInfo {
-        url: webdav_url(config, &row.name),
+        url: webdav_url(settings, &row.name),
         token,
         use_redirect: row.webdav_use_redirect,
         enabled: row.enabled,

@@ -8,10 +8,10 @@
 mod common;
 
 use archypix_back::domain::share::ShareStatus;
-use archypix_back::infra::config::Config;
 use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline;
 use archypix_back::infra::routine::unannounce::UnannounceInput;
+use archypix_back::infra::settings::{keys, test_settings_with};
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::shares;
@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+use archypix_common::settings::Settings;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
@@ -30,11 +31,12 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn patch_tags_rejects_shared_to_me_prefix(db: PgPool) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let alice = common::seed_user(&db, "alice", "p").await;
     let pic = common::seed_picture(&db, alice).await;
-    let token = common::federation::user_jwt(&cfg, "alice", alice);
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let token = common::federation::user_jwt(&settings, "alice", alice);
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
 
     let body = serde_json::json!({
         "picture_ids": [pic],
@@ -55,11 +57,12 @@ async fn patch_tags_rejects_shared_to_me_prefix(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn patch_tags_allows_normal_prefix(db: PgPool) {
-    let cfg = config();
+    let settings = test_settings_with(&[]);
     let alice = common::seed_user(&db, "alice", "p").await;
     let pic = common::seed_picture(&db, alice).await;
-    let token = common::federation::user_jwt(&cfg, "alice", alice);
-    let app = archypix_back::api::routes(&cfg).with_state(common::test_app_state(db.clone(), &cfg));
+    let token = common::federation::user_jwt(&settings, "alice", alice);
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
 
     let body = serde_json::json!({
         "picture_ids": [pic],
@@ -78,25 +81,21 @@ async fn patch_tags_allows_normal_prefix(db: PgPool) {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-fn config() -> Config {
-    Config::test_defaults()
-}
-
 /// Build the shared deps (cache, federation, task queue with spawned runner, pipeline notify).
 async fn deps(
     db: &PgPool,
 ) -> (
-    Config,
+    Arc<Settings>,
     Arc<common::InMemoryCache>,
     RoutineHandle<UnannounceInput>,
     RoutineHandle<Uuid>,
 ) {
-    let config = config();
-    let (fed, cache) = common::make_federation(&config);
-    let (queue, notify) = common::test_task_queue(db, &config);
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let (queue, notify) = common::test_task_queue(db, &settings);
     // `make_federation` returns its own cache; reuse one cache for the share calls.
     let _ = fed;
-    (config, cache, queue, notify)
+    (settings, cache, queue, notify)
 }
 
 /// Run the pipeline once for `user`. Delivery is inline (same-backend registers synchronously), so
@@ -104,12 +103,12 @@ async fn deps(
 async fn run_pipeline_and_settle(
     db: &PgPool,
     _queue: &RoutineHandle<UnannounceInput>,
-    config: &Config,
+    settings: &Arc<Settings>,
     user: Uuid,
 ) {
-    let (fed, cache) = common::make_federation(config);
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), config, &waker, user)
+    let (fed, cache) = common::make_federation(settings);
+    let waker = RoutineHandle::<Uuid>::disconnected();
+    pipeline::run_once_for_user(db, &fed, cache.as_ref(), settings, &waker, user)
         .await
         .unwrap();
 }
@@ -120,7 +119,7 @@ async fn run_pipeline_and_settle(
 #[allow(clippy::too_many_arguments)]
 async fn active_share(
     db: &PgPool,
-    config: &Config,
+    settings: &Arc<Settings>,
     cache: &Arc<common::InMemoryCache>,
     queue: &RoutineHandle<UnannounceInput>,
     notify: &RoutineHandle<Uuid>,
@@ -131,12 +130,12 @@ async fn active_share(
     tag: &str,
     future: bool,
 ) -> Uuid {
-    let (fed, _c) = common::make_federation(config);
+    let (fed, _c) = common::make_federation(settings);
     let share = shares::create_outgoing_share(
         db,
         cache.as_ref(),
         &fed,
-        config,
+        settings,
         notify,
         sender_id,
         sender_name,
@@ -144,7 +143,7 @@ async fn active_share(
         "Test share",
         None,
         recipient_name,
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         true,
         false,
         future,
@@ -152,16 +151,19 @@ async fn active_share(
     )
     .await
     .unwrap();
-    let incoming =
-        IncomingShareRepository::find_by_outgoing_share(db, share.id, &config.global_domain)
-            .await
-            .unwrap()
-            .unwrap();
+    let incoming = IncomingShareRepository::find_by_outgoing_share(
+        db,
+        share.id,
+        &settings.get(keys::GLOBAL_DOMAIN),
+    )
+        .await
+        .unwrap()
+        .unwrap();
     shares::accept_incoming_share(
         db,
         cache.as_ref(),
         &fed,
-        config,
+        settings,
         notify,
         recipient_id,
         recipient_name,
@@ -171,7 +173,7 @@ async fn active_share(
     .unwrap();
     // Initial announcement: sender's OutgoingShare is now `pending_first_announcement`; the
     // pipeline announces its coverage and flips it to Active.
-    run_pipeline_and_settle(db, queue, config, sender_id).await;
+    run_pipeline_and_settle(db, queue, settings, sender_id).await;
     share.id
 }
 
@@ -179,27 +181,27 @@ async fn active_share(
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn future_picture_added_after_accept_is_announced(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
 
     // Active future share, no pictures yet.
     active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
     )
     .await;
     assert_eq!(common::count_received_pictures(&db, bob).await, 0);
 
     // Alice adds a picture to the shared tag → pipeline announces it to Bob.
     common::seed_picture_with_tag(&db, alice, "Travel").await;
-    run_pipeline_and_settle(&db, &queue, &config, alice).await;
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob).await,
         1,
         "future picture must be announced to Bob"
     );
-    let expected = common::shared_to_me_tag("alice", &config.global_domain, "Travel");
+    let expected = common::shared_to_me_tag("alice", &settings.get(keys::GLOBAL_DOMAIN), "Travel");
     assert!(
         common::received_picture_tags(&db, bob)
             .await
@@ -227,18 +229,18 @@ async fn future_picture_added_after_accept_is_announced(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn future_false_share_does_not_announce_new_pictures(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
 
     // future = false.
     active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", false,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", false,
     )
     .await;
 
     common::seed_picture_with_tag(&db, alice, "Travel").await;
-    run_pipeline_and_settle(&db, &queue, &config, alice).await;
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob).await,
@@ -249,16 +251,16 @@ async fn future_false_share_does_not_announce_new_pictures(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn removing_tag_unannounces_picture(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
 
     active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
     )
     .await;
     let pic = common::seed_picture_with_tag(&db, alice, "Travel").await;
-    run_pipeline_and_settle(&db, &queue, &config, alice).await;
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
     assert_eq!(common::count_received_pictures(&db, bob).await, 1);
 
     // Remove the tag → picture leaves coverage → unannounce.
@@ -268,7 +270,7 @@ async fn removing_tag_unannounces_picture(db: PgPool) {
     archypix_back::repository::pipeline::PipelineRepository::invalidate(&db, &[pic])
         .await
         .unwrap();
-    run_pipeline_and_settle(&db, &queue, &config, alice).await;
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob).await,
@@ -281,7 +283,7 @@ async fn removing_tag_unannounces_picture(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
 
@@ -295,7 +297,7 @@ async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool)
         pic,
         alice,
         Uuid::new_v4().to_string(),
-        config.global_domain,
+        settings.get(keys::GLOBAL_DOMAIN),
     )
         .execute(&db)
         .await
@@ -305,10 +307,10 @@ async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool)
         .unwrap();
 
     active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
     )
     .await;
-    run_pipeline_and_settle(&db, &queue, &config, alice).await;
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
 
     // Bob must NOT receive his own picture back.
     assert_eq!(
@@ -322,17 +324,17 @@ async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool)
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
-    let (fed, _c) = common::make_federation(&config);
+    let (fed, _c) = common::make_federation(&settings);
 
     // Alice shares Travel → Bob with allow_share_back = true.
     let alice_share = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice,
         "alice",
@@ -340,7 +342,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
         "Test share",
         None,
         "bob",
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         true,
         false,
         true,
@@ -355,7 +357,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         bob,
         "bob",
@@ -363,7 +365,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
         "Test share",
         None,
         "alice",
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         true,
         false,
         true,
@@ -374,7 +376,7 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
 
     // Bob's pictures are announced to Alice by Bob's pipeline (his OutgoingShare is now
     // `pending_first_announcement`).
-    run_pipeline_and_settle(&db, &queue, &config, bob).await;
+    run_pipeline_and_settle(&db, &queue, &settings, bob).await;
 
     // Alice's IncomingShare from Bob must be Active (auto-accepted), with a mapping service.
     let alice_incomings = IncomingShareRepository::list_by_recipient(&db, alice)
@@ -435,17 +437,17 @@ async fn shareback_same_backend_auto_accepts_and_maps(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn shareback_disallowed_stays_pending(db: PgPool) {
-    let (config, cache, _queue, notify) = deps(&db).await;
+    let (settings, cache, _queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
-    let (fed, _c) = common::make_federation(&config);
+    let (fed, _c) = common::make_federation(&settings);
 
     // Alice shares with allow_share_back = false.
     let alice_share = shares::create_outgoing_share(
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         alice,
         "alice",
@@ -453,7 +455,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
         "Test share",
         None,
         "bob",
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         false,
         false,
         true,
@@ -467,7 +469,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &notify,
         bob,
         "bob",
@@ -475,7 +477,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
         "Test share",
         None,
         "alice",
-        &config.global_domain,
+        &settings.get(keys::GLOBAL_DOMAIN),
         true,
         false,
         true,
@@ -505,7 +507,7 @@ async fn shareback_disallowed_stays_pending(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn transitive_share_propagates_and_forwards_token(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
     let carol = common::seed_user(&db, "carol", "p").await;
@@ -513,16 +515,16 @@ async fn transitive_share_propagates_and_forwards_token(db: PgPool) {
     // Alice shares Travel → Bob, with a picture already present.
     let pic = common::seed_picture_with_tag(&db, alice, "Travel").await;
     active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(common::count_received_pictures(&db, bob).await, 1);
 
     // Bob re-shares the SharedToMe.alice.Travel tag → Carol.
-    let bob_tag = common::shared_to_me_tag("alice", &config.global_domain, "Travel");
+    let bob_tag = common::shared_to_me_tag("alice", &settings.get(keys::GLOBAL_DOMAIN), "Travel");
     active_share(
-        &db, &config, &cache, &queue, &notify, bob, "bob", carol, "carol", &bob_tag, true,
+        &db, &settings, &cache, &queue, &notify, bob, "bob", carol, "carol", &bob_tag, true,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -569,22 +571,22 @@ async fn transitive_share_propagates_and_forwards_token(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn transitive_revocation_cascades_to_carol(db: PgPool) {
-    let (config, cache, queue, notify) = deps(&db).await;
+    let (settings, cache, queue, notify) = deps(&db).await;
     let alice = common::seed_user(&db, "alice", "p").await;
     let bob = common::seed_user(&db, "bob", "p").await;
     let carol = common::seed_user(&db, "carol", "p").await;
-    let (fed, _c) = common::make_federation(&config);
+    let (fed, _c) = common::make_federation(&settings);
 
     common::seed_picture_with_tag(&db, alice, "Travel").await;
     let alice_share = active_share(
-        &db, &config, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", true,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let bob_tag = common::shared_to_me_tag("alice", &config.global_domain, "Travel");
+    let bob_tag = common::shared_to_me_tag("alice", &settings.get(keys::GLOBAL_DOMAIN), "Travel");
     let bob_share = active_share(
-        &db, &config, &cache, &queue, &notify, bob, "bob", carol, "carol", &bob_tag, true,
+        &db, &settings, &cache, &queue, &notify, bob, "bob", carol, "carol", &bob_tag, true,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -595,7 +597,7 @@ async fn transitive_revocation_cascades_to_carol(db: PgPool) {
         &db,
         cache.as_ref(),
         &fed,
-        &config,
+        &settings,
         &queue,
         &notify,
         alice,

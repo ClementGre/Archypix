@@ -1,6 +1,5 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::job::{ExifField, FullExif};
-use crate::infra::error::AppError;
 use crate::services;
 use crate::services::aggregate::AggregateRequest;
 use crate::services::pictures::{
@@ -9,8 +8,9 @@ use crate::services::pictures::{
 };
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, Query, State};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -38,7 +38,7 @@ pub async fn create_upload(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         auth.user_id()?,
         &payload.filename,
         payload.size,
@@ -88,7 +88,7 @@ pub async fn batch_create_upload(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         auth.user_id()?,
         &payload.files,
         &initial_tags,
@@ -140,7 +140,7 @@ pub async fn complete_upload(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         auth.user_id()?,
         picture_id,
         meta,
@@ -175,7 +175,7 @@ pub async fn list(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         &state.federation,
         auth.user_id()?,
         params,
@@ -200,7 +200,7 @@ pub async fn picture_url(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         &state.federation,
         auth.user_id()?,
         picture_id,
@@ -294,7 +294,7 @@ pub async fn copy(
         &state.db,
         state.cache.as_ref(),
         state.storage.as_ref(),
-        &state.config,
+        &state.settings,
         &state.federation,
         &state.routines.pipeline,
         auth.user_id()?,
@@ -536,7 +536,7 @@ pub async fn edit_received_exif(
             let picture = services::pictures::propose_received_exif(
                 &state.db,
                 state.cache.as_ref(),
-                &state.config,
+                &state.settings,
                 &state.federation,
                 &state.routines.pipeline,
                 user_id,

@@ -9,6 +9,19 @@ default = []
 # Include this feature in back/, which needs compile-time SQL type checking.
 # Do NOT include it in worker/, which has no database dependency.
 sqlx = ["dep:sqlx"]
+# Shared JWT service + claims (feature 23 §9). Consumers: back, worker, resolver.
+auth = ["dep:jsonwebtoken"]
+# Generic background-work runtime (feature 23 §8). Consumers: back, resolver.
+routine = ["dep:tokio", "dep:tracing", "dep:async-trait", "dep:anyhow"]
+# Layered runtime-config engine (feature 23 §4). Consumers: back, resolver.
+# `wire_enum!` (enum-as-setting) needs strum on the enums it's applied to.
+settings = ["dep:arc-swap", "dep:strum"]
+# Registration modes + invite domain logic (feature 23 §6). Consumers: back, resolver.
+registration = ["dep:strum", "dep:rand"]
+# Shared `AppError` + Axum `IntoResponse` (feature 23 §8/9 follow-up). Consumers: back, resolver.
+# `From<AuthError>`/`From<SettingsError>` only compile in when `auth`/`settings` are also enabled;
+# `map_sqlx_error`/`From<sqlx::Error>` only when `sqlx` is also enabled.
+error = ["dep:axum", "dep:thiserror", "dep:tracing", "dep:anyhow"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -18,7 +31,23 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 tempfile = "3.27.0"
 
+# ── Optional, feature-gated (see [features]) ────────────────────────────────────
+jsonwebtoken = { version = "10", features = ["rust_crypto"], optional = true }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"], optional = true }
+tracing = { version = "0.1", optional = true }
+async-trait = { version = "0.1", optional = true }
+anyhow = { version = "1", optional = true }
+arc-swap = { version = "1", optional = true }
+strum = { version = "0.26", features = ["derive"], optional = true }
+axum = { version = "0.8.8", optional = true }
+thiserror = { version = "2", optional = true }
+rand = { version = "0.10", features = ["std"], optional = true }
+
 [dependencies.sqlx]
 version = "0.9"
 features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"]
 optional = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "test-util"] }
+strum = { version = "0.26", features = ["derive"] }

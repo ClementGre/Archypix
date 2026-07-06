@@ -3,10 +3,11 @@ pub mod models;
 mod shares;
 mod webfinger;
 
-use crate::infra::config::Config;
 use crate::infra::crypto::JwtService;
 use crate::infra::observability;
 use crate::infra::redis::Cache;
+use crate::infra::settings::keys;
+use archypix_common::settings::Settings;
 use reqwest::Client as HttpClient;
 use std::sync::Arc;
 
@@ -14,16 +15,21 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct FederationClient {
     pub(super) http: HttpClient,
-    pub(super) config: Config,
+    pub(super) settings: Arc<Settings>,
     pub(super) jwt: JwtService,
     pub(super) cache: Arc<dyn Cache>,
 }
 
 impl FederationClient {
-    pub fn new(http: HttpClient, config: Config, jwt: JwtService, cache: Arc<dyn Cache>) -> Self {
+    pub fn new(
+        http: HttpClient,
+        settings: Arc<Settings>,
+        jwt: JwtService,
+        cache: Arc<dyn Cache>,
+    ) -> Self {
         Self {
             http,
-            config,
+            settings,
             jwt,
             cache,
         }
@@ -37,8 +43,8 @@ impl FederationClient {
     ) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
         if self
-            .config
-            .trace_propagation_peers
+            .settings
+            .get(keys::TRACE_PROPAGATION_PEERS)
             .iter()
             .any(|p| p == recipient_global_domain)
         {

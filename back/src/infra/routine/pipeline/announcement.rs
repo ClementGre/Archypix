@@ -20,7 +20,7 @@ use crate::clients::federation::models::{
 use crate::domain::picture::Picture;
 use crate::domain::share::{OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
-use crate::infra::error::{AppError, map_sqlx_error};
+use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use crate::repository::share_announcement::ShareAnnouncementRepository;
@@ -30,6 +30,7 @@ use crate::services::shares::registration::{
     register_received_pictures, unregister_announced_pictures,
 };
 use crate::services::users::find_local_user_id;
+use archypix_common::error::{map_sqlx_error, AppError};
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -194,7 +195,7 @@ async fn reconcile_share(
             meta,
             token,
             sender_username,
-            &run.config.global_domain,
+            &run.settings.get(keys::GLOBAL_DOMAIN),
             owner_purge_at,
         ));
         announce_tokens.push((*pic, token, meta.updated_at));
@@ -228,7 +229,7 @@ async fn reconcile_share(
     let same_backend = find_local_user_id(
         run.cache,
         db,
-        run.config,
+        run.settings,
         &share.recipient_username,
         &share.recipient_instance,
     )
@@ -281,7 +282,8 @@ async fn reconcile_share(
             OutgoingShareRepository::mark_announce_success(db, share.id).await?;
         }
     } else {
-        let next = (Utc::now() + ChronoDuration::seconds(run.config.pipeline_retry_backoff_secs))
+        let next = (Utc::now()
+            + ChronoDuration::seconds(run.settings.get(keys::PIPELINE_RETRY_BACKOFF_SECS)))
             .naive_utc();
         // An `active` share whose incremental pass failed is demoted to `errored` so the next pass
         // is a full reconcile; PFA/Errored keep their status and just back off.
@@ -304,7 +306,7 @@ async fn deliver_announce(
         let incoming = IncomingShareRepository::find_by_outgoing_share(
             run.db,
             share.id,
-            &run.config.global_domain,
+            &run.settings.get(keys::GLOBAL_DOMAIN),
         )
         .await?
         .ok_or(AppError::NotFound)?;
@@ -317,7 +319,7 @@ async fn deliver_announce(
         }
         let shared_tag = TagPath::shared_to_me(
             sender_username,
-            &run.config.global_domain,
+            &run.settings.get(keys::GLOBAL_DOMAIN),
             &TagPath::from_ltree(&share.tag_path),
         );
         register_received_pictures(
@@ -340,7 +342,7 @@ async fn deliver_announce(
                     outgoing_share_id: share.id,
                     tag_path: share.tag_path.clone(),
                     sender_username: sender_username.to_string(),
-                    sender_instance: run.config.global_domain.clone(),
+                    sender_instance: run.settings.get(keys::GLOBAL_DOMAIN).clone(),
                     pictures: items,
                 },
             )
@@ -361,7 +363,7 @@ async fn deliver_unannounce(
         let incoming = IncomingShareRepository::find_by_outgoing_share(
             run.db,
             share.id,
-            &run.config.global_domain,
+            &run.settings.get(keys::GLOBAL_DOMAIN),
         )
         .await?
         .ok_or(AppError::NotFound)?;
@@ -377,7 +379,7 @@ async fn deliver_unannounce(
                 &PicturesUnannouncementRequest {
                     outgoing_share_id: share.id,
                     sender_username: sender_username.to_string(),
-                    sender_instance: run.config.global_domain.clone(),
+                    sender_instance: run.settings.get(keys::GLOBAL_DOMAIN).clone(),
                     picture_ids: picture_ids.to_vec(),
                 },
             )

@@ -5,11 +5,11 @@
 use crate::clients::federation::models::AnnouncedPicture;
 use crate::domain::share::IncomingShare;
 use crate::domain::tag::TagPath;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tag::TagRepository;
+use archypix_common::error::{map_sqlx_error, AppError};
 use sqlx::PgPool;
 use uuid::Uuid;
 

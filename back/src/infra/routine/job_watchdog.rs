@@ -1,10 +1,10 @@
 //! Job-table maintenance [`Routine`]s: the stale-`processing` watchdog and the terminal-row cleanup.
 //!
-//! - [`JobWatchdogTask`] periodically resets jobs stuck in `processing` (a worker that crashed,
+//! - [`JobWatchdogRoutine`] periodically resets jobs stuck in `processing` (a worker that crashed,
 //!   was OOM-killed, or lost connectivity after claiming a job). Without recovery those jobs would
 //!   stay in `processing` forever. It calls [`JobRepository::reset_stale`], which resets eligible
 //!   jobs to `pending` (or to `failed` if their retry budget is exhausted).
-//! - [`JobCleanupTask`] prunes terminal (`completed` / `failed`) job rows older than a retention
+//! - [`JobCleanupRoutine`] prunes terminal (`completed` / `failed`) job rows older than a retention
 //!   window so the `jobs` table does not grow without bound (every upload creates a `gen_thumbnail`
 //!   job; EXIF/visual edits add more).
 //!
@@ -12,30 +12,28 @@
 //! runs `run(())` on each interval tick.
 
 use crate::infra::routine::Routine;
+use crate::infra::settings::keys;
 use crate::repository::job::JobRepository;
+use archypix_common::settings::Settings;
 use sqlx::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
 /// Periodically resets jobs stuck in `processing` back to `pending` (or `failed`).
-pub struct JobWatchdogTask {
+pub struct JobWatchdogRoutine {
     db: PgPool,
-    timeout_secs: i64,
-    interval: Duration,
+    settings: Arc<Settings>,
 }
 
-impl JobWatchdogTask {
-    pub fn new(db: PgPool, timeout_secs: i64, interval: Duration) -> Self {
-        Self {
-            db,
-            timeout_secs,
-            interval,
-        }
+impl JobWatchdogRoutine {
+    pub fn new(db: PgPool, settings: Arc<Settings>) -> Self {
+        Self { db, settings }
     }
 }
 
 #[async_trait::async_trait]
-impl Routine for JobWatchdogTask {
+impl Routine for JobWatchdogRoutine {
     type Input = ();
     type Key = ();
 
@@ -46,11 +44,14 @@ impl Routine for JobWatchdogTask {
     fn key(_input: &()) {}
 
     fn interval(&self) -> Option<Duration> {
-        Some(self.interval)
+        Some(Duration::from_secs(
+            self.settings.get(keys::JOB_WATCHDOG_INTERVAL_SECS),
+        ))
     }
 
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
-        let n = JobRepository::reset_stale(&self.db, self.timeout_secs).await?;
+        let timeout_secs = self.settings.get(keys::JOB_PROCESSING_TIMEOUT_SECS);
+        let n = JobRepository::reset_stale(&self.db, timeout_secs).await?;
         if n > 0 {
             info!(reset = n, "job watchdog: reset stale jobs");
         }
@@ -59,24 +60,19 @@ impl Routine for JobWatchdogTask {
 }
 
 /// Periodically deletes terminal job rows older than `retention_secs`.
-pub struct JobCleanupTask {
+pub struct JobCleanupRoutine {
     db: PgPool,
-    retention_secs: i64,
-    interval: Duration,
+    settings: Arc<Settings>,
 }
 
-impl JobCleanupTask {
-    pub fn new(db: PgPool, retention_secs: i64, interval: Duration) -> Self {
-        Self {
-            db,
-            retention_secs,
-            interval,
-        }
+impl JobCleanupRoutine {
+    pub fn new(db: PgPool, settings: Arc<Settings>) -> Self {
+        Self { db, settings }
     }
 }
 
 #[async_trait::async_trait]
-impl Routine for JobCleanupTask {
+impl Routine for JobCleanupRoutine {
     type Input = ();
     type Key = ();
 
@@ -87,11 +83,14 @@ impl Routine for JobCleanupTask {
     fn key(_input: &()) {}
 
     fn interval(&self) -> Option<Duration> {
-        Some(self.interval)
+        Some(Duration::from_secs(
+            self.settings.get(keys::JOB_CLEANUP_INTERVAL_SECS),
+        ))
     }
 
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
-        let n = JobRepository::delete_terminal_older_than(&self.db, self.retention_secs).await?;
+        let retention_secs = self.settings.get(keys::JOB_RETENTION_SECS);
+        let n = JobRepository::delete_terminal_older_than(&self.db, retention_secs).await?;
         if n > 0 {
             info!(deleted = n, "job cleanup: pruned terminal jobs");
         }
@@ -146,7 +145,8 @@ mod tests {
         .await
         .unwrap();
 
-        let task = JobCleanupTask::new(db.clone(), 2_592_000, Duration::from_secs(86_400));
+        let settings = crate::infra::settings::test_settings_with(&[]);
+        let task = JobCleanupRoutine::new(db.clone(), settings);
         task.run(()).await.unwrap();
 
         let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs")

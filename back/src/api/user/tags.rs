@@ -1,13 +1,13 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::tag::TagPath;
-use crate::infra::error::AppError;
 use crate::repository::tag::TagRepository;
 use crate::services;
 use crate::services::selection::{self, PictureSelection};
 use crate::services::tags::TagBatchOutcome;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Query, State};
+use axum::Json;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use uuid::Uuid;

@@ -1,10 +1,10 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::user_settings::{UserSettings, VersioningMode};
-use crate::infra::error::AppError;
 use crate::services;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::State;
+use axum::Json;
 use serde::Deserialize;
 use tracing::debug;
 

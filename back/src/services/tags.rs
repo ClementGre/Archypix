@@ -1,6 +1,5 @@
 use crate::domain::tag::TagPath;
 use crate::domain::tagging::ServiceType;
-use crate::infra::error::{AppError, map_sqlx_error};
 use crate::infra::routine::RoutineHandle;
 use crate::repository::hierarchy::HierarchyRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
@@ -9,6 +8,7 @@ use crate::repository::share::OutgoingShareRepository;
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use crate::services::aggregate::DryRun;
+use archypix_common::error::{map_sqlx_error, AppError};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;

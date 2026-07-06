@@ -13,27 +13,28 @@ mod rejection;
 
 // ── Shared infrastructure ─────────────────────────────────────────────────────
 
+use archypix_back::infra::settings::test_settings_with;
+use archypix_common::settings::Settings;
 use axum::body::Body;
-use axum::http::{Request, header};
+use axum::http::{header, Request};
 use serde_json::Value;
+use std::sync::Arc;
 
-/// Single-server config for "backend A" — oneshot tests only.
+/// Single-server settings for "backend A" — oneshot tests only.
 /// `back_domain` is a static fake hostname; no real port needed.
-pub(crate) fn cfg_a() -> archypix_back::infra::config::Config {
-    archypix_back::infra::config::Config {
-        global_domain: "a.test".to_string(),
-        back_domain: "backend-a.test".to_string(),
-        ..archypix_back::infra::config::Config::test_defaults()
-    }
+pub(crate) fn settings_a() -> Arc<Settings> {
+    test_settings_with(&[
+        ("GLOBAL_DOMAIN", "a.test"),
+        ("BACK_DOMAIN", "backend-a.test"),
+    ])
 }
 
-/// Single-server config for "backend B" — oneshot tests only.
-pub(crate) fn cfg_b() -> archypix_back::infra::config::Config {
-    archypix_back::infra::config::Config {
-        global_domain: "b.test".to_string(),
-        back_domain: "backend-b.test".to_string(),
-        ..archypix_back::infra::config::Config::test_defaults()
-    }
+/// Single-server settings for "backend B" — oneshot tests only.
+pub(crate) fn settings_b() -> Arc<Settings> {
+    test_settings_with(&[
+        ("GLOBAL_DOMAIN", "b.test"),
+        ("BACK_DOMAIN", "backend-b.test"),
+    ])
 }
 
 /// Build a POST request with a federation bearer token.

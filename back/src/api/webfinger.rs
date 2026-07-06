@@ -1,7 +1,9 @@
-use crate::infra::error::AppError;
+use crate::infra::settings;
+use crate::infra::settings::keys;
 use crate::state::AppState;
+use archypix_common::error::AppError;
 use axum::extract::{Query, State};
-use axum::http::{HeaderValue, header};
+use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
@@ -37,11 +39,11 @@ pub async fn handler(
         AppError::BadRequest("Invalid resource format. Expected archypix:@user:domain".to_string())
     })?;
 
-    if domain != state.config.global_domain {
+    if domain != state.settings.get(keys::GLOBAL_DOMAIN) {
         return Err(AppError::NotFound);
     }
 
-    let public_base_url = state.config.public_base_url();
+    let public_base_url = settings::public_base_url(&state.settings);
 
     let body = WebFingerResponse {
         subject: format!("archypix:@{}:{}", username, domain),

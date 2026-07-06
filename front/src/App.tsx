@@ -13,6 +13,7 @@ import SharesPage from '@/pages/SharesPage'
 import SettingsPage from '@/pages/SettingsPage'
 import TrashPage from '@/pages/TrashPage'
 import AdminPage from '@/pages/AdminPage'
+import ResolverAdminPage from '@/pages/ResolverAdminPage'
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -32,6 +33,8 @@ export default function App() {
                     <Routes>
                     <Route path="/login" element={<LoginPage/>}/>
                     <Route path="/register" element={<RegisterPage/>}/>
+                        {/* Fleet dashboard — resolver operator auth, independent of user login. */}
+                        <Route path="/admin/resolver" element={<ResolverAdminPage/>}/>
 
                     {/* Authenticated app */}
                     <Route element={<ProtectedRoute/>}>

@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code, max_uses, uses, expires_at, created_by, instance_pin FROM invites ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "max_uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "max_uses"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "uses"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "instance_pin",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "instance_pin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "bbe5b2be11267fad9f44db9155ce5442a904003c2174b5948ff2cf87b784ae84"
+}

@@ -4,9 +4,9 @@ pub mod auth_resolver;
 pub mod auth_user;
 pub mod auth_worker;
 
-use crate::infra::error::AppError;
-use axum::http::HeaderMap;
+use archypix_common::error::AppError;
 use axum::http::header::AUTHORIZATION;
+use axum::http::HeaderMap;
 
 pub fn bearer_token(headers: &HeaderMap) -> Result<String, AppError> {
     let header = headers

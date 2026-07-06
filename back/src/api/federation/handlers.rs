@@ -6,13 +6,14 @@ use crate::clients::federation::models::{
     PresignResultItem, ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse,
     ShareRejectRequest, ShareRevokeRequest,
 };
-use crate::infra::error::AppError;
 use crate::infra::observability;
+use crate::infra::settings::keys;
 use crate::services::federation::{self as fed, PresignTokenItem};
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use axum::Json;
 use chrono::Utc;
 use tracing::debug;
 
@@ -24,14 +25,14 @@ pub async fn auth_request(
     let token = state
         .federation
         .issue_federation_token(&payload.requester_instance)?;
-    let expires_at = Utc::now().timestamp() + state.config.federation_jwt_ttl_secs;
+    let expires_at = Utc::now().timestamp() + state.settings.get(keys::FEDERATION_JWT_TTL_SECS);
     state
         .federation
         .send_auth_grant(
             &payload.username,
             &payload.requester_instance,
             &FederationAuthGrant {
-                issuer_instance: state.config.global_domain.clone(),
+                issuer_instance: state.settings.get(keys::GLOBAL_DOMAIN).clone(),
                 token,
                 expires_at,
                 scope: payload.scope,
@@ -70,11 +71,11 @@ pub async fn announce_share(
     State(state): State<AppState>,
     Json(payload): Json<ShareAnnouncementRequest>,
 ) -> Result<Json<ShareAnnouncementResponse>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
 
     let (incoming_id, auto_accepted) = fed::receive_share_announcement(
         &state.db,
-        &state.config,
+        &state.settings,
         &state.routines.pipeline,
         &auth.claims.sub,
         &payload.sender_username,
@@ -113,7 +114,7 @@ pub async fn revoke_share(
     State(state): State<AppState>,
     Json(payload): Json<ShareRevokeRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -124,7 +125,7 @@ pub async fn revoke_share(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
-        &state.config,
+        &state.settings,
         &state.routines.unannounce,
         &state.routines.pipeline,
         &auth.claims.sub,
@@ -150,7 +151,7 @@ pub async fn reject_share(
     State(state): State<AppState>,
     Json(payload): Json<ShareRejectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -168,7 +169,7 @@ pub async fn accept_share(
     State(state): State<AppState>,
     Json(payload): Json<ShareAcceptRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -197,7 +198,7 @@ pub async fn announce_pictures(
     State(state): State<AppState>,
     Json(payload): Json<PicturesAnnouncementRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -208,7 +209,7 @@ pub async fn announce_pictures(
     let registered = fed::receive_pictures_announcement(
         &state.db,
         state.cache.as_ref(),
-        &state.config,
+        &state.settings,
         &state.routines.pipeline,
         &auth.claims.sub,
         &payload.sender_username,
@@ -234,7 +235,7 @@ pub async fn unannounce_pictures(
     State(state): State<AppState>,
     Json(payload): Json<PicturesUnannouncementRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %auth.claims.sub,
         token_type = "federation",
@@ -267,7 +268,7 @@ pub async fn edit_picture_request(
     State(state): State<AppState>,
     Json(payload): Json<PictureEditRequest>,
 ) -> Result<Json<PictureEditResponse>, AppError> {
-    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.config);
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
     debug!(
         user = %payload.requester_username,
         token_type = "federation",
@@ -312,7 +313,7 @@ pub async fn presign_pictures(
         })
         .collect();
     let results =
-        fed::presign_by_picture_tokens(&state.db, state.storage.as_ref(), &state.config, &items)
+        fed::presign_by_picture_tokens(&state.db, state.storage.as_ref(), &state.settings, &items)
             .await?;
     Ok(Json(PresignResponse {
         urls: results

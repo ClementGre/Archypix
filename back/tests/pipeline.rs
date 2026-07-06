@@ -5,9 +5,9 @@ mod common;
 
 use archypix_back::domain::tag::TagSource;
 use archypix_back::domain::tagging::ServiceType;
-use archypix_back::infra::config::Config;
-use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline;
+use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::repository::tagging::TaggingServiceRepository;
 use archypix_back::services;
@@ -16,12 +16,18 @@ use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-/// Run the pipeline once for `user` with throwaway deps + test config.
+/// Run the pipeline once for `user` with throwaway deps + test settings.
 async fn run_pipeline(db: &PgPool, user: Uuid) {
-    let config = Config::test_defaults();
-    let (fed, cache) = common::make_federation(&config);
-    let waker = RoutineHandle::<uuid::Uuid>::disconnected();
-    pipeline::run_once_for_user(db, &fed, cache.as_ref(), &config, &waker, user)
+    let (fed, cache) = common::make_federation(&test_settings_with(&[]));
+    let waker = RoutineHandle::<Uuid>::disconnected();
+    pipeline::run_once_for_user(
+        db,
+        &fed,
+        cache.as_ref(),
+        &test_settings_with(&[]),
+        &waker,
+        user,
+    )
         .await
         .unwrap();
 }

@@ -1,8 +1,9 @@
 use super::FederationClient;
 use crate::clients::federation::models::{FederationAuthGrant, FederationAuthRequest};
 use crate::domain::auth::TokenType;
-use crate::infra::error::AppError;
 use crate::infra::redis::RedisKey;
+use crate::infra::settings::keys;
+use archypix_common::error::AppError;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tracing::{debug, trace, warn};
@@ -52,13 +53,13 @@ impl FederationClient {
             .post(&request_url)
             .headers(self.trace_headers_for(recipient_global_domain))
             .json(&FederationAuthRequest {
-                requester_instance: self.config.global_domain.clone(),
+                requester_instance: self.settings.get(keys::GLOBAL_DOMAIN).clone(),
                 username: sender_username.to_string(),
                 scope: "federation".to_string(),
                 nonce,
             })
             .timeout(Duration::from_millis(
-                self.config.federation_request_timeout_ms,
+                self.settings.get(keys::FEDERATION_REQUEST_TIMEOUT_MS),
             ))
             .send()
             .await
@@ -89,7 +90,8 @@ impl FederationClient {
         }
 
         debug!("federation: waiting for auth token grant");
-        let deadline = Duration::from_millis(self.config.federation_request_timeout_ms);
+        let deadline =
+            Duration::from_millis(self.settings.get(keys::FEDERATION_REQUEST_TIMEOUT_MS));
         let domain = recipient_global_domain;
         let cache = self.cache.clone();
 
@@ -162,15 +164,17 @@ impl FederationClient {
         &self,
         requester_global_domain: &str,
     ) -> Result<String, AppError> {
-        self.jwt.issue(
-            requester_global_domain,
-            None,
-            &self.config.global_domain,
-            TokenType::Federation,
-            false,
-            &self.config.back_domain,
-            self.config.federation_jwt_ttl_secs,
-        )
+        self.jwt
+            .issue(
+                requester_global_domain,
+                None,
+                &self.settings.get(keys::GLOBAL_DOMAIN),
+                TokenType::Federation,
+                false,
+                &self.settings.get(keys::BACK_DOMAIN),
+                self.settings.get(keys::FEDERATION_JWT_TTL_SECS),
+            )
+            .map_err(Into::into)
     }
 
     /// Send the federation token grant to the requester's backend.

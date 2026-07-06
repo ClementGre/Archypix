@@ -73,24 +73,27 @@ so a user can authenticate or register against any instance. The chosen instance
 
 ## 4. Routes (`src/App.tsx`)
 
-| Path           | Page                | Auth       | Notes                                                                                                |
-|----------------|---------------------|------------|------------------------------------------------------------------------------------------------------|
-| `/login`       | `LoginPage`         | public     | WebFinger login + instance switcher                                                                  |
-| `/register`    | `RegisterPage`      | public     | instance switcher (defaults to global domain) + CORS warning on a custom instance, then auto-logs in |
-| `/`            | `GalleryPage`       | required   | the main three-pane workspace                                                                        |
-| `/tags`        | `TagsPage`          | required   | placeholder (tag tree lives in the gallery panel)                                                    |
-| `/tagging`     | `TaggingPage`       | required   | tagging-services editor                                                                              |
-| `/tagging/:id` | `ServiceEditorPage` | required   | single tagging-service editor                                                                        |
-| `/shares`      | `SharesPage`        | required   | placeholder (share UI lives in the gallery panel)                                                    |
-| `/settings`    | `SettingsPage`      | required   | profile + versioning mode + trash retention (reached via user menu)                                  |
-| `/trash`       | `TrashPage`         | required   | soft-deleted photos grid with per-item / restore + purge countdown                                   |
-| `/admin`       | `AdminPage`         | admin only | placeholder                                                                                          |
-| `*`            | → `/`               | —          |                                                                                                      |
+| Path              | Page                | Auth                 | Notes                                                                                                                                                     |
+|-------------------|---------------------|----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `/login`          | `LoginPage`         | public               | WebFinger login + instance switcher                                                                                                                       |
+| `/register`       | `RegisterPage`      | public               | instance switcher (defaults to global domain) + CORS warning on a custom instance, then auto-logs in                                                      |
+| `/`               | `GalleryPage`       | required             | the main three-pane workspace                                                                                                                             |
+| `/tags`           | `TagsPage`          | required             | placeholder (tag tree lives in the gallery panel)                                                                                                         |
+| `/tagging`        | `TaggingPage`       | required             | tagging-services editor                                                                                                                                   |
+| `/tagging/:id`    | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
+| `/shares`         | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
+| `/settings`       | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention, one explicit Save), storage, invites + invitation graph (via user menu, labelled "Profile") |
+| `/trash`          | `TrashPage`         | required             | soft-deleted photos grid with per-item / restore + purge countdown                                                                                        |
+| `/admin`          | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Invites** (+ Fleet link, cache-clear refresh)                                    |
+| `/admin/resolver` | `ResolverAdminPage` | **resolver session** | fleet dashboard — operator-token login, not `ProtectedRoute` (feature 24)                                                                                 |
+| `*`               | → `/`               | —                    |                                                                                                                                                           |
 
 `ProtectedRoute` (`components/layout/ProtectedRoute.tsx`) gates auth and (with `adminOnly`) the admin role. Authenticated routes render inside
 `AppShell` (unified `TopBar` + routed `<Outlet/>`). **There is no `/photos/:id`** — full-size viewing is the `Lightbox` carousel and details live in
 the
-right panel.
+right panel. **`/admin/resolver`** is deliberately **outside** `ProtectedRoute`: the resolver operator token is a separate credential from user auth
+(feature 24), so `ResolverAdminPage` renders its own operator-token login when the `resolverAuth` store is empty and the tabbed fleet dashboard once a
+session exists.
 
 ---
 
@@ -98,15 +101,16 @@ right panel.
 
 ### Zustand stores (`src/stores/`)
 
-| Store           | Shape                                                                                                                                                                                                                                                                                                                                                                              | Persistence (`localStorage`)                                                   |
-|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `auth.ts`       | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                                                                                                                                                                                          | `archypix_auth`                                                                |
-| `ui.ts`         | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`)                                                                                                                                                                      | `archypix_ui`                                                                  |
-| `theme.ts`      | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                       | `archypix_theme`                                                               |
-| `selection.ts`  | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9)        | none (session only)                                                            |
-| `upload.ts`     | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                                 | none (session only)                                                            |
-| `lightbox.ts`   | Lightbox chrome: top-bar / carousel visibility kept **separately per fullscreen vs non-fullscreen** (`toggleTopBar`/`toggleCarousel` flip the current mode's flag), `fullscreen` (mirrors `document.fullscreenElement`), `originalQuality` (session-only, defaults off — presign the `original` instead of `large`); `topBarVisible`/`carouselVisible` selectors resolve the mode. | `archypix_lightbox` (visibility flags only; quality + fullscreen session-only) |
-| `imageCache.ts` | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                       | none (session only)                                                            |
+| Store             | Shape                                                                                                                                                                                                                                                                                                                                                                              | Persistence (`localStorage`)                                                   |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| `auth.ts`         | `user, accessToken, refreshToken, backendUrl, instance` + setters/`clear`                                                                                                                                                                                                                                                                                                          | `archypix_auth`                                                                |
+| `resolverAuth.ts` | resolver-operator session (feature 24) `sessionToken, refreshToken, expiresAt` + `setSession`/`clear` — **separate** from user auth; the `resolverClient` axios instance (targets the global domain) bears it and single-flight-refreshes on 401, and `ResolverAdminPage` schedules a background refresh before `expiresAt`.                                                       | `archypix_resolver_admin`                                                      |
+| `ui.ts`           | `leftSidebarOpen, rightSidebarOpen, leftSidebarWidth, rightSidebarWidth, rowHeight, tagProvenance` + actions (`setLeftOpen/setRightOpen/setLeftWidth/setRightWidth`, clamped to `[SIDEBAR_MIN, SIDEBAR_MAX]`)                                                                                                                                                                      | `archypix_ui`                                                                  |
+| `theme.ts`        | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                       | `archypix_theme`                                                               |
+| `selection.ts`    | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9)        | none (session only)                                                            |
+| `upload.ts`       | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                                 | none (session only)                                                            |
+| `lightbox.ts`     | Lightbox chrome: top-bar / carousel visibility kept **separately per fullscreen vs non-fullscreen** (`toggleTopBar`/`toggleCarousel` flip the current mode's flag), `fullscreen` (mirrors `document.fullscreenElement`), `originalQuality` (session-only, defaults off — presign the `original` instead of `large`); `topBarVisible`/`carouselVisible` selectors resolve the mode. | `archypix_lightbox` (visibility flags only; quality + fullscreen session-only) |
+| `imageCache.ts`   | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                       | none (session only)                                                            |
 
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
@@ -147,6 +151,9 @@ One file per domain under `src/api/` (typed axios wrappers using `apiClient`), w
 | tagging     | `tagging.ts` — service + rule/segment/mapping CRUD, `reorderServices`                                                                                                                                                                                                                              | `useTaggingServices` — `useTaggingServices, useTaggingService, useTaggingMutations`                                                                                                                                                                                       |
 | hierarchies | `hierarchies.ts` — CRUD + `getHierarchyTree`, `browseHierarchy`, `getWebdav`/`regenerateWebdavToken`/`setWebdavUseRedirect`                                                                                                                                                                        | `useHierarchies` — `useHierarchies, useHierarchy, useHierarchyTree, useHierarchyBrowse, useHierarchyMutations, useWebdav, useWebdavMutations`                                                                                                                             |
 | settings    | `settings.ts` — `getSettings, updateSettings` (versioning + `trash_retention_days`)`, updateProfile`                                                                                                                                                                                               | `useSettings` — `useSettings, useUpdateSettings, useUpdateProfile`                                                                                                                                                                                                        |
+| admin       | `admin.ts` — instance/stats/users/jobs/shares + **runtime config** `getAdminSettings/patchAdminSetting/resetAdminSetting`, `getAdminRoutines/triggerAdminRoutine`                                                                                                                                  | `useAdmin` — `…, useAdminSettings/useAdminSettingMutations, useAdminRoutines/useTriggerRoutine`                                                                                                                                                                           |
+| invites     | `invites.ts` — `listInvites/mintInvite/revokeInvite, getInvitations` + public `previewInvite/getRegistrationInfo` (feature 23 §6; backend forwards to the resolver in resolver mode)                                                                                                               | `useInvites` — `useInvites, useInvitations, useInviteMutations, useRegistrationInfo`                                                                                                                                                                                      |
+| resolver    | `resolverAdmin.ts` (feature 24, via the `resolverClient` at the global domain) — `login/refresh, getOverview/getBackends/setCapacity, getSettings/patchSetting/resetSetting, listInvites/mintInvite/revokeInvite, getConfigMatrix/patchConfigMatrix, proxy(backDomain,…)`                          | `useResolverAdmin` — `useResolverSession, useResolverOverview, useResolverBackends, useResolver{Settings,Invite,Capacity}Mutations, useConfigMatrix/useConfigMatrixPatch`                                                                                                 |
 
 `apiErrorMessage(error)` (in `api/client.ts`) extracts a human string for toasts. `hooks/useDebouncedValue.ts` debounces the batch `/aggregate`
 descriptor and EXIF dry-run previews.
@@ -340,6 +347,41 @@ context so it labels "Inherit (on/off)", disables under a master-off ceiling, an
 write-back op-lists with a "suggest from predicate" helper — enabled on `matchUntagged` nodes too with a free-form op-list + the "can't guarantee
 untagged" warning, and an inactive-when-write-back-off note), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed/drop-assign),
 `JsonConfigDialog` (raw `config` textarea; applies to the draft).
+
+**`admin/`** (backend `/admin` + shared) — `OverviewTab`/`UsersTab`/`JobsTab`/`SharesTab`, plus the feature-23/24 additions: **`SettingsPanel`** (the
+metadata-driven runtime-config editor — a filter box, then groups `FieldMeta[]` by `group`, renders a control per `kind` (bool→Switch, enum→Select,
+numbers→**`NumberInput` with per-kind min/max/step** — u16 0–65535 etc., list→comma-string), a `FieldInfoPopover` (i) with the copyable env name /
+type /
+default / example / description, env-locked fields read-only with a badge, a provenance chip + reset-to-default on `db`-sourced fields, and a *
+*collapsed
+"Core (env-only)" section** for non-runtime fields tagged red **core** / **secret** (secret values arrive redacted); pointed at `apiClient`,
+`resolverClient`, or the per-instance proxy), `RoutinesPanel` (live routine status + inline tuning via `SettingsPanel flat` + Trigger-now,
+polls while open), `SettingsTab`, `InvitesTab`, and **`InvitesManager`** (shared by `/admin` + the Profile page + the resolver dashboard — mint form
+adapts to the registration mode (open ⇒ a single **tracking** referral link `max_uses:null`, else allowed-uses/unlimited + expiry, resolver adds an
+instance-pin picker), short grouped codes (`ABC-DEF-GHI`), copyable `/register?invite=` links, revoke; a `groupByCreator` mode groups the list under
+per-user headers for the admin `/admin` Invites tab (`GET /api/admin/invites`, all local) and the fleet Invites tab). **Admin + Fleet dashboard live
+in
+the `TopBar` user dropdown** (not the icon nav) for admins.
+
+**Admin transport abstraction** (`api/adminClient.ts`) — the admin surface is reached two ways: the user's `apiClient` (direct `/admin`) or a
+per-backend **proxy client** that rewrites `/api/admin/*` → the resolver's `instances/{d}` delegation-replay path. Admin api fns take an
+`AxiosInstance`;
+`useAdmin` hooks read it (+ a cache `scope`) from `AdminClientProvider`/`useAdminClient`, so `AdminDashboard` (the whole Overview/Users/Jobs/Shares/
+Settings/Routines tab set) renders identically for `/admin` and a fleet drill-down.
+
+**`resolver/`** (feature 24, `/admin/resolver`) — `ResolverLogin` (operator-token → session), `ResolverOverviewTab` (fleet Σ + `BackendHealthList`
+with
+per-backend capacity %), `ResolverBackendsTab` (master list → a selected backend's **full `AdminDashboard`** proxied via delegation replay — the
+second
+tab bar; its capacity editor + fleet-side backend state — heartbeat / delegation expiry / reachability / version / last-selected — live in an injected
+**Resolver** `extraTab` so they don't crowd the top), `ResolverUsersTab` (**reuses the backend `UsersTab` verbatim per reachable backend** inside a
+proxy `AdminClientProvider`, so create/edit/quota/delete/audit route to the right instance), `ResolverConfigMatrixTab` (group-headed, diff-first
+field×backend table with an info popover + per-field set-all fan-out), `ResolverSettingsTab`, `ResolverRoutinesTab` (reuses the shared
+`RoutinesView`),
+`ResolverInvitesTab` (grouped by creator + instance-pin). The header is compact with an auto-refresh toggle, a cache-clearing refresh, and a
+back-to-{instance}-admin button when a user session exists. `AdminDashboard` takes an `extraTabs` callback slot so resolver-specific tabs inject
+without
+leaking into the shared dashboard.
 
 **`common/`** — `ConfirmDialog` (AlertDialog wrapper gating sensitive actions), `MapView` (shared imperative Leaflet map;
 point/bbox/circle modes — in every mode **clicking the map moves the pin / rect / circle centre** there; custom app-styled zoom ±, **re-center on the selection**, my-location, save-favourite and enlarge

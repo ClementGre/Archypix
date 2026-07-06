@@ -1,14 +1,15 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
-use crate::infra::error::AppError;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use crate::services;
 use crate::state::AppState;
-use axum::Json;
+use archypix_common::error::AppError;
 use axum::extract::{Path, State};
+use axum::Json;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateOutgoingRequest {
@@ -21,12 +22,12 @@ pub struct CreateOutgoingRequest {
     /// Grant recipients EXIF editing of the shared pictures (10 §3). Default `false`.
     pub allow_exif_edit: Option<bool>,
     pub future: Option<bool>,
-    pub shareback_of: Option<uuid::Uuid>,
+    pub shareback_of: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ShareResponse {
-    pub id: uuid::Uuid,
+    pub id: Uuid,
     pub tag_path: String,
     pub name: String,
     pub message: Option<String>,
@@ -39,7 +40,7 @@ pub struct ShareResponse {
     pub future: bool,
     /// ShareBack provenance: the recipient's incoming share (by its `outgoing_share_id`) this
     /// share answers. `None` for a normal share.
-    pub shareback_of: Option<uuid::Uuid>,
+    pub shareback_of: Option<Uuid>,
     /// Announcement retry/backoff (set while `errored`/recovering).
     pub last_error_at: Option<NaiveDateTime>,
     pub next_retry_at: Option<NaiveDateTime>,
@@ -50,12 +51,12 @@ pub struct ShareResponse {
 
 #[derive(Debug, Serialize)]
 pub struct IncomingShareResponse {
-    pub id: uuid::Uuid,
+    pub id: Uuid,
     pub sender_username: String,
     pub sender_instance: String,
     pub name: String,
     pub message: Option<String>,
-    pub outgoing_share_id: uuid::Uuid,
+    pub outgoing_share_id: Uuid,
     pub status: ShareStatus,
     pub allow_share_back: bool,
     /// Whether the sender allows the recipient to propose EXIF edits (10 §3).
@@ -64,8 +65,8 @@ pub struct IncomingShareResponse {
     /// Local `/SharedToMe/<sender>/…` tag (ltree wire form) the received pictures land under.
     pub shared_tag_path: Option<String>,
     pub last_announcement_received_at: Option<NaiveDateTime>,
-    pub shareback_of: Option<uuid::Uuid>,
-    pub local_mapping_service_id: Option<uuid::Uuid>,
+    pub shareback_of: Option<Uuid>,
+    pub local_mapping_service_id: Option<Uuid>,
     pub created_at: NaiveDateTime,
     /// When the share was closed (revoked by the sender or rejected here); `None` while live.
     pub revoked_at: Option<NaiveDateTime>,
@@ -82,7 +83,7 @@ pub async fn create_outgoing(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
-        &state.config,
+        &state.settings,
         &state.routines.pipeline,
         auth.user_id()?,
         &auth.claims.sub,
@@ -181,13 +182,13 @@ pub async fn list_incoming(
 pub async fn accept_incoming(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(share_id): Path<uuid::Uuid>,
+    Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     services::shares::accept_incoming_share(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
-        &state.config,
+        &state.settings,
         &state.routines.pipeline,
         auth.user_id()?,
         &auth.claims.sub,
@@ -203,13 +204,13 @@ pub async fn accept_incoming(
 pub async fn revoke_outgoing(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(share_id): Path<uuid::Uuid>,
+    Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     services::shares::revoke_outgoing_share(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
-        &state.config,
+        &state.settings,
         &state.routines.unannounce,
         &state.routines.pipeline,
         auth.user_id()?,
@@ -224,13 +225,13 @@ pub async fn revoke_outgoing(
 pub async fn reject_incoming(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(share_id): Path<uuid::Uuid>,
+    Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     services::shares::reject_incoming_share(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
-        &state.config,
+        &state.settings,
         &state.routines.unannounce,
         &state.routines.pipeline,
         auth.user_id()?,
