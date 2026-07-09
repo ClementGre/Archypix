@@ -277,7 +277,11 @@ OutgoingShare:
   allowShareBack: true         # if false, ShareBack creates a normal share request (no auto-accept)
   allowExifEdit: false         # if true, the recipient may propose EXIF edits the owner auto-applies
                                # and re-announces (see §6.3); propagated to the IncomingShare
-  future: true                 # new pictures added to the tag are announced automatically
+  future: true                 # new pictures added to the tag are announced automatically. `false`
+                               # only withholds *new additions*: metadata & deletion-lifecycle
+                               # changes to already-shared pictures are always re-announced (§6.2),
+                               # otherwise a recipient's own EXIF proposal (§6.3) or the owner's
+                               # trash state would never reach them.
   sharebackOf: null            # if set, the original OutgoingShare this share answers (ShareBack provenance)
   status: pending              # pending | pending_first_announcement | active | errored | revoked
                                # pending_first_announcement: accepted; the pipeline announces the

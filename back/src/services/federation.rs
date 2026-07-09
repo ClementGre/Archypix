@@ -1,5 +1,5 @@
-use crate::clients::federation::models::AnnouncedPicture;
 use crate::clients::federation::FederationClient;
+use crate::clients::federation::models::AnnouncedPicture;
 use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
 use crate::infra::redis::Cache;
@@ -253,6 +253,9 @@ pub async fn receive_share_reject(
         | ShareStatus::Active
         | ShareStatus::Errored => {
             OutgoingShareRepository::set_status(db, share.id, ShareStatus::Tombstoned).await?;
+            // Rejected by the recipient — invalidate every presign token this share held, exactly
+            // like revocation (the recipient will never fetch these pictures again).
+            ShareAnnouncementRepository::delete_all_for_share(db, share.id).await?;
         }
     }
 

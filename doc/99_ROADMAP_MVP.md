@@ -17,7 +17,8 @@
 - [x] **Tagging pipeline execution** — event-driven pipeline evaluator on ingest/edit/share events.
 - [x] **Tagging pipeline tag removal** — per-source tag lifecycle (stale removal, disable/delete semantics).
 - [x] **Better sharing** — per-picture token presign, pipeline-driven announce/unannounce, ShareBack, loop prevention, transitive sharing. See
-  `doc/features/01_better_sharing_support.md`.
+  `doc/features/01_better_sharing_support.md`. `future=false` shares still re-announce metadata/deletion changes to already-tracked
+  pictures (only *new additions* are withheld); tombstone (rejection) deletes the outgoing tracking rows like revoke.
 - [x] **EXIF editing** — write-through single + batch edit with convergence guarantees and MIME preflight. See
   `doc/features/04_better_exif_support.md`.
 - [x] **Admin endpoints** — user management, job status, instance metrics.
@@ -64,6 +65,12 @@
   §6–7.
 - [x] **Admin config instead of envs** — unified `common::settings` engine (typed keys, env-locks, DB override, hot-swap) across
   backend/worker/resolver + metadata-driven `SettingsPanel`. Spec §4.
+- [x] **Resolver chore** — resolver's entire router nested under one `/archypix-resolver/` prefix (no more
+  `.well-known/webfinger`); fixed `GET /archypix-resolver/info` (bootstrap discovery, backend + resolver) and
+  `GET /archypix-resolver/resolve` (federation/login hot path). Frontend bootstraps `/info` for login/register/resolution,
+  gates the Fleet dashboard button on `is_resolver`, keeps the register instance editable when registration is closed,
+  replaces the static CORS caveat with a live reachability/CORS ping, and lets the fleet dashboard target any resolver
+  domain. See `doc/features/25_resolver_chore.md`.
 - [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.

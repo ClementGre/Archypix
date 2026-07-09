@@ -9,7 +9,7 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
-import {InstanceCorsWarning} from '@/components/common/InstanceCorsWarning'
+import {InstanceHealthWarning} from '@/components/common/InstanceHealthWarning'
 import {cn} from '@/lib/utils'
 import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type RegisterForm, registerFormSchema} from '@/lib/schemas'
@@ -89,79 +89,51 @@ export default function RegisterPage() {
                         Registering on <span className="font-medium text-foreground">{instance || GLOBAL_DOMAIN}</span>.
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                    {/* Invite context: blocked instances get an explanatory message; otherwise a banner. */}
                     {blocked ? (
-                        <div className="space-y-4">
-                            {inviteCode ? (
-                                // The link exists but isn't usable here (expired / used up / a tracking referral
-                                // in an invite-only instance) → it's simply invalid.
-                                <div
-                                    className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
-                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
-                                    <span>This invite link is invalid or has expired. Ask whoever invited you for a fresh one.</span>
-                                </div>
-                            ) : (
-                                <div
-                                    className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-500">
-                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
-                                    <span>Registration on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span> is invite-only — you need an invitation link to join.</span>
-                                </div>
-                            )}
-
-                            {/* Let the user paste an invite link or type the code (ABC-DEF-GHI). */}
-                            <form
-                                className="space-y-2"
-                                onSubmit={(e) => {
-                                    e.preventDefault()
-                                    const code = normalizeInviteInput(codeInput)
-                                    if (code) setSearchParams({invite: code})
-                                }}
-                            >
-                                <Label htmlFor="invite-code">Have an invite?</Label>
-                                <div className="flex gap-2">
-                                    <Input
-                                        id="invite-code"
-                                        value={codeInput}
-                                        onChange={(e) => setCodeInput(e.target.value)}
-                                        placeholder="ABC-DEF-GHI"
-                                        autoCapitalize="characters"
-                                        spellCheck={false}
-                                        className="font-mono uppercase tracking-wider placeholder:tracking-wider"
-                                    />
-                                    <Button type="submit" disabled={!normalizeInviteInput(codeInput)}>Continue</Button>
-                                </div>
-                                <p className="text-xs text-muted-foreground">Paste the invite link or enter the code.</p>
-                            </form>
-
-                            <p className="text-center text-sm text-muted-foreground">
-                                Already have an account?{' '}
-                                <Link to="/login" className="text-primary hover:underline">Sign in</Link>
-                            </p>
-                        </div>
+                        inviteCode ? (
+                            // The link exists but isn't usable here (expired / used up / a tracking referral
+                            // in an invite-only instance) → it's simply invalid.
+                            <div
+                                className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+                                <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                <span>This invite link is invalid or has expired. Ask whoever invited you for a fresh one, or switch to another instance.</span>
+                            </div>
+                        ) : (
+                            <div
+                                className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-500">
+                                <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                <span>Registration on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span> is invite-only — you need an invitation link, or switch to another instance.</span>
+                            </div>
+                        )
                     ) : (
-                        <>
-                            {inviteCode && (
-                                <div className={cn(
-                                    'mb-4 flex items-start gap-2 rounded-md border px-3 py-2 text-sm',
-                                    invite?.valid === false
-                                        ? 'border-destructive/40 bg-destructive/10 text-destructive'
-                                        : 'border-primary/30 bg-primary/10',
-                                )}>
-                                    <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
-                                    {invite?.valid === false ? (
-                                        <span>This invite link is invalid or has expired — but registration is open, so you can still create an account.</span>
-                                    ) : invite?.invited_by ? (
-                                        <span>
-                                    <span className="font-medium">@{invite.invited_by}</span> invited you to join Archypix on{' '}
-                                            <span className="font-medium">{instance || GLOBAL_DOMAIN}</span>. Create an account to get started.
-                                </span>
-                                    ) : (
-                                        <span>You've been invited to join Archypix on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span>.</span>
-                                    )}
-                                </div>
-                            )}
+                        inviteCode && (
+                            <div className={cn(
+                                'flex items-start gap-2 rounded-md border px-3 py-2 text-sm',
+                                invite?.valid === false
+                                    ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                                    : 'border-primary/30 bg-primary/10',
+                            )}>
+                                <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
+                                {invite?.valid === false ? (
+                                    <span>This invite link is invalid or has expired — but registration is open, so you can still create an account.</span>
+                                ) : invite?.invited_by ? (
+                                    <span>
+                                        <span className="font-medium">@{invite.invited_by}</span> invited you to join Archypix on{' '}
+                                        <span className="font-medium">{instance || GLOBAL_DOMAIN}</span>. Create an account to get started.
+                                    </span>
+                                ) : (
+                                    <span>You've been invited to join Archypix on <span
+                                        className="font-medium">{instance || GLOBAL_DOMAIN}</span>.</span>
+                                )}
+                            </div>
+                        )
+                    )}
+
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-                        {/* Handle field: @username:instance, instance editable on click */}
+                        {/* Handle field: @username:instance, instance editable on click — always shown so
+                            the user can switch instance even when this one's registration is closed. */}
                         <div className="space-y-1.5">
                             <Label>Account</Label>
                             <div
@@ -209,40 +181,76 @@ export default function RegisterPage() {
                             )}
                         </div>
 
-                        <InstanceCorsWarning instance={instance}/>
+                        <InstanceHealthWarning instance={instance}/>
 
-                        <div className="space-y-1.5">
-                            <Label htmlFor="display_name">Display name</Label>
-                            <Input id="display_name" placeholder="Jane Doe" {...register('display_name')} />
-                            {errors.display_name && <p className="text-xs text-destructive">{errors.display_name.message}</p>}
-                        </div>
+                        {!blocked && (
+                            <>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="display_name">Display name</Label>
+                                    <Input id="display_name" placeholder="Jane Doe" {...register('display_name')} />
+                                    {errors.display_name && <p className="text-xs text-destructive">{errors.display_name.message}</p>}
+                                </div>
 
-                        <div className="space-y-1.5">
-                            <Label htmlFor="email">Email</Label>
-                            <Input id="email" type="email" placeholder="jane@example.com" {...register('email')} />
-                            {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
-                        </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="email">Email</Label>
+                                    <Input id="email" type="email" placeholder="jane@example.com" {...register('email')} />
+                                    {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+                                </div>
 
-                        <div className="space-y-1.5">
-                            <Label htmlFor="password">Password</Label>
-                            <Input id="password" type="password" autoComplete="new-password" {...register('password')} />
-                            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-                        </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="password">Password</Label>
+                                    <Input id="password" type="password" autoComplete="new-password" {...register('password')} />
+                                    {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+                                </div>
 
-                        <Button type="submit" className="w-full" disabled={isSubmitting}>
-                            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}
-                            Create account
-                        </Button>
+                                <Button type="submit" className="w-full" disabled={isSubmitting}>
+                                    {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}
+                                    Create account
+                                </Button>
+                            </>
+                        )}
                     </form>
 
-                    <p className="mt-4 text-center text-sm text-muted-foreground">
-                        Already have an account?{' '}
-                        <Link to="/login" className="text-primary hover:underline">
-                            Sign in
-                        </Link>
-                    </p>
-                        </>
+                    {/* Blocked: let the user paste an invite link or type the code (ABC-DEF-GHI). */}
+                    {blocked && (
+                        <div className="space-y-2">
+                            <Label htmlFor="invite-code">Have an invite?</Label>
+                            <div className="flex gap-2">
+                                <Input
+                                    id="invite-code"
+                                    value={codeInput}
+                                    onChange={(e) => setCodeInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            const code = normalizeInviteInput(codeInput)
+                                            if (code) setSearchParams({invite: code})
+                                        }
+                                    }}
+                                    placeholder="ABC-DEF-GHI"
+                                    autoCapitalize="characters"
+                                    spellCheck={false}
+                                    className="font-mono uppercase tracking-wider placeholder:tracking-wider"
+                                />
+                                <Button
+                                    type="button"
+                                    disabled={!normalizeInviteInput(codeInput)}
+                                    onClick={() => {
+                                        const code = normalizeInviteInput(codeInput)
+                                        if (code) setSearchParams({invite: code})
+                                    }}
+                                >
+                                    Continue
+                                </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">Paste the invite link or enter the code.</p>
+                        </div>
                     )}
+
+                    <p className="text-center text-sm text-muted-foreground">
+                        Already have an account?{' '}
+                        <Link to="/login" className="text-primary hover:underline">Sign in</Link>
+                    </p>
                 </CardContent>
             </Card>
         </div>

@@ -1,29 +1,25 @@
 import axios, {type AxiosError, type InternalAxiosRequestConfig} from 'axios'
-import {GLOBAL_DOMAIN, originFor} from '@/lib/constants'
 import {useResolverAuthStore} from '@/stores/resolverAuth'
-import type {
-    ConfigMatrixPatchResult,
-    FieldMeta,
-    Invite,
-    ResolverBackend,
-    ResolverOverview,
-    ResolverSession,
-    RoutineInfo,
-} from '@/lib/types'
+import type {ConfigMatrixPatchResult, FieldMeta, Invite, ResolverBackend, ResolverOverview, ResolverSession, RoutineInfo,} from '@/lib/types'
 
 /**
- * The resolver is the shared front at the **global domain** (feature 24 §4.2). This is a second axios
- * instance parallel to `apiClient`, bearing the `ResolverAdminSession` token + its own 401→refresh, so
- * the fleet dashboard never needs a user token on any backend.
+ * The fleet dashboard talks to a resolver's `api_url` (`…/archypix-resolver`), chosen at login and
+ * held in `resolverAuth` (feature 25) — no longer hard-wired to the global domain. This is a second
+ * axios instance parallel to `apiClient`, bearing the `ResolverAdminSession` token + its own
+ * 401→refresh, so the fleet dashboard never needs a user token on any backend.
  */
-export const RESOLVER_BASE = originFor(GLOBAL_DOMAIN)
+function resolverBase(): string {
+    const url = useResolverAuthStore.getState().resolverUrl
+    if (!url) throw new Error('No resolver selected.')
+    return url
+}
 
 let refreshPromise: Promise<string> | null = null
 
 async function refreshSession(): Promise<string> {
     const {refreshToken} = useResolverAuthStore.getState()
     if (!refreshToken) throw new Error('no resolver refresh token')
-    const {data} = await axios.post<ResolverSession>(`${RESOLVER_BASE}/api/resolver-admin/refresh`, {
+    const {data} = await axios.post<ResolverSession>(`${resolverBase()}/api/resolver-admin/refresh`, {
         refresh_token: refreshToken,
     })
     useResolverAuthStore.getState().setSession({
@@ -40,7 +36,11 @@ async function refreshSession(): Promise<string> {
  */
 export function installResolverAuth(instance: ReturnType<typeof axios.create>) {
     instance.interceptors.request.use((config) => {
-        const {sessionToken} = useResolverAuthStore.getState()
+        const {sessionToken, resolverUrl} = useResolverAuthStore.getState()
+        // The connected resolver base is dynamic (feature 25) — read it per request. Reject rather than
+        // fall back to the app origin (which would answer with index.html and poison query caches).
+        if (!resolverUrl) return Promise.reject(new Error('No resolver selected.'))
+        config.baseURL = resolverUrl
         if (sessionToken) config.headers.Authorization = `Bearer ${sessionToken}`
         return config
     })
@@ -66,17 +66,17 @@ export function installResolverAuth(instance: ReturnType<typeof axios.create>) {
     return instance
 }
 
-export const resolverClient = installResolverAuth(axios.create({baseURL: RESOLVER_BASE}))
+export const resolverClient = installResolverAuth(axios.create())
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function login(token: string): Promise<ResolverSession> {
-    const {data} = await axios.post<ResolverSession>(`${RESOLVER_BASE}/api/resolver-admin/login`, {token})
+    const {data} = await axios.post<ResolverSession>(`${resolverBase()}/api/resolver-admin/login`, {token})
     return data
 }
 
 export async function refresh(refresh_token: string): Promise<ResolverSession> {
-    const {data} = await axios.post<ResolverSession>(`${RESOLVER_BASE}/api/resolver-admin/refresh`, {refresh_token})
+    const {data} = await axios.post<ResolverSession>(`${resolverBase()}/api/resolver-admin/refresh`, {refresh_token})
     return data
 }
 
@@ -95,7 +95,7 @@ export async function getBackends(): Promise<ResolverBackend[]> {
 /** Dry-run placement: which backend the next (un-pinned) signup would land on (`null` if none eligible). */
 export async function getNextBackend(): Promise<string | null> {
     const {data} = await resolverClient.get<{ back_domain: string | null }>('/api/resolver-admin/next-backend')
-    return data.back_domain
+    return data?.back_domain ?? null
 }
 
 export async function setCapacity(

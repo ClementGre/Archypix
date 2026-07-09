@@ -30,7 +30,7 @@ use crate::services::shares::registration::{
     register_received_pictures, unregister_announced_pictures,
 };
 use crate::services::users::find_local_user_id;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -46,6 +46,7 @@ enum CoverageScope<'a> {
 
 /// Reconcile every share of `user_id` needing a full pass: `pending_first_announcement` (initial
 /// announce) or `errored` (failure recovery), with the backoff window already elapsed.
+#[tracing::instrument(skip(run))]
 pub async fn reconcile_pending_and_errored(
     run: &PipelineRun<'_>,
     user_id: Uuid,
@@ -63,7 +64,11 @@ pub async fn reconcile_pending_and_errored(
     Ok(())
 }
 
-/// Reconcile the user's `active` + `future = true` shares over a batch of reconciled dirty pictures.
+/// Reconcile the user's `active` shares over a batch of reconciled dirty pictures. `future = true`
+/// shares also announce newly-covered pictures; `future = false` shares only re-announce/unannounce
+/// pictures they already track (metadata/deletion sync) — see the `announce_new` gate in
+/// [`reconcile_share`].
+#[tracing::instrument(skip(run))]
 pub async fn reconcile_active_batch(
     run: &PipelineRun<'_>,
     user_id: Uuid,
@@ -72,7 +77,7 @@ pub async fn reconcile_active_batch(
     if dirty_ids.is_empty() {
         return Ok(());
     }
-    let shares = OutgoingShareRepository::list_active_future_by_owner(run.db, user_id).await?;
+    let shares = OutgoingShareRepository::list_active_by_owner(run.db, user_id).await?;
     if shares.is_empty() {
         return Ok(());
     }
@@ -105,6 +110,7 @@ fn needs_activation(share: &OutgoingShare) -> bool {
 }
 
 /// Diff one share against the tracking table, deliver inline, and record on success.
+#[tracing::instrument(skip(run, scope))]
 async fn reconcile_share(
     run: &PipelineRun<'_>,
     share: &OutgoingShare,
@@ -157,6 +163,11 @@ async fn reconcile_share(
         )
         .await?;
 
+    // `future = false` shares freeze their announced set at the establishing first announce (PFA):
+    // afterwards only already-tracked pictures get metadata/deletion re-announces + unannounce — a
+    // newly-covered picture is never announced (spec §6.1: `future` gates only *new additions*).
+    let announce_new = share.future || share.status == ShareStatus::PendingFirstAnnouncement;
+
     // ── Compute the announce set (with the token + updated_at to record on success) ────────
     let mut announce_items: Vec<AnnouncedPicture> = Vec::new();
     let mut announce_tokens: Vec<(Uuid, Uuid, chrono::NaiveDateTime)> = Vec::new();
@@ -166,6 +177,7 @@ async fn reconcile_share(
         };
         let desired_upstream = upstream.get(pic).copied(); // Some => received (relayed) picture
         let token = match tracking_map.get(pic) {
+            None if !announce_new => continue, // future=false: don't announce a not-yet-tracked picture
             None => match desired_upstream {
                 Some(up) => up,                            // received: forward its upstream token
                 None if meta.is_owned() => Uuid::new_v4(), // owned: mint a fresh token
@@ -284,7 +296,7 @@ async fn reconcile_share(
     } else {
         let next = (Utc::now()
             + ChronoDuration::seconds(run.settings.get(keys::PIPELINE_RETRY_BACKOFF_SECS)))
-            .naive_utc();
+        .naive_utc();
         // An `active` share whose incremental pass failed is demoted to `errored` so the next pass
         // is a full reconcile; PFA/Errored keep their status and just back off.
         let demote = share.status == ShareStatus::Active;
@@ -295,6 +307,7 @@ async fn reconcile_share(
 
 /// Deliver an announce inline. Same-backend registers against the local recipient (and wakes its
 /// pipeline); cross-instance posts to the recipient's `/pictures/announce`. `items` is consumed.
+#[tracing::instrument(skip(run, share))]
 async fn deliver_announce(
     run: &PipelineRun<'_>,
     share: &OutgoingShare,
@@ -352,6 +365,7 @@ async fn deliver_announce(
 
 /// Deliver an unannounce inline. Same-backend unregisters locally (and wakes the recipient);
 /// cross-instance posts to the recipient's `/pictures/unannounce`.
+#[tracing::instrument(skip(run, share))]
 async fn deliver_unannounce(
     run: &PipelineRun<'_>,
     share: &OutgoingShare,

@@ -3,7 +3,7 @@
 use crate::domain::pipeline::PipelineInput;
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceConfig;
-use crate::infra::routine::pipeline::{announcement, dedup, PipelineRun};
+use crate::infra::routine::pipeline::{PipelineRun, announcement, dedup};
 use crate::infra::settings::keys;
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
+#[tracing::instrument(skip(run))]
 pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), AppError> {
     let db = run.db;
     let run_at = Utc::now().naive_utc();
@@ -186,7 +187,7 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
             tokio::time::sleep(Duration::from_millis(
                 run.settings.get(keys::PIPELINE_BATCH_SLEEP_MS),
             ))
-                .await;
+            .await;
         }
     }
 

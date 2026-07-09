@@ -47,6 +47,7 @@ function initials(name: string): string {
 export function TopBar() {
     const user = useAuthStore((s) => s.user)
     const instance = useAuthStore((s) => s.instance)
+    const isResolver = useAuthStore((s) => s.isResolver)
     const theme = useThemeStore((s) => s.theme)
     const toggleTheme = useThemeStore((s) => s.toggle)
     const {leftSidebarOpen, rightSidebarOpen, mobileDrawer, toggleLeft, toggleRight, toggleMobileDrawer} = useUIStore()
@@ -209,10 +210,12 @@ export function TopBar() {
                                     <Shield className="mr-2 h-4 w-4"/>
                                     Admin
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => navigate('/admin/resolver')}>
-                                    <Network className="mr-2 h-4 w-4"/>
-                                    Fleet dashboard
-                                </DropdownMenuItem>
+                                {isResolver && (
+                                    <DropdownMenuItem onClick={() => navigate('/admin/resolver')}>
+                                        <Network className="mr-2 h-4 w-4"/>
+                                        Fleet dashboard
+                                    </DropdownMenuItem>
+                                )}
                             </>
                         )}
                         <DropdownMenuSeparator/>

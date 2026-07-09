@@ -218,7 +218,7 @@ pub fn registry() -> Vec<SettingSpec> {
 
         // ── Federation ──
         SettingSpec::new(WEBFINGER_USE_HTTPS, group::FEDERATION).core().default("true")
-            .doc("Use HTTPS for the initial .well-known/webfinger query when resolving remote backends (subsequent calls use the scheme in the returned backend_url). Set false in local/Docker (HTTP) environments.", "true"),
+            .doc("Use HTTPS for the initial /archypix-resolver/resolve query when resolving remote backends (subsequent calls use the scheme in the returned backend_url). Set false in local/Docker (HTTP) environments.", "true"),
         SettingSpec::new(FEDERATION_JWT_TTL_SECS, group::FEDERATION).default("86400").doc("TTL of pairwise federation JWTs.", "86400"),
         SettingSpec::new(FEDERATION_BACKEND_CACHE_TTL_SECS, group::FEDERATION).default("3600").doc("TTL of the WebFinger backend-URL cache.", "3600"),
         SettingSpec::new(FEDERATION_REQUEST_TIMEOUT_MS, group::FEDERATION).default("1000").doc("Per-request timeout (ms) for outbound federation calls.", "1000"),
@@ -460,9 +460,9 @@ pub fn test_settings_with(overrides: &[(&str, &str)]) -> Arc<Settings> {
         ("PIPELINE_DEBOUNCE_MS", "0"),
         ("TASK_QUEUE_CONCURRENCY", "1"),
     ]
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
     for (k, v) in overrides {
         env.insert(k.to_string(), v.to_string());
     }

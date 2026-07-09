@@ -6,7 +6,7 @@
 //! against this table to decide what to announce / unannounce; revoking a share deletes
 //! its rows (immediately invalidating every token it held).
 
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
@@ -180,6 +180,10 @@ impl ShareAnnouncementRepository {
     /// the refreshed metadata. This is the race-free correctness backstop for the worker-completion
     /// fast path: even if a fast-path wake lost the race against a picture's first announce, a
     /// tracking row that trails its picture is eventually reconciled here.
+    ///
+    /// Rows of `revoked`/`tombstoned` shares are excluded as a precaution: those shares are never
+    /// re-announced, so a lingering stale row must not re-dirty the picture forever (both paths delete
+    /// their rows, so this is defence-in-depth).
     #[tracing::instrument(skip(db))]
     pub async fn find_stale_announcement_pictures(
         db: &sqlx::PgPool,
@@ -188,8 +192,10 @@ impl ShareAnnouncementRepository {
             r#"SELECT DISTINCT sa.picture_id
                FROM share_announcements sa
                JOIN pictures p ON p.id = sa.picture_id
+               JOIN outgoing_shares os ON os.id = sa.outgoing_share_id
                WHERE sa.announced_updated_at IS NOT NULL
-                 AND sa.announced_updated_at < p.updated_at"#,
+                 AND sa.announced_updated_at < p.updated_at
+                 AND os.status NOT IN ('revoked'::share_status, 'tombstoned'::share_status)"#,
         )
         .fetch_all(db)
         .await
@@ -636,6 +642,61 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stale, vec![pic], "picture updated since announce is stale");
+    }
+
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn find_stale_announcement_pictures_excludes_dead_shares(db: PgPool) {
+        use crate::domain::share::ShareStatus;
+        let owner = seed_user(&db).await;
+        let pic = seed_picture(&db, owner).await;
+        let share = OutgoingShareRepository::create(
+            &db,
+            owner,
+            "Photos",
+            "Test share",
+            None,
+            "bob",
+            "other.com",
+            true,
+            false,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let announced_at: chrono::NaiveDateTime =
+            sqlx::query_scalar!("SELECT updated_at FROM pictures WHERE id = $1", pic)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        ShareAnnouncementRepository::insert_with_token(
+            &db,
+            share.id,
+            pic,
+            Uuid::new_v4(),
+            Some(announced_at),
+        )
+        .await
+        .unwrap();
+        // Make the row lag the picture so it would otherwise be stale.
+        sqlx::query!("UPDATE pictures SET blurhash = 'abc' WHERE id = $1", pic)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        // A tombstoned share's lingering row must not resurface as stale (defence-in-depth: the
+        // tombstone path also deletes the row).
+        OutgoingShareRepository::set_status(&db, share.id, ShareStatus::Tombstoned)
+            .await
+            .unwrap();
+        assert!(
+            ShareAnnouncementRepository::find_stale_announcement_pictures(&db)
+                .await
+                .unwrap()
+                .is_empty(),
+            "tombstoned share's stale row is excluded"
+        );
     }
 
     #[sqlx::test(migrator = "MIGRATOR")]

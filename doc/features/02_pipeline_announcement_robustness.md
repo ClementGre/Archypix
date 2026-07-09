@@ -72,13 +72,21 @@ degraded"). `Active` is the same diff with coverage scoped to dirty pictures.
 |----------------------------|----------------------------|-----------------|---------------------------------|
 | `PendingFirstAnnouncement` | all pictures under the tag | → `Active`      | stay `PendingFirstAnnouncement` |
 | `Errored`                  | all pictures under the tag | → `Active`      | stay `Errored` (+ backoff)      |
-| `Active` (+ `future=true`) | dirty pictures only        | stay `Active`   | → `Errored` (+ backoff)         |
+| `Active`                   | dirty pictures only        | stay `Active`   | → `Errored` (+ backoff)         |
 
 Notes:
 
-- **Only `Active → Errored`.** A failure during `PendingFirstAnnouncement` simply stays there. A
-  `future=false` share never reaches the incremental path, so it can only ever go
-  `PendingFirstAnnouncement → Active` and is never demoted.
+- **`future` gates only *new additions*, not metadata.** Both `future=true` and `future=false`
+  active shares run the incremental path so that metadata/deletion changes to already-shared
+  pictures keep reaching the recipient (spec §6.2; e.g. a recipient's EXIF proposal the owner
+  re-announces, §6.3). The difference: an `announce_new` gate in `reconcile_share` lets a
+  `future=false` share re-announce/unannounce only pictures it *already tracks* — a newly-covered
+  picture is never announced. `announce_new = share.future || status == PendingFirstAnnouncement`
+  (PFA is the one pass that establishes a `future=false` share's initial set).
+- **Only `Active → Errored`.** A failure during `PendingFirstAnnouncement` simply stays there.
+  Because a `future=false` share now reaches the incremental path, it too can be demoted to
+  `Errored`; recovery re-announces its tracked pictures only (the same `announce_new` gate applies
+  to the `Errored` full pass).
 - `Errored` is **per-share**: one degraded recipient does not pull the user's other shares off the
   Active fast path.
 - The demotion is the recovery bridge: a failed incremental announce flips the share to `Errored`,

@@ -50,9 +50,8 @@ fn sha256_hex(s: &str) -> String {
 /// Seed the operator credential at startup if absent. `RESOLVER_ADMIN_TOKEN` may be plaintext or an
 /// argon2 hash; unset ⇒ generate one and print it **once**.
 pub async fn ensure_seeded(db: &PgPool, config: &Config) -> anyhow::Result<()> {
-    if repository::get_admin(db).await?.is_some() {
-        return Ok(());
-    }
+    let current_hash = repository::get_admin(db).await?.map(|c| c.token_hash);
+
     let token_hash = match config.get(sk::RESOLVER_ADMIN_TOKEN) {
         Some(t) if is_argon_hash(&t) => t,
         Some(t) => {
@@ -61,13 +60,19 @@ pub async fn ensure_seeded(db: &PgPool, config: &Config) -> anyhow::Result<()> {
         }
         None => {
             let generated = random_token();
-            tracing::warn!(
-                "No RESOLVER_ADMIN_TOKEN set — generated operator token (shown once):\n\n    {generated}\n"
-            );
-            argon_hash(&generated).map_err(|e| anyhow::anyhow!(e.to_string()))?
+            let hash = argon_hash(&generated).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            if Some(&hash) != current_hash.as_ref() {
+                tracing::warn!(
+                    "No RESOLVER_ADMIN_TOKEN set — generated operator token (shown once):\n\n    {generated}\n"
+                );
+            }
+            hash
         }
     };
-    repository::upsert_admin_token(db, &token_hash).await?;
+    if Some(&token_hash) != current_hash.as_ref() {
+        tracing::info!("Seeding operator credential in database");
+        repository::upsert_admin_token(db, &token_hash).await?;
+    }
     Ok(())
 }
 
@@ -109,9 +114,9 @@ pub async fn refresh(
         .map(|h| h == sha256_hex(refresh_token))
         .unwrap_or(false)
         && cred
-        .refresh_expires_at
-        .map(|e| e > Utc::now())
-        .unwrap_or(false);
+            .refresh_expires_at
+            .map(|e| e > Utc::now())
+            .unwrap_or(false);
     if !ok {
         return Err(AppError::Unauthorized(
             "Invalid or expired refresh token".to_string(),

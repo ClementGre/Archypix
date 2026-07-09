@@ -8,7 +8,7 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
-import {InstanceCorsWarning} from '@/components/common/InstanceCorsWarning'
+import {InstanceHealthWarning} from '@/components/common/InstanceHealthWarning'
 import {cn} from '@/lib/utils'
 import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type LoginForm, loginFormSchema} from '@/lib/schemas'
@@ -105,7 +105,7 @@ export default function LoginPage() {
                             )}
                         </div>
 
-                        <InstanceCorsWarning instance={instance}/>
+                        <InstanceHealthWarning instance={instance}/>
 
                         <div className="space-y-1.5">
                             <Label htmlFor="password">Password</Label>

@@ -1,5 +1,5 @@
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
@@ -75,10 +75,12 @@ impl OutgoingShareRepository {
         .map_err(map_sqlx_error)
     }
 
-    /// List the owner's active shares that auto-announce new pictures (`future = true`).
-    /// Used by the pipeline announcement step to compute current coverage.
+    /// List the owner's active shares. Used by the pipeline's incremental announcement step: both
+    /// `future = true` (which also announce new coverage) and `future = false` (which only
+    /// re-announce/unannounce already-tracked pictures — the `announce_new` gate in
+    /// `reconcile_share` enforces that) still propagate metadata/deletion changes to shared pictures.
     #[tracing::instrument(skip(ex), fields(owner_id = %owner_id))]
-    pub async fn list_active_future_by_owner<'e, E>(
+    pub async fn list_active_by_owner<'e, E>(
         ex: E,
         owner_id: Uuid,
     ) -> Result<Vec<OutgoingShare>, AppError>
@@ -95,7 +97,7 @@ impl OutgoingShareRepository {
                       last_error_at, next_retry_at,
                       created_at, revoked_at
                FROM outgoing_shares
-               WHERE owner_id = $1 AND status = 'active'::share_status AND future = true"#,
+               WHERE owner_id = $1 AND status = 'active'::share_status"#,
             owner_id,
         )
         .fetch_all(ex)
@@ -823,7 +825,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "MIGRATOR")]
-    async fn list_active_future_by_owner_filters_correctly(db: PgPool) {
+    async fn list_active_by_owner_filters_correctly(db: PgPool) {
         let owner = seed_user(&db).await;
         // active + future → included
         let s1 = OutgoingShareRepository::create(
@@ -844,7 +846,7 @@ mod tests {
         OutgoingShareRepository::set_status(&db, s1.id, ShareStatus::Active)
             .await
             .unwrap();
-        // active but future=false → excluded
+        // active + future=false → included (still propagates metadata/deletion to tracked pictures)
         let s2 = OutgoingShareRepository::create(
             &db,
             owner,
@@ -880,11 +882,13 @@ mod tests {
         .await
         .unwrap();
 
-        let found = OutgoingShareRepository::list_active_future_by_owner(&db, owner)
+        let found = OutgoingShareRepository::list_active_by_owner(&db, owner)
             .await
             .unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].id, s1.id);
+        let ids: std::collections::HashSet<Uuid> = found.iter().map(|s| s.id).collect();
+        assert_eq!(found.len(), 2);
+        assert!(ids.contains(&s1.id), "active future=true share included");
+        assert!(ids.contains(&s2.id), "active future=false share included");
     }
 
     #[sqlx::test(migrator = "MIGRATOR")]

@@ -1,7 +1,7 @@
 mod handshake;
 pub mod models;
+mod resolve;
 mod shares;
-mod webfinger;
 
 use crate::infra::crypto::JwtService;
 use crate::infra::observability;
@@ -11,7 +11,7 @@ use archypix_common::settings::Settings;
 use reqwest::Client as HttpClient;
 use std::sync::Arc;
 
-/// Outbound client for webfinger, federation auth, and protocol messages.
+/// Outbound client for backend resolution, federation auth, and protocol messages.
 #[derive(Clone)]
 pub struct FederationClient {
     pub(super) http: HttpClient,

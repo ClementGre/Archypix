@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      name, message,\n                      recipient_username, recipient_instance,\n                      allow_share_back, allow_exif_edit, future, shareback_of,\n                      status as \"status: ShareStatus\",\n                      last_error_at, next_retry_at,\n                      created_at, revoked_at\n               FROM outgoing_shares\n               WHERE owner_id = $1 AND status = 'active'::share_status AND future = true",
+  "query": "SELECT id, owner_id, tag_path::text as \"tag_path!\",\n                      name, message,\n                      recipient_username, recipient_instance,\n                      allow_share_back, allow_exif_edit, future, shareback_of,\n                      status as \"status: ShareStatus\",\n                      last_error_at, next_retry_at,\n                      created_at, revoked_at\n               FROM outgoing_shares\n               WHERE owner_id = $1 AND status = 'active'::share_status",
   "describe": {
     "columns": [
       {
@@ -213,5 +213,5 @@
       true
     ]
   },
-  "hash": "7715585fd795ea3500e8d92d2a585b1f9ab640653f69e4bd08b266b39f27d218"
+  "hash": "610944c64f0c71c33c5528232c3816ea89130ed510d92d22af531c409abbd2e3"
 }

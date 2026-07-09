@@ -1,6 +1,6 @@
 // Frontend configuration, derived from Vite env vars (see .env.example).
 // The app is "federated": it talks directly to the backend resolved for the
-// logged-in user via WebFinger, rather than a single fixed API base URL.
+// logged-in user via /archypix-resolver/{info,resolve}, not a single fixed API base URL.
 
 // window.__ENV__ (see public/env.js) is populated at container startup, taking
 // precedence over import.meta.env which is baked in at build time.

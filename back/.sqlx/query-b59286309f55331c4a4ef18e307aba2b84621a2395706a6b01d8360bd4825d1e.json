@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT sa.picture_id\n               FROM share_announcements sa\n               JOIN pictures p ON p.id = sa.picture_id\n               JOIN outgoing_shares os ON os.id = sa.outgoing_share_id\n               WHERE sa.announced_updated_at IS NOT NULL\n                 AND sa.announced_updated_at < p.updated_at\n                 AND os.status NOT IN ('revoked'::share_status, 'tombstoned'::share_status)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "picture_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "share_announcements",
+            "name": "picture_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b59286309f55331c4a4ef18e307aba2b84621a2395706a6b01d8360bd4825d1e"
+}

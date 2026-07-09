@@ -2,11 +2,18 @@
 
 - Resolver (Rust service) — also the **fleet admin control plane** (feature 23). Full read-doc:
   [`07_RESOLVER_ARCHITECTURE.md`](07_RESOLVER_ARCHITECTURE.md).
-    - Purpose: map username → owning backend domain (implements WebFinger). Enables multiple backends to share one global identity domain.
+    - Purpose: map username → owning backend domain. Enables multiple backends to share one global identity domain. The resolver's **entire router is
+      nested under one prefix, `/archypix-resolver/`** (feature 25), so a self-hoster has a single forwarding rule and no `.well-known` collision.
   - Roles:
-      - WebFinger endpoint: answer `/.well-known/webfinger` requests with the resolved backend URL.
-    - User registration routing: `POST /api/public/register` (the same path the standalone backend serves, so the frontend uses one URL across
-      topologies) — enforces the **registration mode + invites**, picks a backend by the configured **selection strategy** (least users/pictures/
+      - Resolution endpoint: answer `GET /archypix-resolver/resolve?user=&domain=` with `{ backend_url }` (one HTTP call; replaces the dropped
+        `.well-known/webfinger`). Plus `GET /archypix-resolver/info` bootstrap discovery (`{ is_resolver, api_url }`) — the two fixed,
+        directly-callable
+        paths. A standalone backend answers `/archypix-resolver/info` (`is_resolver:false`, its own public URL) **and** `/archypix-resolver/resolve`
+        (confirms the user exists, returns its own public URL), so a single-domain deployment can forward the prefix from the global domain to the
+        backend and resolve without a resolver.
+      - User registration routing: `POST /api/public/register` (under the resolver's `/archypix-resolver` prefix; the frontend reaches it via the
+        `api_url` from `/info`, so one code path serves both topologies) — enforces the **registration mode + invites**, picks a backend by the
+        configured **selection strategy** (least users/pictures/
       storage, round-robin, static; honouring an invite's `instance_pin` and hard capacity/reachability gates), forwards registration, stores
       `username → back_domain` mapping.
       - Backend self-registration: `POST /api/backends` — backends call this at startup; the resolver stores `back_domain`, `use_https`, and

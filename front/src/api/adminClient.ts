@@ -1,7 +1,7 @@
 import axios, {type AxiosInstance} from 'axios'
 import {createContext, useContext} from 'react'
 import {apiClient} from '@/api/client'
-import {RESOLVER_BASE, installResolverAuth} from '@/api/resolverAdmin'
+import {installResolverAuth} from '@/api/resolverAdmin'
 
 /**
  * The admin surface (`/api/admin/*`) is reached two ways (feature 24 §5):
@@ -32,7 +32,8 @@ const proxyClients = new Map<string, AxiosInstance>()
 export function proxyAdminClient(backDomain: string): AxiosInstance {
     const existing = proxyClients.get(backDomain)
     if (existing) return existing
-    const instance = installResolverAuth(axios.create({baseURL: RESOLVER_BASE}))
+    // `installResolverAuth` sets `baseURL` to the connected resolver per request (feature 25).
+    const instance = installResolverAuth(axios.create())
     instance.interceptors.request.use((config) => {
         if (config.url?.startsWith('/api/admin/')) {
             const sub = config.url.slice('/api/admin/'.length)

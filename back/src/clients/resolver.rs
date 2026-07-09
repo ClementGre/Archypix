@@ -78,12 +78,7 @@ impl ResolverClient {
             &self.settings.get(keys::GLOBAL_DOMAIN),
             300,
         )?;
-        let url = format!(
-            "{}/api/backends/heartbeat",
-            self.settings
-                .get(keys::RESOLVER_INTERNAL_URL)
-                .trim_end_matches('/')
-        );
+        let url = self.resolver_url("/api/backends/heartbeat");
         self.http
             .post(&url)
             .bearer_auth(push_token)
@@ -130,12 +125,7 @@ impl ResolverClient {
             300,
         )?;
 
-        let url = format!(
-            "{}/api/backends",
-            self.settings
-                .get(keys::RESOLVER_INTERNAL_URL)
-                .trim_end_matches('/')
-        );
+        let url = self.resolver_url("/api/backends");
         tracing::Span::current().record("resolver_url", url.as_str());
 
         let internal_url = self.settings.get(keys::BACK_INTERNAL_URL);
@@ -179,9 +169,11 @@ impl ResolverClient {
             .map_err(Into::into)
     }
 
+    /// Build a URL to the resolver, prepending the `/archypix-resolver` mount prefix (feature 25) to
+    /// the internal base so every backend→resolver call hits the nested router.
     fn resolver_url(&self, path: &str) -> String {
         format!(
-            "{}{}",
+            "{}/archypix-resolver{}",
             self.settings
                 .get(keys::RESOLVER_INTERNAL_URL)
                 .trim_end_matches('/'),
@@ -204,7 +196,9 @@ impl ResolverClient {
             .await
             .map_err(|e| AppError::InternalServerError(format!("Resolver registration_mode: {e}")))?
             .error_for_status()
-            .map_err(|e| AppError::InternalServerError(format!("Resolver registration_mode: {e}")))?;
+            .map_err(|e| {
+                AppError::InternalServerError(format!("Resolver registration_mode: {e}"))
+            })?;
         Ok(resp
             .json::<Info>()
             .await
@@ -293,12 +287,7 @@ impl ResolverClient {
             300,
         )?;
 
-        let url = format!(
-            "{}/api/update",
-            self.settings
-                .get(keys::RESOLVER_INTERNAL_URL)
-                .trim_end_matches('/')
-        );
+        let url = self.resolver_url("/api/update");
 
         self.http
             .post(&url)

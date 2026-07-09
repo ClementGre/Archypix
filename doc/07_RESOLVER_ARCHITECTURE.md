@@ -9,9 +9,19 @@ touching `resolver/**`. Design rationale + target state:
 ## A) Purpose & role
 
 One `GLOBAL_DOMAIN` can be served by many independently-deployed backends. The resolver is the shared
-front:
+front. Its **entire router is nested under one top-level prefix, `/archypix-resolver/`** (feature 25),
+so a self-hoster has a single forwarding rule and there's no `.well-known` collision with other apps on
+the apex domain. Handler paths are unchanged inside the mount.
 
-- **WebFinger** — `@user:global_domain` → owning backend public URL (moka-cached).
+- **Resolution** — `GET /archypix-resolver/resolve?user=&domain=` → owning backend public URL
+  (moka-cached), one HTTP call; the federation/login hot path (replaces the old
+  `.well-known/webfinger` query, dropped entirely).
+- **Bootstrap discovery** — `GET /archypix-resolver/info` → `{ is_resolver: true, api_url }`, so the
+  frontend learns where the heavier `/api/public/*` + `/api/resolver-admin/*` surface lives and that a
+  fleet dashboard exists (feature 25). A standalone backend answers the same route with
+  `{ is_resolver: false, api_url: <its public URL> }`. The **backend also serves `resolve`** (returning
+  its own public URL if the user exists), so a single-domain deployment can forward
+  `/archypix-resolver/` to the backend and resolve without a resolver.
 - **Registration routing** — `POST /api/public/register`: enforces the registration mode + invite,
   picks a backend by the configured **selection strategy** (honouring an invite's `instance_pin`),
   forwards the signup to that backend (replaying its delegation token), records the mapping.
@@ -33,7 +43,7 @@ The resolver holds **no** user content beyond the `username → backend` mapping
 | `repository.rs`                                                             | All SQL — compile-time-checked `query!`/`query_as!` (offline `.sqlx` cache): backends+heartbeat state, user_mappings, invites, operator credential, settings overrides.                         |
 | `clients/backend.rs`                                                        | `BackendClient` — resolver→backend calls **replaying the stored delegation token**; `register_user`, `get_json`, `proxy_json`.                                                                  |
 | `services/{operator,registration,selection}.rs`                             | Operator credential (seed/verify/session/refresh), registration-mode+invite gate, placement strategies.                                                                                         |
-| `api.rs` + `api/{webfinger,public,backends,admin}.rs` + `api/middleware.rs` | Router + handlers + auth extractors (`AuthPush`, `AuthAdmin`).                                                                                                                                  |
+| `api.rs` + `api/{bootstrap,public,backends,admin}.rs` + `api/middleware.rs` | Router (nested under `/archypix-resolver`) + handlers + auth extractors (`AuthPush`, `AuthAdmin`). `bootstrap` = `/info` + `/resolve` (feature 25).                                             |
 | `routine.rs`                                                                | `StaleBackendPrune`, `InviteCleanup` on `common::routine`.                                                                                                                                      |
 | `lib.rs`                                                                    | Re-exports the modules so the binary and `tests/` share one compilation. `AppError` + `IntoResponse` (+ `From` impls) come from [`common::error`](../common/src/error.rs); no local `error.rs`. |
 
@@ -41,7 +51,9 @@ The resolver holds **no** user content beyond the `username → backend` mapping
 
 The resolver's config is the same `common::settings` engine as the backend — one source of truth, read
 via `config.get(setting_keys::X)`. **Core** fields (env-only): DB connection, `GLOBAL_DOMAIN`,
-`RESOLVER_JWT_SECRET`, `RESOLVER_ADMIN_TOKEN`, `LISTEN_ADDR`, cache TTL/capacity. **Runtime**
+`USE_HTTPS`, `PUBLIC_URL` (the `api_url` advertised by `/archypix-resolver/info` — defaults to
+`{scheme}://{GLOBAL_DOMAIN}/archypix-resolver`, feature 25), `RESOLVER_JWT_SECRET`,
+`RESOLVER_ADMIN_TOKEN`, `LISTEN_ADDR`, cache TTL/capacity. **Runtime**
 (DB-editable from the dashboard, hot): `CORS_ORIGINS`, `SELECTION_STRATEGY`, `STATIC_BACKEND`,
 `PIN_IMPORTANCE`, `REGISTRATION_MODE`, `DELEGATION_STALE_SECS`, `STALE_PRUNE_INTERVAL_SECS`,
 `INVITE_CLEANUP_INTERVAL_SECS`. Overrides live in `resolver_settings`; `PATCH` rebuilds the snapshot.
@@ -76,9 +88,13 @@ invite's `instance_pin` is honoured per `pin_importance`: metric strategies hono
 
 ## G) Endpoints
 
+Every route below is served under the **`/archypix-resolver/`** mount prefix (feature 25) — e.g.
+`/archypix-resolver/api/public/register`, `/archypix-resolver/health`.
+
 | Route                                                       | Auth                      | Behaviour                                                                                 |
 |-------------------------------------------------------------|---------------------------|-------------------------------------------------------------------------------------------|
-| `GET /.well-known/webfinger`                                | none                      | `@user:global_domain` → backend URL (JRD).                                                |
+| `GET /info`                                                 | none                      | Bootstrap discovery: `{ is_resolver: true, api_url }` (feature 25).                       |
+| `GET /resolve?user=&domain=`                                | none                      | `@user:domain` → `{ backend_url }` (moka-cached); `404` for unknown user / mismatch.      |
 | `POST /api/public/register`                                 | none                      | Mode+invite gate → strategy pick → forward (delegation) → map.                            |
 | `GET /api/public/registration-info`                         | none                      | `{ mode }` — lets register/profile UIs adapt.                                             |
 | `GET /api/public/invites/{code}`                            | none                      | `{ valid, invited_by }` invite preview for the register page.                             |

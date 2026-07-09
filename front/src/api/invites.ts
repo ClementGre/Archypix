@@ -1,6 +1,7 @@
 import axios from 'axios'
 import {apiClient} from '@/api/client'
-import {GLOBAL_DOMAIN, originFor} from '@/lib/constants'
+import {getResolverInfo} from '@/api/resolve'
+import {GLOBAL_DOMAIN} from '@/lib/constants'
 import type {InvitationGraph, Invite, InvitePreview, RegistrationInfo} from '@/lib/types'
 
 /**
@@ -30,16 +31,19 @@ export async function getInvitations(): Promise<InvitationGraph> {
 }
 
 /**
- * Unauthenticated preview of an invite code (register page). Served at the same path by a standalone
- * backend and the resolver, so the register flow doesn't need to know the topology.
+ * Unauthenticated preview of an invite code (register page). Bootstraps the domain
+ * (`/archypix-resolver/info`) to find where the public surface lives, then hits `{api_url}/api/public/…`
+ * — served directly by a standalone backend and under the `/archypix-resolver` prefix by a resolver.
  */
 export async function previewInvite(code: string, domain: string = GLOBAL_DOMAIN): Promise<InvitePreview> {
-    const {data} = await axios.get<InvitePreview>(`${originFor(domain)}/api/public/invites/${encodeURIComponent(code)}`)
+    const {api_url} = await getResolverInfo(domain)
+    const {data} = await axios.get<InvitePreview>(`${api_url}/api/public/invites/${encodeURIComponent(code)}`)
     return data
 }
 
 /** Effective registration mode where signups land — lets the mint UI adapt (tracking vs. gated). */
 export async function getRegistrationInfo(domain: string = GLOBAL_DOMAIN): Promise<RegistrationInfo> {
-    const {data} = await axios.get<RegistrationInfo>(`${originFor(domain)}/api/public/registration-info`)
+    const {api_url} = await getResolverInfo(domain)
+    const {data} = await axios.get<RegistrationInfo>(`${api_url}/api/public/registration-info`)
     return data
 }

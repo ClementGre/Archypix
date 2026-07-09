@@ -16,8 +16,19 @@ interface AuthState {
     backendUrl: string | null
     /** The user's global/identity domain (the part after ':' in @user:domain). */
     instance: string | null
+    /** Whether the user's instance is fronted by a resolver (⇒ a fleet dashboard exists, feature 25). */
+    isResolver: boolean
+    /** The resolver's `api_url` (`…/archypix-resolver`) for the user's instance, when `isResolver`. */
+    resolverUrl: string | null
 
-    setSession: (s: { accessToken: string; refreshToken: string; backendUrl: string; instance: string }) => void
+    setSession: (s: {
+        accessToken: string
+        refreshToken: string
+        backendUrl: string
+        instance: string
+        isResolver: boolean
+        resolverUrl: string | null
+    }) => void
     setTokens: (t: { accessToken: string; refreshToken: string }) => void
     setUser: (user: AuthUser | null) => void
     clear: () => void
@@ -25,7 +36,7 @@ interface AuthState {
 
 const LS_KEY = 'archypix_auth'
 
-type Persisted = Pick<AuthState, 'user' | 'accessToken' | 'refreshToken' | 'backendUrl' | 'instance'>
+type Persisted = Pick<AuthState, 'user' | 'accessToken' | 'refreshToken' | 'backendUrl' | 'instance' | 'isResolver' | 'resolverUrl'>
 
 const EMPTY: Persisted = {
     user: null,
@@ -33,6 +44,8 @@ const EMPTY: Persisted = {
     refreshToken: null,
     backendUrl: null,
     instance: null,
+    isResolver: false,
+    resolverUrl: null,
 }
 
 function load(): Persisted {
@@ -46,15 +59,15 @@ function load(): Persisted {
 }
 
 function persist(state: AuthState) {
-    const {user, accessToken, refreshToken, backendUrl, instance} = state
-    localStorage.setItem(LS_KEY, JSON.stringify({user, accessToken, refreshToken, backendUrl, instance}))
+    const {user, accessToken, refreshToken, backendUrl, instance, isResolver, resolverUrl} = state
+    localStorage.setItem(LS_KEY, JSON.stringify({user, accessToken, refreshToken, backendUrl, instance, isResolver, resolverUrl}))
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
     ...load(),
 
-    setSession: ({accessToken, refreshToken, backendUrl, instance}) => {
-        set({accessToken, refreshToken, backendUrl, instance})
+    setSession: ({accessToken, refreshToken, backendUrl, instance, isResolver, resolverUrl}) => {
+        set({accessToken, refreshToken, backendUrl, instance, isResolver, resolverUrl})
         persist(get())
     },
     setTokens: ({accessToken, refreshToken}) => {

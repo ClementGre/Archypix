@@ -52,9 +52,20 @@ export default function ResolverAdminPage() {
     const navigate = useNavigate()
     const user = useAuthStore((s) => s.user)
     const instance = useAuthStore((s) => s.instance)
+    const resolverUrl = useResolverAuthStore((s) => s.resolverUrl)
     const [autoRefresh, setAutoRefresh] = useState(true)
 
-    if (!session) return <ResolverLogin/>
+    // Show the connected resolver's host (feature 25 lets an operator target any resolver).
+    let resolverLabel = GLOBAL_DOMAIN
+    try {
+        if (resolverUrl) resolverLabel = new URL(resolverUrl).host
+    } catch {
+        // keep the fallback
+    }
+
+    // Require a chosen resolver too (feature 25): a session persisted before a resolver was selected
+    // would otherwise fire queries with no base URL. Re-login sets `resolverUrl`.
+    if (!session || !resolverUrl) return <ResolverLogin/>
 
     const interval: number | false = autoRefresh ? AUTO_REFRESH_MS : false
 
@@ -71,7 +82,7 @@ export default function ResolverAdminPage() {
                     <h1 className="flex items-center gap-1.5 text-base font-semibold">
                         <Network className="h-4 w-4 text-primary"/>
                         Fleet
-                        <span className="text-xs font-normal text-muted-foreground">{GLOBAL_DOMAIN}</span>
+                        <span className="text-xs font-normal text-muted-foreground">{resolverLabel}</span>
                     </h1>
                     <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh}/>

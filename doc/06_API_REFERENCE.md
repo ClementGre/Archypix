@@ -6,17 +6,17 @@ Primary source of truth for frontend development. See `03_BACKEND_ARCHITECTURE.m
 
 ## 1. Route Groups
 
-| Prefix                   | Auth type                   | Notes                                                                |
-|--------------------------|-----------------------------|----------------------------------------------------------------------|
-| `/api/auth/*`            | None / User JWT             | Login, refresh, logout, me                                           |
-| `/api/public/*`          | None                        | Registration (standalone mode), public profiles                      |
-| `/api/authenticated/*`   | User JWT                    | All regular user actions                                             |
-| `/api/admin/*`           | User JWT + `is_admin=true`  | Admin panel                                                          |
-| `/api/worker/*`          | Worker JWT                  | Worker-facing only, not called by frontend                           |
-| `/api/federation/*`      | Federation JWT              | Server-to-server only, not called by frontend                        |
-| `/api/resolver/*`        | Resolver JWT                | Resolver-facing only, not called by frontend                         |
-| `/.well-known/webfinger` | None                        | Identity resolution                                                  |
-| `/webdav/{slug}/*`       | Per-hierarchy token (Basic) | WebDAV mount of a hierarchy; external sync clients, not the frontend |
+| Prefix                                | Auth type                   | Notes                                                                |
+|---------------------------------------|-----------------------------|----------------------------------------------------------------------|
+| `/api/auth/*`                         | None / User JWT             | Login, refresh, logout, me                                           |
+| `/api/public/*`                       | None                        | Registration (standalone mode), public profiles                      |
+| `/api/authenticated/*`                | User JWT                    | All regular user actions                                             |
+| `/api/admin/*`                        | User JWT + `is_admin=true`  | Admin panel                                                          |
+| `/api/worker/*`                       | Worker JWT                  | Worker-facing only, not called by frontend                           |
+| `/api/federation/*`                   | Federation JWT              | Server-to-server only, not called by frontend                        |
+| `/api/resolver/*`                     | Resolver JWT                | Resolver-facing only, not called by frontend                         |
+| `/archypix-resolver/info` `…/resolve` | None                        | Bootstrap discovery + identity resolution (feature 25)               |
+| `/webdav/{slug}/*`                    | Per-hierarchy token (Basic) | WebDAV mount of a hierarchy; external sync clients, not the frontend |
 
 ---
 
@@ -2352,38 +2352,51 @@ surface (`/api/resolver-admin/*`, WebFinger, registration routing, config-matrix
 
 ---
 
-## 9. WebFinger (`/.well-known/webfinger`)
+## 9. Bootstrap & resolution (`/archypix-resolver/*`, feature 25)
 
-Used for user identity resolution. The frontend calls this when it needs to find which backend hosts a `@username:domain` identity.
+Two fixed, CORS-open, directly-callable paths at whatever domain is queried. They replace the old
+`.well-known/webfinger` (dropped entirely — no RFC-compliant use here, and it risked colliding with
+real WebFinger/Matrix discovery). **Both a resolver and a backend answer both routes**: a backend
+serves `resolve` too so a single-domain deployment whose backend domain differs from the global domain
+(and runs no resolver) can forward `/archypix-resolver/` from the global domain to the backend and
+still resolve in one hop. Everything else on a resolver is nested under the same
+`/archypix-resolver/` prefix (see [`07_RESOLVER_ARCHITECTURE.md`](07_RESOLVER_ARCHITECTURE.md)); the
+backend keeps its own `/api/*` unprefixed.
 
-### `GET /.well-known/webfinger`
+### `GET /archypix-resolver/info`
 
-**Auth:** None. Response content type: `application/jrd+json`.
-
-**Query params:**
-| Name | Type | Required | Description |
-|---|---|---|---|
-| `resource` | `string` | yes | Must match `archypix:@<username>:<domain>` |
+**Auth:** None. Bootstrap discovery — the frontend calls this once against a domain before
+login/register to learn where the heavier surface lives and whether a fleet dashboard exists.
 
 **Response `200`:**
 
 ```ts
 {
-    subject: string;   // "archypix:@username:domain"
-    links: Array<{
-        rel: "backend_url";
-        href: string;    // the resolved backend URL (scheme + host)
-    }>;
+    is_resolver: boolean;   // true ⇒ a resolver fronts this domain (a fleet dashboard exists)
+    api_url: string;        // base for ${api_url}/api/public/register (always) and
+                            // ${api_url}/api/resolver-admin/... (when is_resolver).
+                            // resolver ⇒ "https://example.com/archypix-resolver";
+                            // standalone backend ⇒ its own public URL "https://archypix.example.com"
 }
 ```
 
-**Errors:**
+### `GET /archypix-resolver/resolve`
 
-- 400 if `resource` does not match the expected format.
-- 404 if the domain does not match this instance's global domain.
+**Auth:** None. The federation/login **hot path** — resolves `@user:domain` to its owning backend in
+one HTTP call. A resolver returns the mapped backend; a backend confirms the user lives here and
+returns **its own** public URL (same shape).
 
-The frontend should call this to resolve cross-instance picture owners before fetching their pictures. The resolved `href` is then used as the base
-URL for federation API calls.
+**Query params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| `user` | `string` | yes | The username to resolve |
+| `domain` | `string` | yes | Must match this server's global domain |
+
+**Response `200`:** `{ backend_url: string }` — the owning backend URL (scheme + host).
+
+**Errors:** `404` for an unknown user or a mismatched domain. Federation clients treat a `404` as "no
+`resolve` endpoint here at all" (no resolver, prefix not forwarded) and fall back to the domain itself
+as the backend, so a bare standalone instance still resolves.
 
 ---
 

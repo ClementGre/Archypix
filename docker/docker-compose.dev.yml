@@ -99,6 +99,8 @@ services:
       RESOLVER_JWT_SECRET: devsecret
       CORS_ORIGINS: "*"
       RUST_LOG: info,archypix_resolver=trace
+      USE_HTTPS: "false"
+      RESOLVER_ADMIN_TOKEN: "Test"
     volumes: *workspace-volumes
     extra_hosts: *backend-extra-hosts
     networks:

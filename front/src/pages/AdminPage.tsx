@@ -3,10 +3,12 @@ import {useQueryClient} from '@tanstack/react-query'
 import {Network, RefreshCw} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {AdminDashboard} from '@/components/admin/AdminDashboard'
+import {useAuthStore} from "@/stores/auth.ts";
 
 export default function AdminPage() {
     const queryClient = useQueryClient()
     const navigate = useNavigate()
+    const isResolver = useAuthStore((s) => s.isResolver)
 
     return (
         <div className="h-full overflow-y-auto p-6">
@@ -14,7 +16,7 @@ export default function AdminPage() {
                 <div className="flex items-center justify-between gap-3">
                     <h1 className="text-xl font-semibold">Admin</h1>
                     <div className="flex items-center gap-2">
-                        <Button
+                        {isResolver && <Button
                             variant="outline"
                             size="sm"
                             className="gap-1.5"
@@ -23,7 +25,7 @@ export default function AdminPage() {
                         >
                             <Network className="h-4 w-4"/>
                             Fleet
-                        </Button>
+                        </Button>}
                         <Button
                             variant="ghost"
                             size="icon"

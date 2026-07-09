@@ -2,9 +2,9 @@
 
 pub mod admin;
 pub mod backends;
+pub mod bootstrap;
 pub mod middleware;
 pub mod public;
-pub mod webfinger;
 
 use crate::state::AppState;
 use axum::response::IntoResponse;
@@ -12,9 +12,18 @@ use axum::routing::{any, delete, get, patch, post};
 use axum::{Json, Router};
 
 pub fn routes() -> Router<AppState> {
+    // The resolver's entire surface is nested under one top-level prefix (feature 25) so a self-hoster
+    // has a single forwarding rule and no `.well-known` collision. Handler paths are unchanged inside.
     Router::new()
-        .route("/.well-known/webfinger", get(webfinger::handler))
-        // Same path a standalone backend serves, so the frontend uses one URL across topologies.
+        .route("/health", get(health))
+        .nest("/archypix-resolver", prefixed_routes())
+}
+
+fn prefixed_routes() -> Router<AppState> {
+    Router::new()
+        // Bootstrap + federation resolution — fixed, directly-callable paths (feature 25).
+        .route("/info", get(bootstrap::info))
+        .route("/resolve", get(bootstrap::resolve))
         .route("/api/public/register", post(public::register))
         .route("/api/public/invites/{code}", get(public::preview_invite))
         .route(

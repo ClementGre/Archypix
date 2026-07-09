@@ -12,6 +12,7 @@ use archypix_back::infra::routine::RoutineHandle;
 use archypix_back::infra::routine::pipeline;
 use archypix_back::infra::routine::unannounce::UnannounceInput;
 use archypix_back::infra::settings::{keys, test_settings_with};
+use archypix_back::repository::pipeline::PipelineRepository;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::shares;
@@ -156,9 +157,9 @@ async fn active_share(
         share.id,
         &settings.get(keys::GLOBAL_DOMAIN),
     )
-        .await
-        .unwrap()
-        .unwrap();
+    .await
+    .unwrap()
+    .unwrap();
     shares::accept_incoming_share(
         db,
         cache.as_ref(),
@@ -246,6 +247,57 @@ async fn future_false_share_does_not_announce_new_pictures(db: PgPool) {
         common::count_received_pictures(&db, bob).await,
         0,
         "future=false share must not announce new pictures"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn future_false_share_reannounces_metadata_of_tracked_picture(db: PgPool) {
+    let (settings, cache, queue, notify) = deps(&db).await;
+    let alice = common::seed_user(&db, "alice", "p").await;
+    let bob = common::seed_user(&db, "bob", "p").await;
+
+    // The picture exists before the share, so the initial (PFA) announce tracks it.
+    let pic = common::seed_picture_with_tag(&db, alice, "Travel").await;
+    let os = active_share(
+        &db, &settings, &cache, &queue, &notify, alice, "alice", bob, "bob", "Travel", false,
+    )
+    .await;
+    assert_eq!(common::count_received_pictures(&db, bob).await, 1);
+
+    let announced_before: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT announced_updated_at FROM share_announcements \
+         WHERE outgoing_share_id = $1 AND picture_id = $2",
+    )
+    .bind(os)
+    .bind(pic)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+
+    // Owner edits the picture's metadata: bump updated_at and re-dirty it (as an EXIF edit does).
+    sqlx::query("UPDATE pictures SET captured_at = now() at time zone 'utc' WHERE id = $1")
+        .bind(pic)
+        .execute(&db)
+        .await
+        .unwrap();
+    PipelineRepository::invalidate(&db, &[pic]).await.unwrap();
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
+
+    // No *new* picture is announced, but the already-tracked one is re-announced: its
+    // announced_updated_at advances (metadata/deletion sync is independent of `future`).
+    assert_eq!(common::count_received_pictures(&db, bob).await, 1);
+    let announced_after: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT announced_updated_at FROM share_announcements \
+         WHERE outgoing_share_id = $1 AND picture_id = $2",
+    )
+    .bind(os)
+    .bind(pic)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(
+        announced_after > announced_before,
+        "future=false share must re-announce metadata changes to tracked pictures"
     );
 }
 

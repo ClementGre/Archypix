@@ -57,6 +57,11 @@ pub mod setting_keys {
     pub const DB_PASSWORD: SettingKey<Option<String>> = SettingKey::new("db_password");
     pub const DB_NAME: SettingKey<String> = SettingKey::new("db_name");
     pub const GLOBAL_DOMAIN: SettingKey<String> = SettingKey::new("global_domain");
+    /// Serve public URLs (the `api_url` advertised by `/archypix-resolver/info`) over HTTPS.
+    pub const USE_HTTPS: SettingKey<bool> = SettingKey::new("use_https");
+    /// Externally-reachable base URL of this resolver (incl. the `/archypix-resolver` prefix), what
+    /// the frontend uses for register/dashboard. Unset ⇒ `{scheme}://{GLOBAL_DOMAIN}/archypix-resolver`.
+    pub const PUBLIC_URL: SettingKey<Option<String>> = SettingKey::new("public_url");
     /// Shared secret authenticating backend→resolver pushes; also signs operator session tokens.
     pub const RESOLVER_JWT_SECRET: SettingKey<String> = SettingKey::new("resolver_jwt_secret");
     /// Operator dashboard token (plaintext or argon2 hash). Unset ⇒ generated + printed once at boot.
@@ -92,6 +97,8 @@ pub fn registry() -> Vec<SettingSpec> {
         SettingSpec::new(DB_PASSWORD, group::DATABASE).secret().nullable().doc("Postgres password.", ""),
         SettingSpec::new(DB_NAME, group::DATABASE).core().default("archypix_resolver").doc("Postgres database name.", "archypix_resolver"),
         SettingSpec::new(GLOBAL_DOMAIN, group::IDENTITY).core().doc("The global identity domain this resolver fronts — the part after ':' in @user:global_domain. Must match GLOBAL_DOMAIN on every backend that registers here.", "example.com"),
+        SettingSpec::new(USE_HTTPS, group::IDENTITY).core().default("true").doc("Serve the public api_url (advertised by /archypix-resolver/info) over HTTPS. Set false in local/Docker (HTTP) environments.", "true"),
+        SettingSpec::new(PUBLIC_URL, group::IDENTITY).core().nullable().doc("Externally-reachable base URL of this resolver including the /archypix-resolver prefix — what the frontend and browsers use for registration and the fleet dashboard. Defaults to {scheme}://{GLOBAL_DOMAIN}/archypix-resolver; override when the resolver is served on a different host/path than the identity domain.", "https://example.com/archypix-resolver"),
         SettingSpec::new(RESOLVER_JWT_SECRET, group::AUTH).secret().doc("Shared HS256 secret authenticating backend→resolver PUSHES (self-register / mapping update / heartbeat) and signing operator dashboard sessions. Every registered backend must set this same value as its RESOLVER_JWT_SECRET.", ""),
         SettingSpec::new(RESOLVER_ADMIN_TOKEN, group::AUTH).secret().nullable().doc("Operator token for the fleet dashboard (plaintext or an argon2 hash). If unset, one is generated and printed to the console ONCE at first startup. Stored hashed; rotatable from the dashboard unless env-set.", ""),
         SettingSpec::new(CACHE_TTL_SECS, group::CACHE).core().default("3600").doc("username→backend cache TTL (seconds).", "3600"),
@@ -109,6 +116,24 @@ pub fn registry() -> Vec<SettingSpec> {
 }
 
 // ── Derived ──────────────────────────────────────────────────────────────────────
+
+/// The `api_url` this resolver advertises via `/archypix-resolver/info` — the `PUBLIC_URL` override
+/// if set, else `{scheme}://{GLOBAL_DOMAIN}/archypix-resolver`.
+pub fn public_url(s: &Settings) -> String {
+    if let Some(url) = s.get(setting_keys::PUBLIC_URL) {
+        return url.trim_end_matches('/').to_string();
+    }
+    let scheme = if s.get(setting_keys::USE_HTTPS) {
+        "https"
+    } else {
+        "http"
+    };
+    format!(
+        "{}://{}/archypix-resolver",
+        scheme,
+        s.get(setting_keys::GLOBAL_DOMAIN)
+    )
+}
 
 pub fn database_url(s: &Settings) -> String {
     build_pg_url(
@@ -162,9 +187,9 @@ pub fn test_settings_with(overrides: &[(&str, &str)]) -> Config {
             "test_resolver_secret_must_be_long_enough_for_hs256",
         ),
     ]
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
     for (k, v) in overrides {
         env.insert(k.to_string(), v.to_string());
     }

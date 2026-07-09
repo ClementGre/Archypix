@@ -1,17 +1,17 @@
 mod admin;
+mod bootstrap;
 mod federation;
 mod middleware;
 mod resolver;
 mod user;
 mod webdav;
-mod webfinger;
 mod worker;
 
 use crate::infra::settings::keys;
 use crate::state::AppState;
 use archypix_common::settings::Settings;
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::HeaderValue;
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -33,13 +33,22 @@ pub fn routes(settings: Arc<Settings>) -> Router<AppState> {
         .route("/health", get(health));
 
     if !settings.get(keys::USE_RESOLVER) {
-        router = router.route(
-            "/.well-known/webfinger",
-            get(webfinger::handler).layer(cors),
-        );
+        // Bootstrap discovery + resolution (feature 25): fixed, CORS-open paths answered directly at
+        // this domain. `info` reports a non-resolver serving its own public API; `resolve` lets a
+        // single-domain deployment (global domain forwarding `/archypix-resolver/` here) resolve
+        // identities without a resolver, returning this backend's own public URL.
+        router
+            .route(
+                "/archypix-resolver/info",
+                get(bootstrap::info).layer(cors.clone()),
+            )
+            .route(
+                "/archypix-resolver/resolve",
+                get(bootstrap::resolve).layer(cors),
+            )
+    } else {
+        router
     }
-
-    router
 }
 
 async fn health() -> impl IntoResponse {

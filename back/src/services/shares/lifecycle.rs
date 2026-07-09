@@ -3,13 +3,13 @@
 //! functions only manage share state and hand work to the pipeline (via the
 //! `pending_first_announcement` status) and the task queue.
 
-use crate::clients::federation::models::ShareAnnouncementRequest;
 use crate::clients::federation::FederationClient;
+use crate::clients::federation::models::ShareAnnouncementRequest;
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
 use crate::infra::redis::Cache;
-use crate::infra::routine::unannounce::UnannounceInput;
 use crate::infra::routine::RoutineHandle;
+use crate::infra::routine::unannounce::UnannounceInput;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
@@ -19,7 +19,7 @@ use crate::repository::tag::TagRepository;
 use crate::repository::user::UserRepository;
 use crate::services::shares::shareback::auto_accept_shareback_local;
 use crate::services::users::find_local_user_id;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
@@ -117,8 +117,8 @@ pub async fn cleanup_incoming_share(
             &recipient_username,
             &recipient_instance,
         )
-            .await?
-            .is_some();
+        .await?
+        .is_some();
         task_queue.trigger(UnannounceInput {
             outgoing_share_id: os_id,
             sender_username: relayer_username.clone(),
@@ -209,13 +209,15 @@ pub async fn reject_incoming_share(
     .await?
     .is_some()
     {
-        // Same-backend: directly tombstone the sender's OutgoingShare.
+        // Same-backend: directly tombstone the sender's OutgoingShare and drop its tracking rows
+        // (invalidating its presign tokens), mirroring revocation.
         OutgoingShareRepository::set_status(
             db,
             incoming.outgoing_share_id,
             ShareStatus::Tombstoned,
         )
         .await?;
+        ShareAnnouncementRepository::delete_all_for_share(db, incoming.outgoing_share_id).await?;
     } else {
         // Cross-instance: send rejection to the sender's backend.
         federation
@@ -541,7 +543,7 @@ pub async fn revoke_outgoing_share(
             share_id,
             &settings.get(keys::GLOBAL_DOMAIN),
         )
-            .await?
+        .await?
         {
             if incoming.status != ShareStatus::Revoked && incoming.status != ShareStatus::Tombstoned
             {
