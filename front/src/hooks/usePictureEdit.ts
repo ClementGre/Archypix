@@ -1,10 +1,11 @@
 import {useState} from 'react'
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {copyPicture, editPicture, editReceivedExif, getJob, restorePicture, trashPicture} from '@/api/pictures'
+import {copyPicture, editPicture, editReceivedExif, getJob, restorePicture, setCreator, trashPicture} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {invalidatePictures, invalidatePicturesAndTags, invalidateStorageDebounced, invalidateTags, removePicturesFromLists,} from '@/lib/invalidation'
-import type {EditPictureResponse, ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
+import {queryKeys} from '@/lib/constants'
+import type {CreatorEditMode, EditPictureResponse, ExifEditMode, ExifField, ExifOverrides, PictureDetail, SetCreatorResponse} from '@/lib/types'
 
 const POLL_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
 
@@ -91,6 +92,35 @@ export function useOverrideExif(pictureId: string) {
     })
 
     return {mutation, syncing: false}
+}
+
+/**
+ * Set a picture's **creator** credit (feature 26). Owned pictures write the authoritative `creator`
+ * (which re-announces to recipients); received pictures write the recipient-local override. On
+ * success we patch the detail cache for instant feedback and invalidate `['pictures']` so the list
+ * `creator` projection reconciles.
+ */
+export function useSetCreator(pictureId: string) {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: (body: { value: string | null; mode?: CreatorEditMode }) => setCreator(pictureId, body),
+        onSuccess: (res: SetCreatorResponse) => {
+            queryClient.setQueryData<PictureDetail>(queryKeys.picture(pictureId), (old) =>
+                old
+                    ? {
+                        ...old,
+                        creator: res.creator,
+                        creator_origin: res.creator_origin,
+                        creator_value: res.creator_value,
+                        creator_override: res.creator_override,
+                        updated_at: res.updated_at,
+                    }
+                    : old,
+            )
+            invalidatePictures(queryClient)
+        },
+        onError: (error: unknown) => toast.error('Could not update creator', {description: apiErrorMessage(error)}),
+    })
 }
 
 /** Soft-delete / restore mutations for pictures the user holds. */

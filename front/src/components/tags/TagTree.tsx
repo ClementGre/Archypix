@@ -1,9 +1,10 @@
 import {type MouseEvent, useEffect, useMemo, useRef, useState} from 'react'
 import {useQueryClient} from '@tanstack/react-query'
-import {Ban, Check, ChevronRight, Equal, Hash, Images, Loader2, MoreHorizontal, Pencil, Plus} from 'lucide-react'
+import {Ban, Check, ChevronRight, Equal, Hash, Images, Loader2, MoreHorizontal, Pencil, Plus, Share2} from 'lucide-react'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {useAllTags} from '@/hooks/useTags'
 import {RenameTagDialog} from '@/components/tags/RenameTagDialog'
+import {CreateShareDialog} from '@/components/shares/CreateShareDialog'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
@@ -97,6 +98,10 @@ function TagMenu({state, actions, path}: {
                     {state.excluded && <Check className="ml-auto h-3.5 w-3.5"/>}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator/>
+                <DropdownMenuItem onClick={() => actions.share(path)}>
+                    <Share2 className="mr-2 h-3.5 w-3.5"/>
+                    Share this tag…
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => actions.rename(path)}>
                     <Pencil className="mr-2 h-3.5 w-3.5"/>
                     Rename tag…
@@ -114,6 +119,7 @@ interface TagActions {
     toggleExclude: (path: string) => void
     remove: (path: string) => void
     rename: (path: string) => void
+    share: (path: string) => void
 }
 
 function TreeRow({
@@ -216,6 +222,7 @@ export function TagTree() {
     const queryClient = useQueryClient()
     const tree = useMemo(() => buildTree(tags ?? []), [tags])
     const [renameTarget, setRenameTarget] = useState<string | null>(null)
+    const [shareTag, setShareTag] = useState<string | null>(null)
 
     // The tag list can drift as the pipeline assigns/removes tags in the background; refresh it
     // on interaction so navigating the tree keeps it current.
@@ -310,6 +317,7 @@ export function TagTree() {
             })
         },
         rename: (path) => setRenameTarget(path),
+        share: (path) => setShareTag(path),
     }
 
     const noFilter = !params.tag && !params.include.length && !params.exact.length && !params.exclude.length
@@ -359,6 +367,14 @@ export function TagTree() {
                     onOpenChange={(o) => !o && setRenameTarget(null)}
                 />
             )}
+
+            {/* Share a tag straight from its row menu — pre-fills the create-share tag. */}
+            <CreateShareDialog
+                open={shareTag !== null}
+                onOpenChange={(o) => !o && setShareTag(null)}
+                showTrigger={false}
+                initialTag={shareTag ?? undefined}
+            />
         </div>
     )
 }

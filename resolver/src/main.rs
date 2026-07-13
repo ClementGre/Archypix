@@ -76,7 +76,10 @@ async fn main() -> anyhow::Result<()> {
         routine::MappingReconcile {
             db: db.clone(),
             config: config.clone(),
-            backends: archypix_resolver::clients::BackendClient::new(db.clone(), reqwest::Client::new()),
+            backends: archypix_resolver::clients::BackendClient::new(
+                db.clone(),
+                reqwest::Client::new(),
+            ),
         },
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -102,13 +105,14 @@ async fn main() -> anyhow::Result<()> {
             let allowed = cors_config.get(sk::CORS_ORIGINS);
             allowed.iter().any(|o| o == "*")
                 || origin
-                .to_str()
-                .map(|o| allowed.iter().any(|a| a == o))
-                .unwrap_or(false)
+                    .to_str()
+                    .map(|o| allowed.iter().any(|a| a == o))
+                    .unwrap_or(false)
         }));
 
-    let app = api::routes()
-        .layer(cors)
+    // `cors` (dynamic, CORS_ORIGINS-gated) covers the register/admin/backend surface; the bootstrap
+    // `info`/`resolve` routes get their own open CORS inside `api::routes` (feature 25).
+    let app = api::routes(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

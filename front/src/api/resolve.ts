@@ -54,6 +54,32 @@ export async function resolveConnection(username: string, instance: string): Pro
     return {backendUrl, isResolver: true, resolverUrl: info.api_url}
 }
 
+/** Result of a best-effort identity existence check (feature 26 creator / share recipient). */
+export type IdentityCheck = 'exists' | 'missing' | 'unreachable'
+
+/**
+ * Best-effort check that `@username:instance` names a real account, used to guide (not gate) the
+ * contact autocomplete. The `/archypix-resolver/resolve` endpoint is served at the **same path** by
+ * both a resolver and a standalone backend (feature 25), so it is hit directly — no `/info` bootstrap.
+ * A `404` means the instance answered but has no such user → `missing`; any other failure — CORS,
+ * network, a non-2xx that isn't 404, or a missing `backend_url` — means the instance itself couldn't
+ * be reached → `unreachable`.
+ */
+export async function checkIdentityExists(username: string, instance: string): Promise<IdentityCheck> {
+    try {
+        const params = new URLSearchParams({user: username, domain: instance})
+        const res = await fetch(`${originFor(instance)}/archypix-resolver/resolve?${params.toString()}`, {
+            headers: {Accept: 'application/json'},
+        })
+        if (res.status === 404) return 'missing'
+        if (!res.ok) return 'unreachable'
+        const body = (await res.json()) as { backend_url?: string }
+        return body.backend_url ? 'exists' : 'unreachable'
+    } catch {
+        return 'unreachable'
+    }
+}
+
 /** Hit the resolver's `/archypix-resolver/resolve` directly at `instance`. */
 async function resolveViaResolver(username: string, instance: string): Promise<string> {
     const params = new URLSearchParams({user: username, domain: instance})

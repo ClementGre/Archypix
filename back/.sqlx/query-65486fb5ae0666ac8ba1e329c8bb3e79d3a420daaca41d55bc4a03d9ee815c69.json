@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n               SET creator = $3,\n                   updated_at = (now() AT TIME ZONE 'utc'),\n                   last_pipeline_run_at = NULL\n               WHERE id = $1 AND local_user_id = $2 AND remote_picture_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65486fb5ae0666ac8ba1e329c8bb3e79d3a420daaca41d55bc4a03d9ee815c69"
+}

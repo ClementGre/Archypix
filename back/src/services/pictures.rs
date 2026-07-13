@@ -2,7 +2,7 @@ use crate::clients::federation::FederationClient;
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::picture::{Picture, PictureVersion, UploadSession};
 use crate::domain::tag::TagPath;
-use crate::infra::redis::{cache_get_json, cache_set_json_ex, Cache, RedisKey};
+use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
 use crate::infra::settings::keys;
@@ -13,7 +13,7 @@ use crate::repository::picture::{
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
 use crate::services::users::find_local_user_id;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::job::{ExifField, FullExif};
 use archypix_common::settings::Settings;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -157,6 +157,9 @@ pub struct PictureListItem {
     /// for owned pictures.
     pub owner_username: Option<String>,
     pub owner_instance: Option<String>,
+    /// Resolved creator credit for display (feature 26): `coalesce(creator_override, creator,
+    /// owner_identity)`. Parsed by its leading sigil client-side (`@user:domain` / `#name` / plain).
+    pub creator: String,
     /// Convergence of the file's embedded EXIF vs the DB row.
     pub exif_sync_status: crate::domain::picture::ExifSyncStatus,
     /// The recipient's own local soft-delete timestamp (trash view); `None` when not trashed.
@@ -697,6 +700,21 @@ pub async fn copy_picture(
         )
     };
 
+    // ── Creator carries with the content (§6): the source's propagated value, never the copier ──
+    // Owned source with an unset creator stays owner-default (NULL ⇒ the copier, who now owns it);
+    // a received source's owner default is materialised so attribution survives the copy.
+    let copy_creator: Option<String> = match source.creator.as_deref() {
+        Some(c) if !c.is_empty() => Some(c.to_string()),
+        _ if source.is_owned() => None,
+        _ => match (
+            source.owner_username.as_deref(),
+            source.owner_instance_domain.as_deref(),
+        ) {
+            (Some(u), Some(d)) if !u.is_empty() => Some(Picture::format_identity(u, d)),
+            _ => None,
+        },
+    };
+
     // ── New owned row, seeded from the source's effective EXIF ────────────────
     let eff = source.full_exif();
     let camera_json = serde_json::to_value(&eff.camera).unwrap_or_else(|_| serde_json::json!({}));
@@ -723,6 +741,7 @@ pub async fn copy_picture(
         cs_user.as_deref(),
         cs_instance.as_deref(),
         cs_pic.as_deref(),
+        copy_creator.as_deref(),
     )
     .await?;
     // `is_initial = false`: keep the seeded effective EXIF (don't re-extract the owner's embedded
@@ -953,6 +972,52 @@ pub async fn override_received_exif(
     .await?;
 
     waker.trigger(user_id);
+    PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// Set a picture's creator credit (feature 26 §7). Owned → the authoritative `creator` (re-announced
+/// via the pipeline). Received + `propose = false` → the recipient-local `creator_override`. Received
+/// + `propose = true` → **phase 2**, not yet built (`403`). `value` null/blank resets to the owner
+/// default (owned) or clears the override (received). Returns the updated picture.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, propose = propose))]
+pub async fn set_picture_creator(
+    db: &PgPool,
+    waker: &RoutineHandle<Uuid>,
+    user_id: Uuid,
+    picture_id: Uuid,
+    value: Option<String>,
+    propose: bool,
+) -> Result<Picture, AppError> {
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+
+    // Normalise to the stored form: blank ⇒ None (reset/clear). Reject a forged system sigil (§3).
+    let value = value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(v) = value.as_deref() {
+        crate::domain::picture::validate_manual_creator(v).map_err(AppError::BadRequest)?;
+    }
+
+    if picture.is_owned() {
+        PictureRepository::set_creator(db, user_id, picture_id, value.as_deref()).await?;
+        // Owned edit re-announces through the pipeline (updated_at bumped in the repo).
+        waker.trigger_debounced(user_id);
+    } else if propose {
+        // Propose-to-owner (§7, phase 2) — mirrors feature 10's EXIF propose; not built yet.
+        return Err(AppError::Forbidden(
+            "Proposing a creator to the owner is not yet supported".to_string(),
+        ));
+    } else {
+        PictureRepository::set_creator_override(db, user_id, picture_id, value.as_deref()).await?;
+    }
+
     PictureRepository::find_by_id(db, picture_id)
         .await?
         .ok_or(AppError::NotFound)
@@ -1318,6 +1383,14 @@ pub async fn list_with_filter(
 
     let (pictures, total) = PictureRepository::list(db, user_id, &filter).await?;
 
+    // Owner identity for resolving owner-default creators on owned rows (feature 26 §5). Fetched
+    // once — every row belongs to the caller, so the owner is always this user.
+    let owner_username = crate::repository::user::UserRepository::find_by_id(db, user_id)
+        .await?
+        .map(|u| u.username)
+        .unwrap_or_default();
+    let global_domain = settings.get(keys::GLOBAL_DOMAIN);
+
     // Batch-presign thumbnails: one cache lookup + one HTTP call per remote owner backend
     // instead of N sequential calls.
     let thumbnail_urls = if let Some(variant) = thumbnail {
@@ -1335,6 +1408,7 @@ pub async fn list_with_filter(
         .into_iter()
         .map(|pic| PictureListItem {
             id: pic.id,
+            creator: pic.display_creator(&owner_username, &global_domain),
             filename: pic.filename,
             mime_type: pic.mime_type,
             width: pic.width,

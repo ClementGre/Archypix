@@ -74,6 +74,7 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
         &FullExif::default(),
         None,
         None,
+        None, // creator
     )
     .await
     .unwrap();

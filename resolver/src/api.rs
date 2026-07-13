@@ -10,20 +10,26 @@ use crate::state::AppState;
 use axum::response::IntoResponse;
 use axum::routing::{any, delete, get, patch, post};
 use axum::{Json, Router};
+use tower_http::cors::{Any, CorsLayer};
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(dynamic_cors: CorsLayer) -> Router<AppState> {
     // The resolver's entire surface is nested under one top-level prefix (feature 25) so a self-hoster
     // has a single forwarding rule and no `.well-known` collision. Handler paths are unchanged inside.
     Router::new()
         .route("/health", get(health))
-        .nest("/archypix-resolver", prefixed_routes())
+        .nest("/archypix-resolver", prefixed_routes(dynamic_cors))
 }
 
-fn prefixed_routes() -> Router<AppState> {
-    Router::new()
-        // Bootstrap + federation resolution — fixed, directly-callable paths (feature 25).
+fn prefixed_routes(dynamic_cors: CorsLayer) -> Router<AppState> {
+    // Bootstrap + federation resolution are hit cross-origin by arbitrary frontends resolving
+    // `@user:domain`, so they answer any origin regardless of the CORS_ORIGINS setting (feature 25).
+    let open = Router::new()
         .route("/info", get(bootstrap::info))
         .route("/resolve", get(bootstrap::resolve))
+        .layer(open_cors());
+
+    // The heavier register/admin/backend surface stays behind the operator's dynamic CORS.
+    let gated = Router::new()
         .route("/api/public/register", post(public::register))
         .route("/api/public/invites/{code}", get(public::preview_invite))
         .route(
@@ -47,6 +53,18 @@ fn prefixed_routes() -> Router<AppState> {
         )
         .nest("/api/resolver-admin", admin_routes())
         .route("/health", get(health))
+        .layer(dynamic_cors);
+
+    open.merge(gated)
+}
+
+/// Open CORS for the bootstrap discovery + resolution routes (feature 25): any origin, independent of
+/// the `cors_origins` setting. Read-only, unauthenticated, non-credentialed — safe to open to `*`.
+fn open_cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_methods(Any)
+        .allow_origin(Any)
+        .allow_headers(Any)
 }
 
 fn admin_routes() -> Router<AppState> {

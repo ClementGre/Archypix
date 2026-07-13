@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height,\n                                     exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, orientation,\n                                     copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id",
+  "query": "UPDATE pictures\n               SET mime_type = COALESCE($2, mime_type),\n                   file_size = COALESCE($3, file_size),\n                   width = COALESCE($4, width),\n                   height = COALESCE($5, height),\n                   exif_data = COALESCE($6, exif_data),\n                   captured_at = COALESCE($7, captured_at)\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override",
   "describe": {
     "columns": [
       {
@@ -388,26 +388,39 @@
             "name": "copy_source_picture_id"
           }
         }
+      },
+      {
+        "ordinal": 33,
+        "name": "creator",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator"
+          }
+        }
+      },
+      {
+        "ordinal": 34,
+        "name": "creator_override",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator_override"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
-        "Varchar",
         "Varchar",
         "Int8",
         "Int4",
         "Int4",
         "Jsonb",
-        "Timestamp",
-        "Float8",
-        "Float8",
-        "Int4",
-        "Int2",
-        "Varchar",
-        "Varchar",
-        "Varchar"
+        "Timestamp"
       ]
     },
     "nullable": [
@@ -443,8 +456,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "872f584860b065913bdb26fffd7ed9da7030c7c4a976580c9836c94e56f99793"
+  "hash": "089a3ebcc06a6d1fea6b30cd3a16123fd7ba479f1435e15fa1582878c9ff912d"
 }

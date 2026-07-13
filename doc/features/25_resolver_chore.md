@@ -49,9 +49,13 @@
   handler dropped; new `api/bootstrap.rs` = `GET /info` (`{ is_resolver: true, api_url }`) + `GET /resolve` (replaces
   webfinger, returns `{ backend_url }`, 404 on unknown/mismatch). Config gained `USE_HTTPS` + nullable `PUBLIC_URL`
   (core) with a `public_url(&s)` derive (`{scheme}://{GLOBAL_DOMAIN}/archypix-resolver` default). `.env.example` updated.
+- **CORS**: `/info` + `/resolve` are queried cross-origin by arbitrary frontends resolving `@user:domain`, so on both
+  the resolver and the standalone backend they carry a **dedicated open-CORS layer (any origin)**, distinct from — and
+  never gated by — the operator's dynamic `CORS_ORIGINS` (which still guards the register/admin surface). A target
+  domain can't know which frontends will resolve it; these routes are read-only, unauthenticated, non-credentialed.
 - **Backend** (`back/`): `api/bootstrap.rs` = `GET /archypix-resolver/info` (`is_resolver:false`, own public URL) **and**
   `GET /archypix-resolver/resolve` (confirms the user exists, returns this backend's own public URL — same shape as the
-  resolver), both CORS-open and always served. Serving `resolve` on the backend lets a single-domain deployment whose
+  resolver), both open-CORS (above) and always served. Serving `resolve` on the backend lets a single-domain deployment whose
   backend domain differs from the global domain and runs no resolver forward `/archypix-resolver/` from the global domain
   to the backend and still resolve in one hop (refines the original spec's "standalone has nothing to resolve").
   `/.well-known/webfinger` route + handler removed. `FederationClient::resolve_backend_url` (renamed

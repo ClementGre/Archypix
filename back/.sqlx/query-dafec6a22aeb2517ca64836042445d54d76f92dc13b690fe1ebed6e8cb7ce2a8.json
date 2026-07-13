@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id\n               FROM pictures\n               WHERE local_user_id = $1 AND file_hash = $2\n                 AND remote_picture_id IS NULL\n                 AND ($3 OR deleted_at IS NULL)\n               ORDER BY deleted_at NULLS FIRST\n               LIMIT 1",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override\n               FROM pictures WHERE id = ANY($1::uuid[])",
   "describe": {
     "columns": [
       {
@@ -388,13 +388,33 @@
             "name": "copy_source_picture_id"
           }
         }
+      },
+      {
+        "ordinal": 33,
+        "name": "creator",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator"
+          }
+        }
+      },
+      {
+        "ordinal": 34,
+        "name": "creator_override",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator_override"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Text",
-        "Bool"
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -430,8 +450,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "39fd84f88fe6150b63d617e527cfcccf4143b18a33c95becde67e38cf7f2eb0f"
+  "hash": "dafec6a22aeb2517ca64836042445d54d76f92dc13b690fe1ebed6e8cb7ce2a8"
 }

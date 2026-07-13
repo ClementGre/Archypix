@@ -20,6 +20,7 @@ import {bestLoaded, recordImage, useImageCache, VARIANT_RANK} from '@/stores/ima
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
+import {CreatorField} from '@/components/photos/detail/CreatorField'
 import {CopiesSection} from '@/components/photos/detail/CopiesSection'
 import {OverwrittenBadge} from '@/components/photos/detail/OverwrittenBadge'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
@@ -516,6 +517,10 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                 <span>Added {formatDateTime(picture.ingested_at)}</span>
                 <span>Edited {formatDateTime(picture.updated_at)}</span>
             </div>
+
+            {/* Creator attribution (feature 26) — owned pictures edit the authoritative credit,
+                received pictures a recipient-local override. */}
+            <CreatorField picture={picture}/>
 
             {/* Owner-deletion grace-window warning (received pictures). */}
             {ownerDeleted && (

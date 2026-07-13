@@ -520,6 +520,8 @@ interface PictureListItem {
     owned: boolean;                // false for received (shared-to-me) pictures
     owner_username: string | null; // set when owned=false
     owner_instance: string | null; // global domain of the owning instance
+    creator: string;               // resolved creator credit (override → stored → owner default);
+                                   // parse by leading sigil: @user:domain / #name / plain (feature 26)
     exif_sync_status: ExifSyncStatus;
   deleted_at: string | null;        // the holder's own local soft-delete (trash); null when not trashed
   owner_deleted_at: string | null;  // received only: the owner's soft-delete (grace-window badge)
@@ -558,6 +560,10 @@ Full picture details including version history.
     exif_sync_status: ExifSyncStatus;
     owner_username: string | null;
     owner_instance_domain: string | null;
+  creator: string;                    // resolved creator credit for display (override → stored → owner default)
+  creator_origin: string;             // propagated creator (no override) — what "reset to original" restores
+  creator_value: string | null;       // raw owner-authoritative column (null = owner default); owned "reset to owner"
+  creator_override: string | null;    // raw recipient-local override (received only, null = none)
   deleted_at: string | null;          // the holder's own local soft-delete (trash); null when not trashed
   owner_deleted_at: string | null;    // received only: the owner's soft-delete (grace-window badge)
   owner_purge_at: string | null;      // received only: the owner's announced purge deadline
@@ -774,6 +780,48 @@ Edit a **received** picture's EXIF (`set`/`clear`, same shape as an owned edit) 
 **Errors:** `400` if the picture is owned (use `/edit` instead); `403` (`propose` only) if the share
 does not authorise editing; `404` if not found; `409` (`propose` only) if the owner's picture is
 still in initial extraction.
+
+---
+
+#### `POST /api/authenticated/pictures/{id}/creator`
+
+Set a picture's **creator** attribution credit (`doc/features/26_picture_creator.md §7`).
+
+```ts
+{
+    value: string | null;         // null/blank ⇒ reset to owner default (owned) / clear override (received)
+    mode?: "local" | "propose";   // received pictures only; default "local"
+}
+```
+
+- **Owned** picture (`mode` ignored) — sets the owner-authoritative `creator`. `value` null/blank
+  resets to the owner default (`creator = NULL ⇒ @username:global_domain`). The edit bumps
+  `updated_at` and re-announces to recipients through the normal metadata-delta path.
+- **Received**, `mode: "local"` (default) — sets the recipient-local `creator_override` (DB-only,
+  never propagates). `value` null/blank clears the override (reset to the origin's creator).
+- **Received**, `mode: "propose"` — **phase 2**, not yet implemented → `403`.
+
+**Validation:** a manual `value` may not begin with `#` (system-owned, feature-27 contributions) and
+a leading `@` is accepted **only** as a well-formed `@username:domain` identity (a bare/malformed
+`@…` → `400`). The frontend contact autocomplete resolver-verifies a picked identity; creator grants
+no access, so the server accepts any well-formed identity.
+
+**Path params:** `id: string`
+
+**Response `200`:**
+
+```ts
+{
+    id: string;
+    creator: string;              // resolved display (override → stored → owner default)
+    creator_origin: string;       // propagated creator (no override)
+    creator_value: string | null; // raw owner-authoritative column (null = owner default)
+    creator_override: string | null; // raw recipient-local override (received only)
+    updated_at: string;
+}
+```
+
+**Errors:** `400` on a `#` sigil or malformed `@…`; `403` on `mode: "propose"` (phase 2); `404` if not found.
 
 ---
 

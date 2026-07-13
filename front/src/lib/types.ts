@@ -35,6 +35,8 @@ export interface PictureListItem {
     owned: boolean
     owner_username: string | null
     owner_instance: string | null
+    /** Resolved creator credit (override → stored → owner default); parse by leading sigil (feature 26). */
+    creator: string
     exif_sync_status: ExifSyncStatus
     /** The holder's own local soft-delete (trash); null when not trashed. */
     deleted_at: string | null
@@ -78,6 +80,14 @@ export interface PictureDetail {
     exif_sync_status: ExifSyncStatus
     owner_username: string | null
     owner_instance_domain: string | null
+    /** Creator attribution (feature 26). Resolved display: override → stored → owner default. */
+    creator: string
+    /** Propagated creator with no override applied — what "reset to original" restores (received). */
+    creator_origin: string
+    /** Raw owner-authoritative column (null = owner default); drives owned "reset to owner". */
+    creator_value: string | null
+    /** Raw recipient-local override (received only, null = none). */
+    creator_override: string | null
     /** The holder's own local soft-delete (trash); null when not trashed. */
     deleted_at: string | null
     /** Received only: the owner's soft-delete — drives the grace-window badge. */
@@ -713,6 +723,19 @@ export interface EditPictureResponse {
     exif_data: Record<string, unknown>
     updated_at: string
     job_id: string | null
+}
+
+/** Mode for the creator endpoint on a received picture: a private local override, or a proposal (phase 2). */
+export type CreatorEditMode = 'local' | 'propose'
+
+/** Response of the creator-edit endpoint (feature 26 §7). */
+export interface SetCreatorResponse {
+    id: string
+    creator: string
+    creator_origin: string
+    creator_value: string | null
+    creator_override: string | null
+    updated_at: string
 }
 
 /** Response of the recipient-local EXIF override endpoint (received pictures). */

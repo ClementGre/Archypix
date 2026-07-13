@@ -294,7 +294,7 @@ async fn accept_incoming_share_registers_pictures(db: PgPool) {
         incoming.id,
         alice_id,
     )
-        .await;
+    .await;
 
     assert_eq!(
         common::count_received_pictures(&db, bob_id).await,
@@ -572,6 +572,7 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
             },
             ..Default::default()
         },
+        creator: "@alice:test.com".to_string(),
         owner_deleted_at: None,
         owner_purge_at: None,
     }];
@@ -608,6 +609,95 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
     assert_eq!(orient, Some(6));
 }
 
+/// Feature 26 §6 — the announced creator lands on the recipient row, and a re-announce refreshes
+/// the origin `creator` while **preserving** the recipient's local `creator_override`.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn register_received_pictures_propagates_creator_and_preserves_override(db: PgPool) {
+    use archypix_back::domain::tag::TagPath;
+    use archypix_back::services::shares::register_received_pictures;
+    use uuid::Uuid;
+
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let bob_id = common::seed_user(&db, "bob", "pass").await;
+    let _ = alice_id;
+
+    let share = alice_shares_with_bob(&db, alice_id, "vacation").await;
+    let incoming = IncomingShareRepository::find_by_outgoing_share(&db, share.id, "test.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let shared_tag = TagPath::shared_to_me("alice", "test.com", &TagPath::from_ltree("vacation"));
+
+    let mut pic = AnnouncedPicture {
+        picture_id: Uuid::new_v4().to_string(),
+        owner_username: "alice".to_string(),
+        owner_instance_domain: "test.com".to_string(),
+        picture_token: Uuid::new_v4(),
+        filename: None,
+        mime_type: None,
+        file_size: None,
+        file_hash: None,
+        content_hash: None,
+        thumbnails_generated_at: None,
+        width: None,
+        height: None,
+        blurhash: None,
+        exif: Default::default(),
+        creator: "@alice:test.com".to_string(),
+        owner_deleted_at: None,
+        owner_purge_at: None,
+    };
+
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+
+    let (creator, override_) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT creator, creator_override FROM pictures
+             WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+    )
+    .bind(bob_id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(creator.as_deref(), Some("@alice:test.com"));
+    assert_eq!(override_, None);
+
+    // Bob relabels his own view; then Alice re-announces with a changed creator.
+    sqlx::query(
+        "UPDATE pictures SET creator_override = 'Aunt May'
+         WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+    )
+    .bind(bob_id)
+    .execute(&db)
+    .await
+    .unwrap();
+
+    pic.creator = "Family album".to_string();
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+
+    let (creator, override_) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT creator, creator_override FROM pictures
+             WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+    )
+    .bind(bob_id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        creator.as_deref(),
+        Some("Family album"),
+        "origin creator is refreshed on re-announce"
+    );
+    assert_eq!(
+        override_.as_deref(),
+        Some("Aunt May"),
+        "the recipient's local override survives re-announce"
+    );
+}
+
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn register_received_pictures_persists_hash_and_thumbnail_ts(db: PgPool) {
     use archypix_back::domain::tag::TagPath;
@@ -642,6 +732,7 @@ async fn register_received_pictures_persists_hash_and_thumbnail_ts(db: PgPool) {
         height: None,
         blurhash: None,
         exif: Default::default(),
+        creator: "@alice:test.com".to_string(),
         owner_deleted_at: None,
         owner_purge_at: None,
     };

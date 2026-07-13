@@ -249,14 +249,14 @@ $$;
 
 CREATE TABLE public.app_settings
 (
-    key        text                                   NOT NULL,
-    value      jsonb                                  NOT NULL,
+    key   text  NOT NULL,
+    value jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.federation_messages
 (
-    id           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    id          uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
     message_type public.federation_message_type NOT NULL,
     direction public.federation_direction NOT NULL,
     sender_username character varying(255),
@@ -265,14 +265,14 @@ CREATE TABLE public.federation_messages
     recipient_instance character varying(255),
     outgoing_share_id uuid,
     incoming_share_id uuid,
-    payload      jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    payload     jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
     status public.federation_status DEFAULT 'pending'::public.federation_status NOT NULL,
-    created_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    sent_at      timestamp without time zone,
+    created_at  timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    sent_at     timestamp without time zone,
     delivered_at timestamp without time zone,
     idempotency_key text,
     error_message text,
-    retry_count  integer                     DEFAULT 0                                NOT NULL
+    retry_count integer                     DEFAULT 0                                NOT NULL
 );
 
 CREATE TABLE public.hierarchies
@@ -317,11 +317,11 @@ CREATE TABLE public.incoming_shares
 
 CREATE TABLE public.invites
 (
-    code       character varying(255)                 NOT NULL,
+    code       character varying(255) NOT NULL,
     max_uses   bigint,
-    uses       bigint                   DEFAULT 0     NOT NULL,
+    uses       bigint DEFAULT 0       NOT NULL,
     expires_at timestamp with time zone,
-    created_by character varying(255)                 NOT NULL,
+    created_by character varying(255) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -340,10 +340,10 @@ CREATE TABLE public.jobs
     picture_id    uuid,
     claimed_by    text,
     claim_token uuid,
-    trace_context jsonb,
     created_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     started_at    timestamp without time zone,
-    completed_at  timestamp without time zone
+    completed_at  timestamp without time zone,
+    trace_context jsonb
 );
 
 CREATE TABLE public.outgoing_shares
@@ -378,40 +378,42 @@ CREATE TABLE public.picture_versions
 
 CREATE TABLE public.pictures
 (
-    id                   uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    local_user_id        uuid                                                                 NOT NULL,
-    remote_picture_id    character varying(255),
-    owner_username       character varying(255),
+    id                     uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    local_user_id          uuid                                                                 NOT NULL,
+    remote_picture_id      character varying(255),
+    owner_username         character varying(255),
     owner_instance_domain character varying(255),
-    filename             character varying(1024),
-    mime_type            character varying(100),
-    file_size            bigint,
-    width                integer,
-    height               integer,
-    exif_data            jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    metadata             jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    deleted_at           timestamp without time zone,
-    captured_at          timestamp without time zone,
-    ingested_at          timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at           timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    blurhash             text,
-    gps_lat              double precision,
-    gps_lng              double precision,
-    gps_alt              integer,
-    orientation          smallint,
+    filename               character varying(1024),
+    mime_type              character varying(100),
+    file_size              bigint,
+    width                  integer,
+    height                 integer,
+    exif_data              jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    metadata               jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    deleted_at             timestamp without time zone,
+    captured_at            timestamp without time zone,
+    ingested_at            timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at             timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    blurhash               text,
+    gps_lat                double precision,
+    gps_lng                double precision,
+    gps_alt                integer,
+    orientation            smallint,
     thumbnails_generated_at timestamp without time zone,
-    file_hash            text,
+    file_hash              text,
     last_pipeline_run_at timestamp without time zone,
     exif_sync_status public.picture_exif_sync_status DEFAULT 'synced'::public.picture_exif_sync_status NOT NULL,
-    owner_deleted_at     timestamp without time zone,
-    owner_purge_at       timestamp without time zone,
-    remote_exif_data     jsonb,
+    owner_deleted_at       timestamp without time zone,
+    owner_purge_at         timestamp without time zone,
+    remote_exif_data       jsonb,
     local_exif_overrides jsonb,
     deleted_reason public.picture_deleted_reason,
-    content_hash         text,
+    content_hash           text,
     copy_source_owner_username character varying(255),
     copy_source_owner_instance character varying(255),
-    copy_source_picture_id character varying(255)
+    copy_source_picture_id character varying(255),
+    creator                text,
+    creator_override       text
 );
 
 CREATE TABLE public.refresh_tokens
@@ -491,15 +493,15 @@ CREATE TABLE public.user_storage
 
 CREATE TABLE public.users
 (
-    id                  uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    username            character varying(255)                                               NOT NULL,
-    email               character varying(255)                                               NOT NULL,
-    display_name        character varying(255)                                               NOT NULL,
-    is_admin            boolean                     DEFAULT false                            NOT NULL,
-    created_at          timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at          timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    id           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    username     character varying(255)                                               NOT NULL,
+    email        character varying(255)                                               NOT NULL,
+    display_name character varying(255)                                               NOT NULL,
+    is_admin     boolean                     DEFAULT false                            NOT NULL,
+    created_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     storage_quota_bytes bigint,
-    invited_by          character varying(255)
+    invited_by   character varying(255)
 );
 
 ALTER TABLE ONLY public.app_settings

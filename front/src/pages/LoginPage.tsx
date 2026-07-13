@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react'
 import {useForm} from 'react-hook-form'
 import {zodResolver} from '@hookform/resolvers/zod'
+import {useQueryClient} from '@tanstack/react-query'
 import {Link, useLocation, useNavigate} from 'react-router-dom'
 import {Loader2, Pencil} from 'lucide-react'
 import {toast} from 'sonner'
@@ -18,6 +19,7 @@ import {apiErrorMessage} from '@/api/client'
 export default function LoginPage() {
     const navigate = useNavigate()
     const location = useLocation()
+    const queryClient = useQueryClient()
     const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/'
 
     const [editingInstance, setEditingInstance] = useState(false)
@@ -40,6 +42,8 @@ export default function LoginPage() {
     const onSubmit = async (values: LoginForm) => {
         try {
             await login(values.username, values.password, values.instance)
+            // Start from a clean cache so no stale data from a prior session leaks in.
+            queryClient.clear()
             navigate(from, {replace: true})
         } catch (error) {
             toast.error('Login failed', {description: apiErrorMessage(error)})

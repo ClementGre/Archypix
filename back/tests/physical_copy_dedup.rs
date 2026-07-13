@@ -6,8 +6,8 @@
 mod common;
 
 use archypix_back::infra::redis::Cache;
-use archypix_back::infra::routine::pipeline::{self, dedup};
 use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline::{self, dedup};
 use archypix_back::infra::s3::Storage;
 use archypix_back::infra::settings::test_settings_with;
 use archypix_back::services::pictures;
@@ -486,4 +486,88 @@ async fn copy_creates_distinct_owned_identity_with_provenance_root(db: PgPool) {
 
     // The unused received seed is fine; assert it is still present (sanity).
     assert!(state(&db, source).await.0.is_none());
+}
+
+/// Set the `creator` column on a picture directly (fixture helper).
+async fn set_creator_col(db: &PgPool, id: Uuid, creator: Option<&str>) {
+    sqlx::query("UPDATE pictures SET creator = $2 WHERE id = $1")
+        .bind(id)
+        .bind(creator)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+async fn creator_col(db: &PgPool, id: Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT creator FROM pictures WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
+/// Feature 26 §6 — attribution travels with the content: a copy carries the source's creator, and
+/// an owner-default (NULL) source stays owner-default (the copier owns the copy).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn copy_carries_source_creator(db: PgPool) {
+    let cfg = test_settings_with(&[]);
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let storage = Arc::new(common::MockStorage::new());
+    let (fed, cache) = common::make_federation(&cfg);
+    let waker = RoutineHandle::<Uuid>::disconnected();
+    let storage_dyn: Arc<dyn Storage> = storage.clone();
+
+    let put_bytes = |id: Uuid| {
+        let storage = storage.clone();
+        let cfg = &cfg;
+        async move {
+            storage
+                .put_object(
+                    &cfg.get(archypix_back::infra::settings::keys::S3_BUCKET_PICTURES),
+                    &archypix_back::infra::s3::picture_key(user, id),
+                    b"bytes".to_vec(),
+                    Some("image/jpeg"),
+                )
+                .await
+                .unwrap();
+        }
+    };
+
+    // A manual credit on an owned source is carried verbatim onto the copy.
+    let credited = seed_owned(&db, user, "hashCredit", None).await;
+    set_creator_col(&db, credited, Some("Grandpa's camera")).await;
+    put_bytes(credited).await;
+    let copy = pictures::copy_picture(
+        &db,
+        cache.as_ref() as &dyn Cache,
+        storage_dyn.as_ref(),
+        &cfg,
+        &fed,
+        &waker,
+        user,
+        "alice",
+        credited,
+    )
+    .await
+    .unwrap();
+    assert_eq!(copy.creator.as_deref(), Some("Grandpa's camera"));
+
+    // An owner-default (NULL) owned source stays owner-default — the copy is the copier's own.
+    let plain = seed_owned(&db, user, "hashPlain", None).await;
+    put_bytes(plain).await;
+    let copy2 = pictures::copy_picture(
+        &db,
+        cache.as_ref() as &dyn Cache,
+        storage_dyn.as_ref(),
+        &cfg,
+        &fed,
+        &waker,
+        user,
+        "alice",
+        plain,
+    )
+    .await
+    .unwrap();
+    assert_eq!(copy2.creator, None);
+    assert_eq!(creator_col(&db, copy2.id).await, None);
 }

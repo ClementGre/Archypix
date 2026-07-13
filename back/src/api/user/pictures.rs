@@ -9,8 +9,8 @@ use crate::services::pictures::{
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
 use archypix_common::error::AppError;
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -219,6 +219,9 @@ pub async fn details(
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let d = services::pictures::get_picture_details(&state.db, auth.user_id()?, picture_id).await?;
+    let global_domain = state
+        .settings
+        .get(crate::infra::settings::keys::GLOBAL_DOMAIN);
     Ok(Json(serde_json::json!({
         "id": d.picture.id,
         "filename": d.picture.filename,
@@ -237,6 +240,13 @@ pub async fn details(
         "exif_sync_status": d.picture.exif_sync_status,
         "owner_username": d.picture.owner_username,
         "owner_instance_domain": d.picture.owner_instance_domain,
+        // Creator attribution (feature 26). `creator` is the resolved display (override → stored →
+        // owner default); `creator_origin` is the propagated value the override sits on top of;
+        // `creator_value`/`creator_override` are the raw columns driving the edit/reset affordances.
+        "creator": d.picture.display_creator(&auth.claims.sub, &global_domain),
+        "creator_origin": d.picture.propagated_creator(&auth.claims.sub, &global_domain),
+        "creator_value": d.picture.creator,
+        "creator_override": d.picture.creator_override,
         // Trash & owner-deletion lifecycle (09 §5.3).
         "deleted_at": d.picture.deleted_at,
         "owner_deleted_at": d.picture.owner_deleted_at,
@@ -562,4 +572,62 @@ pub async fn edit_received_exif(
             ))
         }
     }
+}
+
+/// Whether a creator edit targets the recipient-local override or proposes a change to the owner
+/// (feature 26 §7). `local` is the default; `propose` is phase 2 (currently `403`). Ignored for
+/// owned pictures (the owner-authoritative `creator` is always set directly).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CreatorMode {
+    #[default]
+    Local,
+    Propose,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetCreatorBody {
+    /// The new credit. `null`/blank ⇒ reset to owner default (owned) or clear the override (received).
+    /// Rejected if it begins with a reserved sigil (`@`/`#`, feature 26 §3).
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub mode: CreatorMode,
+}
+
+/// `POST /api/authenticated/pictures/{id}/creator` — set the creator credit (feature 26 §7).
+///
+/// - **Owned** → sets the authoritative `creator` (`null`/blank resets to owner default). The change
+///   re-announces to recipients via the pipeline.
+/// - **Received**, `mode: "local"` (default) → sets the recipient-local `creator_override`
+///   (`null`/blank clears it). Never propagates.
+/// - **Received**, `mode: "propose"` → phase 2, returns `403`.
+#[tracing::instrument(skip(auth, state, body), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn set_creator(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+    Json(body): Json<SetCreatorBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let propose = matches!(body.mode, CreatorMode::Propose);
+    let picture = services::pictures::set_picture_creator(
+        &state.db,
+        &state.routines.pipeline,
+        auth.user_id()?,
+        picture_id,
+        body.value,
+        propose,
+    )
+    .await?;
+    let global_domain = state
+        .settings
+        .get(crate::infra::settings::keys::GLOBAL_DOMAIN);
+    Ok(Json(serde_json::json!({
+        "id": picture.id,
+        "creator": picture.display_creator(&auth.claims.sub, &global_domain),
+        "creator_origin": picture.propagated_creator(&auth.claims.sub, &global_domain),
+        "creator_value": picture.creator,
+        "creator_override": picture.creator_override,
+        "updated_at": picture.updated_at,
+    })))
 }

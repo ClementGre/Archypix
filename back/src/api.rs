@@ -26,7 +26,7 @@ pub fn routes(settings: Arc<Settings>) -> Router<AppState> {
         .allow_origin(dynamic_allow_origin(settings.clone()))
         .allow_headers([AUTHORIZATION, CONTENT_TYPE]);
 
-    let mut router = Router::new()
+    let router = Router::new()
         .nest("/api", api_routes().layer(cors.clone()))
         // WebDAV lives outside /api — clients authenticate with HTTP Basic, not a User JWT.
         .merge(webdav::routes())
@@ -36,15 +36,18 @@ pub fn routes(settings: Arc<Settings>) -> Router<AppState> {
         // Bootstrap discovery + resolution (feature 25): fixed, CORS-open paths answered directly at
         // this domain. `info` reports a non-resolver serving its own public API; `resolve` lets a
         // single-domain deployment (global domain forwarding `/archypix-resolver/` here) resolve
-        // identities without a resolver, returning this backend's own public URL.
+        // identities without a resolver, returning this backend's own public URL. These are queried
+        // cross-origin by arbitrary frontends, so they use an open CORS layer (not the dynamic,
+        // CORS_ORIGINS-gated one) — a target backend can't know which frontends will resolve it.
+        let open = open_cors();
         router
             .route(
                 "/archypix-resolver/info",
-                get(bootstrap::info).layer(cors.clone()),
+                get(bootstrap::info).layer(open.clone()),
             )
             .route(
                 "/archypix-resolver/resolve",
-                get(bootstrap::resolve).layer(cors),
+                get(bootstrap::resolve).layer(open),
             )
     } else {
         router
@@ -67,6 +70,16 @@ fn api_routes() -> Router<AppState> {
         .nest("/authenticated", user::authenticated_routes())
         .nest("/federation", federation::routes())
         .nest("/worker", worker::routes())
+}
+
+/// Open CORS for the bootstrap discovery + resolution routes (feature 25): they answer any origin,
+/// independent of the `cors_origins` setting, since arbitrary frontends resolve `@user:domain`
+/// against them. Read-only, unauthenticated, non-credentialed — safe to open to `*`.
+fn open_cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_methods(Any)
+        .allow_origin(Any)
+        .allow_headers(Any)
 }
 
 /// An `AllowOrigin` predicate that consults the live `cors_origins` setting per request. `*` allows

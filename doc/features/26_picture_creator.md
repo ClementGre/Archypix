@@ -47,8 +47,11 @@ is the only field this feature builds.
 - **`NULL` means "the owner".** An unset creator resolves to the owner's `@username:domain` on read.
   No backfill, no global-domain-in-migration problem, and the feature-27 contribution query
   (`creator LIKE '#%'`) naturally excludes owner-default rows.
-- **Sigils are system-owned.** A manual edit may not begin with `@` or `#` (rejected), so a user
-  cannot forge a fake identity or a fake anonymous credit.
+- **`#` is system-owned; `@` identities are pickable.** A manual edit may not begin with `#` (the
+  anonymous-contribution sigil, feature 27) nor be a malformed `@…`. A **well-formed**
+  `@username:domain` *is* allowed as a manual credit — the frontend contact autocomplete lets a user
+  attribute a picture to a real account, resolver-verified client-side. Creator is pure attribution
+  (never an authorization principal), so a best-effort client check suffices and forgery is low-impact.
 - **Local override now; propose-to-owner deferred (phase 2).** A recipient may relabel their own view
   (DB-only, never propagates, not even transitively). Propagating a recipient's correction back to the
   owner — mirroring the feature-10 EXIF propose flow — is designed here (§7) but built as a follow-up.
@@ -59,19 +62,20 @@ is the only field this feature builds.
 
 The `creator` string is interpreted by its leading sigil:
 
-| Form           | Meaning                                         | Set by                                   | UI                          |
-|:---------------|:------------------------------------------------|:-----------------------------------------|:----------------------------|
-| `@user:domain` | a verified Archypix identity                    | default (= owner); propagated downstream | link to the profile         |
-| `#name`        | an unauthenticated public uploader's typed name | feature-27 anonymous upload              | plain, "contributed by"     |
-| plain text     | an arbitrary manual credit (`Grandpa's camera`) | owner editing                            | plain                       |
-| `NULL`         | the owner (unset)                               | ingest default                           | resolved to `@owner:domain` |
+| Form           | Meaning                                         | Set by                                                             | UI                          |
+|:---------------|:------------------------------------------------|:-------------------------------------------------------------------|:----------------------------|
+| `@user:domain` | a verified Archypix identity                    | default (= owner), or a manual contact pick; propagated downstream | link to the profile         |
+| `#name`        | an unauthenticated public uploader's typed name | feature-27 anonymous upload                                        | plain, "contributed by"     |
+| plain text     | an arbitrary manual credit (`Grandpa's camera`) | owner editing                                                      | plain                       |
+| `NULL`         | the owner (unset)                               | ingest default                                                     | resolved to `@owner:domain` |
 
 **Parsing** is trivial and total: starts with `@` and contains `:` → identity (linkify); starts with
 `#` → anonymous name; otherwise → plain credit.
 
-**Sigil guard.** When a user manually edits creator (owned value or recipient override), the input is
-rejected if it begins with `@` or `#`. The system owns those sigils — only the ingest default emits
-`@…:…` and only feature-27 uploads emit `#…`.
+**Sigil guard.** A manual creator edit (owned value or recipient override) is rejected if it begins
+with `#` (system-owned, feature-27 uploads) or is a malformed `@…` (an `@` with no `:domain`). A
+**well-formed** `@username:domain` is accepted — the creator contact autocomplete (frontend)
+resolver-verifies the identity before sending it. Plain text is always accepted.
 
 ---
 
@@ -130,7 +134,8 @@ The owner identity is derived on read from the local user's `username` + the ins
 | Received | `local` (default) | Set `creator_override`. `value` null ⇒ clear the override (reset to origin).                     |
 | Received | `propose`         | **Phase 2** — propose to the owner (grant-gated, mirrors feature 10). Returns `403` until built. |
 
-- **Validation:** reject a manual `value` that begins with `@` or `#` (§3 sigil guard).
+- **Validation:** reject a manual `value` that begins with `#`, or a malformed `@…` (no `:domain`);
+  a well-formed `@username:domain` is accepted (§3 sigil guard).
 - **Owned edit** bumps `updated_at` and wakes the pipeline, so the change re-announces to recipients
   through the normal announcement-delta path (the announcement backstop already re-dirties tracking
   rows whose `announced_updated_at` trails `updated_at`).
@@ -146,7 +151,11 @@ The owner identity is derived on read from the local user's `username` + the ins
   renders as "contributed by {name}"; plain text renders verbatim.
 - **Inline edit:** owned pictures edit the authoritative `creator` (with a "reset to owner" affordance
   when set); received pictures edit the local `creator_override` (with "reset to original" when
-  overridden). The sigil guard is enforced client-side too, with the server as the authority.
+  overridden). Editing uses the shared **`ContactInput`** (`components/common/`): plain-text credits
+  are free, a leading `@` opens a **contact autocomplete** (drawn from the user's incoming + outgoing
+  share partners) and **resolver-verifies** the picked `@user:domain`; `#` is blocked client-side. A
+  `#name` credit renders as "Created by {name}" with a **"public share"** chip (feature 27 origin).
+  The sigil guard is enforced client-side too, with the server as the authority.
 - Batch-editable later via the feature-14 panel.
 
 ---
@@ -155,7 +164,8 @@ The owner identity is derived on read from the local user's `username` + the ins
 
 - **Owner default resolution:** `NULL` creator ⇒ `@owner:domain`; the contribution query
   (`creator LIKE '#%'`) correctly skips owner-default rows.
-- **Sigil forgery:** manual `@…`/`#…` input rejected; only system paths emit sigils.
+- **Sigil forgery:** manual `#…` input rejected; a manual `@…` must be a well-formed `@user:domain`
+  (contact-picked, resolver-verified client-side) — a bare/malformed `@…` is rejected server-side.
 - **Override never propagates**, including transitively — downstream recipients always see the origin's
   creator.
 - **Copy carries the source creator**, not the copier (attribution travels).
@@ -180,17 +190,24 @@ The owner identity is derived on read from the local user's `username` + the ins
 
 **Phase 1 (this feature):**
 
-- [ ] Migration: `pictures.creator`, `pictures.creator_override`; regenerate `schema.sql` + `sqlx prepare`.
-- [ ] Domain: creator parse/format helpers + sigil-guard validation in `domain::picture`/`domain::tag`.
-- [ ] Owner-identity resolution helper (`@username:global_domain`), used on read + before announce.
-- [ ] `AnnouncedPicture.creator`; sender resolves `NULL`→owner; `create_received` stores it and
-  preserves `creator_override`.
-- [ ] `copy_picture` carries the source creator.
-- [ ] `POST /pictures/{id}/creator` (owned set / received local override); re-announce on owned edit.
-- [ ] Add resolved creator to detail + list projections.
-- [ ] Frontend info-panel field (linkify / edit / reset).
-- [ ] Tests: default resolution, sigil guard, propagation + override preservation, transitive
-  no-leak, copy-carries-creator.
+- [x] Migration: `pictures.creator`, `pictures.creator_override`; regenerate `schema.sql` + `sqlx prepare`.
+  (`back/migrations/0009_picture_creator`.)
+- [x] Domain: creator format/validate + resolution helpers (`format_identity`, `propagated_creator`,
+  `display_creator`, `validate_manual_creator`) in `domain::picture`.
+- [x] Owner-identity resolution helper (`@username:global_domain`), used on read + before announce.
+- [x] `AnnouncedPicture.creator`; sender resolves `NULL`→owner in `from_picture`; `create_received`
+  stores it and preserves `creator_override`.
+- [x] `copy_picture` carries the source creator.
+- [x] `POST /pictures/{id}/creator` (owned set / received local override); re-announce on owned edit.
+- [x] Add resolved creator to detail (`creator`/`creator_origin`/`creator_value`/`creator_override`)
+    + list (`creator`) projections.
+- [x] Frontend info-panel field (`CreatorField`): parse-by-sigil display (identity handle / "Created by
+  {name}" + "public share" chip for `#name` / plain), inline edit via the shared **`ContactInput`**
+  (contact autocomplete over share partners + resolver existence check; `#` blocked), owned "reset to
+  owner default" / received "reset to original" override with an "overridden" badge. Guard relaxed to
+  accept a well-formed `@user:domain` (`validate_manual_creator`).
+- [x] Tests: default resolution, sigil guard, propagation + override preservation, transitive
+  no-leak, copy-carries-creator (`domain::picture` unit tests, `services_shares`, `physical_copy_dedup`).
 
 **Phase 2 (soon):** propose-to-owner — a grant (reuse `allow_exif_edit` as a metadata-edit grant, or a
 dedicated `allow_creator_edit`) + a federation verb mirroring feature 10's `pictures/edit_request`;

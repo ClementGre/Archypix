@@ -74,6 +74,8 @@ export function TopBar() {
 
     const handleLogout = async () => {
         await logout()
+        // Drop every cached query so the next session never sees the previous user's data.
+        queryClient.clear()
         navigate('/login', {replace: true})
     }
 

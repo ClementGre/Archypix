@@ -9,7 +9,7 @@ use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tag::TagRepository;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -60,6 +60,7 @@ pub async fn register_received_pictures(
             &pic.exif,
             pic.owner_deleted_at,
             pic.owner_purge_at,
+            Some(pic.creator.as_str()).filter(|c| !c.is_empty()),
         )
         .await?;
 

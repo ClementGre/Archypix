@@ -106,6 +106,11 @@ pub struct AnnouncedPicture {
     /// The owner's authoritative editable EXIF
     #[serde(default, flatten)]
     pub exif: FullExif,
+    /// The origin's already-resolved creator credit (feature 26 §6). Concrete on the wire: the sender
+    /// resolves `NULL → @owner:domain` before announcing, and a relay forwards the *origin's* value
+    /// (never its own local override). Default empty for peers that predate the field.
+    #[serde(default)]
+    pub creator: String,
     /// Owner-deletion lifecycle
     #[serde(default)]
     pub owner_deleted_at: Option<NaiveDateTime>,
@@ -213,6 +218,9 @@ impl AnnouncedPicture {
                 picture.owner_deleted_at,
             )
         };
+        // Propagated creator (§6): the stored value, or the owner default resolved to the same owner
+        // identity derived above. Never the relayer's local `creator_override`.
+        let creator = picture.propagated_creator(&owner_username, &owner_instance);
         Self {
             picture_id: picture
                 .remote_picture_id
@@ -231,6 +239,7 @@ impl AnnouncedPicture {
             height: picture.height,
             blurhash: picture.blurhash.clone(),
             exif,
+            creator,
             owner_deleted_at,
             owner_purge_at,
         }

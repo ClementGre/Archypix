@@ -224,6 +224,19 @@ the wire), then applies it through its existing `edit_picture` write-through, wh
 all recipients. Escalating a field to a proposal clears its local override. See
 `doc/features/10_recipient_exif_editing.md`.
 
+**Picture creator (26)** — `pictures.creator` (owner-authoritative credit, `NULL` ⇒ owner default
+`@username:global_domain`) + `pictures.creator_override` (recipient-local relabel, received rows
+only). Displayed creator = `coalesce(creator_override, creator, owner_identity)` (helpers on
+`domain::picture`; the sigil guard rejects a manual `@…`/`#…`). `AnnouncedPicture.creator` carries
+the origin's already-resolved value — the sender resolves `NULL → @owner:domain` before announcing
+and a relay forwards the *origin's* `creator`, never its local override. `create_received` stores it
+and preserves `creator_override` across re-announces (exactly like `local_exif_overrides`); a physical
+copy carries the **source's** creator (attribution travels). `POST /pictures/{id}/creator`
+(`{ value, mode? }`) sets the owned `creator` (re-announced via the pipeline — the owned edit bumps
+`updated_at`, which the announcement delta re-dirties) or the received `creator_override` (`mode:
+"local"`; `"propose"` is phase-2 → 403). The resolved creator is added to the picture detail + list
+projections. See `doc/features/26_picture_creator.md`.
+
 **Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
 removes them, controlled by the `promote_tags` flag.
 

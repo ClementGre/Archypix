@@ -5,6 +5,7 @@ import type {
     BatchDryRun,
     BatchExifMode,
     BatchExifResult,
+    CreatorEditMode,
     EditPictureResponse,
     ExifEditMode,
     ExifField,
@@ -15,6 +16,7 @@ import type {
     PictureListResponse,
     PictureSelection,
     PictureVariant,
+    SetCreatorResponse,
     TrashResponse,
 } from '@/lib/types'
 
@@ -162,6 +164,21 @@ export async function editReceivedExif(
 ): Promise<ReceivedExifResult> {
     const res = await apiClient.post<OverrideExifResponse>(`/api/authenticated/pictures/${id}/exif`, body)
     return {data: res.data, status: res.status}
+}
+
+/**
+ * Set a picture's **creator** attribution credit (feature 26 §7). For an **owned** picture this sets
+ * the owner-authoritative `creator` (`mode` ignored; `value` null/blank ⇒ reset to owner default);
+ * for a **received** picture `mode: 'local'` (default) sets the recipient-local override (null/blank
+ * clears it). A manual `value` beginning with `@`/`#` is rejected server-side (`400`) — the sigil
+ * guard is enforced client-side too.
+ */
+export async function setCreator(
+    id: string,
+    body: { value: string | null; mode?: CreatorEditMode },
+): Promise<SetCreatorResponse> {
+    const {data} = await apiClient.post<SetCreatorResponse>(`/api/authenticated/pictures/${id}/creator`, body)
+    return data
 }
 
 // ── Batch operations (feature 14 §6.11) ──────────────────────────────────────

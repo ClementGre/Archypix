@@ -20,6 +20,11 @@ Tags are hierarchical paths. A picture can carry any number of tags.
   reads fold these to the deepest distinct paths; a provenance view can list every source behind a tag.
 - The global unique identifier for a picture is the composite key `(owner, picture\_id)`, where `picture\_id` is unique within an instance. This key
   is used everywhere: tag records, federation messages, WebDAV virtual entries, share announcements.
+- **Owner vs. creator.** The *owner* is the user whose library holds the picture (the authorization
+  principal); the *creator* is an editable, propagated attribution credit that may differ (a friend's
+  camera roll, a shared family camera, an anonymous public contribution). Creator defaults to the
+  owner, is carried on share announcements, and is locally overrideable by a recipient. It is pure
+  attribution — never an access principal. See `doc/features/26_picture_creator.md`.
 
  --- 
 
@@ -325,6 +330,14 @@ share sets `allowExifEdit: true` — a **propose-to-owner** edit that Alice auto
 authoritative picture and re-announces, so every recipient converges (the owner is the serialization
 point, last-write-wins). Escalating a field to a proposal clears its local override. Full mechanism:
 `doc/features/10_recipient_exif_editing.md`.
+
+**Creator.** Each announcement carries the origin's already-resolved `creator` credit (an unset
+creator resolves to the owner's `@username:domain` before it leaves the backend), so recipients see
+the real author, refreshed on re-announcement. A recipient may relabel their own view with a local
+`creator_override` (DB-only, never propagates — a transitive re-share always forwards the *origin's*
+creator, not the relayer's override). Owner edits to `creator` re-announce through the normal
+metadata-delta path. Sigils (`@`/`#`) are system-owned — a manual edit may not forge them. Full
+mechanism: `doc/features/26_picture_creator.md`.
 
 ### 6.4 Transitive sharing
 

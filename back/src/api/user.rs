@@ -10,8 +10,8 @@ mod tags;
 mod users;
 
 use crate::state::AppState;
-use axum::routing::{get, patch, post, put};
 use axum::Router;
+use axum::routing::{get, patch, post, put};
 
 pub fn auth_routes() -> Router<AppState> {
     Router::new()
@@ -65,6 +65,7 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/pictures/{id}/copies", get(pictures::copies))
         .route("/pictures/{id}/copies/keep", post(pictures::keep_copy))
         .route("/pictures/{id}/exif", post(pictures::edit_received_exif))
+        .route("/pictures/{id}/creator", post(pictures::set_creator))
         .route("/settings", get(settings::get_settings))
         .route("/settings", patch(settings::update_settings))
         .route("/tags", get(tags::list).patch(tags::edit))

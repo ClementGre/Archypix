@@ -72,9 +72,12 @@
   gates the Fleet dashboard button on `is_resolver`, keeps the register instance editable when registration is closed,
   replaces the static CORS caveat with a live reachability/CORS ping, and lets the fleet dashboard target any resolver
   domain. See `doc/features/25_resolver_chore.md`.
-- [ ] **Picture creator** — owner-vs-creator attribution field: default-to-owner, format convention
+- [x] **Picture creator** — owner-vs-creator attribution field: default-to-owner, format convention
   (`@user:domain` / `#name` / plain), propagated on announcements + locally overrideable by recipients
-  (propose-to-owner deferred); consumed by public-share uploads. Prerequisite for public shares. See
+  (propose-to-owner deferred, phase 2); consumed by public-share uploads. Prerequisite for public shares.
+  Backend (`pictures.creator`/`creator_override`, `AnnouncedPicture.creator`, `POST
+  /pictures/{id}/creator`, resolved creator on detail+list, copy-carries-creator, tests) + frontend
+  info-panel `CreatorField` (linkify / edit / reset, client-side sigil guard). See
   `doc/features/26_picture_creator.md`.
 - [ ] **Public shares** — link-gated *pull* shares served by the owner backend (live coverage, no
   `IncomingShare`): unauthenticated view + anonymous contribution (`creator = #name`, dedup-rejected),

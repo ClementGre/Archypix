@@ -1,7 +1,7 @@
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::job::{CameraExif, FullExif};
 use crate::domain::picture::{ExifSyncStatus, Picture};
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use sqlx::{Executor, PgPool, Postgres};
@@ -167,7 +167,8 @@ impl PictureRepository {
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
-                         copy_source_owner_instance, copy_source_picture_id"#,
+                         copy_source_owner_instance, copy_source_picture_id,
+                         creator, creator_override"#,
             id,
             local_user_id,
             filename,
@@ -208,6 +209,7 @@ impl PictureRepository {
         copy_source_owner_username: Option<&str>,
         copy_source_owner_instance: Option<&str>,
         copy_source_picture_id: Option<&str>,
+        creator: Option<&str>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -216,8 +218,9 @@ impl PictureRepository {
             Picture,
             r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height,
                                      exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, orientation,
-                                     copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16)
+                                     copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id,
+                                     creator)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -229,7 +232,8 @@ impl PictureRepository {
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
-                         copy_source_owner_instance, copy_source_picture_id"#,
+                         copy_source_owner_instance, copy_source_picture_id,
+                         creator, creator_override"#,
             id,
             local_user_id,
             filename,
@@ -246,6 +250,7 @@ impl PictureRepository {
             copy_source_owner_username,
             copy_source_owner_instance,
             copy_source_picture_id,
+            creator,
         )
             .fetch_one(ex)
             .await
@@ -280,6 +285,7 @@ impl PictureRepository {
         remote_exif_data: &FullExif,
         owner_deleted_at: Option<NaiveDateTime>,
         owner_purge_at: Option<NaiveDateTime>,
+        creator: Option<&str>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -293,9 +299,9 @@ impl PictureRepository {
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                     filename, mime_type, file_size, width, height, metadata,
                     blurhash, file_hash, content_hash, thumbnails_generated_at,
-                    remote_exif_data, owner_deleted_at, owner_purge_at)
+                    remote_exif_data, owner_deleted_at, owner_purge_at, creator)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,
-                       $10, $11, $16, $12, $13, $14, $15)
+                       $10, $11, $16, $12, $13, $14, $15, $17)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -309,10 +315,12 @@ impl PictureRepository {
                    content_hash = COALESCE(EXCLUDED.content_hash, pictures.content_hash),
                    thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,
                                                       pictures.thumbnails_generated_at),
-                   -- Owner-authoritative state is refreshed; local_exif_overrides is preserved.
+                   -- Owner-authoritative state is refreshed; local_exif_overrides + creator_override
+                   -- (the recipient's own relabel) are preserved.
                    remote_exif_data = EXCLUDED.remote_exif_data,
                    owner_deleted_at = EXCLUDED.owner_deleted_at,
-                   owner_purge_at   = EXCLUDED.owner_purge_at
+                   owner_purge_at   = EXCLUDED.owner_purge_at,
+                   creator          = EXCLUDED.creator
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -324,7 +332,8 @@ impl PictureRepository {
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
-                         copy_source_owner_instance, copy_source_picture_id"#,
+                         copy_source_owner_instance, copy_source_picture_id,
+                         creator, creator_override"#,
             recipient_id,
             remote_picture_id,
             owner_username,
@@ -341,6 +350,7 @@ impl PictureRepository {
             owner_deleted_at,
             owner_purge_at,
             content_hash,
+            creator,
         )
             .fetch_one(ex)
             .await
@@ -552,7 +562,8 @@ impl PictureRepository {
                       p.thumbnails_generated_at, p.file_hash,
                       p.exif_sync_status as "exif_sync_status: _",
                       p.content_hash, p.copy_source_owner_username,
-                      p.copy_source_owner_instance, p.copy_source_picture_id
+                      p.copy_source_owner_instance, p.copy_source_picture_id,
+                      p.creator, p.creator_override
                FROM pictures p
                JOIN tags t ON t.picture_id = p.id
                WHERE p.local_user_id = $1
@@ -590,7 +601,8 @@ impl PictureRepository {
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
-                      copy_source_owner_instance, copy_source_picture_id
+                      copy_source_owner_instance, copy_source_picture_id,
+                      creator, creator_override
                FROM pictures WHERE id = ANY($1::uuid[])"#,
             ids as &[Uuid],
         )
@@ -617,7 +629,8 @@ impl PictureRepository {
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
-                      copy_source_owner_instance, copy_source_picture_id
+                      copy_source_owner_instance, copy_source_picture_id,
+                      creator, creator_override
                FROM pictures WHERE id = $1"#,
             id
         )
@@ -653,7 +666,8 @@ impl PictureRepository {
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
-                      copy_source_owner_instance, copy_source_picture_id
+                      copy_source_owner_instance, copy_source_picture_id,
+                      creator, creator_override
                FROM pictures
                WHERE local_user_id = $1 AND file_hash = $2
                  AND remote_picture_id IS NULL
@@ -717,6 +731,63 @@ impl PictureRepository {
             picture_id,
             user_id,
             filename,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Set the owner-authoritative `creator` on an **owned** picture the user holds (feature 26 §7).
+    /// `None` ⇒ reset to the owner default (`creator = NULL`). Bumps `updated_at` and re-dirties the
+    /// pipeline so the change re-announces to recipients through the announcement-delta path. Returns
+    /// false if the user holds no such owned picture.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
+    pub async fn set_creator<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+        creator: Option<&str>,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            r#"UPDATE pictures
+               SET creator = $3,
+                   updated_at = (now() AT TIME ZONE 'utc'),
+                   last_pipeline_run_at = NULL
+               WHERE id = $1 AND local_user_id = $2 AND remote_picture_id IS NULL"#,
+            picture_id,
+            user_id,
+            creator,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Set the recipient-local `creator_override` on a **received** picture the user holds (feature 26
+    /// §7). `None` ⇒ clear the override (reset to the origin's propagated creator). Never propagates.
+    /// Returns false if the user holds no such received picture.
+    #[tracing::instrument(skip(ex), fields(user_id = %user_id, picture_id = %picture_id))]
+    pub async fn set_creator_override<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        picture_id: Uuid,
+        creator_override: Option<&str>,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let res = sqlx::query!(
+            r#"UPDATE pictures
+               SET creator_override = $3
+               WHERE id = $1 AND local_user_id = $2 AND remote_picture_id IS NOT NULL"#,
+            picture_id,
+            user_id,
+            creator_override,
         )
         .execute(ex)
         .await
@@ -838,7 +909,8 @@ impl PictureRepository {
                           p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                           p.thumbnails_generated_at, p.file_hash, p.exif_sync_status,
                           p.content_hash, p.copy_source_owner_username,
-                          p.copy_source_owner_instance, p.copy_source_picture_id
+                          p.copy_source_owner_instance, p.copy_source_picture_id,
+                          p.creator, p.creator_override
                    FROM pictures p WHERE p.local_user_id = "#,
             );
             q.push_bind(local_user_id);
@@ -993,7 +1065,8 @@ impl PictureRepository {
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
-                         copy_source_owner_instance, copy_source_picture_id"#,
+                         copy_source_owner_instance, copy_source_picture_id,
+                         creator, creator_override"#,
             id,
             mime_type,
             file_size,
@@ -1061,7 +1134,8 @@ impl PictureRepository {
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
-                         copy_source_owner_instance, copy_source_picture_id"#,
+                         copy_source_owner_instance, copy_source_picture_id,
+                         creator, creator_override"#,
             id,
             width,
             height,
