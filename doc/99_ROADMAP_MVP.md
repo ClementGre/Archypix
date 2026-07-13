@@ -51,6 +51,7 @@
 - [x] **Tag rename cascade** — `POST /tags/rename` search-and-replaces a tag subtree across manual tags, shares, pipeline configs, hierarchy configs;
   invalidates + wakes pipeline. Frontend rename dialog in tag tree menu.
 - [ ] **Federation robustness** — don't 500 on failed remote presign, token refresh schedule, retry logic, presigned URL caching for remote pictures.
+  Clarify whether to use the federation_messages table, or to delete it.
 
 ## To-do for v1.0
 
@@ -71,6 +72,15 @@
   gates the Fleet dashboard button on `is_resolver`, keeps the register instance editable when registration is closed,
   replaces the static CORS caveat with a live reachability/CORS ping, and lets the fleet dashboard target any resolver
   domain. See `doc/features/25_resolver_chore.md`.
+- [ ] **Picture creator** — owner-vs-creator attribution field: default-to-owner, format convention
+  (`@user:domain` / `#name` / plain), propagated on announcements + locally overrideable by recipients
+  (propose-to-owner deferred); consumed by public-share uploads. Prerequisite for public shares. See
+  `doc/features/26_picture_creator.md`.
+- [ ] **Public shares** — link-gated *pull* shares served by the owner backend (live coverage, no
+  `IncomingShare`): unauthenticated view + anonymous contribution (`creator = #name`, dedup-rejected),
+  authenticated convert (save a copy / subscribe to a **derived** share / subscribe + share-back). One
+  `allow_originals` tier vs a view-only gallery; recipient-initiated `shares/public/claim` verb. Depends
+  on feature 26. See `doc/features/27_public_shares.md`.
 - [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
@@ -80,3 +90,22 @@
 - [ ] **Rate limiting & validators** — more rate limiting.
 - [~] **Video & audio playback** — Tier 1 done (inline playback via `@vidstack/react`); Tier 2 todo (ffmpeg transcode worker); Tier 3 later (HLS). See
   `doc/05_FRONTEND_ARCHITECTURE.md §9`.
+
+## Toward a real product (adoption, mobile, hosting)
+
+- [ ] **Onboarding & opinionated defaults** — fresh instance auto-organizes out of the box (default hierarchy, date segmentation, starter rules) with
+  progressive disclosure; user-facing terminology pass (rename tagging service / hierarchy / incoming share / predicate to plain words).
+- [ ] **Bulk library import** — Google Takeout + local-folder import so a new user can land an existing library.
+- [ ] **External shared-album import** — one-time, user-initiated import of Google Photos (Picker API) and public iCloud Shared Albums as received
+  shares (external platform modelled as a pseudo-instance → synthetic `IncomingShare`); offered at onboarding to seed the account. Perpetual
+  auto-bridge
+  is later / demand-driven (ToS-fragile).
+- [ ] **PWA viewer** — mobile view / receive / organize as a PWA; makes iOS (and any) users full participants without a native app.
+- [ ] **iOS background uploader** — first native app (Android is covered by WebDAV + a folder-album gallery like Samsung/Fossify); reliable
+  camera-roll
+  backup into Archypix.
+- [ ] **Backup & recovery discipline** — prerequisite before hosting paying users: S3 object versioning + replication to a store the backend has no
+  delete rights on, Postgres point-in-time recovery, purge-sweep guardrails (dry-run, rate caps, alerts).
+- [ ] **Managed hosting (archypix.com)** — fully-managed instance for non-technical cluster members; pricing = small monthly base + per-GB above a
+  free
+  floor + a monthly ceiling. Needs a legal entity (micro-entreprise on-ramp). Optional niche tier: bring-your-own S3 bucket per user.

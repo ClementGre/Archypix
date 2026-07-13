@@ -13,7 +13,7 @@ import {CreateShareDialog} from './CreateShareDialog'
 import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
 
 const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
-const PENDING = new Set(['pending', 'pending_first_announcement'])
+const PENDING = new Set(['pending'])
 const CLOSED = new Set(['revoked', 'tombstoned'])
 
 function RevokeButton({share, disabled, onRevoke}: { share: ShareResponse; disabled: boolean; onRevoke: () => void }) {

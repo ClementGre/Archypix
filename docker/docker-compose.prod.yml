@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     labels:
       traefik.enable: true
-      traefik.http.routers.resolver.rule: Host(`archypix.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/api`))
+      traefik.http.routers.resolver.rule: Host(`archypix.com`) && PathPrefix(`/archypix-resolver`)
       traefik.http.routers.resolver.priority: 100
       traefik.http.services.resolver.loadbalancer.server.port: 80
     environment:

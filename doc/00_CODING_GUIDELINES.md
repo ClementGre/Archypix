@@ -155,3 +155,15 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   1 Overview (L11) · 2 Decisions (L22) · 3 Routing (L35) · 4 Resolver auth & client (L47) · 5 Dashboard
   surface (L57) · 6 Shared `SettingsPanel` (L78) · 7 Invitation graph (L92) · 8 Edge cases (L99) ·
   9 Out of scope (L111) · 10 Work breakdown (L119) · 11 Doc updates (L129).
+- **25_resolver_chore.md** — resolver router nested under one `/archypix-resolver/` prefix; fixed
+  `/info` + `/resolve` paths; frontend bootstrap. Implementation status — DONE (L46).
+- **26_picture_creator.md** — owner-vs-creator attribution field (spec-only; prerequisite for 27):
+  1 Overview & goals (L3) · 2 Decisions (L36) · 3 Format convention (L57) · 4 Schema changes (L77) ·
+  5 Resolution & owner default (L95) · 6 Propagation (L107) · 7 API (L122) · 8 Frontend (L142) ·
+  9 Edge cases (L153) · 10 Doc updates (L168) · 11 Work breakdown (L178).
+- **27_public_shares.md** — link-gated pull shares (spec-only; depends on 26): 1 Overview & goals (L3) ·
+  2 Decisions (L28) · 3 Schema changes (L57) · 4 Permission model (L92) · 5 URL & discovery (L119) ·
+  6 View (L133) · 7 Anonymous contribution (L154) · 8 Convert (L171) · 9 Revocation (L200) · 10 Received
+  pictures (L217) · 11 Federation protocol (L228) · 12 Services/repos/API (L241) · 13 Abuse controls &
+  config (L258) · 14 Edge cases (L273) · 15 Frontend (L290) · 16 Testing (L304) · 17 Doc updates (L320) ·
+  18 Work breakdown (L331).
