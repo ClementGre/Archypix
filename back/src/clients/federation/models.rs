@@ -153,6 +153,34 @@ pub struct PictureEditResponse {
     pub accepted: bool,
 }
 
+//———————————————— Public share claim (27 §11) ————————————————
+
+/// Sent by a **visitor's** backend to the **owner's** backend to convert a public share into a real
+/// derived `OutgoingShare` (feature 27 §8, recipient-initiated — the reverse of a normal share). The
+/// owner validates the token is `active` + `allow_originals`, mints the share, and returns its
+/// metadata (federation rule 2 — no callback into the visitor's uncommitted state).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicShareClaimRequest {
+    pub token: String,
+    pub requester_username: String,
+    pub requester_instance: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublicShareClaimResponse {
+    /// The minted derived `OutgoingShare` id — the visitor creates its matching `IncomingShare`
+    /// against it (so the owner's picture-announcement resolves the share).
+    pub outgoing_share_id: Uuid,
+    pub name: String,
+    pub message: Option<String>,
+    /// ltree wire form of the covered tag — the visitor lands received pictures under
+    /// `/SharedToMe/<owner>/<tag_path>`.
+    pub tag_path: String,
+    pub allow_share_back: bool,
+    pub allow_exif_edit: bool,
+    pub future: bool,
+}
+
 //———————————————— Presigning ————————————————
 
 #[derive(Debug, Serialize, Deserialize)]

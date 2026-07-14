@@ -78,6 +78,11 @@
     - Single static site served from CDN; no per-instance build.
     - Discovery: resolve `@username:domain` → backend URL via WebFinger before making API calls.
     - All API and WebDAV calls go to the resolved backend for that user.
+  - **Public share links** (feature 27): `https://<frontend>/s/<global_domain>/<username>/<token>`. The URL
+    carries everything a resolver pass needs, so any correctly-CORS'd frontend can open it — it resolves
+    `(username, global_domain)` → backend via the resolver (or a standalone backend directly), then calls
+    that backend's `/api/public/shares/{token}` endpoints. The `token` is a 256-bit unguessable secret;
+    pages are `noindex`.
 
 **Invariants**
 

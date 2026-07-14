@@ -229,6 +229,34 @@ standalone backend and the resolver.
 
 **Auth:** None · **Response `200`:** `{ valid: boolean, invited_by: string | null }` (`valid` folds expiry/exhaustion; unknown code ⇒ `false`/`null`).
 
+### Public shares — view & contribution (feature 27)
+
+Unauthenticated, token-gated. Authorization is the URL `token` (+ an optional unlock JWT for a
+password-gated share + optional `expires_at`), re-validated per request; an unknown / revoked / expired
+token is `404` (no oracle). The frontend reaches these after resolving the owner backend from the link
+`/s/<global_domain>/<username>/<token>`. Management + Convert live in §6.9b.
+
+- `GET /api/public/shares/{token}` → `{ name, message, owner_display, tag_path, permissions, picture_count,
+  requires_password, expires_at, view_only }`. Returned even when locked (no pictures). `tag_path` (wire/ltree)
+  lets a logged-in visitor detect an existing incoming share from this owner for this tag.
+- `POST /api/public/shares/{token}/unlock` `{ password }` → `{ token }` — a short-lived `PublicShare` JWT
+  presented as `Authorization: Bearer` on subsequent calls (password-gated shares only).
+- `GET /api/public/shares/{token}/pictures?page=&page_size=&thumbnail=` → the standard picture-list page
+  with presigned thumbnails. A **view-only** share omits `captured_at`.
+- `GET /api/public/shares/{token}/pictures/{id}` → coverage-checked detail (view-only strips
+  captured/GPS/`exif_data`); includes the resolved `creator`.
+- `GET /api/public/shares/{token}/pictures/{id}/url?variant=` → coverage-checked presign (`{ url }`);
+  a view-only share presigns thumbnail variants only (`403` for `original`). Received pictures in
+  coverage proxy to the real owner.
+- `POST /api/public/shares/{token}/aggregate` `{ include_ids, sections? }` → EXIF/summary aggregation over
+  the coverage-intersected explicit selection (view-only drops the EXIF section).
+- `POST /api/public/shares/{token}/uploads` `{ contributor_name, files: [{ filename, file_hash?, size? }] }`
+  → per-file `{ picture_id, presigned_url|null, rejected }` (`rejected` = a dedup hit; not stored).
+  Gated by `allow_upload`; enforces the owner's quota, size/count caps, and a per-IP+share rate limit.
+- `POST /api/public/shares/{token}/uploads/{id}/complete` `{ contributor_name, mime_type, file_size?,
+  file_hash?, width?, height? }` → `{ id }`. MIME allowlist = the ingestable image/video set; the album
+  tag is forced and `creator = #contributor_name`.
+
 ---
 
 ## 6. Authenticated User Endpoints
@@ -1475,6 +1503,68 @@ Reject an incoming share. Moves it to `tombstoned` status.
 
 ---
 
+### 6.9b Public shares (feature 27)
+
+Link-gated **pull** shares served entirely by the owner backend. Coverage is resolved live per request
+(`picture tag <@ tag_path`, owned by the owner, not deleted/hidden) — no `IncomingShare`, no per-picture
+tokens. The **owner management** + logged-in-visitor **Convert** endpoints are authenticated
+(`/api/authenticated/shares/public`); the **view + anonymous contribution** endpoints are unauthenticated
+and token-gated (`/api/public/shares/{token}`, §5).
+
+#### `POST /api/authenticated/shares/public` — create a public link
+
+**Body:**
+
+```ts
+{
+    tag_path: string            // covered tag (wire ltree; may be a SharedToMe/... received tag)
+    name: string                // ≤ 64
+    message?: string | null
+    password?: string | null    // optional access gate (argon2-hashed server-side)
+    expires_at?: string | null  // optional NaiveDateTime
+    allow_originals: boolean     // download + save-a-copy + convert (OFF ⇒ view-only gallery)
+    allow_upload: boolean        // anonymous contribution (forces allow_share_back on)
+    allow_share_back: boolean
+    conv_allow_exif_edit: boolean // inherited by the derived share on Subscribe
+    conv_future: boolean          // inherited by the derived share on Subscribe
+}
+```
+
+**Response `200`** — the share incl. the secret `token`, `has_password`, `permissions`, `status`,
+`derived_share_count`, `contribution_count`.
+
+#### `GET /api/authenticated/shares/public`
+
+List the caller's public links (with `derived_share_count` / `contribution_count`).
+
+#### `PATCH /api/authenticated/shares/public/{id}`
+
+Same body as create, plus `keep_password: boolean` (keep the stored hash; else `password` sets/clears it).
+`tag_path` is immutable.
+
+#### `POST /api/authenticated/shares/public/{id}/revoke`
+
+Body `{ cascade_derived: boolean, trash_contributions: boolean }`. Coverage cut is instant.
+Response `{ revoked, derived_revoked, contributions_trashed }`.
+
+#### `POST /api/authenticated/shares/public/{id}/contributions/trash`
+
+Body `{ contributor?: string | null }` (a `#name`, or omit for all). Trashes the owner's `#`-contributions
+under the album tag. Response `{ trashed: number }`.
+
+#### `POST /api/authenticated/shares/public/save-copy` (Convert)
+
+Body `{ owner_username, owner_instance, token, picture_id }`. Feature-11 copy of a covered picture into the
+caller's library (**same-backend now**; cross-instance ⇒ `403`, subscribe instead). Response `{ id }`.
+
+#### `POST /api/authenticated/shares/public/subscribe` (Convert)
+
+Body `{ owner_username, owner_instance, token }`. Mints a derived `OutgoingShare` on the owner backend
+(recipient-initiated `shares/public/claim`, or a same-backend short-circuit) and creates the caller's
+active `IncomingShare`. Response `{ outgoing_share_id, name, tag_path, allow_share_back }`.
+
+---
+
 ### 6.10 Hierarchies
 
 A hierarchy maps a filtered view of the tag graph to a navigable directory tree. It stores **no
@@ -2363,18 +2453,19 @@ for completeness.
 
 All require a federation JWT (pairwise, issued by the target instance).
 
-| Method | Path                                    | Description                                                    |
-|--------|-----------------------------------------|----------------------------------------------------------------|
-| `POST` | `/api/federation/auth/request`          | Request a federation JWT from another instance                 |
-| `POST` | `/api/federation/auth/grant`            | Receive a federation JWT                                       |
-| `POST` | `/api/federation/shares/announce`       | Announce a new share                                           |
-| `POST` | `/api/federation/shares/accept`         | Notify sender of share acceptance                              |
-| `POST` | `/api/federation/shares/reject`         | Notify sender of share rejection                               |
-| `POST` | `/api/federation/shares/revoke`         | Revoke a share (sender → recipient)                            |
-| `POST` | `/api/federation/pictures/announce`     | Deliver picture announcements for an active share              |
-| `POST` | `/api/federation/pictures/unannounce`   | Remove specific pictures from a share                          |
-| `POST` | `/api/federation/pictures/edit_request` | Recipient → owner: propose an EXIF edit the owner auto-applies |
-| `POST` | `/api/federation/pictures/presign`      | Get presigned URLs using per-picture tokens (no JWT required)  |
+| Method | Path                                    | Description                                                                             |
+|--------|-----------------------------------------|-----------------------------------------------------------------------------------------|
+| `POST` | `/api/federation/auth/request`          | Request a federation JWT from another instance                                          |
+| `POST` | `/api/federation/auth/grant`            | Receive a federation JWT                                                                |
+| `POST` | `/api/federation/shares/announce`       | Announce a new share                                                                    |
+| `POST` | `/api/federation/shares/accept`         | Notify sender of share acceptance                                                       |
+| `POST` | `/api/federation/shares/reject`         | Notify sender of share rejection                                                        |
+| `POST` | `/api/federation/shares/revoke`         | Revoke a share (sender → recipient)                                                     |
+| `POST` | `/api/federation/shares/public/claim`   | Visitor → owner: convert a public share into a derived `OutgoingShare` (feature 27 §11) |
+| `POST` | `/api/federation/pictures/announce`     | Deliver picture announcements for an active share                                       |
+| `POST` | `/api/federation/pictures/unannounce`   | Remove specific pictures from a share                                                   |
+| `POST` | `/api/federation/pictures/edit_request` | Recipient → owner: propose an EXIF edit the owner auto-applies                          |
+| `POST` | `/api/federation/pictures/presign`      | Get presigned URLs using per-picture tokens (no JWT required)                           |
 
 The `presign` endpoint is notable: it is called by the **recipient backend** on behalf of the recipient's frontend when fetching a picture owned by
 the sender. The frontend does not call it directly — the `GET /api/authenticated/pictures/{id}/url` endpoint handles cross-instance presigning

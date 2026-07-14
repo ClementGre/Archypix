@@ -103,7 +103,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
-    "arc-swap",
+ "arc-swap",
  "archypix-common",
  "argon2",
  "async-trait",
@@ -117,7 +117,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http 1.4.1",
-    "jsonwebtoken",
+ "jsonwebtoken",
  "md5",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -128,8 +128,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
-    "sqlx",
-    "strum",
+ "sqlx",
+ "strum",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -145,22 +145,22 @@ dependencies = [
 name = "archypix-common"
 version = "0.1.0"
 dependencies = [
-    "anyhow",
-    "arc-swap",
-    "async-trait",
-    "axum 0.8.9",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "axum 0.8.9",
  "chrono",
-    "jsonwebtoken",
-    "rand 0.10.1",
+ "jsonwebtoken",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
-    "sqlx",
-    "strum",
+ "sqlx",
+ "strum",
  "tempfile",
-    "thiserror 2.0.18",
-    "tokio",
-    "tracing",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -169,23 +169,23 @@ name = "archypix-resolver"
 version = "0.1.0"
 dependencies = [
  "anyhow",
-    "arc-swap",
-    "archypix-common",
-    "argon2",
-    "async-trait",
+ "arc-swap",
+ "archypix-common",
+ "argon2",
+ "async-trait",
  "axum 0.8.9",
  "chrono",
  "dotenvy",
-    "hex",
-    "jsonwebtoken",
+ "hex",
+ "jsonwebtoken",
  "moka",
-    "rand 0.10.1",
+ "rand 0.10.1",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
-    "sha2 0.10.9",
-    "sqlx",
-    "strum",
+ "sha2 0.10.9",
+ "sqlx",
+ "strum",
  "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",
@@ -206,7 +206,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "futures-util",
-    "jsonwebtoken",
+ "jsonwebtoken",
  "magick_rust",
  "num-rational",
  "opentelemetry",
@@ -575,7 +575,7 @@ dependencies = [
  "http 1.4.1",
  "http-body 1.0.1",
  "http-body-util",
-    "md-5",
+ "md-5",
  "pin-project-lite",
  "sha1 0.11.0",
  "sha2 0.11.0",
@@ -2957,7 +2957,7 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
-    "redox_syscall",
+ "redox_syscall",
  "smallvec",
  "windows-link",
 ]
@@ -3976,11 +3976,11 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "378620ccc25c62c89d8be1c819e76a88d59bdcc3304733330788948e619bfd71"
 dependencies = [
-    "sqlx-core",
-    "sqlx-macros",
-    "sqlx-mysql",
-    "sqlx-postgres",
-    "sqlx-sqlite",
+ "sqlx-core",
+ "sqlx-macros",
+ "sqlx-mysql",
+ "sqlx-postgres",
+ "sqlx-sqlite",
 ]
 
 [[package]]
@@ -4002,7 +4002,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "hashbrown 0.16.1",
-    "hashlink",
+ "hashlink",
  "indexmap 2.14.0",
  "log",
  "memchr",
@@ -4029,8 +4029,8 @@ checksum = "bd2b84f2bc39a5705ef27ec785a11c934a41bbd4a24941e257927cddc26b60bf"
 dependencies = [
  "proc-macro2",
  "quote",
-    "sqlx-core",
-    "sqlx-macros-core",
+ "sqlx-core",
+ "sqlx-macros-core",
  "syn",
 ]
 
@@ -4050,10 +4050,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
-    "sqlx-core",
-    "sqlx-mysql",
-    "sqlx-postgres",
-    "sqlx-sqlite",
+ "sqlx-core",
+ "sqlx-mysql",
+ "sqlx-postgres",
+ "sqlx-sqlite",
  "syn",
  "thiserror 2.0.18",
  "tokio",
@@ -4082,7 +4082,7 @@ dependencies = [
  "serde",
  "sha1 0.11.0",
  "sha2 0.11.0",
-    "sqlx-core",
+ "sqlx-core",
  "thiserror 2.0.18",
  "tracing",
  "uuid",
@@ -4101,7 +4101,7 @@ dependencies = [
  "chrono",
  "crc",
  "dotenvy",
-    "etcetera",
+ "etcetera",
  "futures-channel",
  "futures-core",
  "futures-util",
@@ -4110,19 +4110,19 @@ dependencies = [
  "hmac 0.13.0",
  "itoa",
  "log",
-    "md-5",
+ "md-5",
  "memchr",
  "rand 0.10.1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "smallvec",
-    "sqlx-core",
+ "sqlx-core",
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
  "uuid",
-    "whoami",
+ "whoami",
 ]
 
 [[package]]
@@ -4133,7 +4133,7 @@ checksum = "488e99c397a62007e4229aec669a179816339afc6d2620ca6fa420dbee2e982c"
 dependencies = [
  "atoi",
  "chrono",
-    "flume",
+ "flume",
  "form_urlencoded",
  "futures-channel",
  "futures-core",
@@ -4144,7 +4144,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "serde",
-    "sqlx-core",
+ "sqlx-core",
  "thiserror 2.0.18",
  "tracing",
  "url",
@@ -4174,7 +4174,7 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
-    "strum_macros",
+ "strum_macros",
 ]
 
 [[package]]
@@ -4183,11 +4183,11 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
 dependencies = [
-    "heck",
-    "proc-macro2",
-    "quote",
-    "rustversion",
-    "syn",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
 ]
 
 [[package]]

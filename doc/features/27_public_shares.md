@@ -94,11 +94,11 @@ CREATE INDEX idx_public_shares_tag ON public_shares USING gist (tag_path);
 
 Two directions, gated independently:
 
-|                                        | Action                                                       | Gate                                                 |
-|:---------------------------------------|:-------------------------------------------------------------|:-----------------------------------------------------|
-| **OUT** (take pictures from the album) | download original · save a copy · convert to a derived share | **`allow_originals`**                                |
-| **IN** (contribute to the album)       | anonymous upload (bytes → creator's library)                 | `allow_upload`                                       |
-|                                        | authed ShareBack (a tag stays on the contributor's side)     | `allow_share_back` (**forced on if `allow_upload`**) |
+|                                        | Action                                                       | Gate                                                                             |
+|:---------------------------------------|:-------------------------------------------------------------|:---------------------------------------------------------------------------------|
+| **OUT** (take pictures from the album) | download original · save a copy · convert to a derived share | **`allow_originals`**                                                            |
+| **IN** (contribute to the album)       | anonymous upload (bytes → creator's library)                 | `allow_upload`                                                                   |
+|                                        | authed ShareBack (a tag stays on the contributor's side)     | `allow_share_back` (**requires `allow_originals`**; forced on if `allow_upload`) |
 
 `allow_originals = false` ⇒ **view-only gallery**: thumbnails only, EXIF/GPS omitted from the JSON;
 none of download / copy / convert are offered (convert and view-only are mutually exclusive). The
@@ -113,7 +113,9 @@ download/copy):
 - `allow_share_back` → the convert menu offers "convert **+** share back a tag".
 
 **Coherent corner:** `allow_upload` on with `allow_originals` off is a valid *drop-only* gallery
-(contribute in, nothing out); ShareBack (an inbound action) is still offered there.
+(anonymous contribute in, nothing out). **Authenticated ShareBack rides Convert, which needs
+`allow_originals`** — so with originals off it has no meaning: `allow_share_back` is forced off (and the
+create dialog hides its toggle along with the convert sub-options).
 
 ---
 
@@ -135,7 +137,8 @@ token (+ optional password) gated**, not world-visible.
 
 All on the **owner's** backend, under `/api/public/*` (no user JWT):
 
-- `GET /api/public/shares/{token}` → `{ name, message, owner_display, permissions, picture_count, requires_password, expires_at }`.
+- `GET /api/public/shares/{token}` →
+  `{ name, message, owner_display, tag_path, permissions, picture_count, requires_password, expires_at, view_only }`.
 - `POST /api/public/shares/{token}/unlock { password }` → a **`public_share` JWT** (new
   `common::auth` token type, claim `{ share_id }`, short TTL) sent on subsequent calls. Only for
   password-gated shares. (A JWT beats re-running argon2 on every thumbnail fetch.)
@@ -331,17 +334,69 @@ Public pages are `noindex`; token lookup is constant-time-ish via the unique ind
 
 ## 18. Work breakdown
 
-- [ ] Migration: `public_shares` (+ `public_share_status` enum), `outgoing_shares.derived_from_public_share_id`; regen `schema.sql` + `sqlx prepare`.
-- [ ] `domain::public_share` + `repository::public_share` (CRUD, `find_by_token`, coverage/list, derived-share lookup).
-- [ ] `common::auth` `TokenType::PublicShare`.
-- [ ] `services::shares::public`: create/list/update/revoke (+ cascade prompt).
-- [ ] Public view surface: `GET shares/{token}`, `unlock`, `pictures`, `pictures/{id}/url` (coverage-checked presign reusing owned/received branching;
-  view-only stripping).
-- [ ] Contribution: `uploads` + `complete` wrapping `begin_upload_batch`/`complete_upload` with public auth, quota/caps/rate-limit, `creator = #name`.
-- [ ] Convert: save-a-copy (feature 11 from a public link); `shares/public/claim` verb + `receive_public_claim` (derived share); subscribe +
-  share-back wiring.
-- [ ] Abuse-control settings (feature-23 keys) + defaults.
-- [ ] Frontend: public page (gallery / password / download / copy / convert / upload) + creator's "Public links" management + contributions
-  moderation.
-- [ ] Tag-rename cascade includes `public_shares.tag_path`.
-- [ ] Tests (§16).
+- [x] Migration `0010_public_shares`: `public_shares` (+ `public_share_status` enum), `outgoing_shares.derived_from_public_share_id`; regen
+  `schema.sql` + `sqlx prepare`. (`timestamp` UTC-naive columns, matching the rest of the schema, not `timestamptz`.)
+- [x] `domain::public_share` (`PublicShare`, `PublicShareStatus`, base64url token gen, accessibility/permission helpers, `contribution_creator`) +
+  `repository::public_share` (CRUD, `find_by_token`, `find_covered_picture`/`filter_covered_ids`/`contribution_ids`, `rename_tag_subtree`) +
+  `OutgoingShareRepository::{set_derived_from_public_share, find_derived_by_public_share}`.
+- [x] `common::auth` `TokenType::PublicShare` (claim = `sub` holds `share_id`, short TTL).
+- [x] `services::shares::public`: create/list-with-counts/update/revoke (+ cascade-derived + trash-contributions).
+- [x] Public view surface: `GET shares/{token}` (meta), `unlock`, `pictures`, `pictures/{id}` (detail), `pictures/{id}/url` (coverage-checked presign
+  reusing the extracted `presign_variant_for_picture` owned/received branch), `aggregate` (coverage-intersected explicit selection); view-only strips
+  captured/EXIF/GPS from both bytes and JSON.
+- [x] Contribution: `uploads` + `uploads/{id}/complete` wrapping `begin_upload_batch`/`complete_upload` with token auth, quota (charged to owner),
+  size/count caps, per-IP+share rate limit, MIME allowlist, forced album tag, `creator = #name`; dedup hits **rejected, not auto-tagged**.
+- [x] Convert: `shares/public/claim` verb + `receive_public_claim` (derived `OutgoingShare` + provenance) + `public_subscribe` (same-backend
+  short-circuit / federation, creates the visitor's active `IncomingShare`); save-a-copy via the shared `copy_source_into_library` (**same-backend
+  now**; cross-instance is a follow-up).
+- [x] Abuse-control settings (`public_upload_max_file_bytes`, `public_upload_max_files_per_request`, `public_upload_rate_max`,
+  `public_upload_rate_window_secs`, `public_share_session_ttl_secs`) + defaults.
+- [x] Frontend: public page `/s/:global_domain/:username/:token` (resolve backend, password gate, gallery + lightbox + detail/batch-EXIF panel reusing
+  `OrientedContainImage`/`MediaPlayer`/`FileTypeIcon`, contributor upload, convert menu) + the owner's "Public links" manager (create dialog + list +
+  copy-link + revoke-with-cascade) in the Outgoing shares panel.
+- [x] Tag-rename cascade includes `public_shares.tag_path`.
+- [x] Tests (§16): `back/tests/public_shares.rs` (coverage view, token/password gating, view-only stripping, contribution + dedup-reject, same-backend
+  subscribe, revoke cascade) + `domain::public_share` unit tests.
+
+**Deferred (noted follow-ups):** cross-instance save-a-copy (needs a server-to-server fetch through the owner's public presign — §10, the deepest
+escalation); the Convert **+** share-back UI wiring (the backend carries `allow_share_back` on the derived share, so it's a `CreateShareDialog`
+reuse); download-as-zip (server-side zip streaming of presigned objects is non-trivial — per-picture download ships today).
+
+## 19. Review pass (2026-07)
+
+Fixes from a review of the initial agent build:
+
+- **Cross-instance Subscribe 404 (bug).** `receive_public_claim` (owner backend) looked the requester up
+  by bare username and 404'd when absent — but a cross-instance visitor has no row on the owner's backend.
+  It now resolves the requester via `find_local_user_id` (federated-identity aware) and rejects only a
+  genuine self-subscribe. Regression test: `claim_from_remote_visitor_mints_derived_share`.
+- **No self-service on your own album.** `public_save_copy` rejects `visitor_id == share.owner_id`
+  (Subscribe was already guarded); the frontend also hides Convert / Save / Upload from the album owner.
+- **Frontend factorization (not a rebuild).** The public page reuses the authenticated gallery instead of
+  parallel components: a read-only **`PictureSource`** context (`components/photos/pictureSource.ts`) lets
+  the shared **`Lightbox`**/**`LightboxCarousel`** render token-gated pictures; the grid reuses **`PhotoCard`**
+  (aspect-ratio) and the **global feature-14 `selection` store** + shared **`SelectionActionBar`** (identical
+  click / ⌘-toggle / shift-range / long-press semantics, the floating bottom bar, ⌘/Ctrl+A — in explicit
+  mode over the loaded ids, since a token-gated album has no server `PictureFilter`); the details
+  panel is wrapped in **`SidePanel`** (resizable/mobile) and mirrors the app `SelectionPanel` layout — a
+  top-aligned borderless **`OrientedContainImage`** preview, inline file meta + download, read-only EXIF via
+  the shared **`Section`** + **`ReadOnlyRow`**/**`FieldLabel`**, and Save-a-copy / Convert-to-a-share actions;
+  the footer reuses a factored **`ThumbnailSizeSlider`**; **`PublicTopBar`** mirrors the app `TopBar` chrome.
+  The `PublicCard` and `PublicLightbox` rebuilds were deleted.
+- **Shared upload dialog.** The contribution upload reuses the app's **`UploadDialog`** through a new
+  **`UploadSource`** abstraction (`components/photos/uploadSource.ts`, default = the authenticated library
+  upload). The public source (`usePublicUploadSource`) requires a contributor name, forces the album tag
+  server-side (no tag picker), drops the storage/import/restore surface, and reports a dedup hit as *"The
+  owner already has this picture"*. `PublicUploadDialog` was deleted. `PublicTopBar` also drops the redundant
+  "Sign in to save" button (the Sign-in button already covers it) and its user menu now matches the app's
+  (Go to my gallery / Profile / Admin / Fleet / Log out).
+- **Convert is album-global + dedup-aware.** The `GET shares/{token}` meta now returns `tag_path`, so a
+  logged-in visitor who already holds a live incoming share from this owner covering the same tag sees
+  "Already in your incoming shares" instead of the Convert action. Convert lives only in the top bar (a
+  whole-album action); the details sidebar offers only per-picture Save-a-copy.
+- **Owner management.** `PublicShareDialog` is create-**or**-edit; each link row has an edit button + a
+  `PublicShareInfoPopover`; both create buttons sit at the top of the Outgoing pane; the tag tree `…` menu
+  offers "New public share link…"; visitor-facing copy is friendlier ("Add to my account" / "Convert to a
+  share on your account" / "Upload").
+- **Still parallel (follow-up):** only the *editable* `ExifInlineEditor` (the read-only rows already reuse
+  `Section`/`ReadOnlyRow`) is not yet shared; the public listing has no sort/filter controls.

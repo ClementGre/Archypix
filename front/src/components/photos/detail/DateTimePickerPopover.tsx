@@ -38,14 +38,17 @@ interface DateTimePickerPopoverProps {
     value: string | null
     onChange: (value: string | null) => void
     children: ReactNode
+    /** Disable days before today (e.g. an expiry can't be in the past). */
+    disablePast?: boolean
 }
 
-export function DateTimePickerPopover({value, onChange, children}: DateTimePickerPopoverProps) {
+export function DateTimePickerPopover({value, onChange, children, disablePast}: DateTimePickerPopoverProps) {
     const [open, setOpen] = useState(false)
 
     const parsed = value ? parseNaive(value) : null
     const selectedDate = parsed?.date
     const time = parsed?.time ?? '12:00'
+    const disabledDays = disablePast ? {before: new Date(new Date().setHours(0, 0, 0, 0))} : undefined
 
     function handleSelectDate(date: Date | undefined) {
         if (!date) {
@@ -69,6 +72,7 @@ export function DateTimePickerPopover({value, onChange, children}: DateTimePicke
                     weekStartsOn={1}
                     selected={selectedDate}
                     onSelect={handleSelectDate}
+                    disabled={disabledDays}
                     captionLayout="dropdown"
                     className="[--cell-size:1.5rem]"
                     classNames={{

@@ -35,7 +35,7 @@ export interface ShareInfoEntry {
 }
 
 /** Compact on/off feature chip — consistent styling regardless of side. */
-function FlagChip({label, on}: { label: string; on: boolean }) {
+export function FlagChip({label, on}: { label: string; on: boolean }) {
     return (
         <span
             className={cn(
@@ -49,7 +49,7 @@ function FlagChip({label, on}: { label: string; on: boolean }) {
     )
 }
 
-function DetailRow({label, children}: { label: string; children: ReactNode }) {
+export function DetailRow({label, children}: { label: string; children: ReactNode }) {
     return (
         <div className="flex items-baseline justify-between gap-3">
             <span className="shrink-0 text-[11px] text-muted-foreground">{label}</span>

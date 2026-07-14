@@ -1,9 +1,9 @@
 import {type RefObject, useEffect, useMemo, useRef, useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {getPictureUrl} from '@/api/pictures'
 import {bestLoaded, recordImage, useImageCache} from '@/stores/imageCache'
 import {cn, isVideoMime} from '@/lib/utils'
 import type {PictureListItem, PictureVariant} from '@/lib/types'
+import {usePictureSource} from './pictureSource'
 import {displayDimensions, OrientedImage} from './OrientedImage'
 import {FileTypeIcon} from './FileTypeIcon'
 import {PlayBadge} from './PlayBadge'
@@ -46,11 +46,12 @@ function CarouselThumb({item, gridVariant, active, rootRef, onClick}: {
     const entry = useImageCache((s) => s.entries[item.id])
     const loaded = useMemo(() => bestLoaded(entry), [entry])
 
+    const source = usePictureSource()
     const useListThumb = !loaded && gridVariant !== 'large' && !!item.thumbnail_url
     const needSmall = inView && !loaded && !useListThumb && !!item.thumbnail_url
     const {data: small} = useQuery({
-        queryKey: ['pictures', 'url', item.id, 'small'],
-        queryFn: () => getPictureUrl(item.id, 'small'),
+        queryKey: source.urlKey(item.id, 'small'),
+        queryFn: () => source.presign(item.id, 'small'),
         enabled: needSmall,
         staleTime: 10 * 60 * 1000,
     })

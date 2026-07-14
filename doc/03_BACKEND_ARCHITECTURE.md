@@ -38,6 +38,7 @@ domain/
   hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static/drop), validation,
                     #   per-node writeBackEnabled (feature 18 effective_enabled), TagPredicate
   share.rs          # OutgoingShare, IncomingShare
+  public_share.rs   # feature 27: PublicShare + PublicShareStatus, token gen, coverage/permission helpers
   federation.rs     # FederationMessage, BackendMapping
   job.rs            # Job (includes claim_token), re-exports from archypix-common
   tagging.rs        # service model + ServiceConfig (parse/validate/normalize/evaluate dispatch) + should_run
@@ -52,6 +53,8 @@ repository/
   picture.rs      # picture CRUD + list/count; push_filters renders TagPredicate + legacy `tag`
   hierarchy.rs    # hierarchy CRUD SQL (load/store config JSONB)
   share.rs / auth.rs / job.rs / tagging.rs
+  public_share.rs # feature 27: public-share CRUD, find_by_token, live coverage queries (find_covered_picture/
+                  # filter_covered_ids), contribution_ids, tag-rename rewrite
   pipeline.rs     # dirty-picture queries, atomic per-source pipeline tag reconcile
   dedup.rs        # feature 11: content-dedup group queries (candidate keys, group rows, survivor/
                   # promote/boomerang mutations)
@@ -77,11 +80,15 @@ services/
     registration.rs # recipient-side received-picture register / unregister
     shareback.rs    # ShareBack auto-accept (mapping wiring)
     delivery.rs     # best-effort task delivery of the revocation-cascade unannounce
+    public.rs       # feature 27: public-share view/contribute/convert + owner management (create/list/
+                    #   update/revoke+cascade); the only *pull* share path (live coverage, no IncomingShare)
   federation.rs     # inbound federation protocol handlers
 
 api/
   middleware/auth_user.rs / auth_admin.rs / auth_resolver.rs / auth_federation.rs / auth_worker.rs
   user/auth.rs / users.rs / pictures.rs / settings.rs / shares.rs / tags.rs / jobs.rs / tagging_services.rs / hierarchies.rs
+  user/public_shares.rs # feature 27: owner management + logged-in visitor Convert (save-copy/subscribe)
+  user/public_view.rs   # feature 27: unauthenticated token-gated view + anonymous contribution (mounted in public_routes)
   admin/handlers.rs + models.rs
   federation/handlers.rs + models.rs
   resolver/handlers.rs + models.rs
@@ -236,6 +243,27 @@ copy carries the **source's** creator (attribution travels). `POST /pictures/{id
 `updated_at`, which the announcement delta re-dirties) or the received `creator_override` (`mode:
 "local"`; `"propose"` is phase-2 → 403). The resolved creator is added to the picture detail + list
 projections. See `doc/features/26_picture_creator.md`.
+
+**Public shares (27)** — the first **pull** share: a `public_shares` row (owner backend only) grants
+link + token (+ optional password/expiry) access, and coverage is resolved **live** on every request
+(`picture tag <@ share.tag_path`, owned by the owner, `deleted_at IS NULL`) — no `IncomingShare`, no
+per-picture tokens, no pipeline involvement, so revocation is instant. One `allow_originals` tier gates
+download/save-a-copy/convert; `OFF` ⇒ a view-only gallery (thumbnails only, EXIF/GPS stripped from
+bytes **and** JSON). The unauthenticated surface is `/api/public/shares/{token}[/unlock|/pictures|
+/pictures/{id}|/pictures/{id}/url|/aggregate|/uploads|/uploads/{id}/complete]`; a password unlock mints
+a `TokenType::PublicShare` JWT (claim: `sub = share_id`) re-checked per request. The presign reuses the
+extracted `services::pictures::presign_variant_for_picture` owned/received branch (received pictures in
+coverage proxy to the real owner via their stored token). **Contribution** is an anonymous upload that
+lands as a picture *owned by the share owner* (`begin_upload_batch`/`complete_upload`, quota charged to
+the owner, size/count/MIME caps + per-IP+share rate limit), tagged into the album with `creator =
+#name`; a dedup hit against the owner's live/trashed pictures is **rejected, not stored, not tagged**.
+**Convert** is the only path back into the pipeline: the recipient-initiated
+`POST /api/federation/shares/public/claim` mints a derived `OutgoingShare`
+(`derived_from_public_share_id`) that the visitor's `public_subscribe` pairs with an active
+`IncomingShare` (same-backend short-circuit or federation); save-a-copy reuses feature-11's shared
+`copy_source_into_library` (same-backend today, cross-instance is a follow-up). Revocation cascades to
+derived shares and optionally trashes `#`-contributions. The tag-rename cascade rewrites
+`public_shares.tag_path`. See `doc/features/27_public_shares.md`.
 
 **Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
 removes them, controlled by the `promote_tags` flag.

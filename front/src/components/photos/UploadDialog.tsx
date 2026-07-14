@@ -5,13 +5,13 @@ import {useQueryClient} from '@tanstack/react-query'
 import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/components/ui/dialog'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
+import {Input} from '@/components/ui/input'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {beginUploadBatch, completeUpload, restorePicture} from '@/api/pictures'
-import {invalidatePictures, invalidatePicturesAndTags, invalidateStorageDebounced} from '@/lib/invalidation'
 import {cn, TagPath} from '@/lib/utils'
 import {filesFromDataTransfer, isHiddenFile} from '@/lib/uploadFiles'
 import {apiErrorMessage} from '@/api/client'
 import {useStorage} from '@/hooks/useSettings'
+import {AUTH_UPLOAD_SOURCE, type UploadSource} from './uploadSource'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,17 +170,20 @@ export interface UploadDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     initialFiles?: File[]
+    /** The upload backend + UI capabilities. Defaults to the authenticated library upload. */
+    source?: UploadSource
 }
 
-export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogProps) {
+export function UploadDialog({open, onOpenChange, initialFiles, source = AUTH_UPLOAD_SOURCE}: UploadDialogProps) {
     const queryClient = useQueryClient()
-    const {data: storage} = useStorage()
+    const {data: storage} = useStorage(source.showStoragePreflight)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const folderInputRef = useRef<HTMLInputElement>(null)
     const dropzoneRef = useRef<HTMLDivElement>(null)
 
     const [files, setFiles] = useState<File[]>([])
     const [tags, setTags] = useState<string[]>([])
+    const [contributor, setContributor] = useState('')
     const [phase, setPhase] = useState<Phase>('idle')
     const [items, setItems] = useState<UploadItem[]>([])
     const [dropActive, setDropActive] = useState(false)
@@ -204,6 +207,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
         if (!open) {
             setFiles([])
             setTags([])
+            setContributor('')
             setPhase('idle')
             setItems([])
             setRestored(false)
@@ -259,15 +263,10 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
 
             // Fresh presign for this single file: carries the hash (upload-time dedup) + tags (assigned
             // to a dedup hit) + the import label (tags duplicates AlreadyExisting[.Deleted]).
-            let slot: Awaited<ReturnType<typeof beginUploadBatch>>[number] | undefined
+            const ctx = {tags, label: uploadLabel.current, contributor}
+            let slot: Awaited<ReturnType<typeof source.begin>>[number] | undefined
             try {
-                slot = (
-                    await beginUploadBatch(
-                        [{filename: file.name, file_hash: hash, size: file.size}],
-                        tags.length ? tags : undefined,
-                        uploadLabel.current || undefined,
-                    )
-                )[0]
+                slot = (await source.begin([{filename: file.name, file_hash: hash, size: file.size}], ctx))[0]
             } catch (e) {
                 patchItem(key, {status: 'error', error: uploadErrorMessage(e)})
                 return false
@@ -277,7 +276,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 return false
             }
             if (slot.duplicate) {
-                // Already in the library — settled server-side (tags assigned); nothing to upload.
+                // Already on the target library — settled server-side; nothing to upload.
                 patchItem(key, {
                     status: 'deduplicated',
                     pictureId: slot.picture_id,
@@ -293,17 +292,15 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
             try {
                 await uploadToS3(presignedUrl, file, (pct) => patchItem(key, {progress: pct}))
                 patchItem(key, {status: 'completing', progress: 97})
-                await completeUpload(pictureId, {
-                    mime_type: file.type || undefined,
-                    file_size: file.size,
-                    file_hash: hash,
-                    initial_tags: tags.length ? tags : undefined,
-                    upload_label: uploadLabel.current || undefined,
-                })
+                await source.complete(
+                    pictureId,
+                    {mime_type: file.type || undefined, file_size: file.size, file_hash: hash},
+                    ctx,
+                )
                 patchItem(key, {status: 'done', progress: 100})
                 if (!firstSuccess.current) {
                     firstSuccess.current = true
-                    invalidatePictures(queryClient)
+                    source.onFirstSuccess?.(queryClient)
                 }
                 return true
             } catch (e) {
@@ -311,7 +308,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 return false
             }
         },
-        [patchItem, tags, queryClient],
+        [patchItem, tags, contributor, source, queryClient],
     )
 
     // Drain a list of slots through bounded-concurrency workers.
@@ -336,14 +333,12 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     // so refresh pictures + tags broadly — `['tags']` also refreshes per-picture tag caches (e.g. an
     // already-existing picture open in the sidebar), which the old narrow keys missed.
     const invalidateAll = useCallback(() => {
-        invalidatePicturesAndTags(queryClient)
-        // Uploads change billed usage → refresh the storage bar/breakdown (feature 22), debounced
-        // since this fires once per file/batch during a multi-file upload.
-        invalidateStorageDebounced(queryClient)
-    }, [queryClient])
+        source.onSettled?.(queryClient)
+    }, [source, queryClient])
 
     async function startUpload() {
         if (!files.length || phase !== 'idle') return
+        if (source.requireContributor && !contributor.trim()) return
 
         firstSuccess.current = false
         uploadLabel.current = makeUploadLabel()
@@ -415,10 +410,10 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
     const uploadBlocked = phase === 'idle' && files.length > 0 && quotaFull
 
     const undeleteExisting = async () => {
-        if (!deletedItems.length || restoring) return
+        if (!deletedItems.length || restoring || !source.restore) return
         setRestoring(true)
         try {
-            await Promise.all(deletedItems.map((it) => restorePicture(it.pictureId)))
+            await Promise.all(deletedItems.map((it) => source.restore!(it.pictureId)))
             setRestored(true)
             invalidateAll()
         } catch (e) {
@@ -458,7 +453,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                 }}
             >
                 <DialogHeader className="px-6 pt-6 pb-4">
-                    <DialogTitle>Upload photos</DialogTitle>
+                    <DialogTitle>{source.title}</DialogTitle>
                 </DialogHeader>
 
                 {/* ── Overall progress (outside the scrollable list, always visible) ── */}
@@ -504,7 +499,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         )}
 
                         {/* Import summary — what was tagged with the batch label (feature 15). */}
-                        {phase === 'complete' && (doneCount > 0 || dedupCount > 0) && (
+                        {source.showImportSummary && phase === 'complete' && (doneCount > 0 || dedupCount > 0) && (
                             <div className="mt-2 space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
                                 {label && (
                                     <p className="text-muted-foreground">
@@ -641,7 +636,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                                                     </p>
                                                 ) : item.status === 'deduplicated' ? (
                                                     <p className="truncate text-xs text-amber-500">
-                                                        Already in your library
+                                                        {source.dedupMessage}
                                                     </p>
                                                 ) : item.status === 'preparing' ? (
                                                     <p className="text-xs text-muted-foreground">Preparing…</p>
@@ -702,8 +697,23 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                         </div>
                     )}
 
+                    {/* ── Contributor name (public contributions) ─────────── */}
+                    {phase === 'idle' && source.requireContributor && (
+                        <div className="space-y-1.5">
+                            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Your name (shown as the credit)
+                            </span>
+                            <Input
+                                value={contributor}
+                                onChange={(e) => setContributor(e.target.value)}
+                                placeholder="Your name"
+                                maxLength={64}
+                            />
+                        </div>
+                    )}
+
                     {/* ── Tag section (idle only) ──────────────────────────── */}
-                    {phase === 'idle' && (
+                    {phase === 'idle' && source.showTagPicker && (
                         <div className="space-y-2 pb-1">
                             <div className="flex items-center gap-1.5">
                                 <TagIcon className="h-3.5 w-3.5 text-muted-foreground"/>
@@ -744,7 +754,7 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                     )}
 
                     {/* ── Storage preflight (feature 22) ───────────────────── */}
-                    {phase === 'idle' && storage && (storage.quota_bytes ?? 0) > 0 && (
+                    {source.showStoragePreflight && phase === 'idle' && storage && (storage.quota_bytes ?? 0) > 0 && (
                         <div
                             className={cn(
                                 'rounded-md border px-3 py-2 text-xs',
@@ -792,7 +802,12 @@ export function UploadDialog({open, onOpenChange, initialFiles}: UploadDialogPro
                             </Button>
                             <Button
                                 onClick={startUpload}
-                                disabled={files.length === 0 || isBusy || uploadBlocked}
+                                disabled={
+                                    files.length === 0 ||
+                                    isBusy ||
+                                    uploadBlocked ||
+                                    (source.requireContributor && !contributor.trim())
+                                }
                                 title={uploadBlocked ? 'Storage is full' : undefined}
                             >
                                 {isBusy ? (

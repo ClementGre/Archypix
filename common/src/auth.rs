@@ -25,6 +25,10 @@ pub enum TokenType {
     /// Resolver-signed operator session token for the fleet admin dashboard.
     #[serde(rename = "resolver_admin_session")]
     ResolverAdminSession,
+    /// Owner-backend-signed session for an unlocked password-gated public share (feature 27 §6).
+    /// The `sub` claim carries the `public_shares.id`; short TTL.
+    #[serde(rename = "public_share")]
+    PublicShare,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

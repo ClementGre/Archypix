@@ -14,7 +14,7 @@ set -euo pipefail
 
 CONTAINER="${PG_CONTAINER:-archypix-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UP_SQL7="${SCRIPT_DIR}/../../back/migrations/0007_storage_quotas.up.sql"
+UP_SQL7="${SCRIPT_DIR}/../../back/migrations/0009_picture_creator.up.sql"
 
 CHECKSUM7="$(shasum -a 384 "$UP_SQL7" | awk '{print $1}')"
 
@@ -25,7 +25,7 @@ DBS="${DBS:-archypix_back archypix_back1 archypix_back2 archypix_back3}"
 for db in $DBS; do
   echo "==> patching ${db} _sqlx_migrations version 1"
   docker exec -i "$CONTAINER" psql -U archypix -d "$db" -v ON_ERROR_STOP=1 \
-    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM7}', 'hex') WHERE version = 7;"
+    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM7}', 'hex') WHERE version = 9;"
 done
 
 echo "Migration checksums updated."

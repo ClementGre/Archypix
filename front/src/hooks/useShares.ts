@@ -3,10 +3,11 @@ import {acceptIncomingShare, listIncomingShares, listOutgoingShares, rejectIncom
 import {queryKeys} from '@/lib/constants'
 import {invalidatePicturesAndTags} from '@/lib/invalidation'
 
-export function useIncomingShares() {
+export function useIncomingShares(enabled = true) {
     return useQuery({
         queryKey: queryKeys.incomingShares(),
         queryFn: listIncomingShares,
+        enabled,
     })
 }
 

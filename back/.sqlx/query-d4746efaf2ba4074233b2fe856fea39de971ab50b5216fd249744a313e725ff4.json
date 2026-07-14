@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET captured_at = now() AT TIME ZONE 'utc' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d4746efaf2ba4074233b2fe856fea39de971ab50b5216fd249744a313e725ff4"
+}

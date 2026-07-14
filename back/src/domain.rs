@@ -5,6 +5,7 @@ pub mod job;
 pub mod picture;
 pub mod pipeline;
 pub mod predicate;
+pub mod public_share;
 pub mod received_exif;
 pub mod segmentation;
 pub mod share;

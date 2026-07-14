@@ -1,5 +1,5 @@
-import {useMemo} from 'react'
-import {Ban, Loader2, Send} from 'lucide-react'
+import {useMemo, useState} from 'react'
+import {Ban, Link2, Loader2, Send, Share2} from 'lucide-react'
 import {toast} from 'sonner'
 import {Button} from '@/components/ui/button'
 import {Section} from '@/components/photos/detail/Section'
@@ -10,6 +10,8 @@ import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
 import type {IncomingShareResponse, ShareResponse} from '@/lib/types'
 import {CreateShareDialog} from './CreateShareDialog'
+import {PublicLinksManager} from './PublicLinksManager'
+import {PublicShareDialog} from './PublicShareDialog'
 import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
 
 const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
@@ -125,6 +127,9 @@ export function OutgoingSharesList() {
     const {revoke} = useShareMutations()
     const {update} = useGalleryParams()
 
+    const [shareOpen, setShareOpen] = useState(false)
+    const [publicOpen, setPublicOpen] = useState(false)
+
     const onRevoke = (id: string) => revoke.mutate(id, {onError: (e) => toast.error(apiErrorMessage(e))})
     const onFilterTag = (tag: string) => update({tag})
 
@@ -151,9 +156,17 @@ export function OutgoingSharesList() {
     }, [shares])
 
     const header = (
-        <div className="flex items-center justify-between px-2 pt-2">
-            <span className="text-xs font-medium text-muted-foreground">Outgoing</span>
-            <CreateShareDialog/>
+        <div className="flex flex-wrap items-center gap-2 px-2 pt-2">
+            {/* flex-1 shares the row when both fit; without min-w-0 the button won't shrink below its
+                text (no overflow), so a narrow panel wraps them and each takes the full width. */}
+            <Button size="sm" className="flex-1 gap-1.5" onClick={() => setShareOpen(true)}>
+                <Share2 className="h-4 w-4 shrink-0"/> Share tag
+            </Button>
+            <Button size="sm" variant="secondary" className="flex-1 gap-1.5" onClick={() => setPublicOpen(true)}>
+                <Link2 className="h-4 w-4 shrink-0"/> Public share
+            </Button>
+            <CreateShareDialog open={shareOpen} onOpenChange={setShareOpen} showTrigger={false}/>
+            <PublicShareDialog open={publicOpen} onOpenChange={setPublicOpen} showTrigger={false}/>
         </div>
     )
 
@@ -208,6 +221,7 @@ export function OutgoingSharesList() {
         <>
             {header}
             <div className="p-2">
+                <PublicLinksManager/>
                 {closed.length > 0 && (
                     <Section id="outgoing-closed" title="Closed" count={closedCount} defaultOpen={false}>
                         <div className="space-y-1.5">{renderGroups(closed)}</div>

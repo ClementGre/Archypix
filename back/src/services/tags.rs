@@ -8,7 +8,7 @@ use crate::repository::share::OutgoingShareRepository;
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use crate::services::aggregate::DryRun;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -137,6 +137,12 @@ pub async fn cascade_rename(
     outcome.shares_renamed =
         OutgoingShareRepository::rename_tag_subtree(&mut *tx, user_id, old_ltree, new_ltree)
             .await?;
+
+    // ── Public shares (feature 27 §14): rewrite the anchored coverage tag too ───
+    crate::repository::public_share::PublicShareRepository::rename_tag_subtree(
+        &mut *tx, user_id, old_ltree, new_ltree,
+    )
+    .await?;
 
     // ── Tagging services: gates (requires/excludes) + type-specific config ──────
     for svc in TaggingServiceRepository::list_by_owner(&mut *tx, user_id).await? {

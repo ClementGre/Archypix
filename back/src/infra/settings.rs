@@ -154,6 +154,17 @@ pub mod keys {
     pub const MAX_PENDING_INCOMING_SHARES: SettingKey<usize> =
         SettingKey::new("max_pending_incoming_shares");
 
+    // ── Public shares (feature 27 §13) ──
+    pub const PUBLIC_UPLOAD_MAX_FILE_BYTES: SettingKey<i64> =
+        SettingKey::new("public_upload_max_file_bytes");
+    pub const PUBLIC_UPLOAD_MAX_FILES_PER_REQUEST: SettingKey<usize> =
+        SettingKey::new("public_upload_max_files_per_request");
+    pub const PUBLIC_UPLOAD_RATE_MAX: SettingKey<u64> = SettingKey::new("public_upload_rate_max");
+    pub const PUBLIC_UPLOAD_RATE_WINDOW_SECS: SettingKey<u64> =
+        SettingKey::new("public_upload_rate_window_secs");
+    pub const PUBLIC_SHARE_SESSION_TTL_SECS: SettingKey<i64> =
+        SettingKey::new("public_share_session_ttl_secs");
+
     // ── Registration ──
     pub const REGISTRATION_MODE: SettingKey<RegistrationMode> =
         SettingKey::new("registration_mode");
@@ -296,6 +307,11 @@ pub fn registry() -> Vec<SettingSpec> {
         SettingSpec::new(RATE_LIMIT_REGISTER_WINDOW_SECS, group::RATE_LIMITS).default("3600").doc("Registration rate-limit window (seconds).", "3600"),
         SettingSpec::new(MAX_PENDING_OUTGOING_SHARES, group::RATE_LIMITS).default("100").doc("Max pending outgoing shares per user.", "100"),
         SettingSpec::new(MAX_PENDING_INCOMING_SHARES, group::RATE_LIMITS).default("200").doc("Max pending incoming shares per recipient.", "200"),
+        SettingSpec::new(PUBLIC_UPLOAD_MAX_FILE_BYTES, group::RATE_LIMITS).default("104857600").doc("Max byte size of a single anonymous public-share contribution file.", "104857600"),
+        SettingSpec::new(PUBLIC_UPLOAD_MAX_FILES_PER_REQUEST, group::RATE_LIMITS).default("50").doc("Max files in one anonymous public-share upload request.", "50"),
+        SettingSpec::new(PUBLIC_UPLOAD_RATE_MAX, group::RATE_LIMITS).default("60").doc("Max anonymous public-share upload requests per IP+share per window.", "60"),
+        SettingSpec::new(PUBLIC_UPLOAD_RATE_WINDOW_SECS, group::RATE_LIMITS).default("3600").doc("Window (seconds) for the anonymous public-share upload rate limit.", "3600"),
+        SettingSpec::new(PUBLIC_SHARE_SESSION_TTL_SECS, group::RATE_LIMITS).default("3600").doc("Lifetime (seconds) of the JWT minted when a viewer unlocks a password-gated public share.", "3600"),
 
         // ── Registration ──
         SettingSpec::new(REGISTRATION_MODE, group::REGISTRATION).default("open")

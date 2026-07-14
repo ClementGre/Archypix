@@ -79,11 +79,25 @@
   /pictures/{id}/creator`, resolved creator on detail+list, copy-carries-creator, tests) + frontend
   info-panel `CreatorField` (linkify / edit / reset, client-side sigil guard). See
   `doc/features/26_picture_creator.md`.
-- [ ] **Public shares** — link-gated *pull* shares served by the owner backend (live coverage, no
+- [x] **Public shares** — link-gated *pull* shares served by the owner backend (live coverage, no
   `IncomingShare`): unauthenticated view + anonymous contribution (`creator = #name`, dedup-rejected),
-  authenticated convert (save a copy / subscribe to a **derived** share / subscribe + share-back). One
-  `allow_originals` tier vs a view-only gallery; recipient-initiated `shares/public/claim` verb. Depends
-  on feature 26. See `doc/features/27_public_shares.md`.
+  authenticated convert (subscribe to a **derived** share via the recipient-initiated
+  `shares/public/claim` verb + save-a-copy). One `allow_originals` tier vs a view-only gallery
+  (thumbnails only, EXIF/GPS stripped from bytes **and** JSON). Backend (`public_shares` table +
+  `TokenType::PublicShare` + `/api/public/shares/*` view/contribute + `/api/authenticated/shares/public`
+  management/convert + the claim verb + tag-rename cascade + tests) and frontend (`/s/:domain/:user/:token`
+  public gallery reusing the lightbox/detail leaves, contributor upload, convert menu, and the owner's
+  "Public share links" manager). Depends on feature 26. See `doc/features/27_public_shares.md`.
+  **Review pass (2026-07):** fixed the cross-instance Subscribe 404 (`receive_public_claim` now resolves
+  the requester via `find_local_user_id`, not a bare owner-side username lookup, and only rejects a genuine
+  self-subscribe); the owner can no longer save-a-copy/subscribe from their own album (backend guard + the
+  frontend hides the actions). Frontend **factorized to reuse the app gallery**: the public page now shares
+  `PhotoCard` (aspect-ratio grid + app selection semantics), the `Lightbox`/`LightboxCarousel` (via a new
+  read-only `PictureSource` context), `SidePanel` (resizable/mobile details), the `TopBar` chrome, and a
+  factored `ThumbnailSizeSlider` footer; `PublicShareDialog` is now create-**or**-edit with an info popover,
+  friendlier visitor terms, and a tag-tree "New public share link…" entry. **Follow-up:** cross-instance
+  save-a-copy (§10); Convert + share-back UI; reuse the full `UploadDialog` and read-only `ExifInlineEditor`
+  on the public page; sort/filter on the public listing.
 - [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.

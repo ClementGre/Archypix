@@ -47,6 +47,11 @@ CREATE TYPE public.picture_exif_sync_status AS ENUM (
     'pending_job_creation'
 );
 
+CREATE TYPE public.public_share_status AS ENUM (
+    'active',
+    'revoked'
+    );
+
 CREATE TYPE public.safe_delete_mode AS ENUM (
     'singleBranch',
     'fullDelete'
@@ -249,7 +254,7 @@ $$;
 
 CREATE TABLE public.app_settings
 (
-    key   text  NOT NULL,
+    key text NOT NULL,
     value jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -317,9 +322,9 @@ CREATE TABLE public.incoming_shares
 
 CREATE TABLE public.invites
 (
-    code       character varying(255) NOT NULL,
-    max_uses   bigint,
-    uses       bigint DEFAULT 0       NOT NULL,
+    code     character varying(255) NOT NULL,
+    max_uses bigint,
+    uses     bigint DEFAULT 0       NOT NULL,
     expires_at timestamp with time zone,
     created_by character varying(255) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
@@ -340,30 +345,31 @@ CREATE TABLE public.jobs
     picture_id    uuid,
     claimed_by    text,
     claim_token uuid,
+    trace_context jsonb,
     created_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     started_at    timestamp without time zone,
-    completed_at  timestamp without time zone,
-    trace_context jsonb
+    completed_at  timestamp without time zone
 );
 
 CREATE TABLE public.outgoing_shares
 (
-    id                 uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id           uuid                                                                 NOT NULL,
+    id                           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    owner_id                     uuid                                                                 NOT NULL,
     tag_path public.ltree NOT NULL,
-    name               character varying(64)                                                NOT NULL,
-    message            text,
-    recipient_username character varying(255)                                               NOT NULL,
-    recipient_instance character varying(255)                                               NOT NULL,
-    allow_share_back   boolean                     DEFAULT true                             NOT NULL,
-    future             boolean                     DEFAULT true                             NOT NULL,
-    allow_exif_edit    boolean                     DEFAULT false                            NOT NULL,
-    shareback_of       uuid,
+    name                         character varying(64)                                                NOT NULL,
+    message                      text,
+    recipient_username           character varying(255)                                               NOT NULL,
+    recipient_instance           character varying(255)                                               NOT NULL,
+    allow_share_back             boolean                     DEFAULT true                             NOT NULL,
+    future                       boolean                     DEFAULT true                             NOT NULL,
+    allow_exif_edit              boolean                     DEFAULT false                            NOT NULL,
+    shareback_of                 uuid,
     status public.share_status DEFAULT 'pending'::public.share_status NOT NULL,
-    last_error_at      timestamp without time zone,
-    next_retry_at      timestamp without time zone,
-    created_at         timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at         timestamp without time zone
+    last_error_at                timestamp without time zone,
+    next_retry_at                timestamp without time zone,
+    created_at                   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at                   timestamp without time zone,
+    derived_from_public_share_id uuid
 );
 
 CREATE TABLE public.picture_versions
@@ -378,42 +384,62 @@ CREATE TABLE public.picture_versions
 
 CREATE TABLE public.pictures
 (
-    id                     uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    local_user_id          uuid                                                                 NOT NULL,
-    remote_picture_id      character varying(255),
-    owner_username         character varying(255),
+    id                uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    local_user_id     uuid                                                                 NOT NULL,
+    remote_picture_id character varying(255),
+    owner_username    character varying(255),
     owner_instance_domain character varying(255),
-    filename               character varying(1024),
-    mime_type              character varying(100),
-    file_size              bigint,
-    width                  integer,
-    height                 integer,
-    exif_data              jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    metadata               jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    deleted_at             timestamp without time zone,
-    captured_at            timestamp without time zone,
-    ingested_at            timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at             timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    blurhash               text,
-    gps_lat                double precision,
-    gps_lng                double precision,
-    gps_alt                integer,
-    orientation            smallint,
+    filename          character varying(1024),
+    mime_type         character varying(100),
+    file_size         bigint,
+    width             integer,
+    height            integer,
+    exif_data         jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    metadata          jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
+    deleted_at        timestamp without time zone,
+    captured_at       timestamp without time zone,
+    ingested_at       timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at        timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    blurhash          text,
+    gps_lat           double precision,
+    gps_lng           double precision,
+    gps_alt           integer,
+    orientation       smallint,
     thumbnails_generated_at timestamp without time zone,
-    file_hash              text,
+    file_hash         text,
     last_pipeline_run_at timestamp without time zone,
     exif_sync_status public.picture_exif_sync_status DEFAULT 'synced'::public.picture_exif_sync_status NOT NULL,
-    owner_deleted_at       timestamp without time zone,
-    owner_purge_at         timestamp without time zone,
-    remote_exif_data       jsonb,
+    owner_deleted_at  timestamp without time zone,
+    owner_purge_at    timestamp without time zone,
+    remote_exif_data  jsonb,
     local_exif_overrides jsonb,
     deleted_reason public.picture_deleted_reason,
-    content_hash           text,
+    content_hash      text,
     copy_source_owner_username character varying(255),
     copy_source_owner_instance character varying(255),
     copy_source_picture_id character varying(255),
-    creator                text,
-    creator_override       text
+    creator           text,
+    creator_override  text
+);
+
+CREATE TABLE public.public_shares
+(
+    id                   uuid                        DEFAULT public.uuid_generate_v4()            NOT NULL,
+    owner_id             uuid                                                                     NOT NULL,
+    tag_path             public.ltree                                                             NOT NULL,
+    name                 character varying(64)                                                    NOT NULL,
+    message              text,
+    token                text                                                                     NOT NULL,
+    password_hash        text,
+    expires_at           timestamp without time zone,
+    allow_originals      boolean                     DEFAULT false                                NOT NULL,
+    allow_upload         boolean                     DEFAULT false                                NOT NULL,
+    allow_share_back     boolean                     DEFAULT false                                NOT NULL,
+    conv_allow_exif_edit boolean                     DEFAULT false                                NOT NULL,
+    conv_future          boolean                     DEFAULT true                                 NOT NULL,
+    status               public.public_share_status  DEFAULT 'active'::public.public_share_status NOT NULL,
+    created_at           timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text)     NOT NULL,
+    revoked_at           timestamp without time zone
 );
 
 CREATE TABLE public.refresh_tokens
@@ -537,6 +563,12 @@ ALTER TABLE ONLY public.picture_versions
 ALTER TABLE ONLY public.pictures
     ADD CONSTRAINT pictures_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.public_shares
+    ADD CONSTRAINT public_shares_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.public_shares
+    ADD CONSTRAINT public_shares_token_key UNIQUE (token);
+
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id);
 
@@ -647,6 +679,10 @@ CREATE INDEX idx_pictures_remote_owner ON public.pictures USING btree (owner_use
 CREATE INDEX idx_pictures_user_file_size ON public.pictures USING btree (local_user_id, file_size);
 
 CREATE INDEX idx_pictures_user_filename ON public.pictures USING btree (local_user_id, filename);
+
+CREATE INDEX idx_public_shares_owner ON public.public_shares USING btree (owner_id);
+
+CREATE INDEX idx_public_shares_tag ON public.public_shares USING gist (tag_path);
 
 CREATE INDEX idx_refresh_tokens_expires ON public.refresh_tokens USING btree (expires_at);
 
@@ -772,6 +808,9 @@ ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures (id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.outgoing_shares
+    ADD CONSTRAINT outgoing_shares_derived_from_public_share_id_fkey FOREIGN KEY (derived_from_public_share_id) REFERENCES public.public_shares (id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.outgoing_shares
     ADD CONSTRAINT outgoing_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.picture_versions
@@ -779,6 +818,9 @@ ALTER TABLE ONLY public.picture_versions
 
 ALTER TABLE ONLY public.pictures
     ADD CONSTRAINT pictures_local_user_id_fkey FOREIGN KEY (local_user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.public_shares
+    ADD CONSTRAINT public_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;

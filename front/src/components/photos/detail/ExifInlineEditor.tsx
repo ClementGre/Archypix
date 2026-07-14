@@ -13,7 +13,7 @@ import type {PictureDetail} from '@/lib/types'
 import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
 
 /** A read-only metadata row (label + value), matching the editable rows' layout. */
-function ReadOnlyRow({label, value}: { label: string; value: string }) {
+export function ReadOnlyRow({label, value}: { label: string; value: string }) {
     return (
         <div className="flex min-h-[1.4rem] items-center gap-1">
             <div className="w-3 shrink-0"/>

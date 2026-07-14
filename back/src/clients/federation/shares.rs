@@ -1,8 +1,9 @@
 use super::FederationClient;
 use crate::clients::federation::models::{
     PictureEditRequest, PicturesAnnouncementRequest, PicturesUnannouncementRequest, PresignRequest,
-    PresignRequestItem, PresignResponse, ShareAcceptRequest, ShareAnnouncementRequest,
-    ShareAnnouncementResponse, ShareRejectRequest, ShareRevokeRequest,
+    PresignRequestItem, PresignResponse, PublicShareClaimRequest, PublicShareClaimResponse,
+    ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse, ShareRejectRequest,
+    ShareRevokeRequest,
 };
 use archypix_common::error::AppError;
 use std::collections::HashMap;
@@ -310,6 +311,58 @@ impl FederationClient {
             .error_for_status()
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         Ok(())
+    }
+
+    /// Claim a public share on the owner's backend, converting it into a real derived `OutgoingShare`
+    /// (feature 27 §8). The **visitor** (`requester_username`) holds the federation token toward the
+    /// owner. Returns the derived share's metadata; a `404` means an unknown/revoked/expired token or
+    /// `allow_originals = false`.
+    #[tracing::instrument(
+        skip(self, token),
+        fields(otel.kind = "client", requester_username = %requester_username, owner_username = %owner_username, owner_global_domain = %owner_global_domain
+        )
+    )]
+    pub async fn claim_public_share(
+        &self,
+        requester_username: &str,
+        requester_instance: &str,
+        owner_username: &str,
+        owner_global_domain: &str,
+        token: &str,
+    ) -> Result<PublicShareClaimResponse, AppError> {
+        let fed_token = self
+            .get_or_wait_federation_token(requester_username, owner_username, owner_global_domain)
+            .await?;
+        let backend_base_url = self
+            .resolve_backend_url(owner_username, owner_global_domain)
+            .await?;
+        debug!(backend_base_url, "federation: claiming public share");
+        let url = format!("{}/api/federation/shares/public/claim", backend_base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&fed_token)
+            .headers(self.trace_headers_for(owner_global_domain))
+            .json(&PublicShareClaimRequest {
+                token: token.to_string(),
+                requester_username: requester_username.to_string(),
+                requester_instance: requester_instance.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "federation: public-share claim delivery failed");
+                AppError::InternalServerError(e.to_string())
+            })?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::NotFound);
+        }
+        let resp = resp
+            .error_for_status()
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        resp.json()
+            .await
+            .map_err(|e| AppError::InternalServerError(e.to_string()))
     }
 
     /// Unannounce a batch of pictures from the recipient's backend (pictures left a share's

@@ -14,11 +14,12 @@ export function useSettings() {
  * The caller's storage quota/usage (feature 22). No polling — refreshed by explicit invalidation
  * (see {@link invalidateStorageDebounced}) after trash/restore/upload.
  */
-export function useStorage() {
+export function useStorage(enabled = true) {
     return useQuery({
         queryKey: queryKeys.storage(),
         queryFn: getStorage,
         staleTime: 30_000,
+        enabled,
     })
 }
 

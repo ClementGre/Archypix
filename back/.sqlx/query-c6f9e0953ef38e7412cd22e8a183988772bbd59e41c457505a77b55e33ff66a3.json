@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id\n               FROM pictures p\n               WHERE p.local_user_id = $1\n                 AND p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NULL\n                 AND p.creator LIKE '#%'\n                 AND ($3::text IS NULL OR p.creator = $3)\n                 AND EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id\n                                                    AND t.tag_path <@ $2::text::ltree)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c6f9e0953ef38e7412cd22e8a183988772bbd59e41c457505a77b55e33ff66a3"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE public_shares\n               SET status = 'revoked'::public_share_status,\n                   revoked_at = COALESCE(revoked_at, now() AT TIME ZONE 'utc')\n               WHERE id = $1 AND owner_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ccc965169f3a925ba000899aa93de7ccc08c780380a15b0e307ca89086229a5a"
+}

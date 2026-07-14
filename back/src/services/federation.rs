@@ -14,7 +14,7 @@ use crate::repository::user::UserRepository;
 use crate::services::pictures::PictureVariant;
 use crate::services::shares::{register_received_pictures, unregister_announced_pictures};
 use crate::services::users::find_local_user_id;
-use archypix_common::error::AppError;
+use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -431,6 +431,85 @@ pub async fn receive_picture_edit_request(
     )
     .await?;
     Ok(())
+}
+
+/// Owner-side handler for a visitor's public-share Subscribe (feature 27 §8/§11). Validates the token
+/// is `active` + `allow_originals`, mints a derived `OutgoingShare` (owner → visitor) in
+/// `pending_first_announcement`, stamps its `derived_from_public_share_id`, and wakes the owner's
+/// pipeline (which announces coverage). Returns the derived share's metadata (incl. its id, so the
+/// visitor can create the matching `IncomingShare`). Used by both the cross-instance federation
+/// handler and the same-backend short-circuit in `services::shares::public::subscribe`.
+#[tracing::instrument(skip(cache, db, pipeline_waker, settings), fields(requester = %requester_username))]
+pub async fn receive_public_claim(
+    cache: &dyn Cache,
+    db: &PgPool,
+    pipeline_waker: &RoutineHandle<Uuid>,
+    settings: &Settings,
+    token: &str,
+    requester_username: &str,
+    requester_instance: &str,
+) -> Result<crate::clients::federation::models::PublicShareClaimResponse, AppError> {
+    use crate::repository::public_share::PublicShareRepository;
+
+    let now = chrono::Utc::now().naive_utc();
+    let share = PublicShareRepository::find_by_token(db, token)
+        .await?
+        .filter(|s| s.is_accessible(now) && s.allow_originals)
+        // A 404 hides an unknown token from a revoked/view-only one (no oracle).
+        .ok_or(AppError::NotFound)?;
+
+    // Loop guard: a user cannot subscribe to their own album. A cross-instance visitor has no row on
+    // this (owner) backend, so resolve the *federated* identity — never a bare username lookup, which
+    // would 404 a legitimate remote visitor (they simply aren't local here).
+    if find_local_user_id(cache, db, settings, requester_username, requester_instance).await?
+        == Some(share.owner_id)
+    {
+        return Err(AppError::BadRequest(
+            "cannot convert your own public share to a private share".to_string(),
+        ));
+    }
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let outgoing = OutgoingShareRepository::create(
+        &mut *tx,
+        share.owner_id,
+        &share.tag_path,
+        &share.name,
+        share.message.as_deref(),
+        requester_username,
+        requester_instance,
+        share.allow_share_back,
+        share.conv_allow_exif_edit,
+        share.conv_future,
+        None,
+    )
+    .await?;
+    OutgoingShareRepository::set_derived_from_public_share(&mut *tx, outgoing.id, share.id).await?;
+    OutgoingShareRepository::set_status(
+        &mut *tx,
+        outgoing.id,
+        ShareStatus::PendingFirstAnnouncement,
+    )
+    .await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+
+    // The owner's pipeline announces the current coverage and flips the share to active.
+    pipeline_waker.trigger(share.owner_id);
+
+    Ok(
+        crate::clients::federation::models::PublicShareClaimResponse {
+            outgoing_share_id: outgoing.id,
+            name: share.name,
+            message: share.message,
+            tag_path: share.tag_path,
+            allow_share_back: share.allow_share_back,
+            allow_exif_edit: share.conv_allow_exif_edit,
+            future: share.conv_future,
+        },
+    )
 }
 
 /// Resolve per-picture tokens to owned pictures and presign each. The token *is* the

@@ -339,6 +339,58 @@ impl OutgoingShareRepository {
         .await
         .map_err(map_sqlx_error)
     }
+
+    /// Record that an outgoing share was minted from a public share (feature 27 §8), for the
+    /// revoke-time cascade prompt. Kept as a setter (not a `create` arg) so the many existing
+    /// `create` call sites stay untouched.
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id, public_share_id = %public_share_id))]
+    pub async fn set_derived_from_public_share<'e, E>(
+        ex: E,
+        share_id: Uuid,
+        public_share_id: Uuid,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"UPDATE outgoing_shares SET derived_from_public_share_id = $2 WHERE id = $1"#,
+            share_id,
+            public_share_id,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// The non-revoked outgoing shares derived from a public share (feature 27 §9) — the targets of the
+    /// revoke-time cascade prompt.
+    #[tracing::instrument(skip(ex), fields(public_share_id = %public_share_id))]
+    pub async fn find_derived_by_public_share<'e, E>(
+        ex: E,
+        public_share_id: Uuid,
+    ) -> Result<Vec<OutgoingShare>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_as!(
+            OutgoingShare,
+            r#"SELECT id, owner_id, tag_path::text as "tag_path!",
+                      name, message,
+                      recipient_username, recipient_instance,
+                      allow_share_back, allow_exif_edit, future, shareback_of,
+                      status as "status: ShareStatus",
+                      last_error_at, next_retry_at,
+                      created_at, revoked_at
+               FROM outgoing_shares
+               WHERE derived_from_public_share_id = $1
+                 AND status NOT IN ('revoked'::share_status, 'tombstoned'::share_status)"#,
+            public_share_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
 }
 
 pub struct IncomingShareRepository;

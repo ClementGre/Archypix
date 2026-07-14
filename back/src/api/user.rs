@@ -3,6 +3,8 @@ mod hierarchies;
 pub mod invites;
 mod jobs;
 mod pictures;
+mod public_shares;
+mod public_view;
 mod settings;
 mod shares;
 mod tagging_services;
@@ -27,6 +29,24 @@ pub fn public_routes() -> Router<AppState> {
         .route("/users/{username}", get(users::get_public))
         .route("/invites/{code}", get(invites::preview_invite))
         .route("/registration-info", get(invites::registration_info))
+        // Public shares (feature 27): token-gated view + anonymous contribution.
+        .route("/shares/{token}", get(public_view::meta))
+        .route("/shares/{token}/unlock", post(public_view::unlock))
+        .route("/shares/{token}/pictures", get(public_view::pictures))
+        .route(
+            "/shares/{token}/pictures/{pid}",
+            get(public_view::picture_detail),
+        )
+        .route(
+            "/shares/{token}/pictures/{pid}/url",
+            get(public_view::picture_url),
+        )
+        .route("/shares/{token}/aggregate", post(public_view::aggregate))
+        .route("/shares/{token}/uploads", post(public_view::uploads))
+        .route(
+            "/shares/{token}/uploads/{pid}/complete",
+            post(public_view::complete_upload),
+        )
 }
 
 pub fn authenticated_routes() -> Router<AppState> {
@@ -86,6 +106,19 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route(
             "/shares/incoming/{id}/reject",
             post(shares::reject_incoming),
+        )
+        // Public shares (feature 27): owner management + logged-in visitor Convert.
+        .route(
+            "/shares/public",
+            post(public_shares::create).get(public_shares::list),
+        )
+        .route("/shares/public/save-copy", post(public_shares::save_copy))
+        .route("/shares/public/subscribe", post(public_shares::subscribe))
+        .route("/shares/public/{id}", patch(public_shares::update))
+        .route("/shares/public/{id}/revoke", post(public_shares::revoke))
+        .route(
+            "/shares/public/{id}/contributions/trash",
+            post(public_shares::trash_contributions),
         )
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/pictures/{id}/jobs", get(jobs::list_picture_jobs))

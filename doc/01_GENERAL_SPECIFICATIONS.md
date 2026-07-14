@@ -377,6 +377,20 @@ Recipient backend on revocation: removes all `/SharedToMe/alice@instance.com/...
 `revoked`, invalidates Redis presign-token cache, propagates revocation downstream to transitive recipients. Bob's own pictures and the tag itself are
 unaffected; the broken
 `SharedTagMappingService` mapping is flagged in the UI.
+
+### 6.8 Public shares (link-gated pull shares)
+
+Every share above is a **push** share to a *named recipient backend*. A **public share** is the first
+**pull** share: a capability link (`https://<frontend>/s/<global_domain>/<username>/<token>`) grants
+unauthenticated, token-gated access to the pictures under a tag, served entirely by the owner's backend.
+There is **no recipient backend and no `IncomingShare`** — coverage is computed **live at request time**
+(picture tagged under the shared tag, owned by the owner, not deleted), so revocation is instant. A single
+`allow_originals` toggle gates download / save-a-copy / convert; off ⇒ a **view-only gallery** (thumbnails
+only, EXIF/GPS stripped). An anonymous visitor may **contribute** (when enabled): the upload becomes a
+picture *owned by the owner*, tagged into the album, credited `#name` (feature 26), and rejected on a
+byte-dedup hit. An authenticated visitor may **convert** — save a copy, or **subscribe** (a
+recipient-initiated *derived* `OutgoingShare` that re-enters the normal push pipeline). Full mechanism:
+`doc/features/27_public_shares.md`.
 --- 
 
 ## 7. Important Edge Cases

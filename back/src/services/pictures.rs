@@ -598,6 +598,79 @@ pub async fn copy_picture(
     if source.local_user_id != user_id {
         return Err(AppError::NotFound);
     }
+    let global_domain = settings.get(keys::GLOBAL_DOMAIN);
+    copy_source_into_library(
+        db,
+        cache,
+        storage,
+        settings,
+        federation,
+        waker,
+        user_id,
+        &source,
+        caller_username,
+        &global_domain,
+    )
+    .await
+}
+
+/// Copy a picture the caller **holds via a public-share coverage grant** (feature 27 §8, "save a
+/// copy") into their library. The source is the public-share owner's local row (same-backend only —
+/// the coverage check ran against the owner on this backend). Provenance + creator carry the origin,
+/// not the copier. Cross-instance save-a-copy is a follow-up (§10, the deepest escalation).
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, waker, source), fields(dest_user_id = %dest_user_id, source_id = %source.id))]
+pub async fn copy_covered_picture(
+    db: &PgPool,
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    settings: &Settings,
+    federation: &FederationClient,
+    waker: &RoutineHandle<Uuid>,
+    dest_user_id: Uuid,
+    source: &Picture,
+    source_owner_username: &str,
+    source_owner_domain: &str,
+) -> Result<Picture, AppError> {
+    copy_source_into_library(
+        db,
+        cache,
+        storage,
+        settings,
+        federation,
+        waker,
+        dest_user_id,
+        source,
+        source_owner_username,
+        source_owner_domain,
+    )
+    .await
+}
+
+/// Shared physical-copy core (feature 11 §3 + feature 27 §8): quota-gate, copy the source bytes into
+/// `dest_user_id`'s library (S3 copy for a local source, presign+fetch for a cross-instance owner),
+/// root-resolve `copy_source_*` provenance, carry the source's creator (attribution travels), and
+/// enqueue `gen_thumbnail`. `source_owner_username`/`source_owner_domain` identify who owns `source`
+/// locally (the caller for a self-copy, the public-share owner for a coverage copy) — used only for an
+/// **owned** source's provenance/creator materialisation.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(db, cache, storage, settings, federation, waker, source), fields(dest_user_id = %dest_user_id, source_id = %source.id))]
+async fn copy_source_into_library(
+    db: &PgPool,
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    settings: &Settings,
+    federation: &FederationClient,
+    waker: &RoutineHandle<Uuid>,
+    dest_user_id: Uuid,
+    source: &Picture,
+    source_owner_username: &str,
+    source_owner_domain: &str,
+) -> Result<Picture, AppError> {
+    let user_id = dest_user_id;
+    // Whether the source's local owner is the destination user (a self-copy) — decides whether an
+    // owned source's owner-default creator stays NULL or is materialised to the real owner.
+    let same_owner = source.local_user_id == dest_user_id;
 
     // Quota gate (feature 22 §6): a copy becomes a new owned picture — bill it upfront. `507` before
     // the S3 copy so no bytes are written when over quota.
@@ -610,12 +683,12 @@ pub async fn copy_picture(
     let new_id = Uuid::new_v4();
     let new_key = s3::picture_key(user_id, new_id);
 
-    // ── Copy the bytes into the caller's pictures object ──────────────────────
+    // ── Copy the bytes into the destination's pictures object ─────────────────
     if source.is_owned() {
         storage
             .copy_object(
                 &settings.get(keys::S3_BUCKET_PICTURES),
-                &s3::picture_key(user_id, source.id),
+                &s3::picture_key(source.local_user_id, source.id),
                 &settings.get(keys::S3_BUCKET_PICTURES),
                 &new_key,
             )
@@ -688,8 +761,8 @@ pub async fn copy_picture(
         )
     } else if source.is_owned() {
         (
-            Some(caller_username.to_string()),
-            Some(settings.get(keys::GLOBAL_DOMAIN).clone()),
+            Some(source_owner_username.to_string()),
+            Some(source_owner_domain.to_string()),
             Some(source.id.to_string()),
         )
     } else {
@@ -701,11 +774,16 @@ pub async fn copy_picture(
     };
 
     // ── Creator carries with the content (§6): the source's propagated value, never the copier ──
-    // Owned source with an unset creator stays owner-default (NULL ⇒ the copier, who now owns it);
-    // a received source's owner default is materialised so attribution survives the copy.
+    // Owned source with an unset creator: a *self-copy* stays owner-default (NULL ⇒ the copier, who
+    // now owns it); a *coverage copy* materialises the source owner's identity (attribution travels).
+    // A received source's owner default is always materialised.
     let copy_creator: Option<String> = match source.creator.as_deref() {
         Some(c) if !c.is_empty() => Some(c.to_string()),
-        _ if source.is_owned() => None,
+        _ if source.is_owned() && same_owner => None,
+        _ if source.is_owned() => Some(Picture::format_identity(
+            source_owner_username,
+            source_owner_domain,
+        )),
         _ => match (
             source.owner_username.as_deref(),
             source.owner_instance_domain.as_deref(),
@@ -1595,6 +1673,24 @@ pub async fn presign_picture_variant(
         return Err(AppError::NotFound);
     }
 
+    presign_variant_for_picture(db, cache, storage, settings, federation, &pic, variant).await
+}
+
+/// Presign one already-authorized picture at `variant` (owned → local S3 key; same-backend received →
+/// the sender's key; cross-instance received → the picture's token + a remote presign). The single
+/// owned/received branch shared by the authenticated `presign_picture_variant` (ownership-gated) and
+/// the public-share presign (coverage-gated) — the caller does the authorization, this does the S3
+/// work + cache. Returns `None` for a thumbnail variant that doesn't exist yet.
+#[tracing::instrument(skip(db, cache, storage, settings, federation, pic), fields(picture_id = %pic.id))]
+pub async fn presign_variant_for_picture(
+    db: &PgPool,
+    cache: &dyn Cache,
+    storage: &dyn Storage,
+    settings: &Settings,
+    federation: &FederationClient,
+    pic: &Picture,
+    variant: PictureVariant,
+) -> Result<Option<String>, AppError> {
     // No thumbnail to presign (pending, or a non-thumbnailable format) → `None` so the client shows
     // a file-type placeholder. The `original` always exists.
     if variant.is_thumbnail() && pic.thumbnails_generated_at.is_none() {

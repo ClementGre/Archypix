@@ -13,6 +13,7 @@
 
 pub mod delivery;
 pub mod lifecycle;
+pub mod public;
 pub mod registration;
 pub mod shareback;
 

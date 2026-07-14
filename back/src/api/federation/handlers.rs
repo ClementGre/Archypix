@@ -3,17 +3,17 @@ use crate::api::middleware::auth_federation::AuthFederation;
 use crate::clients::federation::models::{
     FederationAuthGrant, FederationAuthRequest, PictureEditRequest, PictureEditResponse,
     PicturesAnnouncementRequest, PicturesUnannouncementRequest, PresignRequest, PresignResponse,
-    PresignResultItem, ShareAcceptRequest, ShareAnnouncementRequest, ShareAnnouncementResponse,
-    ShareRejectRequest, ShareRevokeRequest,
+    PresignResultItem, PublicShareClaimRequest, PublicShareClaimResponse, ShareAcceptRequest,
+    ShareAnnouncementRequest, ShareAnnouncementResponse, ShareRejectRequest, ShareRevokeRequest,
 };
 use crate::infra::observability;
 use crate::infra::settings::keys;
 use crate::services::federation::{self as fed, PresignTokenItem};
 use crate::state::AppState;
 use archypix_common::error::AppError;
+use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::Json;
 use chrono::Utc;
 use tracing::debug;
 
@@ -293,6 +293,36 @@ pub async fn edit_picture_request(
     )
     .await?;
     Ok(Json(PictureEditResponse { accepted: true }))
+}
+
+/// `POST /api/federation/shares/public/claim` — owner-side handler for a visitor's Subscribe
+/// (feature 27 §8/§11). The proposing instance must match the authenticated federation peer; the
+/// owner mints a derived `OutgoingShare` and returns its metadata.
+#[tracing::instrument(skip(auth, state, payload, headers), fields(peer_user = %payload.requester_username, peer_domain = %auth.claims.sub))]
+pub async fn claim_public_share(
+    auth: AuthFederation,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<PublicShareClaimRequest>,
+) -> Result<Json<PublicShareClaimResponse>, AppError> {
+    observability::maybe_set_remote_parent(&headers, &auth.claims.sub, &state.settings);
+    // Bind the proposing identity to the authenticated peer: a peer may only claim as itself.
+    if payload.requester_instance != auth.claims.sub {
+        return Err(AppError::Unauthorized(
+            "Requester instance does not match the authenticated instance".to_string(),
+        ));
+    }
+    let meta = fed::receive_public_claim(
+        state.cache.as_ref(),
+        &state.db,
+        &state.routines.pipeline,
+        &state.settings,
+        &payload.token,
+        &payload.requester_username,
+        &payload.requester_instance,
+    )
+    .await?;
+    Ok(Json(meta))
 }
 
 #[tracing::instrument(skip(state, payload))]

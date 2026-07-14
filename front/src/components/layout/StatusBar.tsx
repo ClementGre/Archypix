@@ -1,11 +1,11 @@
 import {useLocation, useNavigate} from 'react-router-dom'
-import {HardDrive, Images, LayoutGrid, Wand2} from 'lucide-react'
+import {HardDrive, Images, Wand2} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionCount} from '@/hooks/useAggregate'
 import {useTaggingServices} from '@/hooks/useTaggingServices'
 import {useStorage} from '@/hooks/useSettings'
 import {StorageBar} from '@/components/StorageBar'
-import {ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, useUIStore} from '@/stores/ui'
+import {ThumbnailSizeSlider} from '@/components/photos/ThumbnailSizeSlider'
 import {formatBytes, TagPath} from '@/lib/utils'
 
 /** Thin footer with user/storage stats, the current view, selection, and the thumbnail-size slider. */
@@ -16,8 +16,6 @@ export function StatusBar() {
 
     const {params} = useGalleryParams()
     const {count: selectedCount} = useSelectionCount()
-    const rowHeight = useUIStore((s) => s.rowHeight)
-    const setRowHeight = useUIStore((s) => s.setRowHeight)
     const {data: services} = useTaggingServices()
     const {data: storage} = useStorage()
 
@@ -73,21 +71,7 @@ export function StatusBar() {
                 {isGallery && selectedCount > 0 && (
                     <span className="font-medium text-foreground tabular-nums">{selectedCount} selected</span>
                 )}
-                {isGallery && (
-                    <label className="flex items-center gap-1.5" title="Thumbnail size">
-                        <LayoutGrid className="h-3 w-3"/>
-                        <input
-                            type="range"
-                            min={ROW_HEIGHT_MIN}
-                            max={ROW_HEIGHT_MAX}
-                            step={10}
-                            value={rowHeight}
-                            onChange={(e) => setRowHeight(Number(e.target.value))}
-                            className="h-1 w-30 cursor-pointer accent-primary"
-                            aria-label="Thumbnail size"
-                        />
-                    </label>
-                )}
+                {isGallery && <ThumbnailSizeSlider/>}
             </div>
         </footer>
     )

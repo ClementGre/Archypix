@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id\n               FROM pictures p\n               WHERE p.id = ANY($1)\n                 AND p.local_user_id = $2\n                 AND p.deleted_at IS NULL\n                 AND EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id\n                                                    AND t.tag_path <@ $3::text::ltree)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d6ce2b68c5d3abdd96eb361c0ade419bfff0bebb1de2287e6ccaac24f42e1623"
+}

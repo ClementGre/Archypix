@@ -21,10 +21,9 @@ import {
     X,
 } from 'lucide-react'
 import type {PictureDetail, PictureListItem, PictureVariant} from '@/lib/types'
-import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
-import {queryKeys} from '@/lib/constants'
 import {cn, formatBytes, isAudioMime, isPlayableMedia} from '@/lib/utils'
+import {usePictureSource} from './pictureSource'
 import {MediaPlayer} from './MediaPlayer'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useExifDraft} from '@/hooks/useExifDraft'
@@ -190,12 +189,14 @@ function LightboxImage({item, url, variant, loading, showRotate}: {
     loading: boolean
     showRotate: boolean
 }) {
+    const source = usePictureSource()
     const {data: detail} = useQuery({
-        queryKey: queryKeys.picture(item.id),
-        queryFn: () => getPicture(item.id),
+        queryKey: source.detailKey(item.id),
+        queryFn: () => source.getDetail(item.id),
     })
     const mime = detail?.mime_type
-    const media = isPlayableMedia(mime)
+    // Media playback needs the original blob, so it is only offered when originals are downloadable.
+    const media = isPlayableMedia(mime) && source.canDownload
 
     // A lower-res variant already loaded by the browser (from the grid/carousel), shown behind the
     // large/original while it downloads so the viewer never flashes empty.
@@ -205,8 +206,8 @@ function LightboxImage({item, url, variant, loading, showRotate}: {
     // Video/audio: play the original inline (autoplay). Its presigned URL is fetched separately —
     // the `large` thumbnail variant (`url` above) is null for a non-thumbnailable media file.
     const {data: mediaUrl} = useQuery({
-        queryKey: ['pictures', 'url', item.id, 'original'],
-        queryFn: () => getPictureUrl(item.id, 'original'),
+        queryKey: source.urlKey(item.id, 'original'),
+        queryFn: () => source.presign(item.id, 'original'),
         enabled: media,
         staleTime: 10 * 60 * 1000,
     })
@@ -256,9 +257,10 @@ function LightboxImage({item, url, variant, loading, showRotate}: {
             </div>
         )
     }
-    // Once detail is loaded, render with rotate controls. Otherwise (URL still resolving, or detail
-    // not loaded yet) render the image box with the blurhash / reused-thumbnail placeholder.
-    if (detail && url) {
+    // Once detail is loaded, render with rotate controls (owned/editable only). Otherwise (URL still
+    // resolving, detail not loaded, or a read-only public view) render the plain image box with the
+    // blurhash / reused-thumbnail placeholder.
+    if (detail && url && !source.readOnly) {
         return <LightboxImageWithDraft picture={detail} url={url} variant={variant} blurhash={item.blurhash} placeholderSrc={placeholderSrc}
                                        showRotate={showRotate}/>
     }
@@ -311,6 +313,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     /** Fetch the next grid page — called as the viewer nears the end of the loaded items. */
     loadMore?: () => void
 }) {
+    const source = usePictureSource()
     const [sp, setSp] = useSearchParams()
     const viewId = sp.get('view')
     const index = viewId ? items.findIndex((i) => i.id === viewId) : -1
@@ -384,11 +387,14 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     const close = useCallback(() => {
         if (document.fullscreenElement) void document.exitFullscreen()
         if (viewId) {
-            select(viewId)
-            if (isMobile) openMobileDrawer('right')
+            if (source.onCloseFocus) source.onCloseFocus(viewId)
+            else {
+                select(viewId)
+                if (isMobile) openMobileDrawer('right')
+            }
         }
         setView(null)
-    }, [viewId, select, isMobile, openMobileDrawer, setView])
+    }, [viewId, source, select, isMobile, openMobileDrawer, setView])
     const goPrev = useCallback(() => {
         if (index > 0) setView(items[index - 1].id)
     }, [index, items, setView])
@@ -425,14 +431,14 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
             else if (e.key === 'ArrowRight') goNext()
                 // Delete / ⌘+Backspace trashes the picture currently in view, no confirmation —
             // a deliberate keyboard shortcut doesn't need the mouse-click confirm gate.
-            else if (!current.deleted_at && (e.key === 'Delete' || (e.metaKey && e.key === 'Backspace'))) {
+            else if (!source.readOnly && !current.deleted_at && (e.key === 'Delete' || (e.metaKey && e.key === 'Backspace'))) {
                 e.preventDefault()
                 trashAndAdvance()
             }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [open, current, close, goPrev, goNext, trashAndAdvance])
+    }, [open, current, close, goPrev, goNext, trashAndAdvance, source.readOnly])
 
     // Page in more items as the viewer approaches the end of what the grid has loaded.
     useEffect(() => {
@@ -441,18 +447,19 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
 
     // The main image variant follows the original-quality toggle: `original` for the full blob,
     // otherwise the `large` thumbnail. `urlData.url` is null for non-thumbnailable formats.
-    const variant: PictureVariant = originalQuality ? 'original' : 'large'
+    // Read-only shares without originals must never request the `original` variant (403); cap at `large`.
+    const variant: PictureVariant = originalQuality && source.canDownload ? 'original' : 'large'
     const {data: urlData} = useQuery({
-        queryKey: ['pictures', 'url', current?.id, variant],
-        queryFn: () => getPictureUrl(current!.id, variant),
+        queryKey: source.urlKey(current?.id ?? '', variant),
+        queryFn: () => source.presign(current!.id, variant),
         enabled: !!current,
         staleTime: 10 * 60 * 1000,
     })
 
     // File size lives on the detail (not the list item); reuse the cached detail query.
     const {data: detail} = useQuery({
-        queryKey: queryKeys.picture(current?.id ?? ''),
-        queryFn: () => getPicture(current!.id),
+        queryKey: source.detailKey(current?.id ?? ''),
+        queryFn: () => source.getDetail(current!.id),
         enabled: !!current,
     })
 
@@ -461,7 +468,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
         if (!current) return
         setDownloading(true)
         try {
-            await downloadOriginal(current.id, current.filename)
+            await source.download(current.id, current.filename)
         } catch (e) {
             toast.error('Could not download', {description: apiErrorMessage(e)})
         } finally {
@@ -511,10 +518,12 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                 </div>
 
                 {/* View controls: original quality, carousel, top-bar pin, fullscreen. */}
-                <ToggleButton active={originalQuality} onClick={toggleOriginalQuality}
-                              title={originalQuality ? 'Original quality: on' : 'Original quality: off'}>
-                    <Sparkles className="h-4 w-4"/>
-                </ToggleButton>
+                {source.canDownload && (
+                    <ToggleButton active={originalQuality} onClick={toggleOriginalQuality}
+                                  title={originalQuality ? 'Original quality: on' : 'Original quality: off'}>
+                        <Sparkles className="h-4 w-4"/>
+                    </ToggleButton>
+                )}
                 <ToggleButton active={carVisible} onClick={toggleCarousel} title={carVisible ? 'Hide carousel' : 'Show carousel'}>
                     <Images className="h-4 w-4"/>
                 </ToggleButton>
@@ -525,19 +534,21 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                     {fullscreen ? <Minimize2 className="h-4 w-4"/> : <Maximize2 className="h-4 w-4"/>}
                 </ToggleButton>
 
-                <div className="mx-1 h-5 w-px bg-white/15"/>
+                {(source.canDownload || !source.readOnly) && <div className="mx-1 h-5 w-px bg-white/15"/>}
 
-                <button
-                    onClick={download}
-                    disabled={downloading}
-                    aria-label="Download original"
-                    title="Download original"
-                    className={ICON_BTN}
-                >
-                    {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Download className="h-4 w-4"/>}
-                </button>
+                {source.canDownload && (
+                    <button
+                        onClick={download}
+                        disabled={downloading}
+                        aria-label="Download original"
+                        title="Download original"
+                        className={ICON_BTN}
+                    >
+                        {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Download className="h-4 w-4"/>}
+                    </button>
+                )}
                 {/* Copy ("rescue") a received picture into your own library (feature 11). */}
-                {!current.owned && (
+                {!source.readOnly && !current.owned && (
                     <button
                         onClick={() => copy.mutate(current.id)}
                         disabled={copy.isPending}
@@ -548,7 +559,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                         {copy.isPending ? <Loader2 className="h-4 w-4 animate-spin"/> : <Copy className="h-4 w-4"/>}
                     </button>
                 )}
-                {trashed ? (
+                {!source.readOnly && (trashed ? (
                     <button
                         onClick={() => restore.mutate(current.id)}
                         disabled={restore.isPending}
@@ -582,7 +593,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                         destructive
                         onConfirm={trashAndAdvance}
                     />
-                )}
+                ))}
                 <button onClick={close} aria-label="Close" className={ICON_BTN}>
                     <X className="h-4 w-4"/>
                 </button>

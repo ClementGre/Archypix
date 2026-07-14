@@ -108,6 +108,37 @@ function ShareRow({
               <span className="text-muted-foreground">:{share.sender_instance}</span>
           </span>
                 <div className="flex shrink-0 items-center gap-1">
+                    {rejectable && (
+                        <ConfirmDialog
+                            title="Reject this share?"
+                            description="Pictures received through this share will be removed from your library."
+                            confirmLabel="Reject"
+                            destructive
+                            onConfirm={onReject}
+                            trigger={
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    title="Reject"
+                                    disabled={rejecting}
+                                >
+                                    <X className="h-3.5 w-3.5"/>
+                                </Button>
+                            }
+                        />
+                    )}
+                    {share.status === 'active' && (
+                        <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            title="View photos"
+                            onClick={onView}
+                        >
+                            <Images className="h-3.5 w-3.5"/>
+                        </Button>
+                    )}
                     <ShareInfoPopover
                         entries={[{
                             name: share.name,
@@ -135,37 +166,6 @@ function ShareRow({
                             ) : undefined
                         }
                     />
-                    {share.status === 'active' && (
-                        <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                            title="View photos"
-                            onClick={onView}
-                        >
-                            <Images className="h-3.5 w-3.5"/>
-                        </Button>
-                    )}
-                    {rejectable && (
-                        <ConfirmDialog
-                            title="Reject this share?"
-                            description="Pictures received through this share will be removed from your library."
-                            confirmLabel="Reject"
-                            destructive
-                            onConfirm={onReject}
-                            trigger={
-                                <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                                    title="Reject"
-                                    disabled={rejecting}
-                                >
-                                    <X className="h-3.5 w-3.5"/>
-                                </Button>
-                            }
-                        />
-                    )}
                 </div>
             </div>
 

@@ -10,8 +10,11 @@ import {useIsMobile} from '@/hooks/useMediaQuery'
  * Floating selection bar (§7): shown on desktop **and** mobile whenever more than one picture is
  * selected. Carries the resolved count, Select-all (adopts the view's query), Invert, Clear, and a
  * Batch-actions button that surfaces the right (multi-select) panel.
+ *
+ * `onSelectAll`/`onInvert` override the default query-mode behaviour — the token-gated public share
+ * page has no `PictureFilter`, so it passes explicit select-all/invert over the loaded ids instead.
  */
-export function SelectionActionBar() {
+export function SelectionActionBar({onSelectAll, onInvert}: { onSelectAll?: () => void; onInvert?: () => void } = {}) {
     const query = useSelectionStore((s) => s.query)
     const includeIds = useSelectionStore((s) => s.includeIds)
     const excludeIds = useSelectionStore((s) => s.excludeIds)
@@ -27,6 +30,9 @@ export function SelectionActionBar() {
 
     const {selectionFilter} = useGalleryParams()
     const {count, loading} = useSelectionCount()
+
+    const doSelectAll = onSelectAll ?? (() => selectAll(selectionFilter))
+    const doInvert = onInvert ?? (() => invert(selectionFilter))
 
     // Show only for a genuine multi-selection. A single explicit picture uses the detail panel.
     const isSingle = query === null && includeIds.length === 1 && excludeIds.length === 0
@@ -51,11 +57,11 @@ export function SelectionActionBar() {
                     {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : count}
                     <span className="hidden font-normal text-muted-foreground sm:inline">selected</span>
                 </span>
-                <Button variant="ghost" size="sm" className="gap-1.5 rounded-full" onClick={() => selectAll(selectionFilter)}>
+                <Button variant="ghost" size="sm" className="gap-1.5 rounded-full" onClick={doSelectAll}>
                     <CheckCheck className="h-4 w-4"/> Select all
                 </Button>
                 {
-                    <Button variant="ghost" size="sm" className="gap-1.5 rounded-full" onClick={() => invert(selectionFilter)}
+                    <Button variant="ghost" size="sm" className="gap-1.5 rounded-full" onClick={doInvert}
                             title="Invert selection">
                         <FlipHorizontal2 className="h-4 w-4"/>
                         <span className="hidden sm:inline">Invert</span>
