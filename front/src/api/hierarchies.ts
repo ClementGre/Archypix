@@ -6,6 +6,7 @@ import type {
     HierarchyTreeResponse,
     PictureListResponse,
     PictureVariant,
+    TrashFilter,
     WebdavResponse,
 } from '@/lib/types'
 
@@ -89,7 +90,7 @@ export interface BrowseParams {
     page_size: number
     sort?: string
     order?: string
-    include_deleted?: boolean
+    trash?: TrashFilter
     owned_only?: boolean
     shared_with_me?: boolean
     captured_after?: string

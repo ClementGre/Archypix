@@ -26,6 +26,20 @@ pub enum SortOrder {
     Desc,
 }
 
+/// Trash-membership state for a picture list. The trash is a **filter over the main view**, not a
+/// separate page: `Exclude` is the normal gallery, `Only` is the trash, `Include` shows both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrashFilter {
+    /// Live pictures only (`deleted_at IS NULL`) — the default gallery.
+    #[default]
+    Exclude,
+    /// Live + `manual`-trashed pictures.
+    Include,
+    /// `manual`-trashed pictures only — the trash view.
+    Only,
+}
+
 #[derive(Debug, Clone)]
 pub struct PictureListFilter {
     pub page: i64,
@@ -37,7 +51,7 @@ pub struct PictureListFilter {
     pub predicate: Option<TagPredicate>,
     pub owned_only: bool,
     pub shared_with_me: bool,
-    pub include_deleted: bool,
+    pub trash: TrashFilter,
     pub captured_after: Option<NaiveDateTime>,
     pub captured_before: Option<NaiveDateTime>,
 }
@@ -954,13 +968,19 @@ impl PictureRepository {
 
     fn push_filters(q: &mut sqlx::QueryBuilder<Postgres>, filter: &PictureListFilter) {
         // Content-dedup rows (`content_dedupe`/`boomerang`) are internal hidden state — they never
-        // surface in gallery or trash listings, only via the per-picture copies endpoint. The trash
-        // view (`include_deleted`) therefore shows live + `manual`-trashed only, so a rejected
-        // content group shows exactly one recoverable entry rather than a pile of duplicates.
-        if filter.include_deleted {
-            q.push(" AND (p.deleted_at IS NULL OR p.deleted_reason = 'manual'::picture_deleted_reason)");
-        } else {
-            q.push(" AND p.deleted_at IS NULL");
+        // surface in gallery or trash listings, only via the per-picture copies endpoint. Any state
+        // that admits trashed rows therefore shows `manual`-trashed only, so a rejected content group
+        // shows exactly one recoverable entry rather than a pile of duplicates.
+        match filter.trash {
+            TrashFilter::Exclude => {
+                q.push(" AND p.deleted_at IS NULL");
+            }
+            TrashFilter::Include => {
+                q.push(" AND (p.deleted_at IS NULL OR p.deleted_reason = 'manual'::picture_deleted_reason)");
+            }
+            TrashFilter::Only => {
+                q.push(" AND p.deleted_at IS NOT NULL AND p.deleted_reason = 'manual'::picture_deleted_reason");
+            }
         }
         if filter.owned_only {
             q.push(" AND p.remote_picture_id IS NULL");

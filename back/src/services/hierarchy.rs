@@ -18,7 +18,7 @@ use crate::infra::s3::Storage;
 use crate::infra::settings;
 use crate::infra::settings::keys;
 use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
-use crate::repository::picture::{PictureListFilter, PictureSortField, SortOrder};
+use crate::repository::picture::{PictureListFilter, PictureSortField, SortOrder, TrashFilter};
 use crate::repository::tag::TagRepository;
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
 use archypix_common::error::AppError;
@@ -562,7 +562,7 @@ fn predicate_filter(pred: &TagPredicate) -> PictureListFilter {
         predicate: Some(pred.clone()),
         owned_only: false,
         shared_with_me: false,
-        include_deleted: false,
+        trash: TrashFilter::Exclude,
         captured_after: None,
         captured_before: None,
     }
@@ -663,7 +663,7 @@ pub struct BrowseParams {
     pub page_size: u32,
     pub sort: PictureSortField,
     pub order: SortOrder,
-    pub include_deleted: bool,
+    pub trash: TrashFilter,
     pub owned_only: bool,
     pub shared_with_me: bool,
     pub captured_after: Option<DateTime<Utc>>,
@@ -715,7 +715,7 @@ pub async fn browse(
         predicate: Some(predicate),
         owned_only: params.owned_only,
         shared_with_me: params.shared_with_me,
-        include_deleted: params.include_deleted,
+        trash: params.trash,
         captured_after: params.captured_after.map(|dt| dt.naive_utc()),
         captured_before: params.captured_before.map(|dt| dt.naive_utc()),
     };
@@ -783,7 +783,7 @@ pub fn list_filter_for(pred: &TagPredicate, page_size: i64) -> PictureListFilter
         predicate: Some(pred.clone()),
         owned_only: false,
         shared_with_me: false,
-        include_deleted: false,
+        trash: TrashFilter::Exclude,
         captured_after: None,
         captured_before: None,
     }

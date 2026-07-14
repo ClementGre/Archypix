@@ -17,6 +17,7 @@ import type {
     PictureSelection,
     PictureVariant,
     SetCreatorResponse,
+    TrashFilter,
     TrashResponse,
 } from '@/lib/types'
 
@@ -66,7 +67,8 @@ export interface ListPicturesParams {
     untagged?: boolean
     owned_only?: boolean
     shared_with_me?: boolean
-    include_deleted?: boolean
+    /** Trash-membership state: `exclude` (default) | `include` | `only`. Omitted when `exclude`. */
+    trash?: TrashFilter
     captured_after?: string
     captured_before?: string
     thumbnail?: PictureVariant

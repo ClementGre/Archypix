@@ -14,7 +14,7 @@ import {InvitesManager} from '@/components/admin/InvitesManager'
 import {useAuthStore} from '@/stores/auth'
 import {apiErrorMessage} from '@/api/client'
 import {useSettings, useStorage, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
-import {useInvitations, useInvites, useInviteMutations, useRegistrationInfo} from '@/hooks/useInvites'
+import {useInvitations, useInviteMutations, useInvites, useRegistrationInfo} from '@/hooks/useInvites'
 import {cn, formatBytes} from '@/lib/utils'
 import type {VersioningMode} from '@/lib/types'
 
@@ -232,7 +232,7 @@ function StorageCard() {
                             Empty your trash to reclaim{' '}
                             <span className="font-medium text-foreground">{formatBytes(reclaimable_trash_bytes)}</span>
                         </span>
-                        <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => navigate('/trash')}>
+                        <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => navigate('/?trash=only')}>
                             <Trash2 className="h-3.5 w-3.5"/>Open trash
                         </Button>
                     </div>

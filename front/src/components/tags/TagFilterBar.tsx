@@ -81,7 +81,7 @@ export function TagFilterBar() {
     const clearAll = () => update({tag: null, include: [], exact: [], exclude: []})
 
     return (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
             <ListFilter className="mr-0.5 h-4 w-4 shrink-0 text-muted-foreground"/>
             {includes.map((p) => (
                 <Chip key={`inc:${p}`} path={p} kind="inc" switchTo="exa" onSwitch={() => toExact(p)} onRemove={() => remove(p)}/>

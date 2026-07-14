@@ -2,7 +2,6 @@ import {ArrowUpDown, Check, Filter} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {
     DropdownMenu,
-    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuLabel,
     DropdownMenuRadioGroup,
@@ -89,13 +88,6 @@ export function FilterControls() {
                             </DropdownMenuRadioItem>
                         ))}
                     </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator/>
-                    <DropdownMenuCheckboxItem
-                        checked={params.includeDeleted}
-                        onCheckedChange={(checked) => update({includeDeleted: checked})}
-                    >
-                        Include trashed
-                    </DropdownMenuCheckboxItem>
                     <DropdownMenuSeparator/>
                     {/* Capture-date range — same calendar widget as the query-rule date ranges. */}
                     <div className="px-2 py-1.5">

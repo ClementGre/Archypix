@@ -7,7 +7,7 @@ import {apiErrorMessage} from '@/api/client'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {TagPath} from '@/lib/utils'
 import {useAuthStore} from '@/stores/auth'
-import {usePublicShareMutations, usePublicShares} from '@/hooks/usePublicShares'
+import {usePublicShareMutations} from '@/hooks/usePublicShares'
 import {Button} from '@/components/ui/button'
 import {Switch} from '@/components/ui/switch'
 import {Section} from '@/components/photos/detail/Section'
@@ -15,8 +15,12 @@ import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/
 import {PublicShareDialog} from './PublicShareDialog'
 import {PublicShareInfoPopover} from './PublicShareInfoPopover'
 
-export function PublicLinksManager() {
-    const {data: shares, isPending} = usePublicShares()
+type PublicLinksManagerProps = {
+    shares?: PublicShareSummary[]
+    isPending: boolean
+}
+
+export function PublicLinksManager({shares, isPending}: PublicLinksManagerProps) {
     const active = (shares ?? []).filter((s) => s.status === 'active')
 
     return (

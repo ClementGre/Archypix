@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Drive the `dark:` variant off the in-app theme (`.light` class on <html>, see
+   stores/theme.ts), not the browser's `prefers-color-scheme`. Dark is the base
+   theme, so `dark:` applies whenever <html> is not `.light`. */
+@custom-variant dark (&:where(html:not(.light) *));
+
 @theme {
     /* ── Neutral palette: zinc ─────────────────────────────────────────────── */
     --color-background: var(--color-zinc-950);

@@ -471,3 +471,54 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
         "purge deletes the share_announcements tracking rows"
     );
 }
+
+/// The "better trash" three-state filter over the picture list: `Exclude` (default) hides trashed
+/// rows, `Include` shows live + trashed, `Only` is the trash view (trashed rows only). This replaces
+/// the frontend-side `deleted_at` filtering the old dedicated trash page did.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn trash_filter_three_states(db: PgPool) {
+    use archypix_back::repository::picture::{
+        PictureListFilter, PictureSortField, SortOrder, TrashFilter,
+    };
+    use std::collections::HashSet;
+
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let live = common::seed_picture(&db, user).await;
+    let trashed = common::seed_picture(&db, user).await;
+    PictureRepository::set_deleted(&db, user, trashed, true)
+        .await
+        .unwrap();
+
+    async fn list_ids(db: &PgPool, user: Uuid, trash: TrashFilter) -> HashSet<Uuid> {
+        let filter = PictureListFilter {
+            page: 1,
+            page_size: 50,
+            sort: PictureSortField::IngestedAt,
+            order: SortOrder::Desc,
+            predicate: None,
+            owned_only: false,
+            shared_with_me: false,
+            trash,
+            captured_after: None,
+            captured_before: None,
+        };
+        let (items, _) = PictureRepository::list(db, user, &filter).await.unwrap();
+        items.into_iter().map(|p| p.id).collect()
+    }
+
+    assert_eq!(
+        list_ids(&db, user, TrashFilter::Exclude).await,
+        HashSet::from([live]),
+        "exclude (default) shows live pictures only"
+    );
+    assert_eq!(
+        list_ids(&db, user, TrashFilter::Include).await,
+        HashSet::from([live, trashed]),
+        "include shows both live and trashed"
+    );
+    assert_eq!(
+        list_ids(&db, user, TrashFilter::Only).await,
+        HashSet::from([trashed]),
+        "only shows trashed pictures (the trash view)"
+    );
+}

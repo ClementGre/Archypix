@@ -26,6 +26,7 @@ use crate::infra::s3::Storage;
 use crate::infra::settings::keys;
 use crate::repository::picture::{
     PictureListFilter, PictureRepository, PictureSortField, ResolvedSelection, SortOrder,
+    TrashFilter,
 };
 use crate::repository::public_share::PublicShareRepository;
 use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository};
@@ -69,7 +70,7 @@ fn coverage_filter(
         }),
         owned_only: false,
         shared_with_me: false,
-        include_deleted: false,
+        trash: TrashFilter::Exclude,
         captured_after: None,
         captured_before: None,
     }

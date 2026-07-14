@@ -34,12 +34,16 @@ export function removePicturesFromLists(qc: QueryClient, ids: string[]): void {
     type Infinite = { pages: Page[]; pageParams: unknown[] }
     const isInfinite = (d: unknown): d is Infinite =>
         !!d && typeof d === 'object' && Array.isArray((d as { pages?: unknown }).pages)
-    // Only grid lists that DON'T include trashed items — in an "include trashed" view a just-trashed
-    // picture legitimately stays visible, so removing it there would flash it out then back on refetch.
-    const includesDeleted = (f: unknown) => !!f && typeof f === 'object' && !!(f as { includeDeleted?: boolean }).includeDeleted
+    // Only grid lists that DON'T show trashed items — in a view that shows the trash (`include` or
+    // `only`) a just-trashed picture legitimately stays visible, so removing it there would flash it
+    // out then back on refetch.
+    const showsTrashed = (f: unknown) => {
+        const t = !!f && typeof f === 'object' ? (f as { trash?: string }).trash : undefined
+        return t === 'include' || t === 'only'
+    }
     const predicate = ({queryKey: k}: { queryKey: readonly unknown[] }) => {
-        if (k[0] === 'pictures') return typeof k[1] === 'object' && k[1] !== null && !includesDeleted(k[1])
-        if (k[0] === 'hierarchies' && k[1] === 'browse') return !includesDeleted(k[4])
+        if (k[0] === 'pictures') return typeof k[1] === 'object' && k[1] !== null && !showsTrashed(k[1])
+        if (k[0] === 'hierarchies' && k[1] === 'browse') return !showsTrashed(k[4])
         return false
     }
     const update = (old: unknown) => {

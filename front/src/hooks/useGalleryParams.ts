@@ -1,6 +1,6 @@
 import {useCallback, useMemo} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import type {PictureFilter, PictureFilters, SortField, SortOrder} from '@/lib/types'
+import type {PictureFilter, PictureFilters, SortField, SortOrder, TrashFilter} from '@/lib/types'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
@@ -15,7 +15,8 @@ export interface GalleryParams {
     /** Exact / strict include tags (wire form), no descendants (`exa`). */
     exact: string[]
     scope: Scope
-    includeDeleted: boolean
+    /** Trash-membership state: `exclude` (default) | `include` | `only` (trash view). */
+    trash: TrashFilter
     sort: SortField
     order: SortOrder
     capturedAfter: string | null
@@ -38,7 +39,7 @@ export interface GalleryParamsPatch {
     exclude?: string[]
     exact?: string[]
     scope?: Scope
-    includeDeleted?: boolean
+    trash?: TrashFilter
     sort?: SortField
     order?: SortOrder
     capturedAfter?: string | null
@@ -74,7 +75,7 @@ export function useGalleryParams() {
             exclude: splitList(sp.get('exc')),
             exact: splitList(sp.get('exa')),
             scope: (sp.get('scope') as Scope) || 'all',
-            includeDeleted: sp.get('deleted') === '1',
+            trash: (sp.get('trash') as TrashFilter) || 'exclude',
             sort: (sp.get('sort') as SortField) || DEFAULT_SORT,
             order: (sp.get('order') as SortOrder) || DEFAULT_ORDER,
             capturedAfter: sp.get('after'),
@@ -102,7 +103,7 @@ export function useGalleryParams() {
                     if ('exclude' in patch) setOrDelete('exc', joinList(patch.exclude), false)
                     if ('exact' in patch) setOrDelete('exa', joinList(patch.exact), false)
                     if ('scope' in patch) setOrDelete('scope', patch.scope, patch.scope === 'all')
-                    if ('includeDeleted' in patch) setOrDelete('deleted', patch.includeDeleted ? '1' : '', false)
+                    if ('trash' in patch) setOrDelete('trash', patch.trash, patch.trash === 'exclude')
                     if ('sort' in patch) setOrDelete('sort', patch.sort, patch.sort === DEFAULT_SORT)
                     if ('order' in patch) setOrDelete('order', patch.order, patch.order === DEFAULT_ORDER)
                     if ('capturedAfter' in patch) setOrDelete('after', patch.capturedAfter, false)
@@ -128,7 +129,7 @@ export function useGalleryParams() {
                 exclude: [],
                 exact: [],
                 scope: 'all',
-                includeDeleted: false,
+                trash: 'exclude',
                 sort: DEFAULT_SORT,
                 order: DEFAULT_ORDER,
                 capturedAfter: null,
@@ -145,7 +146,7 @@ export function useGalleryParams() {
             exclude: params.exclude,
             exact: params.exact,
             scope: params.scope,
-            includeDeleted: params.includeDeleted,
+            trash: params.trash,
             sort: params.sort,
             order: params.order,
             capturedAfter: params.capturedAfter,
@@ -160,7 +161,7 @@ export function useGalleryParams() {
         params.exclude.length > 0 ||
         params.exact.length > 0 ||
         params.scope !== 'all' ||
-        params.includeDeleted ||
+        params.trash !== 'exclude' ||
         !!params.capturedAfter ||
         !!params.capturedBefore
 
@@ -170,7 +171,7 @@ export function useGalleryParams() {
         const scope = {
             owned_only: params.scope === 'owned' || undefined,
             shared_with_me: params.scope === 'shared' || undefined,
-            include_deleted: params.includeDeleted || undefined,
+            trash: params.trash !== 'exclude' ? params.trash : undefined,
             captured_after: params.capturedAfter ?? undefined,
             captured_before: params.capturedBefore ?? undefined,
         }

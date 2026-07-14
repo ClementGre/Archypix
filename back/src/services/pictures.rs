@@ -9,6 +9,7 @@ use crate::infra::settings::keys;
 use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
     PictureListFilter, PictureRepository, PictureSortField, ResolvedSelection, SortOrder,
+    TrashFilter,
 };
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
@@ -128,8 +129,9 @@ pub struct PictureListParams {
     pub owned_only: bool,
     #[serde(default)]
     pub shared_with_me: bool,
+    /// Trash-membership state: `exclude` (default) | `include` | `only` (trash view).
     #[serde(default)]
-    pub include_deleted: bool,
+    pub trash: TrashFilter,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
     pub thumbnail: Option<ThumbnailSize>,
@@ -1423,7 +1425,7 @@ pub async fn list_pictures(
         predicate,
         owned_only: params.owned_only,
         shared_with_me: params.shared_with_me,
-        include_deleted: params.include_deleted,
+        trash: params.trash,
         captured_after: params.captured_after.map(|dt| dt.naive_utc()),
         captured_before: params.captured_before.map(|dt| dt.naive_utc()),
     };

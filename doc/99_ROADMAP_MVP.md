@@ -98,6 +98,15 @@
   friendlier visitor terms, and a tag-tree "New public share link…" entry. **Follow-up:** cross-instance
   save-a-copy (§10); Convert + share-back UI; reuse the full `UploadDialog` and read-only `ExifInlineEditor`
   on the public page; sort/filter on the public listing.
+- [ ] **Picture creator better integration** — Add picture creator support in query tagging services and in batch view/editing.
+- [x] **Frontend fixes** — `dark:` tailwind variant redefined via `@custom-variant` (`index.css`) to key off the in-app `.light` class on `<html>`
+  instead of the browser's `prefers-color-scheme`.
+- [x] **Better trash** — trash is now a **filter over the main view**, not a separate page. Backend `PictureListFilter.trash`
+  (`TrashFilter::Exclude|Include|Only`, wire `?trash=exclude|include|only`) threads through the list / hierarchy `browse` / selection
+  (batch) filters; `push_filters` gained the `Only` (trashed-only) arm. Frontend replaced the `/trash` page + `deleted=1` param with a
+  three-state grid-header `TrashToggle` (Photos / All / Trash → `trash` URL param), removed the "Include trashed" checkbox, and the main
+  gallery (metadata, tag filtering, batch restore in the selection panel) now serves trashed pictures directly — no client-side `deleted_at`
+  filtering. Profile "Open trash" deep-links to `/?trash=only`.
 - [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.

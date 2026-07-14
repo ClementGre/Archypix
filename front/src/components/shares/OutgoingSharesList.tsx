@@ -13,6 +13,7 @@ import {CreateShareDialog} from './CreateShareDialog'
 import {PublicLinksManager} from './PublicLinksManager'
 import {PublicShareDialog} from './PublicShareDialog'
 import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
+import {usePublicShares} from "@/hooks/usePublicShares.ts";
 
 const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
 const PENDING = new Set(['pending'])
@@ -155,6 +156,9 @@ export function OutgoingSharesList() {
         }
     }, [shares])
 
+
+    const {data: publicShares, isPending: publicIsPending} = usePublicShares()
+
     const header = (
         <div className="flex flex-wrap items-center gap-2 px-2 pt-2">
             {/* flex-1 shares the row when both fit; without min-w-0 the button won't shrink below its
@@ -188,7 +192,7 @@ export function OutgoingSharesList() {
             </>
         )
     }
-    if (!shares.length) {
+    if (!shares.length && !publicShares?.some((s) => s.status === 'active')) {
         return (
             <>
                 {header}
@@ -221,7 +225,7 @@ export function OutgoingSharesList() {
         <>
             {header}
             <div className="p-2">
-                <PublicLinksManager/>
+                <PublicLinksManager shares={publicShares} isPending={publicIsPending}/>
                 {closed.length > 0 && (
                     <Section id="outgoing-closed" title="Closed" count={closedCount} defaultOpen={false}>
                         <div className="space-y-1.5">{renderGroups(closed)}</div>

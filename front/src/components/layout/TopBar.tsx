@@ -1,6 +1,6 @@
 import {Link, NavLink, useLocation, useNavigate} from 'react-router-dom'
 import {useQueryClient} from '@tanstack/react-query'
-import {Images, LogOut, Moon, Network, PanelLeft, PanelRight, RefreshCw, Shield, Sun, Trash2, Upload, User as UserIcon, Wand2,} from 'lucide-react'
+import {Images, LogOut, Moon, Network, PanelLeft, PanelRight, RefreshCw, Shield, Sun, Upload, User as UserIcon, Wand2,} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Avatar, AvatarFallback} from '@/components/ui/avatar'
 import {
@@ -31,7 +31,6 @@ interface NavItem {
 const NAV: NavItem[] = [
     {to: '/', label: 'Gallery', icon: Images, end: true},
     {to: '/tagging', label: 'Tagging services', icon: Wand2},
-    {to: '/trash', label: 'Trash', icon: Trash2},
 ]
 
 function initials(name: string): string {

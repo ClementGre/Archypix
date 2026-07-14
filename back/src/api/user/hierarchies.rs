@@ -1,14 +1,14 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::hierarchy::HierarchyConfig;
 use crate::repository::hierarchy::HierarchyRow;
-use crate::repository::picture::{PictureSortField, SortOrder};
+use crate::repository::picture::{PictureSortField, SortOrder, TrashFilter};
 use crate::services;
 use crate::services::hierarchy::{BrowseParams, TreeResult};
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
 use crate::state::AppState;
 use archypix_common::error::AppError;
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -201,7 +201,7 @@ pub async fn webdav_regenerate(
         auth.user_id()?,
         id,
     )
-        .await?;
+    .await?;
     Ok(Json(info.into()))
 }
 
@@ -281,7 +281,7 @@ pub struct BrowseQuery {
     #[serde(default)]
     pub order: SortOrder,
     #[serde(default)]
-    pub include_deleted: bool,
+    pub trash: TrashFilter,
     #[serde(default)]
     pub owned_only: bool,
     #[serde(default)]
@@ -303,7 +303,7 @@ pub async fn browse(
         page_size: query.page_size,
         sort: query.sort,
         order: query.order,
-        include_deleted: query.include_deleted,
+        trash: query.trash,
         owned_only: query.owned_only,
         shared_with_me: query.shared_with_me,
         captured_after: query.captured_after,

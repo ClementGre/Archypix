@@ -28,7 +28,7 @@ export function usePictures(
                 ...(include.length ? {include_tags: include.join(','), match: 'all' as const} : {}),
                 ...(filters.exclude?.length ? {exclude_tags: filters.exclude.join(',')} : {}),
                 ...(filters.exact?.length ? {exact: filters.exact.join(',')} : {}),
-                ...(filters.includeDeleted ? {include_deleted: true} : {}),
+                ...(filters.trash && filters.trash !== 'exclude' ? {trash: filters.trash} : {}),
                 ...(filters.capturedAfter ? {captured_after: filters.capturedAfter} : {}),
                 ...(filters.capturedBefore ? {captured_before: filters.capturedBefore} : {}),
             }

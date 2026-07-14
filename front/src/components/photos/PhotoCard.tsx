@@ -1,10 +1,10 @@
 import {memo, type MouseEvent, type PointerEvent, useRef, useState} from 'react'
-import {AlertTriangle, Check, Trash2} from 'lucide-react'
+import {AlertTriangle, Check, Clock, Trash2} from 'lucide-react'
 import type {PictureListItem} from '@/lib/types'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {recordImage} from '@/stores/imageCache'
 import {cn, isVideoMime, variantForSize} from '@/lib/utils'
-import {countdown} from '@/lib/trash'
+import {countdown, deadlineLabel, ownedPurgeAt} from '@/lib/trash'
 import {Blurhash} from './Blurhash'
 import {FileTypeIcon} from './FileTypeIcon'
 import {PlayBadge} from './PlayBadge'
@@ -17,6 +17,10 @@ interface PhotoCardProps {
     selected: boolean
     /** Touch multi-select mode is active — show the selection circle on every card. */
     multiSelect: boolean
+    /** Trash-only view — show the purge countdown overlay on owned trashed pictures. */
+    showPurgeCountdown?: boolean
+    /** Owner's `trash_retention_days` (for the purge deadline); defaults to 30. */
+    retentionDays?: number
     onSelect: (event: MouseEvent) => void
     /** Long-press (touch) on the card — enters/extends multi-select. */
     onLongPress: () => void
@@ -34,7 +38,17 @@ const MOVE_CANCEL_PX = 10
  * carries the picture's `aspect-ratio` so flexbox derives a uniform row height
  * while preserving each picture's shape — no cropping, minimal JS.
  */
-export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, multiSelect, onSelect, onLongPress, onOpen}: PhotoCardProps) {
+export const PhotoCard = memo(function PhotoCard({
+                                                     item,
+                                                     rowHeight,
+                                                     selected,
+                                                     multiSelect,
+                                                     showPurgeCountdown,
+                                                     retentionDays,
+                                                     onSelect,
+                                                     onLongPress,
+                                                     onOpen
+                                                 }: PhotoCardProps) {
     // Long-press detection (touch/pen only — desktop uses modifier-click). A held touch
     // that hasn't moved past the threshold enters multi-select mode; the long-press also
     // suppresses the synthetic click that follows the pointer release.
@@ -92,6 +106,12 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
 
     const trashed = !!item.deleted_at
     const ownerDeleted = !item.owned && !!item.owner_deleted_at
+    // Purge countdown (trash-only view, owned trashed pictures): owner rows carry no `owner_purge_at`,
+    // so derive it as `deleted_at + retention`. Received trash is local-only (never purged) — no badge.
+    const purgeAt = showPurgeCountdown && trashed && item.owned
+        ? ownedPurgeAt(item.deleted_at, retentionDays ?? 30)
+        : null
+    const purgeCountdown = purgeAt ? countdown(purgeAt) : null
     // Play badge only over a real video frame thumbnail — never over the fallback file-type icon.
     const showPlayBadge = isVideoMime(item.mime_type) && !!item.thumbnail_url
 
@@ -185,6 +205,16 @@ export const PhotoCard = memo(function PhotoCard({item, rowHeight, selected, mul
                 >
                     <Trash2 className="h-3 w-3"/>
                 </span>
+            )}
+
+            {purgeCountdown && (
+                <div
+                    className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1 rounded bg-destructive/85 px-1 py-0.5 text-[10px] font-medium leading-4 text-white"
+                    title={`Permanently deleted ${deadlineLabel(purgeAt)}`}
+                >
+                    <Clock className="h-2.5 w-2.5 shrink-0"/>
+                    <span className="truncate">Deletes {purgeCountdown === 'overdue' ? 'soon' : purgeCountdown}</span>
+                </div>
             )}
         </li>
     )

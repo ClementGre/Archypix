@@ -169,6 +169,9 @@ export interface IncomingShareResponse {
 
 // ---------- Gallery filter object (camelCase; hooks map to query params) ----------
 
+/** Trash-membership state: normal view (`exclude`), everything (`include`), or trash only (`only`). */
+export type TrashFilter = 'exclude' | 'include' | 'only'
+
 export interface PictureFilters {
     tag?: string | null
     /** Additional include tags (wire form) layered on top of `tag` via the sidebar menu. */
@@ -178,7 +181,8 @@ export interface PictureFilters {
     /** Exact (strict, no-descendant) include tags (wire form). */
     exact?: string[]
     scope?: 'all' | 'owned' | 'shared'
-    includeDeleted?: boolean
+    /** Trash-membership state; `exclude` (default) hides trashed pictures. */
+    trash?: TrashFilter
     sort?: SortField
     order?: SortOrder
     capturedAfter?: string | null
@@ -773,7 +777,7 @@ export type PictureFilter =
     untagged?: boolean
     owned_only?: boolean
     shared_with_me?: boolean
-    include_deleted?: boolean
+    trash?: TrashFilter
     captured_after?: string
     captured_before?: string
 }
@@ -783,7 +787,7 @@ export type PictureFilter =
     path: string
     owned_only?: boolean
     shared_with_me?: boolean
-    include_deleted?: boolean
+    trash?: TrashFilter
     captured_after?: string
     captured_before?: string
 }

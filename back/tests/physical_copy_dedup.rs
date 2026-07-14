@@ -347,7 +347,7 @@ async fn keep_copy_replaces_manual_tags_from_old_live(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn trash_view_hides_dedupe_and_boomerang(db: PgPool) {
     use archypix_back::repository::picture::{
-        PictureListFilter, PictureRepository, PictureSortField, SortOrder,
+        PictureListFilter, PictureRepository, PictureSortField, SortOrder, TrashFilter,
     };
     let user = common::seed_user(&db, "alice", "pass").await;
     let manual = seed_owned(&db, user, "hashA", Some("manual")).await;
@@ -362,7 +362,7 @@ async fn trash_view_hides_dedupe_and_boomerang(db: PgPool) {
         predicate: None,
         owned_only: false,
         shared_with_me: false,
-        include_deleted: true, // trash view
+        trash: TrashFilter::Only, // trash view
         captured_after: None,
         captured_before: None,
     };

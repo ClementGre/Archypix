@@ -1,7 +1,7 @@
 mod common;
 
 use archypix_back::infra::settings::test_settings_with;
-use archypix_back::repository::picture::{PictureSortField, SortOrder};
+use archypix_back::repository::picture::{PictureSortField, SortOrder, TrashFilter};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::hierarchy::{self, BrowseParams};
 use archypix_back::state::AppState;
@@ -44,7 +44,7 @@ fn browse_params() -> BrowseParams {
         page_size: 100,
         sort: PictureSortField::default(),
         order: SortOrder::default(),
-        include_deleted: false,
+        trash: TrashFilter::Exclude,
         owned_only: false,
         shared_with_me: false,
         captured_after: None,

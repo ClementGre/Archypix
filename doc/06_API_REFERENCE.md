@@ -517,7 +517,8 @@ Paginated picture list.
 | `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. Mutually exclusive with `include_tags`/`exclude_tags`/`exact` |
 | `owned_only` | `boolean` | `false` | Only show pictures owned by this user |
 | `shared_with_me` | `boolean` | `false` | Only show pictures received via incoming shares |
-| `include_deleted` | `boolean` | `false` | Include soft-deleted pictures (trash view) |
+| `trash` | `"exclude" \| "include" \| "only"` | `"exclude"` | Trash membership: `exclude` = live only (default), `include` = live + trashed, `only` =
+trashed only (the trash view). A filter over the main view — there is no separate trash endpoint |
 | `captured_after` | `string` | — | ISO 8601 datetime — lower bound on capture date |
 | `captured_before` | `string` | — | ISO 8601 datetime — upper bound on capture date |
 | `thumbnail` | `"original" \| "small" \| "medium" \| "large"` | — | If set, each item includes a `thumbnail_url` presigned for this variant |
@@ -879,7 +880,7 @@ lifecycle flag cleared.
 
 Batch soft-delete / restore over a **selection** (feature 14 §6). One set-based write (no per-picture
 loop). See [§6.11](#611-batch-operations-feature-14) for the request/response shape. Restore must
-target a selection that includes the trashed rows (e.g. the trash view's `include_deleted` query, or
+target a selection that includes the trashed rows (e.g. the trash view's `trash: "only"` query, or
 explicit ids).
 
 #### `POST /api/authenticated/pictures/{id}/copy`
@@ -1719,7 +1720,7 @@ Paginated pictures of one directory. The server resolves `path` into the directo
 node wins" predicate and reuses the picture list machinery — the client only ever sends a `path`.
 
 **Query params:** `path` (default root) plus the same pagination/filter params as
-`GET /pictures`: `page`, `page_size`, `sort`, `order`, `include_deleted`, `owned_only`,
+`GET /pictures`: `page`, `page_size`, `sort`, `order`, `trash`, `owned_only`,
 `shared_with_me`, `captured_after`, `captured_before`, `thumbnail`.
 
 **Response `200`:** identical shape to `GET /pictures` (`{ total, page, page_size, items }`). A
@@ -1785,7 +1786,8 @@ type PictureFilter =
       exact?: string[];  // exactly-matched paths (strict tag nav)
       match?: "all" | "any"; untagged?: boolean;
       // shared scope/date params:
-      owned_only?: boolean; shared_with_me?: boolean; include_deleted?: boolean;
+  owned_only?: boolean; shared_with_me?: boolean;
+  trash?: "exclude" | "include" | "only";
       captured_after?: string; captured_before?: string }
   | { kind: "hierarchy"; hierarchy_id: string; path: string;
       /* + the same shared scope/date params */ };

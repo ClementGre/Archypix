@@ -11,7 +11,6 @@ import TagsPage from '@/pages/TagsPage'
 import TaggingPage from '@/pages/TaggingPage'
 import SharesPage from '@/pages/SharesPage'
 import SettingsPage from '@/pages/SettingsPage'
-import TrashPage from '@/pages/TrashPage'
 import AdminPage from '@/pages/AdminPage'
 import ResolverAdminPage from '@/pages/ResolverAdminPage'
 import PublicSharePage from '@/pages/PublicSharePage'
@@ -48,7 +47,6 @@ export default function App() {
                             <Route path="/tagging/:id" element={<TaggingPage/>}/>
                             <Route path="/shares" element={<SharesPage/>}/>
                             <Route path="/settings" element={<SettingsPage/>}/>
-                            <Route path="/trash" element={<TrashPage/>}/>
                         </Route>
                     </Route>
 

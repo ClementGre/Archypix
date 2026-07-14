@@ -3,6 +3,7 @@ import {useSearchParams} from 'react-router-dom'
 import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
 import {usePictures} from '@/hooks/usePictures'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
+import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {isMemberSelected, useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
@@ -12,6 +13,7 @@ import {cn, variantForSize} from '@/lib/utils'
 import {TagFilterBar} from '@/components/tags/TagFilterBar'
 import {PhotoCard} from './PhotoCard'
 import {Lightbox} from './Lightbox'
+import {TrashToggle} from './TrashToggle'
 import {SelectionActionBar} from './batch/SelectionActionBar'
 
 /** Breadcrumb for the active hierarchy directory; segments are clickable. */
@@ -22,7 +24,7 @@ function HierarchyBreadcrumb() {
     const segments = params.hpath ? params.hpath.split('/') : []
 
     return (
-        <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-1 text-sm">
             <FolderOpen className="mr-1 h-4 w-4 shrink-0 text-muted-foreground"/>
             <button
                 onClick={() => update({hpath: ''})}
@@ -52,6 +54,9 @@ function HierarchyBreadcrumb() {
 export function PhotoGrid() {
     const {filters, params, selectionFilter} = useGalleryParams()
     const isBrowsing = !!params.hierarchy
+    const trashOnly = params.trash === 'only'
+    const {data: settings} = useSettings()
+    const retentionDays = settings?.trash_retention_days ?? 30
     const rowHeight = useUIStore((s) => s.rowHeight)
     const openMobileDrawer = useUIStore((s) => s.openMobileDrawer)
     const isMobile = useIsMobile()
@@ -190,6 +195,8 @@ export function PhotoGrid() {
                             rowHeight={rowHeight}
                             selected={isMemberSelected(query, includeIds, excludeIds, it.id)}
                             multiSelect={multiSelect}
+                            showPurgeCountdown={trashOnly}
+                            retentionDays={retentionDays}
                             onSelect={handleSelect(it.id)}
                             onLongPress={handleLongPress(it.id)}
                             onOpen={() => openViewer(it.id)}
@@ -207,16 +214,17 @@ export function PhotoGrid() {
         )
     }
 
-    const content = isBrowsing ? (
+    // A single header row tops the grid: on the left the active hierarchy breadcrumb, or (flat view)
+    // the tag-filter breadcrumb of active include/exact/exclude chips (empty when none); on the right
+    // the three-state trash toggle — the trash is a filter over this view, not a separate page.
+    const content = (
         <div className="flex h-full min-h-0 flex-col">
-            <HierarchyBreadcrumb/>
-            <div className="min-h-0 flex-1">{body}</div>
-        </div>
-    ) : (
-        // Flat view: a tag-filter breadcrumb (active include/exact/exclude) tops the grid, mirroring
-        // the hierarchy breadcrumb. It renders nothing when no tag filter is active.
-        <div className="flex h-full min-h-0 flex-col">
-            <TagFilterBar/>
+            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+                <div className="min-w-0 flex-1">
+                    {isBrowsing ? <HierarchyBreadcrumb/> : <TagFilterBar/>}
+                </div>
+                <TrashToggle/>
+            </div>
             <div className="min-h-0 flex-1">{body}</div>
         </div>
     )

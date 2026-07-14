@@ -37,7 +37,9 @@ see [06_API_REFERENCE.md](06_API_REFERENCE.md); for product semantics, [01_GENER
 | Media player  | `@vidstack/react` (default skin) — inline video/audio playback (lazy-loaded chunk)      |
 
 Commands: `npm run dev` (Vite :5173), `npm run build` (`tsc -b && vite build`). Node 24 / npm. **Theme:** dark is the base `@theme`; light mode is the
-`.light` class on `<html>` (toggled by `stores/theme.ts`). The repo runs a code formatter — match surrounding style; don't fight it.
+`.light` class on `<html>` (toggled by `stores/theme.ts`). The `dark:` utility variant is redefined in `index.css` (`@custom-variant dark`) to follow
+that `.light` class rather than the browser's `prefers-color-scheme`, so `dark:` means "in-app dark mode" (applies when `<html>` is not `.light`). The
+repo runs a code formatter — match surrounding style; don't fight it.
 
 ---
 
@@ -93,7 +95,6 @@ The **register page** keeps the account/instance editor (and the health warning)
 | `/tagging/:id`                       | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
 | `/shares`                            | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
 | `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention, one explicit Save), storage, invites + invitation graph (via user menu, labelled "Profile") |
-| `/trash`                             | `TrashPage`         | required             | soft-deleted photos grid with per-item / restore + purge countdown                                                                                        |
 | `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Invites** (+ Fleet link, cache-clear refresh)                                    |
 | `/admin/resolver`                    | `ResolverAdminPage` | **resolver session** | fleet dashboard — operator-token login, not `ProtectedRoute` (feature 24)                                                                                 |
 | `/s/:global_domain/:username/:token` | `PublicSharePage`   | **public**           | link-gated public share (feature 27): resolves the owner backend from the URL, renders the gallery/lightbox/detail; no login required                     |
@@ -130,21 +131,21 @@ session exists.
 The gallery view lives entirely in the URL so it is shareable and back/forward-friendly. `useGalleryParams()` returns typed `params`, derived
 `filters` (for `usePictures`), and `update(patch, { replace })`. Params (defaults are **omitted** from the URL):
 
-| Param              | Meaning                                                                              |
-|--------------------|--------------------------------------------------------------------------------------|
-| `tag`              | active (primary) tag filter (wire form) — set by a plain tag click                   |
-| `inc` / `exc` / `exa` | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu |
-| `scope`            | `all` \| `owned` \| `shared`                                                         |
-| `deleted`          | include trashed (`1`)                                                                |
-| `sort`             | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` |
-| `order`            | `asc` \| `desc`                                                                      |
-| `after` / `before` | capture-date bounds (ISO)                                                            |
-| `panel`            | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                 |
-| `share`            | incoming share id to highlight (cross-link target)                                   |
-| `hierarchy`        | active hierarchy id — center grid browses it (via `browse`) instead of the flat list |
-| `hpath`            | directory path within the active hierarchy (slash-separated names, `''` = root)      |
-| `hedit`            | hierarchy id whose config editor occupies the center view (overrides the grid)       |
-| `view`             | open the Lightbox on this picture id (set by `PhotoGrid`)                            |
+| Param                 | Meaning                                                                                                                                                |
+|-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `tag`                 | active (primary) tag filter (wire form) — set by a plain tag click                                                                                     |
+| `inc` / `exc` / `exa` | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                            |
+| `scope`               | `all` \| `owned` \| `shared`                                                                                                                           |
+| `trash`               | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle` |
+| `sort`                | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename`                                                                  |
+| `order`               | `asc` \| `desc`                                                                                                                                        |
+| `after` / `before`    | capture-date bounds (ISO)                                                                                                                              |
+| `panel`               | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                                                                                   |
+| `share`               | incoming share id to highlight (cross-link target)                                                                                                     |
+| `hierarchy`           | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                   |
+| `hpath`               | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                        |
+| `hedit`               | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                         |
+| `view`                | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                              |
 
 ---
 
@@ -196,10 +197,14 @@ picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row 
 **fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
 (render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
 (loading placeholder only — faded out on load), `FilterControls` (**Sort** + **Filters** dropdowns; rendered inside `TopBar`.
-Sort offers Date taken / added / modified, File size, Name — default **Date taken** (`captured_at`); Filters folds in scope, Include-trashed,
+Sort offers Date taken / added / modified, File size, Name — default **Date taken** (`captured_at`); Filters folds in scope
 and a **capture-date range** using the shared `DateRangePicker` calendar — no tag chips here, those live in the centre `TagFilterBar`),
+`TrashToggle` (`components/photos/`, a three-state segmented control — **Photos** (hide trashed, default) / **All** (include trashed) / **Trash**
+(trashed only) — pinned to the right of the grid header, writing the `trash` URL param; the trash is a **filter over the main view**, not a
+separate page),
 `TagFilterBar` (`components/tags/`, a breadcrumb-style bar atop the flat grid showing the active include / `=`-exact / `⦸`-exclude tags as chips,
-each with a switch-include↔exact control + remove, plus Clear), `Lightbox` (full-screen viewer driven by the `view` param;
+each with a switch-include↔exact control + remove, plus Clear; shares the grid-header row with `TrashToggle` — the flat tag chips / the hierarchy
+breadcrumb on the left, the trash toggle on the right), `Lightbox` (full-screen viewer driven by the `view` param;
 ←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
 instead of closing**, only closing when no picture remains;
@@ -221,8 +226,10 @@ filmstrip: the current picture centres (half-width end spacers let the first/las
 into the centre changes it, thumbnails reuse already-loaded / list `thumbnail_url` images before requesting a `small` presign, and image work is
 **lazy** (per-thumb `IntersectionObserver`) so a large library doesn't presign every thumbnail; the viewer also pages in more grid items (`loadMore`)
 as it nears the end of what's loaded), `SelectionPanel`
-(right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — and a **red** owner chip with
-an alert icon when a received picture's `owner_deleted_at` is set), `UploadDialog` (batch upload with drag-and-drop, per-file progress, and initial
+(right panel; see §8), `PhotoCard` (also surfaces trash state — dimmed + a corner trash chip when `deleted_at` is set — a **red** owner chip with
+an alert icon when a received picture's `owner_deleted_at` is set, and — in the **trash-only** view (`showPurgeCountdown`) — a red purge-countdown
+overlay ("Deletes in 12 days") on owned trashed pictures, the deadline derived as `deleted_at + trash_retention_days`), `UploadDialog` (batch upload
+with drag-and-drop, per-file progress, and initial
 tag assignment — see §9; its upload backend + which sections show (tags / storage / import summary /
 contributor name / dedup message) come from an `UploadSource` prop, default = the authenticated library
 upload, so the public share page reuses the same dialog for anonymous contributions), `MediaPlayer` (Vidstack wrapper — picks the default video/audio
@@ -553,10 +560,12 @@ mobile) and shown only when its `ui` store toggle is on:
   page/offset-agnostic —
   it filters the infinite-query pages directly rather than relying on a refetch, so a delete from the Lightbox or sidebar disappears instantly;
   skipped
-  for "include trashed" views where the item legitimately stays). The subsequent invalidation reconciles totals.
-  Owned trash is purged after `trash_retention_days` (the `/trash` page derives the purge date as `deleted_at + retention` since the list item carries
-  no `owner_purge_at` for owned rows); received trash is local-only. The gallery shows trashed items only with Filters → **Include trashed**; the
-  `/trash` page fetches `include_deleted` and client-filters to `deleted_at != null`.
+  for views that show the trash (`trash: include | only`) where the item legitimately stays). The subsequent invalidation reconciles totals.
+  Owned trash is purged after `trash_retention_days`; received trash is local-only. **The trash is a filter over the main gallery, not a separate
+  page** (there is no `/trash` route): the grid-header `TrashToggle` selects **Photos** (`trash=exclude`, default) / **All** (`include`) / **Trash**
+  (`only`), the backend does the filtering (`GET /pictures?trash=…` — no client-side `deleted_at` filtering), and trashed items render dimmed with a
+  purge/owner-deletion badge inline in the same grid + `SelectionPanel` (single or batch **Restore** there). The Profile storage card's "Open trash"
+  button deep-links to `/?trash=only`.
 - **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates at display time using
   `orientedCoverStyle` (absolute positioning + CSS transform; sets `max-w-none` to escape Tailwind's `img { max-width: 100% }` which otherwise
   collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container — it measures its box (seeding from

@@ -13,7 +13,7 @@
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::tag::TagPath;
 use crate::repository::picture::{
-    PictureListFilter, PictureSortField, ResolvedSelection, SortOrder,
+    PictureListFilter, PictureSortField, ResolvedSelection, SortOrder, TrashFilter,
 };
 use crate::services::hierarchy;
 use archypix_common::error::AppError;
@@ -29,8 +29,9 @@ pub struct ScopeParams {
     pub owned_only: bool,
     #[serde(default)]
     pub shared_with_me: bool,
+    /// Trash-membership state: `exclude` (default) | `include` | `only` (trash view).
     #[serde(default)]
-    pub include_deleted: bool,
+    pub trash: TrashFilter,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
 }
@@ -172,7 +173,7 @@ fn filter_from(predicate: Option<TagPredicate>, scope: &ScopeParams) -> PictureL
         predicate,
         owned_only: scope.owned_only,
         shared_with_me: scope.shared_with_me,
-        include_deleted: scope.include_deleted,
+        trash: scope.trash,
         captured_after: scope.captured_after.map(|dt| dt.naive_utc()),
         captured_before: scope.captured_before.map(|dt| dt.naive_utc()),
     }

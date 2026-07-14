@@ -58,7 +58,7 @@ export function useHierarchyBrowse(
                 order: filters.order ?? 'desc',
                 ...(filters.scope === 'owned' ? {owned_only: true} : {}),
                 ...(filters.scope === 'shared' ? {shared_with_me: true} : {}),
-                ...(filters.includeDeleted ? {include_deleted: true} : {}),
+                ...(filters.trash && filters.trash !== 'exclude' ? {trash: filters.trash} : {}),
                 ...(filters.capturedAfter ? {captured_after: filters.capturedAfter} : {}),
                 ...(filters.capturedBefore ? {captured_before: filters.capturedBefore} : {}),
             }),
