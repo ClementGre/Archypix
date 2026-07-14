@@ -189,7 +189,7 @@ export const PhotoCard = memo(function PhotoCard({
                     )}
                     title={
                         ownerDeleted
-                            ? `Owner deleted this — disappears ${countdown(item.owner_purge_at) || 'soon'}`
+                            ? `Owner deleted this. ${countdown(item.owner_purge_at)}`
                             : undefined
                     }
                 >
@@ -209,11 +209,11 @@ export const PhotoCard = memo(function PhotoCard({
 
             {purgeCountdown && (
                 <div
-                    className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1 rounded bg-destructive/85 px-1 py-0.5 text-[10px] font-medium leading-4 text-white"
+                    className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-destructive/85 px-1 text-[10px] font-medium leading-4 text-white"
                     title={`Permanently deleted ${deadlineLabel(purgeAt)}`}
                 >
                     <Clock className="h-2.5 w-2.5 shrink-0"/>
-                    <span className="truncate">Deletes {purgeCountdown === 'overdue' ? 'soon' : purgeCountdown}</span>
+                    <span className="truncate">{purgeCountdown}</span>
                 </div>
             )}
         </li>

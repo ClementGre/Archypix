@@ -10,6 +10,7 @@ import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
 import {InstanceHealthWarning} from '@/components/common/InstanceHealthWarning'
+import {Logo} from '@/components/common/Logo'
 import {cn} from '@/lib/utils'
 import {getPreferredInstance, GLOBAL_DOMAIN, setPreferredInstance} from '@/lib/constants'
 import {type LoginForm, loginFormSchema} from '@/lib/schemas'
@@ -54,10 +55,10 @@ export default function LoginPage() {
         <div className="flex min-h-screen items-center justify-center bg-background p-6">
             <Card className="w-full max-w-md">
                 <CardHeader className="space-y-1">
-                    <CardTitle className="text-2xl">
-                        <span className="text-primary">Archy</span>pix
+                    <CardTitle className={"flex justify-center"}>
+                        <Logo className={"h-10"}/>
                     </CardTitle>
-                    <CardDescription>Sign in to your photo library.</CardDescription>
+                    <CardDescription className={"flex justify-center"}>Sign in to your photo library.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>

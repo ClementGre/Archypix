@@ -104,7 +104,7 @@ export default function RegisterPage() {
                             <div
                                 className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-500">
                                 <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
-                                <span>Registration on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span> is invite-only — you need an invitation link, or switch to another instance.</span>
+                                <span>Registration on <span className="font-medium">{instance || GLOBAL_DOMAIN}</span> is invite-only. You need an invitation link, or switch to another instance.</span>
                             </div>
                         )
                     ) : (
@@ -117,7 +117,7 @@ export default function RegisterPage() {
                             )}>
                                 <Ticket className="mt-0.5 h-4 w-4 shrink-0"/>
                                 {invite?.valid === false ? (
-                                    <span>This invite link is invalid or has expired — but registration is open, so you can still create an account.</span>
+                                    <span>This invite link is invalid or has expired, but registration is open so you can still create an account.</span>
                                 ) : invite?.invited_by ? (
                                     <span>
                                         <span className="font-medium">@{invite.invited_by}</span> invited you to join Archypix on{' '}

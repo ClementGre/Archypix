@@ -101,7 +101,7 @@ export function CreatorField({picture}: { picture: PictureDetail }) {
     return (
         <div className="group flex items-center gap-1.5 px-3 pb-2 text-xs text-muted-foreground">
             <User className="h-3.5 w-3.5 shrink-0"/>
-            <span className="min-w-0 truncate">
+            <span className="min-w-0 ">
                 Created by{' '}
                 <button
                     onClick={startEdit}

@@ -102,7 +102,7 @@ export default function TaggingPage() {
                             )}
                             {all.length === 0 && (
                                 <p className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
-                                    No services yet — create one with &ldquo;New service&rdquo;.
+                                    No services yet. Create one with &ldquo;New service&rdquo;.
                                 </p>
                             )}
                         </>

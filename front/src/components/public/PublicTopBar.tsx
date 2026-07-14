@@ -15,6 +15,7 @@ import {useIncomingShares} from '@/hooks/useShares'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {cn} from '@/lib/utils'
 import {Button} from '@/components/ui/button'
+import {Logo} from '@/components/common/Logo'
 import {Avatar, AvatarFallback} from '@/components/ui/avatar'
 import {
     DropdownMenu,
@@ -112,12 +113,12 @@ export function PublicTopBar() {
 
     return (
         <header className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-background px-2 py-1.5 sm:px-3">
-            <Link to="/" className="shrink-0 px-1.5 text-lg font-semibold tracking-tight">
-                <span className="text-primary">Archy</span>pix
+            <Link to="/" aria-label="Archypix home" className="shrink-0">
+                <Logo/>
             </Link>
 
             {/* Share info stands in for the gallery breadcrumb (title + owner; description on hover). */}
-            <div className="ml-1 min-w-0 flex-1 sm:ml-3">
+            <div className="min-w-0 flex-1">
                 <h1 className="truncate text-sm font-semibold leading-tight" title={meta.message ?? meta.name}>{meta.name}</h1>
                 <p className="truncate text-xs leading-tight text-muted-foreground">
                     {meta.owner_display} · {meta.picture_count} photo{meta.picture_count === 1 ? '' : 's'}

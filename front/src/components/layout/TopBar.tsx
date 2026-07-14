@@ -12,6 +12,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {FilterControls} from '@/components/photos/FilterControls'
+import {Logo} from '@/components/common/Logo'
 import {useAuthStore} from '@/stores/auth'
 import {useThemeStore} from '@/stores/theme'
 import {useUIStore} from '@/stores/ui'
@@ -92,8 +93,8 @@ export function TopBar() {
                 </Button>
             )}
 
-            <Link to="/" className="shrink-0 px-1.5 text-lg font-semibold tracking-tight">
-                <span className="text-primary">Archy</span>pix
+            <Link to="/" aria-label="Archypix home" className="shrink-0">
+                <Logo/>
             </Link>
 
             {/* Primary nav — collapses into the user menu on mobile. */}
