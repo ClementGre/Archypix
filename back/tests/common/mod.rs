@@ -56,16 +56,33 @@ impl Cache for InMemoryCache {
         Ok(())
     }
 
+    async fn set_str_nx_ex(
+        &self,
+        key: RedisKey<'_>,
+        value: &str,
+        _ttl_secs: u64,
+    ) -> Result<bool, AppError> {
+        use std::collections::hash_map::Entry;
+        match self.store.lock().unwrap().entry(key.build()) {
+            Entry::Occupied(_) => Ok(false),
+            Entry::Vacant(e) => {
+                e.insert(value.to_string());
+                Ok(true)
+            }
+        }
+    }
+
     async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>, AppError> {
+        // Support the trailing-`*` glob used in production (`prefix:*` → prefix match).
+        let prefix = pattern.strip_suffix('*').unwrap_or(pattern);
         Ok(self
             .store
             .lock()
             .unwrap()
             .keys()
-            .filter(|k| k.contains(pattern))
+            .filter(|k| k.starts_with(prefix))
             .cloned()
-            .collect::<Vec<_>>()
-            .into())
+            .collect::<Vec<_>>())
     }
 
     async fn incr_ex(&self, key: RedisKey<'_>, _ttl_secs: u64) -> Result<u64, AppError> {
@@ -276,7 +293,7 @@ pub fn test_task_queue_with_federation(
 ///
 /// Useful when the test needs to inspect or pre-seed the cache before and after
 /// requests (e.g., federation contract tests where backend URLs are pre-seeded
-/// so WebFinger calls are bypassed).
+/// so resolver calls are bypassed).
 pub fn test_app_state_with_cache(
     db: PgPool,
     settings: &Arc<Settings>,

@@ -23,7 +23,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::trace;
+use tracing::{trace, warn};
 use uuid::Uuid;
 
 /// Selectable picture variant for presigning. Used both in list thumbnails and the per-picture URL endpoint.
@@ -170,6 +170,12 @@ pub struct PictureListItem {
     /// and announced purge deadline. Drive the red "owner will delete this on X" badge.
     pub owner_deleted_at: Option<NaiveDateTime>,
     pub owner_purge_at: Option<NaiveDateTime>,
+    /// `false` when this (cross-instance) picture's owner backend was unreachable while presigning
+    /// its thumbnail (feature 28 §3.2), so the client can render a distinct "owner offline" tile
+    /// rather than a generic placeholder. Always `true` for owned / same-backend / reachable owners,
+    /// and for a cross-instance picture with no active token yet (a "no thumbnail" state, not an
+    /// outage).
+    pub owner_reachable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -730,7 +736,7 @@ async fn copy_source_into_library(
             let mut urls = federation
                 .presign_remote_pictures(owner_username, owner_instance, &[(token, "original")])
                 .await?;
-            let url = urls.remove(&token).ok_or_else(|| {
+            let url = urls.remove(&token).map(|r| r.url).ok_or_else(|| {
                 AppError::InternalServerError("owner backend returned no presigned URL".into())
             })?;
             let resp = reqwest::get(&url)
@@ -1271,17 +1277,16 @@ pub async fn propose_received_exif(
         .await?;
     } else {
         federation
-            .send_picture_edit_request(
+            .send(
                 requester_username,
                 &owner_username,
                 &owner_instance,
-                &crate::clients::federation::models::PictureEditRequest {
+                crate::clients::federation::models::PictureEditRequest {
                     picture_id: remote_id,
                     requester_username: requester_username.to_string(),
                     requester_instance: settings.get(keys::GLOBAL_DOMAIN).clone(),
                     set: set.clone(),
                     clear: clear.clone(),
-                    idempotency_key: Uuid::new_v4().to_string(),
                 },
             )
             .await?;
@@ -1575,13 +1580,17 @@ pub async fn list_with_filter(
             orientation: pic.orientation,
             thumbnail_url: thumbnail_urls
                 .as_ref()
-                .and_then(|m| m.get(&pic.id))
+                .and_then(|m| m.urls.get(&pic.id))
                 .cloned(),
             owned: pic.remote_picture_id.is_none(),
             exif_sync_status: pic.exif_sync_status,
             deleted_at: pic.deleted_at,
             owner_deleted_at: pic.owner_deleted_at,
             owner_purge_at: pic.owner_purge_at,
+            owner_reachable: thumbnail_urls
+                .as_ref()
+                .map(|m| !m.unreachable.contains(&pic.id))
+                .unwrap_or(true),
             owner_username: pic.owner_username,
             owner_instance: pic.owner_instance_domain,
         })
@@ -1612,12 +1621,13 @@ async fn presign_for_picture_list(
     _local_user_id: Uuid,
     pictures: &[Picture],
     variant: PictureVariant,
-) -> Result<HashMap<Uuid, String>, AppError> {
+) -> Result<ListPresignResult, AppError> {
     let ttl = settings
         .get(keys::S3_PRESIGN_TTL_SECS)
         .saturating_sub(settings.get(keys::S3_PRESIGN_CACHE_MARGIN_SECS));
 
     let mut urls: HashMap<Uuid, String> = HashMap::new();
+    let mut unreachable: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
     let mut misses: Vec<&Picture> = Vec::new();
 
     // Step 1: cache check. A thumbnail variant on a picture with no generated thumbnail (pending,
@@ -1639,7 +1649,7 @@ async fn presign_for_picture_list(
     }
 
     if misses.is_empty() {
-        return Ok(urls);
+        return Ok(ListPresignResult { urls, unreachable });
     }
 
     // Step 2: classify cache misses
@@ -1713,23 +1723,66 @@ async fn presign_for_picture_list(
             continue;
         }
 
-        let remote_urls = federation
+        // §3.1: isolate per owner-group. A down owner leaves *its* pictures' URLs absent and flags
+        // them unreachable, but never fails the whole list — the caller's own pictures still render.
+        let remote_urls = match federation
             .presign_remote_pictures(owner_username, owner_instance, &batch)
-            .await?;
+            .await
+        {
+            Ok(u) => u,
+            Err(e) => {
+                warn!(
+                    owner_username,
+                    owner_instance,
+                    picture_count = token_to_pic.len(),
+                    error = %e,
+                    "federation: remote presign failed — marking owner unreachable"
+                );
+                unreachable.extend(token_to_pic.values().map(|p| p.id));
+                continue;
+            }
+        };
 
-        for (token, url) in remote_urls {
+        for (token, remote) in remote_urls {
             if let Some(pic) = token_to_pic.get(&token) {
-                if ttl > 0 {
+                // §10: cache under a *truthful* lifetime — never past the owner's actual presign.
+                let cache_ttl = truthful_cache_ttl(ttl, remote.expires_at);
+                if cache_ttl > 0 {
                     let _ = cache
-                        .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)
+                        .set_str_ex(
+                            RedisKey::PictureUrl(pic.id, variant.as_str()),
+                            &remote.url,
+                            cache_ttl,
+                        )
                         .await;
                 }
-                urls.insert(pic.id, url);
+                urls.insert(pic.id, remote.url);
             }
         }
     }
 
-    Ok(urls)
+    Ok(ListPresignResult { urls, unreachable })
+}
+
+/// Presigned URLs for a picture-list page, plus the ids of cross-instance pictures whose owner
+/// backend was unreachable (feature 28 §3.2).
+struct ListPresignResult {
+    urls: HashMap<Uuid, String>,
+    unreachable: std::collections::HashSet<Uuid>,
+}
+
+/// The cache TTL for a cross-instance presign: the local cap (`local_ttl`, already margin-adjusted),
+/// bounded by the owner's advertised expiry so the cached URL is never advertised past the owner's
+/// actual presign (feature 28 §10). A `None` remote expiry (peer predating the field) keeps the
+/// local cap.
+fn truthful_cache_ttl(local_ttl: u64, remote_expires_at: Option<i64>) -> u64 {
+    match remote_expires_at {
+        Some(exp) => {
+            let remaining = (exp - chrono::Utc::now().timestamp()).max(0) as u64;
+            local_ttl.min(remaining)
+        }
+        None => local_ttl,
+    }
 }
 
 #[tracing::instrument(skip(db, cache, storage, settings, federation), fields(user_id = %local_user_id, picture_id = %picture_id))]
@@ -1784,11 +1837,15 @@ pub async fn presign_variant_for_picture(
         return Ok(Some(cached));
     }
 
-    let url = if pic.is_owned() {
+    // `(url, remote_expires_at)` — the remote expiry (if any) bounds the cache lifetime (§10).
+    let (url, remote_expires_at): (String, Option<i64>) = if pic.is_owned() {
         let key = s3::picture_key(pic.local_user_id, pic.id);
-        storage
-            .presign_get(&variant.bucket(&settings), &key)
-            .await?
+        (
+            storage
+                .presign_get(&variant.bucket(&settings), &key)
+                .await?,
+            None,
+        )
     } else {
         let owner_username = pic.owner_username.as_deref().unwrap_or_default();
         let owner_instance = pic.owner_instance_domain.as_deref().unwrap_or_default();
@@ -1808,9 +1865,14 @@ pub async fn presign_variant_for_picture(
         {
             // Owner is on this backend — derive S3 key from their user_id + original picture id.
             let key = s3::picture_key(owner_id, remote_id);
-            storage.presign_get(&variant.bucket(settings), &key).await?
+            (
+                storage.presign_get(&variant.bucket(settings), &key).await?,
+                None,
+            )
         } else {
-            // Owner is on a different backend — authorise via the picture's own token and call remote.
+            // Owner is on a different backend — authorise via the picture's own token and call
+            // remote. A transient owner-unreachable failure surfaces as `503` (§3.3), distinct from
+            // `Ok(None)` (no thumbnail exists), so the frontend shows a retryable error.
             let picture_token = TagRepository::find_active_picture_token(db, pic.id)
                 .await?
                 .ok_or_else(|| {
@@ -1819,30 +1881,30 @@ pub async fn presign_variant_for_picture(
                         pic.id
                     ))
                 })?;
-            federation
+            let mut urls = federation
                 .presign_remote_pictures(
                     owner_username,
                     owner_instance,
                     &[(picture_token, variant.as_str())],
                 )
-                .await
-                .map(|mut urls| {
-                    urls.remove(&picture_token).ok_or_else(|| {
-                        AppError::InternalServerError(format!(
-                            "Remote backend did not return presigned URL for picture {}",
-                            pic.id
-                        ))
-                    })
-                })??
+                .await?;
+            let remote = urls.remove(&picture_token).ok_or_else(|| {
+                AppError::InternalServerError(format!(
+                    "Remote backend did not return presigned URL for picture {}",
+                    pic.id
+                ))
+            })?;
+            (remote.url, remote.expires_at)
         }
     };
 
     let ttl = settings
         .get(keys::S3_PRESIGN_TTL_SECS)
         .saturating_sub(settings.get(keys::S3_PRESIGN_CACHE_MARGIN_SECS));
-    if ttl > 0 {
+    let cache_ttl = truthful_cache_ttl(ttl, remote_expires_at);
+    if cache_ttl > 0 {
         cache
-            .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, ttl)
+            .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, cache_ttl)
             .await?;
     }
     Ok(Some(url))

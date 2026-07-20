@@ -42,7 +42,7 @@ export async function getResolverInfo(domain: string): Promise<ResolverInfo> {
 /**
  * Resolve `@username:instance` to the backend it should talk to, and learn whether the instance is
  * resolver-fronted. One bootstrap call (`/info`); when a resolver exists, one more direct
- * `/archypix-resolver/resolve` call at the instance (replaces the old WebFinger lookup).
+ * `/archypix-resolver/resolve` call at the instance.
  */
 export async function resolveConnection(username: string, instance: string): Promise<ResolvedConnection> {
     const info = await getResolverInfo(instance)

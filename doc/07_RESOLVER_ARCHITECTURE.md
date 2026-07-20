@@ -14,8 +14,11 @@ so a self-hoster has a single forwarding rule and there's no `.well-known` colli
 the apex domain. Handler paths are unchanged inside the mount.
 
 - **Resolution** — `GET /archypix-resolver/resolve?user=&domain=` → owning backend public URL
-  (moka-cached), one HTTP call; the federation/login hot path (replaces the old
-  `.well-known/webfinger` query, dropped entirely).
+  (moka-cached), one HTTP call; the federation/login hot path. Resolver behaviour is unchanged by feature 28, but
+  note the **caller side**: a backend resolving a peer keeps a long-lived stale copy of a successful
+  answer and serves it if the resolver is later unreachable (connection error, not a 404), so a resolver
+  blip is non-fatal for already-known peers (feature 28 §4.5); a resolver 404 ("domain is its own
+  backend") is deliberately **not** cached.
 - **Bootstrap discovery** — `GET /archypix-resolver/info` → `{ is_resolver: true, api_url }`, so the
   frontend learns where the heavier `/api/public/*` + `/api/resolver-admin/*` surface lives and that a
   fleet dashboard exists (feature 25). A standalone backend answers the same route with

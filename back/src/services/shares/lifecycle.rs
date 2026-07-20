@@ -4,7 +4,9 @@
 //! `pending_first_announcement` status) and the task queue.
 
 use crate::clients::federation::FederationClient;
-use crate::clients::federation::models::ShareAnnouncementRequest;
+use crate::clients::federation::models::{
+    ShareAcceptRequest, ShareAnnouncementRequest, ShareRejectRequest, ShareRevokeRequest,
+};
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
 use crate::infra::redis::Cache;
@@ -176,11 +178,50 @@ pub async fn reject_incoming_share(
         return Err(AppError::NotFound);
     }
 
+    let sender_local = find_local_user_id(
+        cache,
+        db,
+        settings,
+        &incoming.sender_username,
+        &incoming.sender_instance,
+    )
+        .await?;
+
     match incoming.status {
         ShareStatus::Tombstoned => return Ok(()),
         ShareStatus::Revoked => return Err(AppError::NotFound),
         ShareStatus::Pending | ShareStatus::PendingFirstAnnouncement => {
-            IncomingShareRepository::set_status(db, share_id, ShareStatus::Tombstoned).await?;
+            // One-shot reject of a not-yet-active share: tombstone locally and notify the sender in
+            // one transaction, delivered inside it, committed last (deliver-then-commit, §6.1). A
+            // failure before COMMIT leaves the share re-rejectable.
+            let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+            IncomingShareRepository::set_status(&mut *tx, share_id, ShareStatus::Tombstoned).await?;
+            if sender_local.is_some() {
+                OutgoingShareRepository::set_status(
+                    &mut *tx,
+                    incoming.outgoing_share_id,
+                    ShareStatus::Tombstoned,
+                )
+                    .await?;
+                ShareAnnouncementRepository::delete_all_for_share(
+                    &mut *tx,
+                    incoming.outgoing_share_id,
+                )
+                    .await?;
+            } else {
+                federation
+                    .send(
+                        rejector_username,
+                        &incoming.sender_username,
+                        &incoming.sender_instance,
+                        ShareRejectRequest {
+                            outgoing_share_id: incoming.outgoing_share_id,
+                        },
+                    )
+                    .await?;
+            }
+            tx.commit().await.map_err(map_sqlx_error)?;
+            return Ok(());
         }
         // `Errored` is outgoing-only, but the shared enum requires a branch; treat like Active.
         ShareStatus::Active | ShareStatus::Errored => {
@@ -198,17 +239,8 @@ pub async fn reject_incoming_share(
         }
     }
 
-    // Notify the sender that their share was rejected.
-    if find_local_user_id(
-        cache,
-        db,
-        settings,
-        &incoming.sender_username,
-        &incoming.sender_instance,
-    )
-    .await?
-    .is_some()
-    {
+    // Notify the sender that their (previously active) share was rejected.
+    if sender_local.is_some() {
         // Same-backend: directly tombstone the sender's OutgoingShare and drop its tracking rows
         // (invalidating its presign tokens), mirroring revocation.
         OutgoingShareRepository::set_status(
@@ -221,11 +253,13 @@ pub async fn reject_incoming_share(
     } else {
         // Cross-instance: send rejection to the sender's backend.
         federation
-            .send_share_reject(
+            .send(
                 rejector_username,
                 &incoming.sender_username,
                 &incoming.sender_instance,
-                incoming.outgoing_share_id,
+                ShareRejectRequest {
+                    outgoing_share_id: incoming.outgoing_share_id,
+                },
             )
             .await?;
     }
@@ -253,7 +287,7 @@ pub async fn create_outgoing_share(
     future: bool,
     shareback_of: Option<Uuid>,
 ) -> Result<OutgoingShare, AppError> {
-    // Validate the user-supplied recipient instance before it drives any WebFinger / federation
+    // Validate the user-supplied recipient instance before it drives any resolution / federation
     // HTTP call — blocks the blind-SSRF / request-amplification vector (07_security_audit.md §2.4).
     crate::domain::validation::validate_federation_domain(recipient_instance)
         .map_err(AppError::BadRequest)?;
@@ -325,15 +359,12 @@ pub async fn create_outgoing_share(
     } else {
         // Cross-instance share: announce via federation protocol inside the transaction, so a
         // delivery failure rolls back the OutgoingShare insert.
-        let token = federation
-            .get_or_wait_federation_token(sender_username, recipient_username, recipient_instance)
-            .await?;
         let auto_accepted = federation
-            .announce_share(
+            .send(
+                sender_username,
                 recipient_username,
                 recipient_instance,
-                &token,
-                &ShareAnnouncementRequest {
+                ShareAnnouncementRequest {
                     sender_username: sender_username.to_string(),
                     sender_instance: settings.get(keys::GLOBAL_DOMAIN).clone(),
                     recipient_username: recipient_username.to_string(),
@@ -348,7 +379,8 @@ pub async fn create_outgoing_share(
                     shareback_of,
                 },
             )
-            .await?;
+            .await?
+            .auto_accepted;
 
         // ShareBack auto-accepted by the recipient (no callback into this still-open transaction;
         // it returned `auto_accepted`). Hand our OutgoingShare to the pipeline — set
@@ -450,9 +482,6 @@ pub async fn accept_incoming_share(
         ShareStatus::Revoked | ShareStatus::Tombstoned => return Err(AppError::NotFound),
     }
 
-    // Transition to Active immediately — this is the acceptor's consent.
-    IncomingShareRepository::set_status(db, incoming.id, ShareStatus::Active).await?;
-
     let sender_local_id = find_local_user_id(
         cache,
         db,
@@ -464,35 +493,39 @@ pub async fn accept_incoming_share(
     if let Some(sender_id) = sender_local_id {
         // ── Same-backend path ─────────────────────────────────────────────────
         // Hand the sender's OutgoingShare to the pipeline: it announces the current coverage and
-        // flips the share to Active. No pictures are registered synchronously here.
+        // flips the share to Active. No pictures are registered synchronously here. No federation
+        // delivery, so a single transaction suffices.
+        let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+        IncomingShareRepository::set_status(&mut *tx, incoming.id, ShareStatus::Active).await?;
         OutgoingShareRepository::set_status(
-            db,
+            &mut *tx,
             incoming.outgoing_share_id,
             ShareStatus::PendingFirstAnnouncement,
         )
         .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
         pipeline_waker.trigger(sender_id);
         Ok(())
     } else {
         // ── Cross-instance path ───────────────────────────────────────────────
-        // The IncomingShare is set Active *before* notifying the sender, because the sender then
-        // moves its OutgoingShare to `pending_first_announcement` and its pipeline announces the
-        // pictures back to us — which requires our `IncomingShare = Active` to be committed. If
-        // the accept notification cannot be delivered, revert to Pending so the share isn't left
-        // stuck Active with no pictures (keeping the requester unchanged on failure — the Rule).
-        if let Err(e) = federation
-            .send_share_accept(
+        // Deliver-then-commit (feature 28 §6.1, the 03 §G rule): set Active + notify the sender in
+        // one transaction, deliver inside it, commit last. A crash or delivery failure before COMMIT
+        // leaves the share Pending (clean, re-acceptable) with no manual revert. The sender's async
+        // picture-announce arriving before our commit is absorbed by the announce path's
+        // errored→backoff→retry (self-healing).
+        let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+        IncomingShareRepository::set_status(&mut *tx, incoming.id, ShareStatus::Active).await?;
+        federation
+            .send(
                 acceptor_username,
                 &incoming.sender_username,
                 &incoming.sender_instance,
-                incoming.outgoing_share_id,
+                ShareAcceptRequest {
+                    outgoing_share_id: incoming.outgoing_share_id,
+                },
             )
-            .await
-        {
-            let _ =
-                IncomingShareRepository::set_status(db, incoming.id, ShareStatus::Pending).await;
-            return Err(e);
-        }
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
         Ok(())
     }
 }
@@ -563,11 +596,13 @@ pub async fn revoke_outgoing_share(
     } else {
         // ── Cross-instance path ───────────────────────────────────────────────
         federation
-            .send_revocation(
+            .send(
                 owner_username,
                 &share.recipient_username,
                 &share.recipient_instance,
-                share.id,
+                ShareRevokeRequest {
+                    outgoing_share_id: share.id,
+                },
             )
             .await?;
     }

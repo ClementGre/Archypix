@@ -71,7 +71,7 @@ Spot-checked every mutating path; all scope to the caller:
     - `receive_share_revoke` / `receive_pictures_unannouncement` look the share up keyed by
       `(outgoing_share_id, authenticated_instance)`.
 - The pairwise-JWT handshake is safe against instance impersonation: a token requested for
-  `requester_instance = X` is **delivered out-of-band** to X's backend (resolved via WebFinger),
+  `requester_instance = X` is **delivered out-of-band** to X's backend (resolved via the resolver),
   so a caller cannot obtain a token minted for an instance it does not control.
 - `presign_by_picture_tokens` treats the per-picture token as the capability, then confirms the
   resolved picture `is_owned()` by this backend. Tokens are random UUIDv4 (unguessable,
@@ -128,7 +128,7 @@ per-user limiter). Consequences:
   `login` returns immediately when the username is unknown and only runs Argon2 when it exists,
   so response time distinguishes valid usernames.
 - `POST /api/public/register` (standalone mode) registration is unthrottled.
-- Federation/WebFinger lookups and outbound handshakes can be triggered repeatedly.
+- Federation/resolver lookups and outbound handshakes can be triggered repeatedly.
 
 Recommendation: add a rate-limit middleware (e.g. `tower_governor`) on `auth/*`, `public/*`,
 and share/federation entry points. For enumeration, perform a constant-time dummy Argon2 verify
@@ -159,18 +159,18 @@ recipient holds `MAX_PENDING_INCOMING_SHARES` pending incoming shares.
 ### 2.4 — MEDIUM — [FIXED] Outbound-request amplification / SSRF-flavoured vector via `recipient_instance`
 
 `create_outgoing_share` accepts an arbitrary `recipient_instance` and immediately drives a
-WebFinger resolution + federation HTTP POST to whatever backend that domain resolves to (inside
+resolver resolution + federation HTTP POST to whatever backend that domain resolves to (inside
 the request transaction). An authenticated user can therefore make the backend issue outbound
 HTTP requests to arbitrary attacker-chosen domains (the federation handshake also `POST`s to the
-resolved backend URL). This is bounded by WebFinger resolvability but is still a request-
+resolved backend URL). This is bounded by resolvability but is still a request-
 amplification / blind-SSRF surface.
 
 Recommendation: validate `recipient_instance` against an allowlist or a format/again-resolvable
 check, apply a short timeout (already partly present), and consider not allowing outbound
-federation to private/loopback address ranges after WebFinger resolution.
+federation to private/loopback address ranges after resolution.
 
 **Fixed:** `create_outgoing_share` validates `recipient_instance` with
-`domain::validation::validate_federation_domain` before any WebFinger/federation call — rejecting
+`domain::validation::validate_federation_domain` before any resolver/federation call — rejecting
 schemes, ports, paths, whitespace, `localhost`/`.local` domains, and IPv4/IPv6 literals (e.g.
 `169.254.169.254`, `127.0.0.1`, `::1`). Internal backend URLs still come only from the trusted
 resolver, not this field. Full DNS-rebinding defence (re-checking the resolved IP) remains future work.
@@ -252,7 +252,7 @@ All MEDIUM items and the easy LOW/INFO items were addressed in this PR (§2.1–
 
 1. **§2.6 — per-user storage quotas** (roadmap): enforce a byte quota at upload-complete and
    WebDAV `PUT`, plus a max object size.
-2. **§2.4 follow-up**: optional DNS-rebinding defence (re-check the resolved IP after WebFinger),
+2. **§2.4 follow-up**: optional DNS-rebinding defence (re-check the resolved IP after resolution),
    on top of the `recipient_instance` syntactic validation now in place.
 3. **§2.7 follow-up**: a real email-verification (confirmation link) flow.
 

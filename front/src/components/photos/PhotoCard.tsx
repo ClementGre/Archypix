@@ -1,6 +1,9 @@
 import {memo, type MouseEvent, type PointerEvent, useRef, useState} from 'react'
-import {AlertTriangle, Check, Clock, Trash2} from 'lucide-react'
+import {AlertTriangle, Check, Clock, CloudOff, RefreshCw, Trash2} from 'lucide-react'
+import {useQueryClient} from '@tanstack/react-query'
 import type {PictureListItem} from '@/lib/types'
+import {getPictureUrl} from '@/api/pictures'
+import {usePresignRefresh} from '@/hooks/usePresignRefresh'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {recordImage} from '@/stores/imageCache'
 import {cn, isVideoMime, variantForSize} from '@/lib/utils'
@@ -106,6 +109,9 @@ export const PhotoCard = memo(function PhotoCard({
 
     const trashed = !!item.deleted_at
     const ownerDeleted = !item.owned && !!item.owner_deleted_at
+    // Cross-instance owner whose backend was unreachable at presign time (§3.2) — a distinct
+    // "owner offline" tile, not the generic no-thumbnail file icon.
+    const ownerOffline = !item.owned && !item.owner_reachable
     // Purge countdown (trash-only view, owned trashed pictures): owner rows carry no `owner_purge_at`,
     // so derive it as `deleted_at + retention`. Received trash is local-only (never purged) — no badge.
     const purgeAt = showPurgeCountdown && trashed && item.owned
@@ -118,6 +124,23 @@ export const PhotoCard = memo(function PhotoCard({
     // Once the thumbnail loads, fade the blurhash out so transparent (PNG) areas reveal the
     // checkerboard backdrop rather than the blurry placeholder.
     const [loaded, setLoaded] = useState(false)
+
+    // Presign auto-refresh (§10): an expired/403 thumbnail re-presigns a fresh URL in place rather
+    // than showing a broken image (fixes stale thumbnails after a backgrounded tab resumes).
+    const [refreshedThumb, setRefreshedThumb] = useState<string | null>(null)
+    const thumbSrc = refreshedThumb ?? item.thumbnail_url
+    const onThumbError = usePresignRefresh(() => {
+        void getPictureUrl(item.id, variantForSize(rowHeight))
+            .then((r) => r.url && setRefreshedThumb(r.url))
+            .catch(() => undefined)
+    })
+
+    // Retry the owner-offline tile by re-fetching the list (re-presigns against the peer).
+    const queryClient = useQueryClient()
+    const retryOwner = (e: MouseEvent) => {
+        e.stopPropagation()
+        void queryClient.invalidateQueries({queryKey: ['pictures']})
+    }
 
     return (
         <li
@@ -147,9 +170,9 @@ export const PhotoCard = memo(function PhotoCard({
                 />
             )}
 
-            {item.thumbnail_url ? (
+            {thumbSrc ? (
                 <OrientedImage
-                    src={item.thumbnail_url}
+                    src={thumbSrc}
                     alt={item.filename ?? ''}
                     orientation={item.orientation}
                     width={item.width}
@@ -158,9 +181,24 @@ export const PhotoCard = memo(function PhotoCard({
                     onLoad={() => {
                         setLoaded(true)
                         // Record for reuse by the carousel/lightbox (browser already has these bytes).
-                        recordImage(item.id, variantForSize(rowHeight), item.thumbnail_url, true)
+                        recordImage(item.id, variantForSize(rowHeight), thumbSrc, true)
                     }}
+                    onError={onThumbError}
                 />
+            ) : ownerOffline ? (
+                // The owner's instance was unreachable at presign time — a distinct offline tile with
+                // a retry affordance (§3.2/§13), not the generic no-thumbnail file icon.
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-muted/40 p-2 text-center text-muted-foreground">
+                    <CloudOff className="h-[30%] w-[30%] max-h-12 max-w-12 opacity-60"/>
+                    <span className="text-[10px] leading-tight">Owner offline</span>
+                    <button
+                        onClick={retryOwner}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
+                        title="Retry — the owner's instance may be back"
+                    >
+                        <RefreshCw className="h-2.5 w-2.5"/> Retry
+                    </button>
+                </div>
             ) : (
                 // No thumbnail (pending, or a non-thumbnailable format like a PDF) — file-type icon.
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-2 text-center text-muted-foreground">

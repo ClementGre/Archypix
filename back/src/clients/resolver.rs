@@ -106,7 +106,7 @@ impl ResolverClient {
     /// Register this backend with the resolver at startup. No-op when `use_resolver=false`.
     ///
     /// Sends `back_domain`, `use_https`, and `internal_url` so the resolver can:
-    /// - Return the correct public URL in WebFinger responses.
+    /// - Return the correct public URL when resolving `@user:domain`.
     /// - Use the internal URL to forward user registration requests.
     #[tracing::instrument(skip(self), fields(otel.kind = "client", back_domain = %self.settings.get(keys::BACK_DOMAIN), resolver_url))]
     pub async fn self_register(&self) -> Result<(), AppError> {

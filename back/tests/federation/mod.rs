@@ -48,12 +48,17 @@ pub(crate) fn post_fed(path: &str, bearer: &str, body: &Value) -> Request<Body> 
         .unwrap()
 }
 
-/// Build a POST request with no authentication header.
+/// Build a POST request with no authentication header. Carries a stub `ConnectInfo` so IP-based
+/// rate limiters (e.g. the federation presign endpoint) can extract a source address under
+/// `oneshot` (production supplies it via `into_make_service_with_connect_info`).
 pub(crate) fn post_no_auth(path: &str, body: &Value) -> Request<Body> {
+    use axum::extract::ConnectInfo;
+    use std::net::{Ipv4Addr, SocketAddr};
     Request::builder()
         .method("POST")
         .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
+        .extension(ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))))
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
 }

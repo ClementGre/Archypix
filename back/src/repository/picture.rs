@@ -177,7 +177,7 @@ impl PictureRepository {
                          owner_deleted_at, owner_purge_at,
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
-                         captured_at, ingested_at, updated_at,
+                         captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
@@ -242,7 +242,7 @@ impl PictureRepository {
                          owner_deleted_at, owner_purge_at,
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
-                         captured_at, ingested_at, updated_at,
+                         captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
@@ -300,6 +300,7 @@ impl PictureRepository {
         owner_deleted_at: Option<NaiveDateTime>,
         owner_purge_at: Option<NaiveDateTime>,
         creator: Option<&str>,
+        remote_updated_at: Option<NaiveDateTime>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -313,9 +314,9 @@ impl PictureRepository {
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                     filename, mime_type, file_size, width, height, metadata,
                     blurhash, file_hash, content_hash, thumbnails_generated_at,
-                    remote_exif_data, owner_deleted_at, owner_purge_at, creator)
+                    remote_exif_data, owner_deleted_at, owner_purge_at, creator, remote_updated_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,
-                       $10, $11, $16, $12, $13, $14, $15, $17)
+                       $10, $11, $16, $12, $13, $14, $15, $17, $18)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -330,11 +331,13 @@ impl PictureRepository {
                    thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,
                                                       pictures.thumbnails_generated_at),
                    -- Owner-authoritative state is refreshed; local_exif_overrides + creator_override
-                   -- (the recipient's own relabel) are preserved.
+                   -- (the recipient's own relabel) are preserved. The stale-announce guard (§7) is
+                   -- applied by the caller before this upsert; here we just stamp the new value.
                    remote_exif_data = EXCLUDED.remote_exif_data,
                    owner_deleted_at = EXCLUDED.owner_deleted_at,
                    owner_purge_at   = EXCLUDED.owner_purge_at,
-                   creator          = EXCLUDED.creator
+                   creator          = EXCLUDED.creator,
+                   remote_updated_at = COALESCE(EXCLUDED.remote_updated_at, pictures.remote_updated_at)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -342,7 +345,7 @@ impl PictureRepository {
                          owner_deleted_at, owner_purge_at,
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
-                         captured_at, ingested_at, updated_at,
+                         captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
@@ -365,10 +368,34 @@ impl PictureRepository {
             owner_purge_at,
             content_hash,
             creator,
+            remote_updated_at,
         )
             .fetch_one(ex)
             .await
             .map_err(map_sqlx_error)
+    }
+
+    /// The last-applied owner `updated_at` for a received row, for the stale-announcement guard
+    /// (feature 28 §7). Outer `None` ⇒ no such received row yet; inner `None` ⇒ a row from a peer
+    /// that predated the field. Keyed by the received-picture unique `(local_user_id, remote_picture_id)`.
+    pub async fn received_remote_updated_at<'e, E>(
+        ex: E,
+        recipient_id: Uuid,
+        remote_picture_id: &str,
+    ) -> Result<Option<Option<NaiveDateTime>>, AppError>
+    where
+        E: Executor<'e, Database=Postgres>,
+    {
+        let row = sqlx::query!(
+            r#"SELECT remote_updated_at FROM pictures
+               WHERE local_user_id = $1 AND remote_picture_id = $2"#,
+            recipient_id,
+            remote_picture_id,
+        )
+            .fetch_optional(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(row.map(|r| r.remote_updated_at))
     }
 
     /// Re-materialise a received row's `exif_data` + promoted columns from the
@@ -571,7 +598,7 @@ impl PictureRepository {
                       p.owner_deleted_at, p.owner_purge_at,
                       p.remote_exif_data as "remote_exif_data: _",
                       p.local_exif_overrides as "local_exif_overrides: _",
-                      p.captured_at, p.ingested_at, p.updated_at,
+                      p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
                       p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                       p.thumbnails_generated_at, p.file_hash,
                       p.exif_sync_status as "exif_sync_status: _",
@@ -611,7 +638,7 @@ impl PictureRepository {
                       owner_deleted_at, owner_purge_at,
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
-                      captured_at, ingested_at, updated_at,
+                      captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
@@ -639,7 +666,7 @@ impl PictureRepository {
                       owner_deleted_at, owner_purge_at,
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
-                      captured_at, ingested_at, updated_at,
+                      captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
@@ -676,7 +703,7 @@ impl PictureRepository {
                       owner_deleted_at, owner_purge_at,
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
-                      captured_at, ingested_at, updated_at,
+                      captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
@@ -961,7 +988,7 @@ impl PictureRepository {
                           p.width, p.height, p.exif_data, p.metadata,
                           p.deleted_at, p.deleted_reason, p.owner_deleted_at, p.owner_purge_at,
                           p.remote_exif_data, p.local_exif_overrides,
-                          p.captured_at, p.ingested_at, p.updated_at,
+                          p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
                           p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                           p.thumbnails_generated_at, p.file_hash, p.exif_sync_status,
                           p.content_hash, p.copy_source_owner_username,
@@ -1123,7 +1150,7 @@ impl PictureRepository {
                          owner_deleted_at, owner_purge_at,
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
-                         captured_at, ingested_at, updated_at,
+                         captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
@@ -1192,7 +1219,7 @@ impl PictureRepository {
                          owner_deleted_at, owner_purge_at,
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
-                         captured_at, ingested_at, updated_at,
+                         captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,

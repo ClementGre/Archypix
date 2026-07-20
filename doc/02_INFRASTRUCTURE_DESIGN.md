@@ -5,8 +5,8 @@
     - Purpose: map username → owning backend domain. Enables multiple backends to share one global identity domain. The resolver's **entire router is
       nested under one prefix, `/archypix-resolver/`** (feature 25), so a self-hoster has a single forwarding rule and no `.well-known` collision.
   - Roles:
-      - Resolution endpoint: answer `GET /archypix-resolver/resolve?user=&domain=` with `{ backend_url }` (one HTTP call; replaces the dropped
-        `.well-known/webfinger`). Plus `GET /archypix-resolver/info` bootstrap discovery (`{ is_resolver, api_url }`) — the two fixed,
+      - Resolution endpoint: answer `GET /archypix-resolver/resolve?user=&domain=` with `{ backend_url }` (one HTTP call). Plus
+        `GET /archypix-resolver/info` bootstrap discovery (`{ is_resolver, api_url }`) — the two fixed,
         directly-callable
         paths. A standalone backend answers `/archypix-resolver/info` (`is_resolver:false`, its own public URL) **and** `/archypix-resolver/resolve`
         (confirms the user exists, returns its own public URL), so a single-domain deployment can forward the prefix from the global domain to the
@@ -35,7 +35,8 @@
     - Purpose: authoritative per-instance application server and metadata store.
     - Roles:
         - HTTP API & WebDAV: serve user requests, uploads, sync client endpoints.
-        - WebFinger client: cross-instance discovery; caches backend base URLs in Redis (`WEBFINGER_USE_HTTPS` controls the scheme).
+      - Resolver client: cross-instance discovery via `/archypix-resolver/resolve`; caches backend base URLs in Redis (`FEDERATION_USE_HTTPS` controls
+        the scheme).
         - Postgres: authoritative metadata (users, pictures, tags, shares, jobs). Key picture columns: `file_hash` (SHA-256, WebDAV ETag),
           `file_size`. On a presigned upload the backend reads the authoritative `file_size` from S3 (`HEAD`) rather than trusting the client; the
           client's SHA-256 (computed the same way as the worker) is stored as a provisional `file_hash` and re-confirmed by `gen_thumbnail`.
@@ -76,7 +77,7 @@
 
 - Frontend (static CDN + clients)
     - Single static site served from CDN; no per-instance build.
-    - Discovery: resolve `@username:domain` → backend URL via WebFinger before making API calls.
+  - Discovery: resolve `@username:domain` → backend URL via `/archypix-resolver/resolve` before making API calls.
     - All API and WebDAV calls go to the resolved backend for that user.
   - **Public share links** (feature 27): `https://<frontend>/s/<global_domain>/<username>/<token>`. The URL
     carries everything a resolver pass needs, so any correctly-CORS'd frontend can open it — it resolves
@@ -88,6 +89,6 @@
 
 - Each backend is authoritative for its users (Postgres is the single source of truth per instance).
 - Workers publish results; backends persist — workers never write to backend databases or S3 directly.
-- All persistent storage uses the **global domain**. Backend domains are resolved on demand via WebFinger and cached in Redis.
+- All persistent storage uses the **global domain**. Backend domains are resolved on demand via `/archypix-resolver/resolve` and cached in Redis.
 - Job queue transport is Postgres (`SELECT FOR UPDATE SKIP LOCKED`). Workers are stateless HTTP clients.
 - The `claim_token` protocol prevents stale workers from overwriting the results of a re-claimed job.

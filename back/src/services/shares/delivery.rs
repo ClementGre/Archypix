@@ -49,11 +49,11 @@ pub async fn deliver_unannounce(
         pipeline.trigger(incoming.recipient_id);
     } else {
         federation
-            .unannounce_pictures_to_backend(
+            .send(
                 &sender_username,
                 &recipient_username,
                 &recipient_instance,
-                &PicturesUnannouncementRequest {
+                PicturesUnannouncementRequest {
                     outgoing_share_id,
                     sender_username: sender_username.clone(),
                     sender_instance: settings.get(keys::GLOBAL_DOMAIN).clone(),

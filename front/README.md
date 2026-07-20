@@ -5,7 +5,8 @@
 ## Overview
 
 The frontend is a pure static SPA (no SSR). It is **federated**: rather than talking to one fixed API server, it resolves — per logged-in user — which
-backend hosts that user's `@username:domain` identity via WebFinger, then talks directly to that backend. Picture files are fetched straight from the
+backend hosts that user's `@username:domain` identity via the resolver (`/archypix-resolver/resolve`), then talks directly to that backend. Picture
+files are fetched straight from the
 owner's object storage through short-lived presigned URLs, so large file traffic never passes through a relay.
 
 The whole client lives in `src/` (component source included, not hidden in `node_modules`) so it is easy to read, grep, and edit.
@@ -42,23 +43,23 @@ npm run build    # tsc -b && vite build → dist/
 
 Dev values are read from `front/.env` (see [.env.example](.env.example)). All vars are build-time (`VITE_` prefixed):
 
-| Variable                 | Default         | Purpose                                                                                            |
-|--------------------------|-----------------|----------------------------------------------------------------------------------------------------|
-| `VITE_GLOBAL_DOMAIN`     | `archypix.test` | Default identity domain — the part after `:` in `@user:domain`. Used for WebFinger + registration. |
-| `VITE_USE_HTTPS`         | `false`         | Scheme used to reach the global domain (and resolved backends). `false` → http (dev).              |
-| `VITE_REGISTRATION_MODE` | `auto`          | `auto` (try resolver, fall back to standalone), `resolver`, or `standalone`.                       |
-| `VITE_REGISTRATION_URL`  | *(empty)*       | Explicit registration endpoint override; when set, used verbatim.                                  |
+| Variable                 | Default         | Purpose                                                                                             |
+|--------------------------|-----------------|-----------------------------------------------------------------------------------------------------|
+| `VITE_GLOBAL_DOMAIN`     | `archypix.test` | Default identity domain — the part after `:` in `@user:domain`. Used for resolution + registration. |
+| `VITE_USE_HTTPS`         | `false`         | Scheme used to reach the global domain (and resolved backends). `false` → http (dev).               |
+| `VITE_REGISTRATION_MODE` | `auto`          | `auto` (try resolver, fall back to standalone), `resolver`, or `standalone`.                        |
+| `VITE_REGISTRATION_URL`  | *(empty)*       | Explicit registration endpoint override; when set, used verbatim.                                   |
 
 ## Local development against the dev stack
 
 The repo ships a federation stack in [`docker/docker-compose.dev.yml`](../docker/docker-compose.dev.yml), fronted by Traefik on port 80:
 
-| Host                 | Service                                                     |
-|----------------------|-------------------------------------------------------------|
-| `archypix.test`      | Resolver (WebFinger + `/api/public/register`)               |
-| `b1.archypix.test`   | Backend 1 (resolver-backed)                                 |
-| `b2.archypix.test`   | Backend 2 (resolver-backed)                                 |
-| `solo.archypix.test` | Standalone backend (own WebFinger + `/api/public/register`) |
+| Host                 | Service                                                                        |
+|----------------------|--------------------------------------------------------------------------------|
+| `archypix.test`      | Resolver (`/archypix-resolver/resolve` + `/api/public/register`)               |
+| `b1.archypix.test`   | Backend 1 (resolver-backed)                                                    |
+| `b2.archypix.test`   | Backend 2 (resolver-backed)                                                    |
+| `solo.archypix.test` | Standalone backend (own `/archypix-resolver/resolve` + `/api/public/register`) |
 
 Add the fake hostnames to `/etc/hosts`, then start the stack:
 
@@ -68,7 +69,8 @@ docker compose -f ../docker/docker-compose.dev.yml up --build
 npm run dev
 ```
 
-With `VITE_GLOBAL_DOMAIN=archypix.test`, **log in** as an existing `@user:archypix.test` (WebFinger resolves to `b1`/`b2`) — or switch the instance on
+With `VITE_GLOBAL_DOMAIN=archypix.test`, **log in** as an existing `@user:archypix.test` (the resolver resolves to `b1`/`b2`) — or switch the instance
+on
 the login form to `solo.archypix.test` for the standalone backend. **Register** creates a user on the global domain (resolver or standalone,
 auto-detected). Backends run with `CORS_ORIGINS=*` in dev, so the cross-origin direct-to-backend calls work from `localhost:5173`.
 

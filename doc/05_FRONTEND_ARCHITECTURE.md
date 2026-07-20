@@ -51,8 +51,8 @@ There is **no `VITE_API_BASE_URL`**. Flow:
    `{domain}/archypix-resolver/info` → `{ is_resolver, api_url }`. `resolveConnection(username, instance)`
    returns `{ backendUrl, isResolver, resolverUrl }`: on a standalone instance `api_url` **is** the
    backend (no user resolution); on a resolver-fronted one it additionally hits
-   `{instance}/archypix-resolver/resolve?user=&domain=` (one call, replaces the old WebFinger query) for
-   the owning `backend_url`. The `.well-known/webfinger` path is gone.
+   `{instance}/archypix-resolver/resolve?user=&domain=` (one call) for
+   the owning `backend_url`.
 2. **Login** (`api/auth.ts` → `login`) resolves the connection, POSTs `/api/auth/login` at `backendUrl`,
    stores `{ accessToken, refreshToken, backendUrl, instance, isResolver, resolverUrl }` in the auth
    store, then loads `/api/auth/me`. `isResolver` gates the **Fleet dashboard** entry in the `TopBar`.
@@ -87,7 +87,7 @@ The **register page** keeps the account/instance editor (and the health warning)
 
 | Path                                 | Page                | Auth                 | Notes                                                                                                                                                     |
 |--------------------------------------|---------------------|----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `/login`                             | `LoginPage`         | public               | WebFinger login + instance switcher                                                                                                                       |
+| `/login`                             | `LoginPage`         | public               | resolver login + instance switcher                                                                                                                        |
 | `/register`                          | `RegisterPage`      | public               | instance switcher (stays editable when registration is closed) + live health/CORS ping, then auto-logs in                                                 |
 | `/`                                  | `GalleryPage`       | required             | the main three-pane workspace                                                                                                                             |
 | `/tags`                              | `TagsPage`          | required             | placeholder (tag tree lives in the gallery panel)                                                                                                         |
@@ -95,7 +95,7 @@ The **register page** keeps the account/instance editor (and the health warning)
 | `/tagging/:id`                       | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
 | `/shares`                            | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
 | `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention, one explicit Save), storage, invites + invitation graph (via user menu, labelled "Profile") |
-| `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Invites** (+ Fleet link, cache-clear refresh)                                    |
+| `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Rate limiting** / **Invites** (+ Fleet link, cache-clear refresh)                |
 | `/admin/resolver`                    | `ResolverAdminPage` | **resolver session** | fleet dashboard — operator-token login, not `ProtectedRoute` (feature 24)                                                                                 |
 | `/s/:global_domain/:username/:token` | `PublicSharePage`   | **public**           | link-gated public share (feature 27): resolves the owner backend from the URL, renders the gallery/lightbox/detail; no login required                     |
 | `*`                                  | → `/`               | —                    |                                                                                                                                                           |
@@ -419,7 +419,11 @@ default / example / description, env-locked fields read-only with a badge, a pro
 *collapsed
 "Core (env-only)" section** for non-runtime fields tagged red **core** / **secret** (secret values arrive redacted); pointed at `apiClient`,
 `resolverClient`, or the per-instance proxy), `RoutinesPanel` (live routine status + inline tuning via `SettingsPanel flat` + Trigger-now,
-polls while open), `SettingsTab`, `InvitesTab`, and **`InvitesManager`** (shared by `/admin` + the Profile page + the resolver dashboard — mint form
+polls while open), `SettingsTab`, **`RateLimitsTab`** (feature 28 §9.3 "Rate limiting" tab — a recent-rejections
+bar timeline per category (`login`/`register`/`public_upload`/`federation`/`presign`) with an `attack_suspected`
+banner from `GET /api/admin/rate-limits`, then the `RATE_LIMITS`-group frequency limits via the shared
+`SettingsPanel`; works through the fleet proxy like every other tab), `InvitesTab`, and **`InvitesManager`** (shared by `/admin` + the Profile page +
+the resolver dashboard — mint form
 adapts to the registration mode (open ⇒ a single **tracking** referral link `max_uses:null`, else allowed-uses/unlimited + expiry, resolver adds an
 instance-pin picker), short grouped codes (`ABC-DEF-GHI`), copyable `/register?invite=` links, revoke; a `groupByCreator` mode groups the list under
 per-user headers for the admin `/admin` Invites tab (`GET /api/admin/invites`, all local) and the fleet Invites tab). **Admin + Fleet dashboard live
@@ -512,6 +516,19 @@ mobile) and shown only when its `ui` store toggle is on:
   (`components/photos/`, a lucide icon picked from MIME or filename extension) instead: in the grid (`PhotoCard`), the sidebar preview, and the
   `Lightbox` ("No preview available — use Download"). `getPictureUrl` returns `url: string | null` accordingly (`original` is always a URL). **Videos
   do have thumbnails** (a worker frame-grab), so they render a real thumbnail with a play badge, not the icon fallback.
+- **Owner-offline tile (feature 28 §3.2):** a cross-instance list item with `owner_reachable === false` — its owner's backend was unreachable while
+  presigning the thumbnail — renders a **distinct** `PhotoCard` tile (`CloudOff` icon + "Owner offline" + a **Retry** that invalidates `['pictures']`
+  to
+  re-presign against the peer), not the generic file-type placeholder. A cross-instance picture with no active token yet stays
+  `owner_reachable === true`
+  with an absent URL (a "no thumbnail" state, not an outage).
+- **Presigned-URL auto-refresh (feature 28 §10):** an expired / `403` image URL is treated as a refresh signal rather than a broken image —
+  `hooks/usePresignRefresh.ts` returns an `<img> onError` handler that re-requests a fresh URL **once per failing `src`** (loop-guarded). The grid
+  (`PhotoCard`) re-presigns the thumbnail via `getPictureUrl` and swaps it in; the `Lightbox` main image and the `SelectionPanel` preview `refetch`
+  their presign query. This also self-heals the stale-thumbnail-on-session-resume case (a URL that expired while the tab was backgrounded).
+  Share-action
+  errors (`503` unreachable / `426` version skew / `4xx` specific reason) surface through the backend's tailored messages via the existing
+  `apiErrorMessage` toasts.
 - **Video/audio playback (Tier 1):** `video/*` and `audio/*` pictures (detected via `isPlayableMedia(mime)`, `lib/utils.ts`) play the **`original`**
   file straight from S3 through the `MediaPlayer` (Vidstack) — progressive HTTP-Range playback, **no transcode/streaming infra**. The **Lightbox**
   autoplays: video fills the viewer like an image (`LightboxVideo` measures the area and sizes the player to the largest box of the video's aspect

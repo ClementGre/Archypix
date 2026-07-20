@@ -469,6 +469,28 @@ pub async fn receive_public_claim(
         ));
     }
 
+    // Idempotency (§6.3): a visitor retrying after a lost response must not mint a duplicate derived
+    // share. Return an existing non-terminal derived share for this (public share, requester) pair.
+    if let Some(existing) = OutgoingShareRepository::find_derived_by_public_share(db, share.id)
+        .await?
+        .into_iter()
+        .find(|s| {
+            s.recipient_username == requester_username && s.recipient_instance == requester_instance
+        })
+    {
+        return Ok(
+            crate::clients::federation::models::PublicShareClaimResponse {
+                outgoing_share_id: existing.id,
+                name: share.name,
+                message: share.message,
+                tag_path: share.tag_path,
+                allow_share_back: share.allow_share_back,
+                allow_exif_edit: share.conv_allow_exif_edit,
+                future: share.conv_future,
+            },
+        );
+    }
+
     let mut tx = db
         .begin()
         .await
@@ -513,14 +535,16 @@ pub async fn receive_public_claim(
 }
 
 /// Resolve per-picture tokens to owned pictures and presign each. The token *is* the
-/// authorization — no federation JWT is required. An unknown token yields 401.
+/// authorization — no federation JWT is required. An unknown token yields 401. Each result carries
+/// the presign's expiry (epoch seconds) so the recipient caches it under a truthful lifetime (§10).
 #[tracing::instrument(skip(db, storage, settings, items))]
 pub async fn presign_by_picture_tokens(
     db: &PgPool,
     storage: &dyn Storage,
     settings: &Settings,
     items: &[PresignTokenItem],
-) -> Result<Vec<(Uuid, String)>, AppError> {
+) -> Result<Vec<(Uuid, String, i64)>, AppError> {
+    let ttl = settings.get(keys::S3_PRESIGN_TTL_SECS) as i64;
     let mut results = Vec::with_capacity(items.len());
     for item in items {
         let picture_id = ShareAnnouncementRepository::find_picture_by_token(db, item.picture_token)
@@ -538,7 +562,8 @@ pub async fn presign_by_picture_tokens(
         let variant: PictureVariant = item.variant.as_deref().unwrap_or("original").parse()?;
         let key = s3::picture_key(picture.local_user_id, picture.id);
         let url = storage.presign_get(&variant.bucket(settings), &key).await?;
-        results.push((item.picture_token, url));
+        let expires_at = chrono::Utc::now().timestamp() + ttl;
+        results.push((item.picture_token, url, expires_at));
     }
     Ok(results)
 }

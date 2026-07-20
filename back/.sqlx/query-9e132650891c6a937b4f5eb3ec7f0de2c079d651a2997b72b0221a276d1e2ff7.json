@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override\n               FROM pictures WHERE id = ANY($1::uuid[])",
+  "query": "UPDATE pictures\n               SET width       = COALESCE($2,  width),\n                   height      = COALESCE($3,  height),\n                   captured_at = COALESCE($4,  captured_at),\n                   gps_lat     = COALESCE($5,  gps_lat),\n                   gps_lng     = COALESCE($6,  gps_lng),\n                   gps_alt     = COALESCE($7,  gps_alt),\n                   orientation = COALESCE($8,  orientation),\n                   blurhash    = COALESCE($9,  blurhash),\n                   exif_data   = CASE WHEN $10::jsonb IS NOT NULL\n                                      THEN exif_data || $10::jsonb\n                                      ELSE exif_data\n                                 END,\n                   file_size   = COALESCE($11, file_size),\n                   file_hash   = COALESCE($12, file_hash),\n                   content_hash = COALESCE($13, content_hash),\n                   thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc'),\n                   last_pipeline_run_at = NULL\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override",
   "describe": {
     "columns": [
       {
@@ -247,6 +247,17 @@
       },
       {
         "ordinal": 21,
+        "name": "remote_updated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "remote_updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
         "name": "blurhash",
         "type_info": "Text",
         "origin": {
@@ -257,7 +268,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 23,
         "name": "gps_lat",
         "type_info": "Float8",
         "origin": {
@@ -268,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "gps_lng",
         "type_info": "Float8",
         "origin": {
@@ -279,7 +290,7 @@
         }
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "gps_alt",
         "type_info": "Int4",
         "origin": {
@@ -290,7 +301,7 @@
         }
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "orientation",
         "type_info": "Int2",
         "origin": {
@@ -301,7 +312,7 @@
         }
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "thumbnails_generated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -312,7 +323,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "file_hash",
         "type_info": "Text",
         "origin": {
@@ -323,7 +334,7 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "exif_sync_status: _",
         "type_info": {
           "Custom": {
@@ -346,7 +357,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "content_hash",
         "type_info": "Text",
         "origin": {
@@ -357,7 +368,7 @@
         }
       },
       {
-        "ordinal": 30,
+        "ordinal": 31,
         "name": "copy_source_owner_username",
         "type_info": "Varchar",
         "origin": {
@@ -368,7 +379,7 @@
         }
       },
       {
-        "ordinal": 31,
+        "ordinal": 32,
         "name": "copy_source_owner_instance",
         "type_info": "Varchar",
         "origin": {
@@ -379,7 +390,7 @@
         }
       },
       {
-        "ordinal": 32,
+        "ordinal": 33,
         "name": "copy_source_picture_id",
         "type_info": "Varchar",
         "origin": {
@@ -390,7 +401,7 @@
         }
       },
       {
-        "ordinal": 33,
+        "ordinal": 34,
         "name": "creator",
         "type_info": "Text",
         "origin": {
@@ -401,7 +412,7 @@
         }
       },
       {
-        "ordinal": 34,
+        "ordinal": 35,
         "name": "creator_override",
         "type_info": "Text",
         "origin": {
@@ -414,7 +425,19 @@
     ],
     "parameters": {
       "Left": [
-        "UuidArray"
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Timestamp",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Int2",
+        "Text",
+        "Jsonb",
+        "Int8",
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -446,6 +469,7 @@
       true,
       true,
       true,
+      true,
       false,
       true,
       true,
@@ -455,5 +479,5 @@
       true
     ]
   },
-  "hash": "dafec6a22aeb2517ca64836042445d54d76f92dc13b690fe1ebed6e8cb7ce2a8"
+  "hash": "9e132650891c6a937b4f5eb3ec7f0de2c079d651a2997b72b0221a276d1e2ff7"
 }

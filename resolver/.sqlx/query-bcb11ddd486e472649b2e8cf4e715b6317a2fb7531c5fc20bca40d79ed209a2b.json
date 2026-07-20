@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE invites SET uses = uses + 1\n         WHERE code = $1 AND (max_uses IS NULL OR uses < max_uses)\n           AND (expires_at IS NULL OR expires_at > now())\n         RETURNING code, max_uses, uses, expires_at, created_by, instance_pin",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "max_uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "max_uses"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "uses",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "uses"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "instance_pin",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "instance_pin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "bcb11ddd486e472649b2e8cf4e715b6317a2fb7531c5fc20bca40d79ed209a2b"
+}

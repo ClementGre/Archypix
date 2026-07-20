@@ -23,7 +23,17 @@ use uuid::Uuid;
 
 pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-// ── /api/federation/shares/announce ──────────────────────────────────────────
+/// Wrap a verb body in the feature-28 message envelope (`{ msg_version, type, ...fields }`).
+fn env(type_name: &str, mut body: serde_json::Value) -> serde_json::Value {
+    let obj = body.as_object_mut().expect("envelope body must be object");
+    obj.insert("msg_version".to_string(), json!(1));
+    obj.insert("type".to_string(), json!(type_name));
+    body
+}
+
+const MSG: &str = "/api/federation/message";
+
+// ── share_announce ───────────────────────────────────────────────────────────
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
@@ -35,16 +45,16 @@ async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/announce",
+            MSG,
             &token,
-            &json!({
+            &env("share_announce", json!({
                 "sender_username": "alice",   "sender_instance":    "a.test",
                 "recipient_username": "bob",  "recipient_instance": "wrong.com",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
                 "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
-            }),
+            })),
         ))
         .await
         .unwrap();
@@ -63,16 +73,16 @@ async fn announce_share_rejects_sender_instance_mismatch(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/announce",
+            MSG,
             &token,
-            &json!({
+            &env("share_announce", json!({
                 "sender_username": "alice",  "sender_instance":    "a.test",
                 "recipient_username": "bob", "recipient_instance": "b.test",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
                 "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
-            }),
+            })),
         ))
         .await
         .unwrap();
@@ -89,16 +99,16 @@ async fn announce_share_rejects_unknown_recipient(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/announce",
+            MSG,
             &token,
-            &json!({
+            &env("share_announce", json!({
                 "sender_username": "alice",    "sender_instance":    "a.test",
                 "recipient_username": "nobody", "recipient_instance": "b.test",
                 "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
                 "name": "Test share", "message": null,
                 "allow_share_back": false, "future": false,
                 "shareback_of": null
-            }),
+            })),
         ))
         .await
         .unwrap();
@@ -117,9 +127,9 @@ async fn revoke_share_not_found_for_unknown_id(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/revoke",
+            MSG,
             &token,
-            &json!({ "outgoing_share_id": Uuid::new_v4() }),
+            &env("share_revoke", json!({ "outgoing_share_id": Uuid::new_v4() })),
         ))
         .await
         .unwrap();
@@ -156,9 +166,9 @@ async fn reject_share_rejects_instance_mismatch(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/reject",
+            MSG,
             &token,
-            &json!({ "outgoing_share_id": share.id }),
+            &env("share_reject", json!({ "outgoing_share_id": share.id })),
         ))
         .await
         .unwrap();
@@ -195,9 +205,9 @@ async fn accept_share_rejects_instance_mismatch(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/shares/accept",
+            MSG,
             &token,
-            &json!({ "outgoing_share_id": share.id }),
+            &env("share_accept", json!({ "outgoing_share_id": share.id })),
         ))
         .await
         .unwrap();
@@ -237,9 +247,9 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
 
     let resp = app
         .oneshot(post_fed(
-            "/api/federation/pictures/announce",
+            MSG,
             &token,
-            &json!({
+            &env("pictures_announce", json!({
                 "outgoing_share_id": outgoing_id,
                 "tag_path": "vacation",
                 "sender_username": "alice", "sender_instance": "a.test",
@@ -250,10 +260,58 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
                     "filename": null, "mime_type": null,
                     "file_size": null, "width": null, "height": null, "captured_at": null
                 }]
-            }),
+            })),
         ))
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ── message envelope: version + unknown type (feature 28 §5) ─────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn message_wrong_version_returns_426_with_receiver_version(db: PgPool) {
+    let cfg = settings_b();
+    let token = common::federation::federation_jwt(&cfg, "a.test");
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
+
+    let resp = app
+        .oneshot(post_fed(
+            MSG,
+            &token,
+            // Deliberately-wrong version on a well-formed body.
+            &json!({
+                "msg_version": 999,
+                "type": "share_revoke",
+                "outgoing_share_id": Uuid::new_v4()
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    let body = crate::body_json(resp).await;
+    assert_eq!(body["receiver_version"], 1);
+    assert_eq!(body["message_type"], "share_revoke");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn message_unknown_type_returns_400(db: PgPool) {
+    let cfg = settings_b();
+    let token = common::federation::federation_jwt(&cfg, "a.test");
+    let app = archypix_back::api::routes(archypix_back::infra::settings::test_settings_with(&[]))
+        .with_state(common::test_app_state(db.clone(), &cfg));
+
+    let resp = app
+        .oneshot(post_fed(
+            MSG,
+            &token,
+            &json!({ "msg_version": 1, "type": "not_a_verb" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

@@ -5,19 +5,12 @@ use axum::Router;
 use axum::routing::post;
 
 pub fn routes() -> Router<AppState> {
+    // Feature 28 §5: the eight authenticated verb routes collapse to one typed, versioned envelope.
+    // `auth/request`, `auth/grant`, and `pictures/presign` stay dedicated (they bootstrap the token
+    // or use the token-gated presign auth model).
     Router::new()
         .route("/auth/request", post(handlers::auth_request))
         .route("/auth/grant", post(handlers::auth_grant))
-        .route("/shares/announce", post(handlers::announce_share))
-        .route("/shares/accept", post(handlers::accept_share))
-        .route("/shares/reject", post(handlers::reject_share))
-        .route("/shares/revoke", post(handlers::revoke_share))
-        .route("/shares/public/claim", post(handlers::claim_public_share))
-        .route("/pictures/announce", post(handlers::announce_pictures))
-        .route("/pictures/unannounce", post(handlers::unannounce_pictures))
-        .route(
-            "/pictures/edit_request",
-            post(handlers::edit_picture_request),
-        )
+        .route("/message", post(handlers::message))
         .route("/pictures/presign", post(handlers::presign_pictures))
 }

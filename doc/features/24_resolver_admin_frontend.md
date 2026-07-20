@@ -21,7 +21,7 @@ Three surfaces, one shared settings component:
 
 **Preserved invariant:** a standalone backend (no resolver) never shows `/admin/resolver`; its `/admin`
 Settings/Invites tabs run against the backend directly. The frontend detects topology the same way it
-does today (WebFinger / the configured global domain).
+does today (`/archypix-resolver/info` on the configured global domain).
 
 ## 2. Decisions
 

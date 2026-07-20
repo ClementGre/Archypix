@@ -77,12 +77,18 @@ pub mod keys {
     pub const REFRESH_TOKEN_TTL_SECS: SettingKey<i64> = SettingKey::new("refresh_token_ttl_secs");
 
     // ── Federation ──
-    pub const WEBFINGER_USE_HTTPS: SettingKey<bool> = SettingKey::new("webfinger_use_https");
+    pub const FEDERATION_USE_HTTPS: SettingKey<bool> = SettingKey::new("federation_use_https");
     pub const FEDERATION_JWT_TTL_SECS: SettingKey<i64> = SettingKey::new("federation_jwt_ttl_secs");
     pub const FEDERATION_BACKEND_CACHE_TTL_SECS: SettingKey<u64> =
         SettingKey::new("federation_backend_cache_ttl_secs");
     pub const FEDERATION_REQUEST_TIMEOUT_MS: SettingKey<u64> =
         SettingKey::new("federation_request_timeout_ms");
+    pub const FEDERATION_CONNECT_TIMEOUT_MS: SettingKey<u64> =
+        SettingKey::new("federation_connect_timeout_ms");
+    pub const FEDERATION_GRANT_WAIT_MS: SettingKey<u64> =
+        SettingKey::new("federation_grant_wait_ms");
+    pub const FEDERATION_TOKEN_REFRESH_MARGIN_SECS: SettingKey<i64> =
+        SettingKey::new("federation_token_refresh_margin_secs");
     pub const TRACE_PROPAGATION_PEERS: SettingKey<Vec<String>> =
         SettingKey::new("trace_propagation_peers");
 
@@ -153,6 +159,16 @@ pub mod keys {
         SettingKey::new("max_pending_outgoing_shares");
     pub const MAX_PENDING_INCOMING_SHARES: SettingKey<usize> =
         SettingKey::new("max_pending_incoming_shares");
+    // ── Federation rate limits (feature 28 §9) ──
+    pub const FEDERATION_RATE_MAX: SettingKey<u64> = SettingKey::new("federation_rate_max");
+    pub const FEDERATION_RATE_WINDOW_SECS: SettingKey<u64> =
+        SettingKey::new("federation_rate_window_secs");
+    pub const FEDERATION_PRESIGN_RATE_MAX: SettingKey<u64> =
+        SettingKey::new("federation_presign_rate_max");
+    pub const FEDERATION_PRESIGN_RATE_WINDOW_SECS: SettingKey<u64> =
+        SettingKey::new("federation_presign_rate_window_secs");
+    pub const RATE_LIMIT_EVENT_RETENTION_SECS: SettingKey<u64> =
+        SettingKey::new("rate_limit_event_retention_secs");
 
     // ── Public shares (feature 27 §13) ──
     pub const PUBLIC_UPLOAD_MAX_FILE_BYTES: SettingKey<i64> =
@@ -197,12 +213,12 @@ pub fn registry() -> Vec<SettingSpec> {
 
         // ── Identity & topology ──
         SettingSpec::new(BACK_DOMAIN, group::IDENTITY).core().restart_required()
-            .doc("This backend's public domain (host[:port]); JWT audience + WebFinger href.", "backend1.example.com"),
+            .doc("This backend's public domain (host[:port]); JWT audience + the URL advertised for federation resolution.", "backend1.example.com"),
         SettingSpec::new(BACK_USE_HTTPS, group::IDENTITY).core().default("true").doc("Serve public URLs over HTTPS.", "true"),
         SettingSpec::new(GLOBAL_DOMAIN, group::IDENTITY).core().restart_required()
-            .doc("Shared identity domain — the part after ':' in @user:global_domain. All backends sharing a user namespace must agree. May differ from BACK_DOMAIN (front WebFinger on it via a reverse proxy).", "example.com"),
+            .doc("Shared identity domain — the part after ':' in @user:global_domain. All backends sharing a user namespace must agree. May differ from BACK_DOMAIN (forward /archypix-resolver/ on it to this backend via a reverse proxy).", "example.com"),
         SettingSpec::new(USE_RESOLVER, group::IDENTITY).core().restart_required()
-            .doc("Whether multiple backends share GLOBAL_DOMAIN behind a resolver. false = standalone (serves its own WebFinger + enforces registration locally); true = a resolver owns WebFinger and routes lookups + new-user registration across the pool.", "true"),
+            .doc("Whether multiple backends share GLOBAL_DOMAIN behind a resolver. false = standalone (serves its own /archypix-resolver/resolve + enforces registration locally); true = a resolver owns resolution and routes lookups + new-user registration across the pool.", "true"),
 
         // ── Resolver ──
         SettingSpec::new(RESOLVER_INTERNAL_URL, group::RESOLVER).core().default_computed(|s| {
@@ -228,11 +244,18 @@ pub fn registry() -> Vec<SettingSpec> {
         SettingSpec::new(REFRESH_TOKEN_TTL_SECS, group::AUTH).default("15552000").doc("Refresh-token lifetime (seconds).", "15552000"),
 
         // ── Federation ──
-        SettingSpec::new(WEBFINGER_USE_HTTPS, group::FEDERATION).core().default("true")
+        SettingSpec::new(FEDERATION_USE_HTTPS, group::FEDERATION).core().default("true")
             .doc("Use HTTPS for the initial /archypix-resolver/resolve query when resolving remote backends (subsequent calls use the scheme in the returned backend_url). Set false in local/Docker (HTTP) environments.", "true"),
         SettingSpec::new(FEDERATION_JWT_TTL_SECS, group::FEDERATION).default("86400").doc("TTL of pairwise federation JWTs.", "86400"),
-        SettingSpec::new(FEDERATION_BACKEND_CACHE_TTL_SECS, group::FEDERATION).default("3600").doc("TTL of the WebFinger backend-URL cache.", "3600"),
-        SettingSpec::new(FEDERATION_REQUEST_TIMEOUT_MS, group::FEDERATION).default("1000").doc("Per-request timeout (ms) for outbound federation calls.", "1000"),
+        SettingSpec::new(FEDERATION_BACKEND_CACHE_TTL_SECS, group::FEDERATION).default("3600").doc("TTL of the resolved backend-URL cache.", "3600"),
+        SettingSpec::new(FEDERATION_REQUEST_TIMEOUT_MS, group::FEDERATION).default("10000").restart_required()
+            .doc("Overall per-call HTTP timeout (ms) for outbound federation calls — bounds a slow peer. Rebuilds the client on restart.", "10000"),
+        SettingSpec::new(FEDERATION_CONNECT_TIMEOUT_MS, group::FEDERATION).default("2000").restart_required()
+            .doc("TCP/TLS connect timeout (ms) for outbound federation calls — a down peer fails fast. Rebuilds the client on restart.", "2000"),
+        SettingSpec::new(FEDERATION_GRANT_WAIT_MS, group::FEDERATION).default("12000")
+            .doc("How long (ms) a first-contact handshake polls Redis for the async grant callback.", "12000"),
+        SettingSpec::new(FEDERATION_TOKEN_REFRESH_MARGIN_SECS, group::FEDERATION).default("300")
+            .doc("Lead time (seconds) before a federation token expires at which it is proactively refreshed.", "300"),
         SettingSpec::new(TRACE_PROPAGATION_PEERS, group::OBSERVABILITY).default("")
             .doc("Global domains of federation peers sharing this operator's Jaeger; trace context flows only to these.", "peer.example.com"),
 
@@ -307,6 +330,11 @@ pub fn registry() -> Vec<SettingSpec> {
         SettingSpec::new(RATE_LIMIT_REGISTER_WINDOW_SECS, group::RATE_LIMITS).default("3600").doc("Registration rate-limit window (seconds).", "3600"),
         SettingSpec::new(MAX_PENDING_OUTGOING_SHARES, group::RATE_LIMITS).default("100").doc("Max pending outgoing shares per user.", "100"),
         SettingSpec::new(MAX_PENDING_INCOMING_SHARES, group::RATE_LIMITS).default("200").doc("Max pending incoming shares per recipient.", "200"),
+        SettingSpec::new(FEDERATION_RATE_MAX, group::RATE_LIMITS).default("6000").doc("Max authenticated federation messages per peer domain per window (never trips normal behaviour).", "6000"),
+        SettingSpec::new(FEDERATION_RATE_WINDOW_SECS, group::RATE_LIMITS).default("60").doc("Window (seconds) for the per-peer federation-message rate limit.", "60"),
+        SettingSpec::new(FEDERATION_PRESIGN_RATE_MAX, group::RATE_LIMITS).default("12000").doc("Max federation presign requests per source IP per window (never trips normal behaviour).", "12000"),
+        SettingSpec::new(FEDERATION_PRESIGN_RATE_WINDOW_SECS, group::RATE_LIMITS).default("60").doc("Window (seconds) for the per-IP federation presign rate limit.", "60"),
+        SettingSpec::new(RATE_LIMIT_EVENT_RETENTION_SECS, group::RATE_LIMITS).default("86400").doc("Retention (seconds) of the per-minute recent-rate-limit-rejection buckets surfaced in the admin dashboard.", "86400"),
         SettingSpec::new(PUBLIC_UPLOAD_MAX_FILE_BYTES, group::RATE_LIMITS).default("104857600").doc("Max byte size of a single anonymous public-share contribution file.", "104857600"),
         SettingSpec::new(PUBLIC_UPLOAD_MAX_FILES_PER_REQUEST, group::RATE_LIMITS).default("50").doc("Max files in one anonymous public-share upload request.", "50"),
         SettingSpec::new(PUBLIC_UPLOAD_RATE_MAX, group::RATE_LIMITS).default("60").doc("Max anonymous public-share upload requests per IP+share per window.", "60"),
@@ -328,8 +356,8 @@ pub fn back_scheme(s: &Settings) -> &'static str {
         "http"
     }
 }
-pub fn webfinger_scheme(s: &Settings) -> &'static str {
-    if s.get(keys::WEBFINGER_USE_HTTPS) {
+pub fn federation_scheme(s: &Settings) -> &'static str {
+    if s.get(keys::FEDERATION_USE_HTTPS) {
         "https"
     } else {
         "http"
@@ -461,7 +489,7 @@ pub fn test_settings_with(overrides: &[(&str, &str)]) -> Arc<Settings> {
         ("BACK_USE_HTTPS", "false"),
         ("GLOBAL_DOMAIN", "test.com"),
         ("USE_RESOLVER", "false"),
-        ("WEBFINGER_USE_HTTPS", "false"),
+        ("FEDERATION_USE_HTTPS", "false"),
         (
             "JWT_SECRET",
             "test_jwt_secret_must_be_long_enough_for_hmac_sha256",

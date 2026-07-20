@@ -39,6 +39,10 @@ pub enum AppError {
     /// admin proxy (feature 23 §5.3).
     #[error("Backend error {0}: {1}")]
     BackendError(u16, String),
+    /// Arbitrary status + JSON body, for endpoints that must return a structured error the caller
+    /// parses (e.g. federation protocol-version negotiation → 426, feature 28 §5.4).
+    #[error("HTTP {0}")]
+    Custom(u16, serde_json::Value),
 }
 
 impl IntoResponse for AppError {
@@ -59,7 +63,19 @@ impl IntoResponse for AppError {
             AppError::BackendError(code, _) => {
                 StatusCode::from_u16(*code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            AppError::Custom(code, _) => {
+                StatusCode::from_u16(*code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
         };
+        // A `Custom` error carries its own JSON body verbatim (the caller parses it).
+        if let AppError::Custom(_, ref value) = self {
+            if status.is_server_error() {
+                error!(status = status.as_u16(), error = ?self, "server error");
+            } else {
+                warn!(status = status.as_u16(), error = ?self, "client error");
+            }
+            return (status, axum::Json(value.clone())).into_response();
+        }
         let message = match &self {
             // Proxied backend errors already carry a client-safe body; everything else renders
             // via `Display` (which is generic enough not to leak internals for the 5xx variants).

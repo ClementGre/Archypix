@@ -44,6 +44,12 @@ export interface PictureListItem {
     owner_deleted_at: string | null
     /** Received only: the owner's announced purge deadline. */
     owner_purge_at: string | null
+    /**
+     * `false` when this cross-instance picture's owner backend was unreachable while presigning its
+     * thumbnail (feature 28 §3.2) — the client renders a distinct "owner offline" tile. Always `true`
+     * for owned / same-backend / reachable owners (and for a not-yet-presigned cross-instance picture).
+     */
+    owner_reachable: boolean
 }
 
 export interface PictureListResponse {
@@ -920,6 +926,20 @@ export interface FieldMeta {
 }
 
 /** A background routine's live status + its tuning settings (`GET …/routines`). */
+/** One per-minute rate-limit-rejection bucket for a category (feature 28 §9.3). */
+export interface RateLimitEventBucket {
+    category: string
+    minute_epoch: number
+    count: number
+}
+
+export interface RateLimitsResponse {
+    /** Recent per-minute rejection counts across the retention window, newest first. */
+    buckets: RateLimitEventBucket[]
+    /** A category exceeded the attack threshold in the last few minutes. */
+    attack_suspected: boolean
+}
+
 export interface RoutineInfo {
     name: string
     last_started_at: number | null

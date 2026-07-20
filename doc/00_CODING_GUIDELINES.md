@@ -59,8 +59,8 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   10 Conventions (L528) · **11 Coding guidelines / agents (L541)**
 - **06_API_REFERENCE.md** — 1 Route Groups (L7) · 2 Authentication (L23) · 3 Wire Format Conventions
   (L45) · 4 Auth Endpoints (L60) · 5 Public Endpoints (L153) · 6 Authenticated User Endpoints (L212) ·
-  7 Admin Endpoints (L1639) · 8 Federation & Worker (L2036) · 9 WebFinger (L2074) · 10 Shared Type
-  Reference (L2109) · 11 Key Frontend Behaviours (L2167)
+  7 Admin Endpoints (L1942) · 8 Federation & Worker (L2492) · 9 Bootstrap & resolution (L2552) · 10 Shared Type
+  Reference (L2600) · 11 Key Frontend Behaviours (L2658)
 - **07_RESOLVER_ARCHITECTURE.md** — factual read-doc for the `archypix-resolver` crate (current
   state): A) Purpose · B) Module layout · C) AppState · D) Config env · E) DB schema · F) Endpoints ·
   G) JWT auth · H) Cache/CORS/observability · I) Planned → feature 23. Read before `resolver/**`.

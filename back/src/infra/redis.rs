@@ -30,8 +30,17 @@ pub enum RedisKey<'a> {
     /// Fixed-window rate-limit counter. The string is an opaque `category:id` bucket
     /// (e.g. `login:alice`, `register:1.2.3.4`).
     RateLimit(&'a str),
+    /// Per-peer single-flight handshake lock (feature 28 §4.3). Held via `SET NX EX` while one
+    /// cold request performs the `auth/request` handshake so a burst collapses to one.
+    FederationRefreshLock(&'a str),
+    /// Per-minute recent rate-limit-rejection counter (feature 28 §9.2). `(category, minute_epoch)`;
+    /// aggregated so a flood stays bounded. Surfaced in the admin "Rate limiting" tab.
+    RateLimitEvent(&'a str, i64),
     /// Cached backend domain for `username@global_domain`.
     FederationBackend(&'a str, &'a str),
+    /// Long-lived fallback copy of a resolved backend URL (feature 28 §4.5), served when the resolver
+    /// itself is unreachable so a resolver blip is non-fatal for already-known peers.
+    FederationBackendStale(&'a str, &'a str),
     /// Cached local user UUID for a given username.
     UserByUsername(&'a str),
     /// Cached instance-wide admin analytics (short TTL).
@@ -70,8 +79,11 @@ impl<'a> RedisKey<'a> {
             Self::PictureUrl(id, variant) => format!("presign:{id}:{variant}"),
             Self::FederationToken(domain) => format!("federation:token:{domain}"),
             Self::FederationAuthNonce(domain) => format!("federation:authnonce:{domain}"),
+            Self::FederationRefreshLock(domain) => format!("federation:refreshlock:{domain}"),
             Self::RateLimit(bucket) => format!("ratelimit:{bucket}"),
+            Self::RateLimitEvent(category, minute) => format!("ratelimit:event:{category}:{minute}"),
             Self::FederationBackend(u, d) => format!("federation:backend:{u}@{d}"),
+            Self::FederationBackendStale(u, d) => format!("federation:backendstale:{u}@{d}"),
             Self::UserByUsername(username) => format!("user:username:{username}"),
             Self::AdminStats => "admin:stats:instance".to_string(),
             Self::AdminUserStats(id) => format!("admin:stats:user:{id}"),
@@ -116,6 +128,16 @@ pub trait Cache: Send + Sync {
         ttl_secs: u64,
     ) -> Result<(), AppError>;
     async fn del(&self, key: RedisKey<'_>) -> Result<(), AppError>;
+    /// Atomic `SET key value NX EX ttl`: sets the key only if absent, with an expiry. Returns
+    /// `true` when the caller acquired it (key was absent). Used for the per-peer single-flight
+    /// handshake lock (feature 28 §4.3). A cache error returns `Ok(true)` so the handshake still
+    /// proceeds (availability over dedup).
+    async fn set_str_nx_ex(
+        &self,
+        key: RedisKey<'_>,
+        value: &str,
+        ttl_secs: u64,
+    ) -> Result<bool, AppError>;
     /// Return all keys matching a glob-style pattern. Admin/diagnostic use only.
     async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>, AppError>;
     /// Atomically increment a counter key and return the new value. On the first increment
@@ -206,6 +228,34 @@ impl Cache for RedisClient {
             .await
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         Ok(())
+    }
+
+    async fn set_str_nx_ex(
+        &self,
+        key: RedisKey<'_>,
+        value: &str,
+        ttl_secs: u64,
+    ) -> Result<bool, AppError> {
+        let k = key.build();
+        let mut conn = match self.pool.get().await {
+            Ok(c) => c,
+            // Fail-open: proceed with the handshake rather than deadlock on a Redis outage.
+            Err(e) => {
+                tracing::warn!(error = ?e, "single-flight lock unavailable — proceeding");
+                return Ok(true);
+            }
+        };
+        let acquired: bool = cmd("SET")
+            .arg(&k)
+            .arg(value)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_secs)
+            .query_async::<Option<String>>(&mut *conn)
+            .await
+            .map(|r| r.is_some())
+            .unwrap_or(true);
+        Ok(acquired)
     }
 
     async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>, AppError> {

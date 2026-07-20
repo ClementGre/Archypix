@@ -39,6 +39,9 @@ pub struct Picture {
     pub captured_at: Option<NaiveDateTime>,
     pub ingested_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    /// Received rows only: the last-applied owner `updated_at` (feature 28 §7). The stale-announcement
+    /// guard applies an announcement only when the incoming `owner_updated_at` is newer than this.
+    pub remote_updated_at: Option<NaiveDateTime>,
     pub blurhash: Option<String>,
     pub gps_lat: Option<f64>,
     pub gps_lng: Option<f64>,
@@ -356,6 +359,7 @@ mod tests {
             captured_at: None,
             ingested_at: now,
             updated_at: now,
+            remote_updated_at: None,
             blurhash: None,
             gps_lat: None,
             gps_lng: None,

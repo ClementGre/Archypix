@@ -60,6 +60,8 @@ pub fn routes() -> Router<AppState> {
             "/federation/connections",
             get(handlers::list_active_federation_connections),
         )
+        // ── Rate limiting observability (feature 28 §9.3) ─────────────────────
+        .route("/rate-limits", get(handlers::get_rate_limits))
         // ── Runtime settings (feature 23 §4.5) ──────────────────────────────────
         .route(
             "/settings",

@@ -1,8 +1,63 @@
 use crate::domain::job::FullExif;
 use crate::domain::picture::Picture;
 use chrono::NaiveDateTime;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+//———————————————— Message envelope (feature 28 §5) ————————————————
+
+/// The single authenticated federation wire message. Every verb travels as one of these to
+/// `POST /api/federation/message`. The envelope carries the per-message protocol version
+/// (`msg_version`, §5.4) alongside the internally-tagged message body.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FederationEnvelope {
+    pub msg_version: u16,
+    #[serde(flatten)]
+    pub message: FederationMessage,
+}
+
+/// Internally-tagged (`type`) enum of every authenticated federation verb (§5.1). Each variant
+/// wraps the pre-existing per-verb request struct — the envelope wraps them, it does not flatten
+/// their fields away.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FederationMessage {
+    ShareAnnounce(ShareAnnouncementRequest),
+    ShareAccept(ShareAcceptRequest),
+    ShareReject(ShareRejectRequest),
+    ShareRevoke(ShareRevokeRequest),
+    PublicShareClaim(PublicShareClaimRequest),
+    PicturesAnnounce(PicturesAnnouncementRequest),
+    PicturesUnannounce(PicturesUnannouncementRequest),
+    PictureEditRequest(PictureEditRequest),
+}
+
+/// The response body of `POST /api/federation/message`, internally-tagged so the client can decode
+/// it directly into the concrete per-message `Response` (extra `type` tag is ignored).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FederationResponse {
+    /// revoke / reject / unannounce — nothing to convey beyond success.
+    Ack,
+    ShareAnnounce(ShareAnnouncementResponse),
+    PicturesAnnounce(PicturesAnnouncementResponse),
+    PublicShareClaim(PublicShareClaimResponse),
+    PictureEdit(PictureEditResponse),
+}
+
+/// A concrete federation message paired with its protocol version and decodable response type.
+/// Implemented by each per-verb request struct; drives the generic client `send` and the receiver
+/// version check.
+pub trait FederationMessageType: Sized {
+    /// This message type's protocol version, bumped whenever its request/response shape changes.
+    const VERSION: u16;
+    /// The wire `type` tag (used in the 426 body + error messages).
+    const TYPE_NAME: &'static str;
+    /// The response shape (deserialized from the tagged `FederationResponse` body).
+    type Response: DeserializeOwned;
+    fn into_message(self) -> FederationMessage;
+}
 
 //———————————————— Auth ————————————————
 
@@ -17,7 +72,9 @@ pub struct FederationAuthRequest {
 pub struct FederationAuthGrant {
     pub issuer_instance: String,
     pub token: String,
-    pub expires_at: i64,
+    /// Relative lifetime (seconds) from issuance — the receiver computes its own `expires_at`
+    /// against its own clock, so the TTL is correct under cross-instance clock skew (§4.4).
+    pub ttl_secs: i64,
     pub scope: String,
     pub nonce: String,
 }
@@ -42,10 +99,19 @@ pub struct ShareAnnouncementRequest {
     pub future: bool,
     pub shareback_of: Option<Uuid>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShareAnnouncementResponse {
     pub accepted: bool,
     pub auto_accepted: bool,
+}
+
+/// Empty success body for the ack-only verbs (revoke / reject / accept / unannounce).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct AckResponse {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PicturesAnnouncementResponse {
+    pub registered: usize,
 }
 
 /// Sent by the sender to the recipient to revoke a share.
@@ -116,6 +182,12 @@ pub struct AnnouncedPicture {
     pub owner_deleted_at: Option<NaiveDateTime>,
     #[serde(default)]
     pub owner_purge_at: Option<NaiveDateTime>,
+    /// The owner's monotonic `updated_at` at announce time (feature 28 §7). The recipient applies an
+    /// announcement only when this is newer than the last-applied `remote_updated_at`, dropping a
+    /// retried *older* announcement that arrived out of order. `None` for peers predating the field
+    /// (always applied — no regression).
+    #[serde(default)]
+    pub owner_updated_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -144,8 +216,6 @@ pub struct PictureEditRequest {
     pub set: FullExif,
     #[serde(default)]
     pub clear: Vec<crate::domain::job::ExifField>,
-    /// Dedupe key for a retried delivery (the apply itself is last-write-wins idempotent).
-    pub idempotency_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -201,7 +271,36 @@ pub struct PresignResponse {
 pub struct PresignResultItem {
     pub picture_token: Uuid,
     pub url: String,
+    /// The owner's presign expiry (epoch seconds), so the recipient caches the URL under
+    /// `min(local TTL − margin, remote expiry)` and never advertises a lifetime past the owner's
+    /// actual presign (feature 28 §10). `None` for peers predating the field.
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
+
+//———————————————— Message-type trait impls (feature 28 §5) ————————————————
+
+macro_rules! impl_federation_message {
+    ($req:ty, $version:expr, $tag:literal, $variant:ident, $resp:ty) => {
+        impl FederationMessageType for $req {
+            const VERSION: u16 = $version;
+            const TYPE_NAME: &'static str = $tag;
+            type Response = $resp;
+            fn into_message(self) -> FederationMessage {
+                FederationMessage::$variant(self)
+            }
+        }
+    };
+}
+
+impl_federation_message!(ShareAnnouncementRequest, 1, "share_announce", ShareAnnounce, ShareAnnouncementResponse);
+impl_federation_message!(ShareAcceptRequest, 1, "share_accept", ShareAccept, AckResponse);
+impl_federation_message!(ShareRejectRequest, 1, "share_reject", ShareReject, AckResponse);
+impl_federation_message!(ShareRevokeRequest, 1, "share_revoke", ShareRevoke, AckResponse);
+impl_federation_message!(PublicShareClaimRequest, 1, "public_share_claim", PublicShareClaim, PublicShareClaimResponse);
+impl_federation_message!(PicturesAnnouncementRequest, 1, "pictures_announce", PicturesAnnounce, PicturesAnnouncementResponse);
+impl_federation_message!(PicturesUnannouncementRequest, 1, "pictures_unannounce", PicturesUnannounce, AckResponse);
+impl_federation_message!(PictureEditRequest, 1, "picture_edit_request", PictureEditRequest, PictureEditResponse);
 
 //———————————————— Impl ————————————————
 
@@ -249,6 +348,13 @@ impl AnnouncedPicture {
         // Propagated creator (§6): the stored value, or the owner default resolved to the same owner
         // identity derived above. Never the relayer's local `creator_override`.
         let creator = picture.propagated_creator(&owner_username, &owner_instance);
+        // Owner's monotonic version (§7 stale-announce guard): owned → the row's `updated_at`;
+        // relayed → the last-applied owner value.
+        let owner_updated_at = if picture.is_owned() {
+            Some(picture.updated_at)
+        } else {
+            picture.remote_updated_at
+        };
         Self {
             picture_id: picture
                 .remote_picture_id
@@ -270,6 +376,7 @@ impl AnnouncedPicture {
             creator,
             owner_deleted_at,
             owner_purge_at,
+            owner_updated_at,
         }
     }
 }

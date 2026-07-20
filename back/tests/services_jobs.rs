@@ -75,6 +75,7 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
         None,
         None,
         None, // creator
+        None, // remote_updated_at
     )
     .await
     .unwrap();

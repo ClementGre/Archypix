@@ -29,11 +29,13 @@ pub async fn login(
     password: &str,
 ) -> Result<AuthTokens, AppError> {
     // Throttle credential-stuffing / brute-force per username
-    ratelimit::check(
+    ratelimit::check_categorized(
         cache,
+        ratelimit::category::LOGIN,
         &format!("login:{username}"),
         settings.get(keys::RATE_LIMIT_LOGIN_MAX),
         settings.get(keys::RATE_LIMIT_LOGIN_WINDOW_SECS),
+        settings.get(keys::RATE_LIMIT_EVENT_RETENTION_SECS),
     )
     .await?;
 

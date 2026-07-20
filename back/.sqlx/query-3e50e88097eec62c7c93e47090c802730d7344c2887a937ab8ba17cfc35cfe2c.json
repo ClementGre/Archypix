@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT remote_updated_at FROM pictures\n               WHERE local_user_id = $1 AND remote_picture_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "remote_updated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "remote_updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "3e50e88097eec62c7c93e47090c802730d7344c2887a937ab8ba17cfc35cfe2c"
+}

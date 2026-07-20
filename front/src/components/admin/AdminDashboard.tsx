@@ -6,6 +6,7 @@ import {JobsTab} from '@/components/admin/JobsTab'
 import {SharesTab} from '@/components/admin/SharesTab'
 import {SettingsTab} from '@/components/admin/SettingsTab'
 import {RoutinesPanel} from '@/components/admin/RoutinesPanel'
+import {RateLimitsTab} from '@/components/admin/RateLimitsTab'
 import {InvitesTab} from '@/components/admin/InvitesTab'
 
 const TAB_LIST = 'inline-flex h-auto flex-wrap items-center justify-start gap-1 rounded-md bg-muted p-1'
@@ -44,6 +45,7 @@ export function AdminDashboard({showInvites = true, extraTabs = [], extraTabsFir
                 <TabsTrigger value="shares">Shares &amp; Federation</TabsTrigger>
                 <TabsTrigger value="settings">Settings</TabsTrigger>
                 <TabsTrigger value="routines">Routines</TabsTrigger>
+                <TabsTrigger value="rate-limits">Rate limiting</TabsTrigger>
                 {showInvites && <TabsTrigger value="invites">Invites</TabsTrigger>}
                 {!extraTabsFirst && extraTriggers}
             </TabsList>
@@ -53,6 +55,7 @@ export function AdminDashboard({showInvites = true, extraTabs = [], extraTabsFir
             <TabsContent value="shares" className="mt-6"><SharesTab/></TabsContent>
             <TabsContent value="settings" className="mt-6"><SettingsTab/></TabsContent>
             <TabsContent value="routines" className="mt-6"><RoutinesPanel/></TabsContent>
+            <TabsContent value="rate-limits" className="mt-6"><RateLimitsTab/></TabsContent>
             {showInvites && <TabsContent value="invites" className="mt-6"><InvitesTab/></TabsContent>}
             {extraTabs.map((t) => <TabsContent key={t.value} value={t.value} className="mt-6">{t.content}</TabsContent>)}
         </Tabs>

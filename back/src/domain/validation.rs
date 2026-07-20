@@ -88,7 +88,7 @@ pub fn validate_email(email: &str) -> Result<(), String> {
 
 /// Validate a user-supplied federation **global domain** (e.g. a share `recipient_instance`).
 ///
-/// This is the user-controlled input that drives an outbound WebFinger + federation HTTP call, so
+/// This is the user-controlled input that drives an outbound resolution + federation HTTP call, so
 /// it is the primary blind-SSRF / request-amplification surface (07_security_audit.md §2.4). We
 /// require a plain dotted hostname and reject schemes, paths, ports, whitespace, `localhost`, and
 /// IP-address literals (which would point at internal/metadata endpoints). Legitimate federation

@@ -73,6 +73,18 @@ async fn main() -> anyhow::Result<()> {
     let redis = infra::redis::connect(&settings).await?;
     let storage: Arc<dyn infra::s3::Storage> = Arc::new(infra::s3::connect(&settings).await?);
     let http = HttpClient::new();
+    // Federation gets a bounded client (feature 28 §4.1): a *down* peer fails fast on connect, a
+    // *slow* peer is bounded by the overall request timeout. Covers every outbound federation call
+    // (incl. backend resolution).
+    let federation_http = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_millis(
+            settings.get(keys::FEDERATION_CONNECT_TIMEOUT_MS),
+        ))
+        .timeout(std::time::Duration::from_millis(
+            settings.get(keys::FEDERATION_REQUEST_TIMEOUT_MS),
+        ))
+        .build()
+        .unwrap_or_else(|_| HttpClient::new());
 
     let jwt = JwtService::new(
         &settings.get(keys::JWT_SECRET),
@@ -88,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let federation = FederationClient::new(
-        http.clone(),
+        federation_http,
         settings.clone(),
         jwt.clone(),
         Arc::new(redis.clone()),

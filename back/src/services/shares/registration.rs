@@ -39,6 +39,20 @@ pub async fn register_received_pictures(
     // Picture rows registered/refreshed this batch — classified for the boomerang guard after commit.
     let mut registered_ids: Vec<Uuid> = Vec::new();
     for pic in pictures {
+        // Stale-announcement guard (§7): drop only a *strictly older* announcement (a retried,
+        // out-of-order delivery carrying stale metadata). An equal `owner_updated_at` is still
+        // applied — the upsert is idempotent, and a re-announce of the same picture under a second
+        // share (same `updated_at`) must still land that share's tag. A `None` incoming value (peer
+        // predating the field) is always applied (no regression).
+        if let (Some(Some(last_applied)), Some(incoming)) = (
+            PictureRepository::received_remote_updated_at(&mut *tx, recipient_id, &pic.picture_id)
+                .await?,
+            pic.owner_updated_at,
+        ) {
+            if incoming < last_applied {
+                continue;
+            }
+        }
         // The announced owner snapshot (typed FullExif) is stored verbatim in remote_exif_data; the
         // merged exif_data + promoted columns are re-materialised below, preserving any existing
         // local overrides (09 §6/§8).
@@ -61,6 +75,7 @@ pub async fn register_received_pictures(
             pic.owner_deleted_at,
             pic.owner_purge_at,
             Some(pic.creator.as_str()).filter(|c| !c.is_empty()),
+            pic.owner_updated_at,
         )
         .await?;
 

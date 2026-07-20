@@ -39,7 +39,7 @@ pub struct JwtClaims {
     /// User UUID — present for user tokens, absent otherwise.
     pub uid: Option<Uuid>,
     pub is_admin: bool,
-    /// Global (WebFinger) domain of the issuing instance (e.g. `example.com`).
+    /// Global (federation) domain of the issuing instance (e.g. `example.com`).
     pub instance: String,
     pub token_type: TokenType,
     /// Audience: backend domain of the verifying instance (matched against `BACK_DOMAIN` on decode).

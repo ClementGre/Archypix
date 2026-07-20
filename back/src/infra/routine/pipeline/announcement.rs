@@ -347,11 +347,11 @@ async fn deliver_announce(
         Ok(())
     } else {
         run.federation
-            .announce_pictures_to_backend(
+            .send(
                 sender_username,
                 &share.recipient_username,
                 &share.recipient_instance,
-                &PicturesAnnouncementRequest {
+                PicturesAnnouncementRequest {
                     outgoing_share_id: share.id,
                     tag_path: share.tag_path.clone(),
                     sender_username: sender_username.to_string(),
@@ -360,6 +360,7 @@ async fn deliver_announce(
                 },
             )
             .await
+            .map(|_| ())
     }
 }
 
@@ -386,11 +387,11 @@ async fn deliver_unannounce(
         Ok(())
     } else {
         run.federation
-            .unannounce_pictures_to_backend(
+            .send(
                 sender_username,
                 &share.recipient_username,
                 &share.recipient_instance,
-                &PicturesUnannouncementRequest {
+                PicturesUnannouncementRequest {
                     outgoing_share_id: share.id,
                     sender_username: sender_username.to_string(),
                     sender_instance: run.settings.get(keys::GLOBAL_DOMAIN).clone(),
@@ -398,5 +399,6 @@ async fn deliver_unannounce(
                 },
             )
             .await
+            .map(|_| ())
     }
 }

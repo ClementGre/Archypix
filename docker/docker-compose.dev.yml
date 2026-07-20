@@ -8,7 +8,7 @@
 #   worker12:   worker for backend 1 and 2
 #   worker3:    worker for backend 3
 #
-# All inter-service traffic uses HTTP (BACK_USE_HTTPS=false, WEBFINGER_USE_HTTPS=false).
+# All inter-service traffic uses HTTP (BACK_USE_HTTPS=false, FEDERATION_USE_HTTPS=false).
 #
 # Traefik (172.30.0.10) routes fake hostnames to the right containers so that
 # inter-backend federation works from inside the Docker network:
@@ -57,7 +57,7 @@ x-workspace-volumes: &workspace-volumes
 
 # ── Extra hosts injected into every backend/worker container ─────────────────
 # Maps all fake hostnames to Traefik's static IP so that inter-service requests
-# (federation, WebFinger) resolve correctly from inside any container.
+# (federation, resolution) resolve correctly from inside any container.
 x-backend-extra-hosts: &backend-extra-hosts
   - "archypix.test:172.30.0.10"
   - "b1.archypix.test:172.30.0.10"

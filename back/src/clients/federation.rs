@@ -1,4 +1,5 @@
 mod handshake;
+mod message;
 pub mod models;
 mod resolve;
 mod shares;

@@ -242,21 +242,23 @@ capture date), the server returns
 ## 5. Federation
 
 User identities take the form `@username:instance.com`. Each instance is an independently deployed backend. The Resolver maps usernames to backend
-domains via WebFinger.
+domains via a single-hop `/archypix-resolver/resolve` lookup.
 
 ### 5.1 Components
 
-- **Resolver** — WebFinger endpoint mapping `@user:instance.com` → backend domain. Backed by Postgres with an in-process TTL cache.
+- **Resolver** — `/archypix-resolver/resolve` endpoint mapping `@user:instance.com` → backend domain. Backed by Postgres with an in-process TTL cache.
 - **Backend** — authoritative per-instance server. Owns metadata in Postgres. Serves HTTP API and WebDAV. Handles federation messages. Enqueues jobs
   to a Postgres-backed queue; consumes results from workers via HTTP. Caches hot data in Redis.
 - **Workers** — stateless Rust processes. Poll the backend for jobs (thumbnails, EXIF extraction) via HTTP. Publish results back. Never write to the
   database directly; access S3 only via presigned URLs.
 - **S3/MinIO** — durable blob store for originals, derivatives, and version snapshots.
-- **Frontend** — static CDN. Resolves `@username:instance.com` → backend URL via WebFinger. All API and WebDAV calls go to the resolved backend.
+- **Frontend** — static CDN. Resolves `@username:instance.com` → backend URL via `/archypix-resolver/resolve`. All API and WebDAV calls go to the
+  resolved backend.
 
 ### 5.2 Cross-Instance Picture Fetching
 
-When a client needs to display a picture owned by `@alice:instance.com`, it resolves the backend domain via WebFinger (using the picture's
+When a client needs to display a picture owned by `@alice:instance.com`, it resolves the backend domain via `/archypix-resolver/resolve` (using the
+picture's
 `owner` field), then fetches the blob directly from that backend via presigned URL. The relaying user's backend is never in the data path — it handles
 only metadata: tag assignments, share announcements, and revocations.
 --- 

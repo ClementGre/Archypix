@@ -50,11 +50,19 @@
   editing.
 - [x] **Tag rename cascade** — `POST /tags/rename` search-and-replaces a tag subtree across manual tags, shares, pipeline configs, hierarchy configs;
   invalidates + wakes pipeline. Frontend rename dialog in tag tree menu.
-- [ ] **Federation robustness** — don't 500 on failed remote presign, token refresh schedule, retry logic, presigned URL caching for remote pictures.
-  Decided against a durable outbox: **delete** the `federation_messages` table; announcements keep converging from state via the pipeline, interactive
-  verbs stay synchronous (crash-atomic, clear "recipient unreachable — try later"). Also: one typed versioned `POST /api/federation/message` envelope
-  (per-message exact-match version), three distinct outbound timeouts + proactive token refresh + single-flight handshake, per-peer/-IP rate limiting
-  with an admin observability tab, stale-announcement guard. Spec-only so far — see `doc/features/28_federation_robustness.md`.
+- [x] **Federation robustness** — read paths degrade instead of 500ing on a down peer
+  (`PictureListItem.owner_reachable`, single-picture `503`); one typed versioned `POST /api/federation/message`
+  envelope replacing the eight verb routes (per-message exact-match `VERSION` → `426`), collapsed into a single
+  generic `FederationClient::send`; three distinct outbound timeouts (bounded client) + relative-TTL grant +
+  proactive token refresh + single-flight handshake + backend-URL bust-on-failure + serve-stale-on-resolver-outage;
+  deliver-then-commit accept/reject + `claim` idempotency; stale-announcement guard (`pictures.remote_updated_at`);
+  presign expiry threaded into a truthful cache TTL; per-peer/-IP rate limiting with a Redis recent-rejections store
+  + `GET /api/admin/rate-limits`; **deleted** the dead `federation_messages` table + `domain::federation` types +
+    `PictureEditRequest.idempotency_key`. **Frontend** (§13): owner-offline tile with retry on
+    `owner_reachable === false`, presigned-URL auto-refresh on expiry/`403` (grid/lightbox/sidebar), admin
+    "Rate limiting" tab (limits `SettingsPanel` + recent-rejections timeline + attack flag); share-action `503`/`426`/`4xx`
+    reasons surface through the backend's tailored messages via the existing `apiErrorMessage` toasts. See
+    `doc/features/28_federation_robustness.md`.
 
 ## To-do for v1.0
 

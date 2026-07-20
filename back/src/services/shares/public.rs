@@ -418,11 +418,13 @@ pub async fn public_upload_batch(
             "a contributed file exceeds the size limit".to_string(),
         ));
     }
-    ratelimit::check(
+    ratelimit::check_categorized(
         cache,
+        ratelimit::category::PUBLIC_UPLOAD,
         &format!("pubup:{}:{}", share.id, client_ip),
         settings.get(keys::PUBLIC_UPLOAD_RATE_MAX),
         settings.get(keys::PUBLIC_UPLOAD_RATE_WINDOW_SECS),
+        settings.get(keys::RATE_LIMIT_EVENT_RETENTION_SECS),
     )
     .await?;
     // No `initial_tags`/`upload_label`: a dedup hit must NOT be auto-tagged into the album (that would
@@ -588,12 +590,15 @@ pub async fn public_subscribe(
         .await?
     } else {
         federation
-            .claim_public_share(
+            .send(
                 visitor_username,
-                &global,
                 owner_username,
                 owner_instance,
-                token,
+                crate::clients::federation::models::PublicShareClaimRequest {
+                    token: token.to_string(),
+                    requester_username: visitor_username.to_string(),
+                    requester_instance: global.clone(),
+                },
             )
             .await?
     };

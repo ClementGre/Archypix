@@ -81,6 +81,7 @@ export const queryKeys = {
     adminStaleJobs: () => ['admin', 'jobs', 'stale'] as const,
     adminErroredShares: () => ['admin', 'shares', 'errored'] as const,
     adminFederationInstances: () => ['admin', 'federation', 'instances'] as const,
+    adminRateLimits: () => ['admin', 'rate-limits'] as const,
     // resolver fleet admin (feature 24)
     resolverAdmin: {
         overview: () => ['resolverAdmin', 'overview'] as const,

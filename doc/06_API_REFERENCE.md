@@ -2386,6 +2386,23 @@ Returns `FederationInstanceResponse[]`.
 
 ---
 
+### `GET /api/admin/rate-limits`
+
+Recent rate-limit-rejection activity for the admin "Rate limiting" tab (feature 28 §9.3). Rejections
+are recorded per-minute per category in Redis (`login`, `register`, `public_upload`, `federation`,
+`presign`), retained for `RATE_LIMIT_EVENT_RETENTION_SECS`.
+
+**Response `200`:**
+
+```ts
+interface RateLimitsResponse {
+    buckets: { category: string; minute_epoch: number; count: number }[]; // newest first
+    attack_suspected: boolean;   // a category exceeded the threshold in the last few minutes
+}
+```
+
+---
+
 ### Runtime settings (feature 23 §4)
 
 The operational half of the backend's config lives in a layered runtime engine (`default → env(locks) → DB override`), hot-swapped and editable from
@@ -2481,23 +2498,36 @@ for completeness.
 
 All require a federation JWT (pairwise, issued by the target instance).
 
-| Method | Path                                    | Description                                                                             |
-|--------|-----------------------------------------|-----------------------------------------------------------------------------------------|
-| `POST` | `/api/federation/auth/request`          | Request a federation JWT from another instance                                          |
-| `POST` | `/api/federation/auth/grant`            | Receive a federation JWT                                                                |
-| `POST` | `/api/federation/shares/announce`       | Announce a new share                                                                    |
-| `POST` | `/api/federation/shares/accept`         | Notify sender of share acceptance                                                       |
-| `POST` | `/api/federation/shares/reject`         | Notify sender of share rejection                                                        |
-| `POST` | `/api/federation/shares/revoke`         | Revoke a share (sender → recipient)                                                     |
-| `POST` | `/api/federation/shares/public/claim`   | Visitor → owner: convert a public share into a derived `OutgoingShare` (feature 27 §11) |
-| `POST` | `/api/federation/pictures/announce`     | Deliver picture announcements for an active share                                       |
-| `POST` | `/api/federation/pictures/unannounce`   | Remove specific pictures from a share                                                   |
-| `POST` | `/api/federation/pictures/edit_request` | Recipient → owner: propose an EXIF edit the owner auto-applies                          |
-| `POST` | `/api/federation/pictures/presign`      | Get presigned URLs using per-picture tokens (no JWT required)                           |
+| Method | Path                               | Description                                                                          |
+|--------|------------------------------------|--------------------------------------------------------------------------------------|
+| `POST` | `/api/federation/auth/request`     | Request a federation JWT from another instance                                       |
+| `POST` | `/api/federation/auth/grant`       | Receive a federation JWT (`ttl_secs`, relative — feature 28 §4.4)                    |
+| `POST` | `/api/federation/message`          | The single typed, versioned message envelope (feature 28 §5) — see below             |
+| `POST` | `/api/federation/pictures/presign` | Get presigned URLs using per-picture tokens (no JWT required); response `expires_at` |
+
+**One message envelope (feature 28 §5).** The eight per-verb routes
+(`shares/announce|accept|reject|revoke`, `shares/public/claim`, `pictures/announce|unannounce|edit_request`)
+were replaced by one authenticated `POST /api/federation/message`. The body is
+`{ "msg_version": <u16>, "type": "<verb>", ...verb fields }`; the response is a tagged
+`FederationResponse` (`{ "type": "ack" | "share_announce" | "pictures_announce" | "public_share_claim" | "picture_edit" , ... }`).
+`type` ∈ `share_announce`, `share_accept`, `share_reject`, `share_revoke`, `public_share_claim`,
+`pictures_announce`, `pictures_unannounce`, `picture_edit_request`.
+
+- **Protocol version — per-message, exact match (§5.4).** Each type owns a `VERSION` (currently `1`). A
+  mismatch returns **`426 Upgrade Required`** with body
+  `{ "error": "version_mismatch", "message_type", "receiver_version" }`; the caller turns that into a
+  directional "your/their instance is out of date" error.
+- **Errors (§6.2).** Connect/timeout/peer-`5xx` → `503` ("recipient unreachable — try later"); peer-`4xx`
+  keeps its specific meaning (`404`/`403`/`409`/`400`).
+- **Rate limiting (§9).** Per-peer-domain frequency limit (`FEDERATION_RATE_MAX`/`_WINDOW_SECS`) +
+  hardcoded `MAX_ANNOUNCE_BATCH = 10_000` on inbound `pictures`/`picture_ids`.
 
 The `presign` endpoint is notable: it is called by the **recipient backend** on behalf of the recipient's frontend when fetching a picture owned by
 the sender. The frontend does not call it directly — the `GET /api/authenticated/pictures/{id}/url` endpoint handles cross-instance presigning
-transparently.
+transparently. Per-IP rate-limited (`FEDERATION_PRESIGN_RATE_MAX`), hardcoded `MAX_PRESIGN_BATCH = 10_000`,
+and each result now carries an `expires_at` so the recipient caches under a truthful lifetime (§10). A
+picture whose owner backend is unreachable is flagged `owner_reachable=false` on the `GET /pictures` list
+item (§3) and yields `503` on `GET /pictures/{id}/url` (not `500`).
 
 ### Worker (`/api/worker/*`)
 
@@ -2514,7 +2544,7 @@ All require a worker JWT (`WORKER_JWT_SECRET`, 300s TTL).
 Called by the resolver, not the frontend. As of feature 23 these are authed by a **backend-signed `ResolverDelegation`** token (the backend is the
 token authority; the resolver replays the token it received via its last heartbeat), not the old shared-secret. The backend also runs a
 `ResolverHeartbeat` routine that `POST`s a fresh delegation token + fleet metrics to the resolver's `POST /api/backends/heartbeat`. The full resolver
-surface (`/api/resolver-admin/*`, WebFinger, registration routing, config-matrix, per-instance proxy) is catalogued in
+surface (`/api/resolver-admin/*`, resolution, registration routing, config-matrix, per-instance proxy) is catalogued in
 [`07_RESOLVER_ARCHITECTURE.md`](07_RESOLVER_ARCHITECTURE.md).
 
 ---

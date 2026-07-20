@@ -2,7 +2,7 @@
 //!
 //! - `GET /archypix-resolver/info` — discovery: reports `is_resolver: true` + the public `api_url`.
 //! - `GET /archypix-resolver/resolve?user=&domain=` — the federation/login hot path: `@user:domain`
-//!   → owning backend URL, in one HTTP call (replaces the old `.well-known/webfinger` query).
+//!   → owning backend URL, in one HTTP call.
 
 use crate::config;
 use crate::repository;

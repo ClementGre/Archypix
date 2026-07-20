@@ -18,6 +18,7 @@ import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
 import {bestLoaded, recordImage, useImageCache, VARIANT_RANK} from '@/stores/imageCache'
 import {useIsMobile} from '@/hooks/useMediaQuery'
+import {usePresignRefresh} from '@/hooks/usePresignRefresh'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {Section} from '@/components/photos/detail/Section'
 import {CreatorField} from '@/components/photos/detail/CreatorField'
@@ -200,13 +201,15 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const cached = useMemo(() => bestLoaded(entry), [entry])
     const reuseCached = !!cached && VARIANT_RANK[cached.variant] >= VARIANT_RANK[previewVariant]
     // Images and videos both have thumbnails (video's is a frame-grab); audio has none.
-    const {data: preview} = useQuery({
+    const {data: preview, refetch: refetchPreview} = useQuery({
         queryKey: ['pictures', 'url', id, previewVariant],
         queryFn: () => getPictureUrl(id, previewVariant),
         enabled: !isAudio && !reuseCached,
         staleTime: 10 * 60 * 1000,
     })
     const previewUrl = reuseCached ? cached!.url : preview?.url
+    // Re-presign a fresh preview URL if the current one has expired / 403s (§10).
+    const onPreviewError = usePresignRefresh(() => void refetchPreview())
     const previewUsedVariant = reuseCached ? cached!.variant : previewVariant
 
     // Audio plays inline in the panel from the original file; video opens the (autoplaying) Lightbox.
@@ -365,6 +368,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                 alt={picture.filename ?? ''}
                                 className="max-h-52 w-full object-contain"
                                 onLoad={() => recordImage(id, previewUsedVariant, previewUrl, true)}
+                                onError={onPreviewError}
                             />
                             <PlayBadge hover/>
                         </div>
@@ -378,6 +382,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                             maxHeight={PREVIEW_MAX_HEIGHT}
                             placeholderSrc={cached && cached.url !== previewUrl ? cached.url : undefined}
                             onLoad={() => recordImage(id, previewUsedVariant, previewUrl, true)}
+                            onError={onPreviewError}
                         />
                     ) : (
                         // No thumbnail (pending, or a non-thumbnailable format) — show a file-type icon.

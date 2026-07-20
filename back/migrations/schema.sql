@@ -1,24 +1,6 @@
 
 CREATE SCHEMA public;
 
-CREATE TYPE public.federation_direction AS ENUM (
-    'inbound',
-    'outbound'
-);
-
-CREATE TYPE public.federation_message_type AS ENUM (
-    'share_announcement',
-    'share_revocation',
-    'picture_update'
-);
-
-CREATE TYPE public.federation_status AS ENUM (
-    'pending',
-    'sent',
-    'delivered',
-    'failed'
-);
-
 CREATE TYPE public.job_status AS ENUM (
     'pending',
     'processing',
@@ -259,27 +241,6 @@ CREATE TABLE public.app_settings
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.federation_messages
-(
-    id          uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    message_type public.federation_message_type NOT NULL,
-    direction public.federation_direction NOT NULL,
-    sender_username character varying(255),
-    sender_instance character varying(255),
-    recipient_username character varying(255),
-    recipient_instance character varying(255),
-    outgoing_share_id uuid,
-    incoming_share_id uuid,
-    payload     jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    status public.federation_status DEFAULT 'pending'::public.federation_status NOT NULL,
-    created_at  timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    sent_at     timestamp without time zone,
-    delivered_at timestamp without time zone,
-    idempotency_key text,
-    error_message text,
-    retry_count integer                     DEFAULT 0                                NOT NULL
-);
-
 CREATE TABLE public.hierarchies
 (
     id                  uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
@@ -322,9 +283,9 @@ CREATE TABLE public.incoming_shares
 
 CREATE TABLE public.invites
 (
-    code     character varying(255) NOT NULL,
+    code character varying(255) NOT NULL,
     max_uses bigint,
-    uses     bigint DEFAULT 0       NOT NULL,
+    uses bigint DEFAULT 0       NOT NULL,
     expires_at timestamp with time zone,
     created_by character varying(255) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
@@ -345,30 +306,30 @@ CREATE TABLE public.jobs
     picture_id    uuid,
     claimed_by    text,
     claim_token uuid,
-    trace_context jsonb,
     created_at    timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     started_at    timestamp without time zone,
-    completed_at  timestamp without time zone
+    completed_at  timestamp without time zone,
+    trace_context jsonb
 );
 
 CREATE TABLE public.outgoing_shares
 (
-    id                           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id                     uuid                                                                 NOT NULL,
+    id                 uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
+    owner_id           uuid                                                                 NOT NULL,
     tag_path public.ltree NOT NULL,
-    name                         character varying(64)                                                NOT NULL,
-    message                      text,
-    recipient_username           character varying(255)                                               NOT NULL,
-    recipient_instance           character varying(255)                                               NOT NULL,
-    allow_share_back             boolean                     DEFAULT true                             NOT NULL,
-    future                       boolean                     DEFAULT true                             NOT NULL,
-    allow_exif_edit              boolean                     DEFAULT false                            NOT NULL,
-    shareback_of                 uuid,
+    name               character varying(64)                                                NOT NULL,
+    message            text,
+    recipient_username character varying(255)                                               NOT NULL,
+    recipient_instance character varying(255)                                               NOT NULL,
+    allow_share_back   boolean                     DEFAULT true                             NOT NULL,
+    future             boolean                     DEFAULT true                             NOT NULL,
+    allow_exif_edit    boolean                     DEFAULT false                            NOT NULL,
+    shareback_of       uuid,
     status public.share_status DEFAULT 'pending'::public.share_status NOT NULL,
-    last_error_at                timestamp without time zone,
-    next_retry_at                timestamp without time zone,
-    created_at                   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at                   timestamp without time zone,
+    last_error_at      timestamp without time zone,
+    next_retry_at      timestamp without time zone,
+    created_at         timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at         timestamp without time zone,
     derived_from_public_share_id uuid
 );
 
@@ -419,7 +380,8 @@ CREATE TABLE public.pictures
     copy_source_owner_instance character varying(255),
     copy_source_picture_id character varying(255),
     creator           text,
-    creator_override  text
+    creator_override  text,
+    remote_updated_at timestamp without time zone
 );
 
 CREATE TABLE public.public_shares
@@ -533,12 +495,6 @@ CREATE TABLE public.users
 ALTER TABLE ONLY public.app_settings
     ADD CONSTRAINT app_settings_pkey PRIMARY KEY (key);
 
-ALTER TABLE ONLY public.federation_messages
-    ADD CONSTRAINT federation_messages_idempotency_key_key UNIQUE (idempotency_key);
-
-ALTER TABLE ONLY public.federation_messages
-    ADD CONSTRAINT federation_messages_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.hierarchies
     ADD CONSTRAINT hierarchies_pkey PRIMARY KEY (id);
 
@@ -613,16 +569,6 @@ ALTER TABLE ONLY public.user_storage
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
-
-CREATE INDEX idx_federation_messages_direction ON public.federation_messages USING btree (direction);
-
-CREATE INDEX idx_federation_messages_recipient ON public.federation_messages USING btree (recipient_username, recipient_instance);
-
-CREATE INDEX idx_federation_messages_sender ON public.federation_messages USING btree (sender_username, sender_instance);
-
-CREATE INDEX idx_federation_messages_status ON public.federation_messages USING btree (status);
-
-CREATE INDEX idx_federation_messages_type ON public.federation_messages USING btree (message_type);
 
 CREATE INDEX idx_hierarchies_owner ON public.hierarchies USING btree (owner_id);
 
@@ -785,12 +731,6 @@ CREATE TRIGGER update_users_updated_at
     ON public.users
     FOR EACH ROW
 EXECUTE FUNCTION public.update_updated_at_column();
-
-ALTER TABLE ONLY public.federation_messages
-    ADD CONSTRAINT federation_messages_incoming_share_id_fkey FOREIGN KEY (incoming_share_id) REFERENCES public.incoming_shares (id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.federation_messages
-    ADD CONSTRAINT federation_messages_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares (id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.incoming_shares
     ADD CONSTRAINT fk_incoming_shares_mapping FOREIGN KEY (local_mapping_service_id) REFERENCES public.tagging_services (id) ON DELETE SET NULL;

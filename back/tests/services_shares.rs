@@ -575,6 +575,7 @@ async fn register_received_pictures_is_idempotent(db: PgPool) {
         creator: "@alice:test.com".to_string(),
         owner_deleted_at: None,
         owner_purge_at: None,
+        owner_updated_at: None,
     }];
 
     // Register twice — second call must be a no-op (ON CONFLICT DO UPDATE / DO NOTHING)
@@ -646,6 +647,7 @@ async fn register_received_pictures_propagates_creator_and_preserves_override(db
         creator: "@alice:test.com".to_string(),
         owner_deleted_at: None,
         owner_purge_at: None,
+        owner_updated_at: None,
     };
 
     register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
@@ -735,6 +737,7 @@ async fn register_received_pictures_persists_hash_and_thumbnail_ts(db: PgPool) {
         creator: "@alice:test.com".to_string(),
         owner_deleted_at: None,
         owner_purge_at: None,
+        owner_updated_at: None,
     };
     register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
         .await

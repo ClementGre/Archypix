@@ -49,11 +49,13 @@ pub async fn register(
         ));
     }
     // Throttle account-creation spam per source IP (07_security_audit.md §2.2).
-    ratelimit::check(
+    ratelimit::check_categorized(
         state.cache.as_ref(),
+        ratelimit::category::REGISTER,
         &format!("register:{}", addr.ip()),
         state.settings.get(keys::RATE_LIMIT_REGISTER_MAX),
         state.settings.get(keys::RATE_LIMIT_REGISTER_WINDOW_SECS),
+        state.settings.get(keys::RATE_LIMIT_EVENT_RETENTION_SECS),
     )
     .await?;
 

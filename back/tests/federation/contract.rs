@@ -50,7 +50,7 @@ fn dummy_notify() -> RoutineHandle<Uuid> {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-/// Spawn both backends, wire their backend-URL caches to bypass WebFinger,
+/// Spawn both backends, wire their backend-URL caches to bypass resolution,
 /// and seed alice (on A) and bob (on B).
 ///
 /// Returns `(cache_a, cfg_a, cache_b, cfg_b, alice_id, bob_id)`.

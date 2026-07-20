@@ -11,7 +11,8 @@ instances, without any central authority. Instead of rigid album structures, Arc
 labels you can assign manually or through automated rules. Your tag tree can be browsed as a virtual folder hierarchy that can be synced with any
 WebDAV-compatible client or OS file manager.
 
-Archypix uses a federated identity model: users are identified as `@username:domain`, resolved across instances via the standard WebFinger protocol.
+Archypix uses a federated identity model: users are identified as `@username:domain`, resolved across instances via a single-hop
+`/archypix-resolver/resolve` lookup.
 Multiple backend instances can share a single public domain through a lightweight Resolver service, or operate independently on their own domain.
 
 > The full feature specifications are available in [doc/01_GENERAL_SPECIFICATIONS.md](doc/01_GENERAL_SPECIFICATIONS.md).
@@ -89,21 +90,21 @@ graph TB
     storage[("• Postgres<br>• Redis<br>• S3")]
     client -->|" REST / WebDAV "| backA
     client -->|" REST / WebDAV "| backB
-    client -->|WebFinger| resolver
+    client -->|Resolve| resolver
     backA --- storage
     backB --- storage
     backA <-->|Federation| backB
-    backA -->|" • self-register<br>• WebFinger "| resolver
-    backB -->|" • self-register<br>• WebFinger "| resolver
+    backA -->|" • self-register<br>• resolve "| resolver
+    backB -->|" • self-register<br>• resolve "| resolver
     worker -->|" • Pools new jobs<br>• Submits job result "| backA
     worker -->|" • Pools new jobs<br>• Submits job result "| backB
 ```
 
-| Component                                                                 | Role                                                                                                                         |
-|---------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | WebFinger service. Maps `@username:domain` to the owning backend. Routes new user registrations to the least-loaded backend. |
-| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Axum HTTP server. Authoritative store for users, pictures, tags, and shares. Serves the REST API and WebDAV.                 |
-| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Async job pool for thumbnail generation, EXIF extraction, BlurHash, file hashing. ML inference planned.                      |
+| Component                                                                 | Role                                                                                                                          |
+|---------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | Resolution service. Maps `@username:domain` to the owning backend. Routes new user registrations to the least-loaded backend. |
+| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Axum HTTP server. Authoritative store for users, pictures, tags, and shares. Serves the REST API and WebDAV.                  |
+| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Async job pool for thumbnail generation, EXIF extraction, BlurHash, file hashing. ML inference planned.                       |
 
 ## The Story of Archypix
 

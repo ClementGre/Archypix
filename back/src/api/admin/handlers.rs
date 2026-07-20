@@ -452,6 +452,77 @@ pub async fn list_active_federation_connections(
     Ok(Json(domains))
 }
 
+// ── Rate limiting observability (feature 28 §9.3) ─────────────────────────────
+
+/// One per-minute rejection bucket for a category.
+#[derive(serde::Serialize)]
+pub struct RateLimitEventBucket {
+    pub category: String,
+    pub minute_epoch: i64,
+    pub count: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct RateLimitsResponse {
+    /// Recent per-minute rejection counts across the retention window, newest first.
+    pub buckets: Vec<RateLimitEventBucket>,
+    /// `true` when a category exceeded [`ATTACK_THRESHOLD`] rejections in the last few minutes.
+    pub attack_suspected: bool,
+}
+
+/// Rejections/minute above which a category's recent activity is flagged as a suspected attack.
+const ATTACK_THRESHOLD: u64 = 100;
+/// How many recent minutes the attack flag inspects.
+const ATTACK_WINDOW_MINUTES: i64 = 5;
+
+/// `GET /api/admin/rate-limits` — recent rate-limit-rejection buckets per category, plus an
+/// `attack_suspected` flag. Backs the admin dashboard "Rate limiting" tab (§9.3).
+#[tracing::instrument(skip(_auth, state), fields(user = %_auth.claims.sub))]
+pub async fn get_rate_limits(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+) -> Result<Json<RateLimitsResponse>, AppError> {
+    let now_minute = chrono::Utc::now().timestamp() / 60;
+    let keys = state.cache.scan_keys("ratelimit:event:*").await?;
+    const PREFIX: &str = "ratelimit:event:";
+
+    let mut buckets: Vec<RateLimitEventBucket> = Vec::new();
+    let mut attack_suspected = false;
+    for key in keys {
+        let Some(rest) = key.strip_prefix(PREFIX) else {
+            continue;
+        };
+        // `{category}:{minute}` — split on the last ':' so a category can't contain a colon issue.
+        let Some((category, minute)) = rest.rsplit_once(':') else {
+            continue;
+        };
+        let (Ok(minute_epoch), Some(count)) = (
+            minute.parse::<i64>(),
+            state
+                .cache
+                .get_str(RedisKey::RateLimitEvent(category, minute.parse().unwrap_or(0)))
+                .await?
+                .and_then(|v| v.parse::<u64>().ok()),
+        ) else {
+            continue;
+        };
+        if now_minute - minute_epoch <= ATTACK_WINDOW_MINUTES && count >= ATTACK_THRESHOLD {
+            attack_suspected = true;
+        }
+        buckets.push(RateLimitEventBucket {
+            category: category.to_string(),
+            minute_epoch,
+            count,
+        });
+    }
+    buckets.sort_by(|a, b| b.minute_epoch.cmp(&a.minute_epoch));
+
+    Ok(Json(RateLimitsResponse {
+        buckets,
+        attack_suspected,
+    }))
+}
+
 // ── Federation instances ──────────────────────────────────────────────────────
 
 #[tracing::instrument(skip(_auth, state), fields(user = %_auth.claims.sub))]

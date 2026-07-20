@@ -12,6 +12,7 @@ import {
     getErroredShares,
     getInstanceHealth,
     getInstanceStats,
+    getRateLimits,
     getStaleJobs,
     getUserShares,
     getUserStats,
@@ -129,6 +130,15 @@ export function useFederationInstances() {
     return useQuery({
         queryKey: [...queryKeys.adminFederationInstances(), scope],
         queryFn: () => listFederationInstances(client),
+    })
+}
+
+export function useRateLimits() {
+    const {client, scope} = useAdminClient()
+    return useQuery({
+        queryKey: [...queryKeys.adminRateLimits(), scope],
+        queryFn: () => getRateLimits(client),
+        refetchInterval: 30_000,
     })
 }
 

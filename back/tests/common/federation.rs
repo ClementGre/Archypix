@@ -4,7 +4,7 @@
 //! - [`settings_a`] / [`settings_b`] — two-domain test settings
 //! - [`spawn_backend`]               — real Axum server on an OS-assigned port
 //! - [`make_client`]                 — FederationClient sharing a server's cache
-//! - [`seed_backend_url`]            — bypass WebFinger by pre-seeding the cache
+//! - [`seed_backend_url`]            — bypass resolution by pre-seeding the cache
 //! - [`federation_jwt`]              — forge a federation JWT for a given server
 //! - [`user_jwt`]                    — forge a user access JWT for a given server
 
@@ -48,7 +48,7 @@ pub fn settings_b() -> Arc<Settings> {
 /// `(socket_addr, cache_handle, final_settings)`.
 ///
 /// **Pre-seed the returned cache with [`seed_backend_url`] entries for any
-/// remote domain before making federation calls**, so WebFinger resolution is
+/// remote domain before making federation calls**, so backend resolution is
 /// bypassed without a real resolver.
 pub async fn spawn_backend(
     db: PgPool,
@@ -86,7 +86,7 @@ pub async fn spawn_backend(
 /// The cache is the same `Arc` returned by [`spawn_backend`], so tokens written
 /// by the server's `/api/federation/auth/grant` handler are immediately visible
 /// to this client's poll loop, and backend-URL seeds written via [`seed_backend_url`]
-/// are resolved without a real WebFinger lookup.
+/// are resolved without a real resolver lookup.
 pub fn make_client(settings: &Arc<Settings>, cache: &Arc<InMemoryCache>) -> FederationClient {
     FederationClient::new(
         reqwest::Client::new(),
@@ -102,7 +102,7 @@ pub fn make_client(settings: &Arc<Settings>, cache: &Arc<InMemoryCache>) -> Fede
 // ── Cache helpers ─────────────────────────────────────────────────────────────
 
 /// Pre-seed `cache` so that `FederationClient::resolve_backend_url(username, domain)`
-/// returns `backend_url` immediately without making a WebFinger HTTP call.
+/// returns `backend_url` immediately without making a resolver HTTP call.
 ///
 /// Call this for every `(username, domain)` pair that a server will need to
 /// resolve before the test makes federation requests.

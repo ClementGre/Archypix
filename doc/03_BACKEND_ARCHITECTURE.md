@@ -39,7 +39,7 @@ domain/
                     #   per-node writeBackEnabled (feature 18 effective_enabled), TagPredicate
   share.rs          # OutgoingShare, IncomingShare
   public_share.rs   # feature 27: PublicShare + PublicShareStatus, token gen, coverage/permission helpers
-  federation.rs     # FederationMessage, BackendMapping
+  # (feature 28: the dead domain::federation module — FederationMessage*/BackendMapping — was deleted)
   job.rs            # Job (includes claim_token), re-exports from archypix-common
   tagging.rs        # service model + ServiceConfig (parse/validate/normalize/evaluate dispatch) + should_run
   pipeline.rs       # PipelineInput (the picture projection the evaluator reads)
@@ -60,10 +60,14 @@ repository/
                   # promote/boomerang mutations)
 
 clients/
+  federation.rs     # FederationClient struct (bounded reqwest client, feature 28 §4.1) + trace headers
   federation/
-    mod.rs          # FederationClient struct + shared protocol types
-    handshake.rs    # WebFinger resolution, token request/grant/store/issue
-    shares.rs       # announce_share, send_share_accept, send_share_reject, send_revocation, announce_pictures, presign_remote_pictures, send_picture_edit_request
+    handshake.rs    # token: store-with-expiry, proactive refresh, single-flight handshake (§4.2–4.4)
+    resolve.rs      # resolver `/resolve` lookup + cache; serves a stale URL on resolver outage (§4.5)
+    message.rs      # feature 28: the one generic `send<M>` — token, resolve, post envelope, classify
+                    #   errors (transient/permanent/426), bust-on-failure re-resolve
+    shares.rs       # presign_remote_pictures (unauthenticated, token-gated; carries expiry §10)
+    models.rs       # FederationEnvelope + FederationMessage/FederationResponse + per-type VERSION
   resolver.rs       # self_register, update_mapping, verify_token
 
 services/
@@ -89,8 +93,8 @@ api/
   user/auth.rs / users.rs / pictures.rs / settings.rs / shares.rs / tags.rs / jobs.rs / tagging_services.rs / hierarchies.rs
   user/public_shares.rs # feature 27: owner management + logged-in visitor Convert (save-copy/subscribe)
   user/public_view.rs   # feature 27: unauthenticated token-gated view + anonymous contribution (mounted in public_routes)
-  admin/handlers.rs + models.rs
-  federation/handlers.rs + models.rs
+  admin/handlers.rs + models.rs  # incl. GET /rate-limits recent-rejection buckets (feature 28 §9.3)
+  federation/handlers.rs # auth_request/grant + one `message` dispatch (version check + rate limit) + presign
   resolver/handlers.rs + models.rs
   worker/handlers.rs + models.rs
   webdav.rs         # WebDAV handler (OPTIONS/PROPFIND/GET/HEAD/PUT/DELETE/MOVE/COPY/MKCOL/PROPPATCH/LOCK); mounted at /webdav/{slug}
@@ -341,7 +345,7 @@ See [`06_API_REFERENCE.md`](06_API_REFERENCE.md) for the complete endpoint catal
 | Term               | Env var         | Example                | Description                                                                                                     |
 |--------------------|-----------------|------------------------|-----------------------------------------------------------------------------------------------------------------|
 | **Global domain**  | `GLOBAL_DOMAIN` | `example.com`          | Public identity domain. Used in `@user:example.com`, JWTs, DB, federation. Never changes from user perspective. |
-| **Backend domain** | `BACK_DOMAIN`   | `backend1.example.com` | Actual API server. Resolved via WebFinger, cached in Redis. Never stored persistently.                          |
+| **Backend domain** | `BACK_DOMAIN`   | `backend1.example.com` | Actual API server. Resolved via `/archypix-resolver/resolve`, cached in Redis. Never stored persistently.       |
 
 All persistent storage uses the **global domain**. Backend domains are derived on demand and cached.
 
@@ -363,7 +367,7 @@ Worker tokens: `sub = worker_id`, signed with `WORKER_JWT_SECRET` (HS256, 300 s 
 The recipient instance issues a JWT to the requesting instance. All domains in federation messages are global domains.
 
 1. A → B: `POST /api/federation/auth/request` `{ requester_instance, username, scope, nonce }`
-2. B resolves A's backend via WebFinger; sends grant to resolved address.
+2. B resolves A's backend via `/archypix-resolver/resolve`; sends grant to resolved address.
 3. B → A: `POST /api/federation/auth/grant` `{ issuer_instance, token, expires_at, scope, nonce }`
 4. A stores token in Redis under `federation:token:{B_global_domain}`.
 
@@ -392,18 +396,27 @@ When a federation **handler** must itself make a federation call:
 
 1. Alice creates `OutgoingShare` (`status = pending`). The insert and federation delivery run in a single transaction.
    - **Same-backend**: `IncomingShare` created in the same transaction; no HTTP federation.
-   - **Cross-instance**: federation handshake (or cached JWT), then `POST /api/federation/shares/announce` to Bob's backend.
-2. Bob accepts via `POST /api/authenticated/shares/incoming/{id}/accept`. Bob transitions `IncomingShare` to `active`, then signals the sender.
-   - **Same-backend**: Alice's `OutgoingShare` → `pending_first_announcement`; pipeline takes over.
-   - **Cross-instance**: `POST /api/federation/shares/accept`. On receipt Alice moves her `OutgoingShare` to `pending_first_announcement`.
-3. The **pipeline** sees `pending_first_announcement`, reconciles coverage, mints per-picture tokens, delivers `pictures/announce` inline, records
-   tracking rows, flips to `active`. Failure → `errored` with retry backoff.
-4. Bob's `announce_pictures` handler registers each picture and assigns `/SharedToMe/...` tags (`source = incoming_share`). Only accepts `active`
-   shares.
+   - **Cross-instance**: federation handshake (or cached JWT), then a `share_announce` message to Bob's backend.
+2. Bob accepts via `POST /api/authenticated/shares/incoming/{id}/accept`.
+    - **Same-backend**: `IncomingShare = active` + Alice's `OutgoingShare` → `pending_first_announcement` in one tx; pipeline takes over.
+    - **Cross-instance**: **deliver-then-commit** (feature 28 §6.1) — `IncomingShare = active` and the `share_accept`
+      delivery run in one transaction, delivered inside it, committed last. A crash/failure before commit leaves the
+      share `pending` (clean, re-acceptable), no manual revert. `reject` is identical. On receipt Alice moves her
+      `OutgoingShare` to `pending_first_announcement`.
+3. The **pipeline** sees `pending_first_announcement`, reconciles coverage, mints per-picture tokens, delivers a `pictures_announce` message inline,
+   records tracking rows, flips to `active`. Failure → `errored` with retry backoff.
+4. Bob's `pictures_announce` handler registers each picture and assigns `/SharedToMe/...` tags (`source = incoming_share`). Only accepts `active`
+   shares. A **stale-announcement guard** (feature 28 §7) drops a strictly-older `owner_updated_at` (dropped retry) — see
+   `pictures.remote_updated_at`.
 5. When Bob accesses a picture: same-backend owner → derive S3 key locally; cross-instance owner → use the picture's `picture_token` to call
-   `POST /api/federation/pictures/presign` on Alice's backend.
+   `POST /api/federation/pictures/presign` on Alice's backend. An unreachable owner degrades the read path (list `owner_reachable=false`,
+   single-picture `503`) instead of 500ing (feature 28 §3).
 
-**ShareBack** (`shares/outgoing` with `shareback_of` set, `allowShareBack = true`): the recipient auto-accepts in `shares/announce` (sets
+**All authenticated verbs travel as one typed, versioned envelope** — `POST /api/federation/message` carrying
+`FederationMessage`/`FederationResponse` with a per-message `VERSION` (exact-match → `426` on skew). The client
+side is the single generic `FederationClient::send<M>` (`clients/federation/message.rs`). See `doc/features/28_federation_robustness.md`.
+
+**ShareBack** (`shares/outgoing` with `shareback_of` set, `allowShareBack = true`): the recipient auto-accepts in the `share_announce` handler (sets
 `IncomingShare = active`, creates `SharedTagMappingService`) and returns `auto_accepted: true` instead of calling back (rule 2). The initiator moves
 its `OutgoingShare` to `pending_first_announcement`.
 

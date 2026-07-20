@@ -30,7 +30,7 @@ A few key concepts to be aware of:
 
 - **`BACK_DOMAIN`** is the public domain of this specific backend instance (e.g. `backend1.example.com`), used as the JWT audience.
 - **`GLOBAL_DOMAIN`** is the shared identity domain that appears in user handles (`@user:example.com`). It can differ from `BACK_DOMAIN`, which is
-  common when a reverse proxy forwards WebFinger requests from the public domain to this backend.
+  common when a reverse proxy forwards `/archypix-resolver/` requests from the public domain to this backend.
 - **`USE_RESOLVER`**: set to `true` when multiple backends share the same `GLOBAL_DOMAIN` via a Resolver. Set to `false` for a standalone instance.
 
 Log level:
@@ -111,7 +111,7 @@ cache seeding).
     - `federation/` — `/api/federation/*`
     - `resolver/` — `/api/resolver/*`
   - `worker/` — `/api/worker/*`
-    - `webfinger.rs` — `/.well-known/webfinger` (standalone mode only)
+      - `bootstrap.rs` — `/archypix-resolver/info` + `/archypix-resolver/resolve` (backend-answered)
 
 Dependency rule: `api → services → repository → domain`. No layer may reach upward. `clients` and `infra` are horizontal utilities.
 

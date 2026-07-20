@@ -13,16 +13,16 @@ graph LR
     resolver["Resolver"]
     backA["Backend A"]
     backB["Backend B"]
-    client -->|" GET /.well-known/webfinger "| resolver
+    client -->|" GET /archypix-resolver/resolve "| resolver
     backA -->|" POST /api/backends (startup) "| resolver
     backB -->|" POST /api/backends (startup) "| resolver
     resolver -->|" POST /api/resolver/users (registration) "| backA
 ```
 
-The Resolver is only needed when multiple backends share the same `GLOBAL_DOMAIN`. A single standalone backend can serve its own WebFinger endpoint
-directly (set `USE_RESOLVER=false`).
+The Resolver is only needed when multiple backends share the same `GLOBAL_DOMAIN`. A single standalone backend can answer its own
+`/archypix-resolver/resolve` endpoint directly (set `USE_RESOLVER=false`).
 
-WebFinger lookups are served from an in-process TTL cache before hitting the database.
+Resolution lookups are served from an in-process TTL cache before hitting the database.
 
 ## Tech stack
 

@@ -12,6 +12,7 @@ import type {
     Invite,
     JobStatus,
     JobType,
+    RateLimitsResponse,
     RoutineInfo,
     StorageAuditResponse,
     UserSharesResponse,
@@ -138,6 +139,13 @@ export async function regenerateThumbnails(client: AxiosInstance, body: {
     reextract_exif?: boolean
 }): Promise<{ enqueued: number }> {
     const {data} = await client.post('/api/admin/pictures/regenerate-thumbnails', body)
+    return data
+}
+
+// ── Rate limiting observability (feature 28 §9.3) ────────────────────────────────
+
+export async function getRateLimits(client: AxiosInstance = apiClient): Promise<RateLimitsResponse> {
+    const {data} = await client.get<RateLimitsResponse>('/api/admin/rate-limits')
     return data
 }
 

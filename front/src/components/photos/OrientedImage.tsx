@@ -80,6 +80,8 @@ interface OrientedImageProps {
     /** Native lazy/eager loading. Defaults to `lazy` (grid); the lightbox/sidebar pass `eager`. */
     loading?: 'lazy' | 'eager'
     onLoad?: React.ReactEventHandler<HTMLImageElement>
+    /** Fires when the image fails to load (e.g. an expired/403 presigned URL — see `usePresignRefresh`). */
+    onError?: React.ReactEventHandler<HTMLImageElement>
 }
 
 /**
@@ -87,7 +89,7 @@ interface OrientedImageProps {
  * sized to *cover* its parent. Must be placed inside a `position: relative`
  * parent whose box already carries the display aspect ratio.
  */
-export function OrientedImage({src, alt, orientation, width, height, className, loading = 'lazy', onLoad}: OrientedImageProps) {
+export function OrientedImage({src, alt, orientation, width, height, className, loading = 'lazy', onLoad, onError}: OrientedImageProps) {
     const {className: coverClass, style} = orientedCoverStyle(orientation, width, height)
     return (
         <img
@@ -95,6 +97,7 @@ export function OrientedImage({src, alt, orientation, width, height, className, 
             alt={alt}
             loading={loading}
             onLoad={onLoad}
+            onError={onError}
             className={cn(coverClass, 'object-cover', className)}
             style={style}
         />
@@ -118,6 +121,8 @@ interface OrientedContainImageProps {
     placeholderSrc?: string | null
     /** Called once the main `src` image finishes loading. */
     onLoad?: () => void
+    /** Fires when the main `src` image fails to load (expired/403 presign — see `usePresignRefresh`). */
+    onError?: React.ReactEventHandler<HTMLImageElement>
     /** Raw (pre-orientation) pixel dimensions — used to derive the display aspect ratio. */
     width?: number | null
     height?: number | null
@@ -151,6 +156,7 @@ export function OrientedContainImage({
                                          maxHeight,
                                          className,
                                          onLoad,
+                                         onError,
                                          onClick,
                                      }: OrientedContainImageProps) {
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
@@ -247,6 +253,7 @@ export function OrientedContainImage({
                                 setLoadedSrc(src)
                                 onLoad?.()
                             }}
+                            onError={onError}
                         />
                     )}
                 </div>

@@ -32,6 +32,7 @@ import {useUIStore} from '@/stores/ui'
 import {bestLoaded, recordImage, useImageCache} from '@/stores/imageCache'
 import {carouselVisible, topBarVisible, useLightboxStore} from '@/stores/lightbox'
 import {useIsMobile} from '@/hooks/useMediaQuery'
+import {usePresignRefresh} from '@/hooks/usePresignRefresh'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {Button} from '@/components/ui/button'
 import {FileTypeIcon} from './FileTypeIcon'
@@ -57,13 +58,14 @@ const MEDIA_KEY_SHORTCUTS = {
 } as const
 
 /** Still-image viewer: zoom/pan + rotate controls. Rotation auto-commits (see `useExifDraft`). */
-function LightboxImageWithDraft({picture, url, variant, blurhash, placeholderSrc, showRotate}: {
+function LightboxImageWithDraft({picture, url, variant, blurhash, placeholderSrc, showRotate, onError}: {
     picture: PictureDetail
     url: string
     variant: PictureVariant
     blurhash?: string | null
     placeholderSrc?: string | null
     showRotate: boolean
+    onError?: React.ReactEventHandler<HTMLImageElement>
 }) {
     const exif = useExifDraft(picture)
     const draftOrientation = exif.draft.orientation ? Number(exif.draft.orientation) : 1
@@ -80,6 +82,7 @@ function LightboxImageWithDraft({picture, url, variant, blurhash, placeholderSrc
                     width={picture.width}
                     height={picture.height}
                     onLoad={() => recordImage(picture.id, variant, url, true)}
+                    onError={onError}
                     onClick={(e) => e.stopPropagation()}
                 />
             </ZoomableArea>
@@ -182,12 +185,13 @@ function LightboxVideo({src, mime, title, width, height}: {
 }
 
 /** Resolves the picture detail (for rotate) and renders the fitted image. */
-function LightboxImage({item, url, variant, loading, showRotate}: {
+function LightboxImage({item, url, variant, loading, showRotate, onError}: {
     item: PictureListItem
     url: string | null
     variant: PictureVariant
     loading: boolean
     showRotate: boolean
+    onError?: React.ReactEventHandler<HTMLImageElement>
 }) {
     const source = usePictureSource()
     const {data: detail} = useQuery({
@@ -262,7 +266,7 @@ function LightboxImage({item, url, variant, loading, showRotate}: {
     // blurhash / reused-thumbnail placeholder.
     if (detail && url && !source.readOnly) {
         return <LightboxImageWithDraft picture={detail} url={url} variant={variant} blurhash={item.blurhash} placeholderSrc={placeholderSrc}
-                                       showRotate={showRotate}/>
+                                       showRotate={showRotate} onError={onError}/>
     }
     return (
         <OrientedContainImage
@@ -274,6 +278,7 @@ function LightboxImage({item, url, variant, loading, showRotate}: {
             width={item.width}
             height={item.height}
             onLoad={() => url && recordImage(item.id, variant, url, true)}
+            onError={onError}
             onClick={(e) => e.stopPropagation()}
         />
     )
@@ -449,12 +454,14 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     // otherwise the `large` thumbnail. `urlData.url` is null for non-thumbnailable formats.
     // Read-only shares without originals must never request the `original` variant (403); cap at `large`.
     const variant: PictureVariant = originalQuality && source.canDownload ? 'original' : 'large'
-    const {data: urlData} = useQuery({
+    const {data: urlData, refetch: refetchUrl} = useQuery({
         queryKey: source.urlKey(current?.id ?? '', variant),
         queryFn: () => source.presign(current!.id, variant),
         enabled: !!current,
         staleTime: 10 * 60 * 1000,
     })
+    // Re-presign a fresh URL if the current one expired / 403s while the image was rendered (§10).
+    const onImgError = usePresignRefresh(() => void refetchUrl())
 
     // File size lives on the detail (not the list item); reuse the cached detail query.
     const {data: detail} = useQuery({
@@ -616,7 +623,8 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                     <ChevronLeft className="h-6 w-6"/>
                 </button>
 
-                <LightboxImage item={current} url={urlData?.url ?? null} variant={variant} loading={urlData === undefined} showRotate={showRotate}/>
+                <LightboxImage item={current} url={urlData?.url ?? null} variant={variant} loading={urlData === undefined}
+                               showRotate={showRotate} onError={onImgError}/>
 
                 <button
                     onClick={(e) => {
