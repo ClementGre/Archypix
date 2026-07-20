@@ -7,6 +7,7 @@ import {Section} from '@/components/photos/detail/Section'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {BatchConfirmDialog} from './BatchConfirmDialog'
 import {BatchExifSection, BatchMetadataSection} from './BatchExifSection'
+import {BatchCreatorControl} from './BatchCreatorControl'
 import {batchRestore, batchTrash} from '@/api/pictures'
 import {batchEditTags} from '@/api/tags'
 import {useAggregate} from '@/hooks/useAggregate'
@@ -213,6 +214,7 @@ export function MultiSelectionPanel() {
                                 ))}
                             </div>
                         )}
+                        <BatchCreatorControl creator={agg.creator} total={total} selection={selection}/>
                         {inFlight > 0 && (
                             <p className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
                                 <Loader2 className="h-3 w-3 animate-spin"/>

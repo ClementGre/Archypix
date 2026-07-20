@@ -167,3 +167,9 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   pictures (L217) · 11 Federation protocol (L228) · 12 Services/repos/API (L241) · 13 Abuse controls &
   config (L258) · 14 Edge cases (L273) · 15 Frontend (L290) · 16 Testing (L304) · 17 Doc updates (L320) ·
   18 Work breakdown (L331).
+- **28_federation_robustness.md** — federation hardening (spec-only): 1 Overview (L9) · 2 Decisions (L28) ·
+  3 Read-path failure isolation (L44) · 4 Outbound HTTP hardening — timeouts/refresh/single-flight/clock-skew
+  (L70) · 5 One typed versioned message envelope (L120) · 6 Interactive-verb crash-atomicity + typed errors
+  (L190) · 7 Stale-announcement guard (L230) · 8 Delete `federation_messages` (L248) · 9 Rate limiting &
+  observability (L266) · 10 Presign TTL + frontend auto-refresh (L300) · 11 Config (L314) · 12 Edge cases ·
+  13 Frontend · 14 Testing · 15 Doc updates · 16 Work breakdown.

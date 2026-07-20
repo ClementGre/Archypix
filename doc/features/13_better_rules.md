@@ -44,25 +44,31 @@ Empty `and`/`or` arrays are valid: `{"and": []}` always matches, `{"or": []}` ne
 Every leaf predicate names exactly one `field`. The full set of available fields and their base
 types are:
 
-| `field` name      | Base type | Source column / derivation                              |
-|-------------------|-----------|---------------------------------------------------------|
-| `captured_at`     | date      | `pictures.captured_at`                                  |
-| `gps_lat`         | float     | `pictures.gps_lat`                                      |
-| `gps_lng`         | float     | `pictures.gps_lng`                                      |
-| `gps_alt`         | int       | `pictures.gps_alt` (metres)                             |
-| `iso_speed`       | int       | `exif_data.iso_speed`                                   |
-| `f_number`        | float     | `exif_data.f_number`                                    |
-| `focal_length_mm` | float     | `exif_data.focal_length_mm`                             |
-| `exposure_time`   | float     | `exif_data.exposure_time_num / exposure_time_den` (sec) |
-| `orientation`     | int       | `pictures.orientation` (EXIF tag: 1/3/6/8/…)            |
-| `camera_brand`    | str       | `exif_data.camera_brand`                                |
-| `camera_model`    | str       | `exif_data.camera_model`                                |
-| `filename`        | str       | `pictures.filename`                                     |
-| `mime_type`       | str       | `pictures.mime_type`                                    |
-| `file_size`       | int       | `pictures.file_size` (bytes)                            |
-| `width`           | int       | `pictures.width` (pixels)                               |
-| `height`          | int       | `pictures.height` (pixels)                              |
-| `is_owned`        | bool      | `pictures.remote_picture_id IS NULL`                    |
+| `field` name      | Base type | Source column / derivation                                                                  |
+|-------------------|-----------|---------------------------------------------------------------------------------------------|
+| `captured_at`     | date      | `pictures.captured_at`                                                                      |
+| `gps_lat`         | float     | `pictures.gps_lat`                                                                          |
+| `gps_lng`         | float     | `pictures.gps_lng`                                                                          |
+| `gps_alt`         | int       | `pictures.gps_alt` (metres)                                                                 |
+| `iso_speed`       | int       | `exif_data.iso_speed`                                                                       |
+| `f_number`        | float     | `exif_data.f_number`                                                                        |
+| `focal_length_mm` | float     | `exif_data.focal_length_mm`                                                                 |
+| `exposure_time`   | float     | `exif_data.exposure_time_num / exposure_time_den` (sec)                                     |
+| `orientation`     | int       | `pictures.orientation` (EXIF tag: 1/3/6/8/…)                                                |
+| `camera_brand`    | str       | `exif_data.camera_brand`                                                                    |
+| `camera_model`    | str       | `exif_data.camera_model`                                                                    |
+| `filename`        | str       | `pictures.filename`                                                                         |
+| `mime_type`       | str       | `pictures.mime_type`                                                                        |
+| `file_size`       | int       | `pictures.file_size` (bytes)                                                                |
+| `width`           | int       | `pictures.width` (pixels)                                                                   |
+| `height`          | int       | `pictures.height` (pixels)                                                                  |
+| `is_owned`        | bool      | `pictures.remote_picture_id IS NULL`                                                        |
+| `owner`           | str       | resolved owner identity `@user:domain` (local holder for owned, stored origin for received) |
+| `creator`         | str       | resolved displayed creator `coalesce(override, creator, owner default)` (feature 26)        |
+
+`owner` and `creator` are **non-nullable** (always resolve to a value), so — unlike other fields —
+they do not accept the `is_present` presence condition (the frontend `FieldDef.nullable` flag drops
+the "is set" / "is not set" operators; the backend rejects `is_present` on them).
 
 ### 2.3 Conditions per base type
 

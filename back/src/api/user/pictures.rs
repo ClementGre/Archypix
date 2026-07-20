@@ -3,8 +3,8 @@ use crate::domain::job::{ExifField, FullExif};
 use crate::services;
 use crate::services::aggregate::AggregateRequest;
 use crate::services::pictures::{
-    BatchUploadFile, BatchUploadOutcome, PictureListParams, PictureListResult, PictureVariant,
-    TrashBatchOutcome, UploadMetadata,
+    BatchUploadFile, BatchUploadOutcome, CreatorBatchOutcome, PictureListParams, PictureListResult,
+    PictureVariant, TrashBatchOutcome, UploadMetadata,
 };
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
@@ -288,7 +288,14 @@ pub async fn aggregate(
     State(state): State<AppState>,
     Json(body): Json<AggregateRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = services::aggregate::aggregate(&state.db, auth.user_id()?, body).await?;
+    let result = services::aggregate::aggregate(
+        &state.db,
+        &state.settings,
+        auth.user_id()?,
+        &auth.claims.sub,
+        body,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -630,4 +637,64 @@ pub async fn set_creator(
         "creator_override": picture.creator_override,
         "updated_at": picture.updated_at,
     })))
+}
+
+/// Body for a batch creator edit over a selection (feature 26 batch integration). Accepts the
+/// selection descriptor or a legacy explicit `picture_ids` list; `value` null/blank resets the owner
+/// value / clears the override; `dry_run: true` returns the affected breakdown only.
+#[derive(Debug, Deserialize)]
+pub struct BatchCreatorRequest {
+    #[serde(default)]
+    pub selection: Option<PictureSelection>,
+    #[serde(default)]
+    pub picture_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// `PATCH /api/authenticated/pictures/creator` — batch-set the creator over a selection (feature 26
+/// batch integration). Owned pictures get the authoritative `creator` (re-announced); received
+/// pictures get the recipient-local `creator_override`.
+#[tracing::instrument(
+    skip(auth, state, body),
+    fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), dry_run = body.dry_run)
+)]
+pub async fn batch_set_creator(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<BatchCreatorRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let sel = selection::resolve_or_explicit(
+        &state.db,
+        user_id,
+        body.selection.as_ref(),
+        body.picture_ids.clone(),
+    )
+    .await?;
+    let outcome = services::pictures::batch_set_creator_selection(
+        &state.db,
+        &state.routines.pipeline,
+        user_id,
+        &sel,
+        body.value,
+        body.dry_run,
+    )
+    .await?;
+    Ok(Json(match outcome {
+        CreatorBatchOutcome::DryRun(dry) => {
+            serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
+        }
+        CreatorBatchOutcome::Applied {
+            affected,
+            edited,
+            local_override,
+        } => serde_json::json!({
+            "affected": affected,
+            "edited": edited,
+            "local_override": local_override,
+        }),
+    }))
 }

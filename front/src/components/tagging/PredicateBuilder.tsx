@@ -364,12 +364,12 @@ function FieldPicker({value, onChange}: { value: string; onChange: (field: strin
 function FieldView({node, onChange, onRemove}: NodeViewProps) {
     if (node.kind !== 'field') return null
     const def = fieldDef(node.field)!
-    const ops = operatorsFor(def.type)
+    const ops = operatorsFor(def.type, def.nullable)
     const cond = node.cond
 
     const setField = (field: string) => {
         const nd = fieldDef(field)!
-        onChange({...node, field, cond: condForOp(nd.type, operatorsFor(nd.type)[0].op)})
+        onChange({...node, field, cond: condForOp(nd.type, operatorsFor(nd.type, nd.nullable)[0].op)})
     }
     const setOp = (op: string) => onChange({...node, cond: condForOp(def.type, op)})
     const setCond = (patch: Partial<CondState>) => onChange({...node, cond: {...cond, ...patch}})

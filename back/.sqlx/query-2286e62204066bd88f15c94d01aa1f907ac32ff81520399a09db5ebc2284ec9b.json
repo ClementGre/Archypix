@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.id, p.captured_at, p.ingested_at, p.updated_at,\n                      p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.filename, p.mime_type, p.file_size, p.width, p.height,\n                      p.exif_data as \"exif_data: Json<CameraExif>\",\n                      (p.remote_picture_id IS NULL) as \"is_owned!\"\n               FROM pictures p\n               WHERE p.local_user_id = $1\n                 AND (\n                   (p.last_pipeline_run_at IS NULL)\n                   OR\n                   EXISTS (\n                     SELECT 1 FROM tagging_services ts\n                     WHERE ts.owner_id = $1\n                       AND ts.enabled = true\n                       AND p.last_pipeline_run_at < ts.last_invalidated_at\n                   )\n                 )",
+  "query": "SELECT p.id, p.captured_at, p.ingested_at, p.updated_at,\n                      p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.filename, p.mime_type, p.file_size, p.width, p.height,\n                      p.exif_data as \"exif_data: Json<CameraExif>\",\n                      (p.remote_picture_id IS NULL) as \"is_owned!\",\n                      p.creator, p.creator_override, p.owner_username, p.owner_instance_domain\n               FROM pictures p\n               WHERE p.local_user_id = $1\n                 AND (\n                   (p.last_pipeline_run_at IS NULL)\n                   OR\n                   EXISTS (\n                     SELECT 1 FROM tagging_services ts\n                     WHERE ts.owner_id = $1\n                       AND ts.enabled = true\n                       AND p.last_pipeline_run_at < ts.last_invalidated_at\n                   )\n                 )",
   "describe": {
     "columns": [
       {
@@ -162,6 +162,50 @@
         "name": "is_owned!",
         "type_info": "Bool",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 15,
+        "name": "creator",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "creator_override",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "creator_override"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "owner_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_username"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "owner_instance_domain",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "owner_instance_domain"
+          }
+        }
       }
     ],
     "parameters": {
@@ -184,8 +228,12 @@
       true,
       true,
       false,
-      null
+      null,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "7997bb753d0e726a5889df029654a8051ed01bec445d79f81a79c3e6b29bb79d"
+  "hash": "2286e62204066bd88f15c94d01aa1f907ac32ff81520399a09db5ebc2284ec9b"
 }

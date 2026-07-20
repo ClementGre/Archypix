@@ -31,6 +31,15 @@ pub struct PipelineInput {
     pub file_size: Option<i64>,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    /// Derived: `remote_picture_id IS NULL` (the picture is owned by this user).
+    /// Derived: `remote_picture_id IS NULL` (the picture is owned by this user). Queryable as the
+    /// `is_owned` rule field.
     pub is_owned: bool,
+    /// Resolved **owner** identity `@username:domain` — the local holder for an owned picture, the
+    /// stored origin owner for a received one (`"Unknown"` if unresolvable). Never empty. Queryable as
+    /// the (non-nullable) `owner` rule field — a string comparison alongside the `is_owned` boolean.
+    pub owner: String,
+    /// Resolved **displayed** creator credit (feature 26): `coalesce(creator_override, creator,
+    /// owner_default)`. Effectively always `Some` (the owner default backstops it); `None` only when
+    /// the owner is unresolvable. Queryable as the (non-nullable) `creator` rule field.
+    pub creator: Option<String>,
 }

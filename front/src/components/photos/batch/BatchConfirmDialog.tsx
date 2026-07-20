@@ -35,6 +35,8 @@ interface BatchConfirmDialogProps {
     children?: ReactNode
     /** Confirm is disabled when the previewed `affected` is 0 unless this is set. */
     allowEmpty?: boolean
+    /** Extra client-side gate on Confirm (e.g. an invalid input in `children`). */
+    confirmDisabled?: boolean
     onConfirm: () => void
 }
 
@@ -56,6 +58,7 @@ export function BatchConfirmDialog({
                                        renderResult,
                                        children,
                                        allowEmpty = false,
+                                       confirmDisabled = false,
                                        onConfirm,
                                    }: BatchConfirmDialogProps) {
     const [openState, setOpenState] = useState(false)
@@ -95,7 +98,7 @@ export function BatchConfirmDialog({
         onConfirm()
     }
 
-    const disabled = loading || !!error || (!allowEmpty && (result?.affected ?? 0) === 0)
+    const disabled = loading || !!error || confirmDisabled || (!allowEmpty && (result?.affected ?? 0) === 0)
 
     return (
         <AlertDialog open={open} onOpenChange={setOpen}>

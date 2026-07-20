@@ -51,7 +51,10 @@
 - [x] **Tag rename cascade** — `POST /tags/rename` search-and-replaces a tag subtree across manual tags, shares, pipeline configs, hierarchy configs;
   invalidates + wakes pipeline. Frontend rename dialog in tag tree menu.
 - [ ] **Federation robustness** — don't 500 on failed remote presign, token refresh schedule, retry logic, presigned URL caching for remote pictures.
-  Clarify whether to use the federation_messages table, or to delete it.
+  Decided against a durable outbox: **delete** the `federation_messages` table; announcements keep converging from state via the pipeline, interactive
+  verbs stay synchronous (crash-atomic, clear "recipient unreachable — try later"). Also: one typed versioned `POST /api/federation/message` envelope
+  (per-message exact-match version), three distinct outbound timeouts + proactive token refresh + single-flight handshake, per-peer/-IP rate limiting
+  with an admin observability tab, stale-announcement guard. Spec-only so far — see `doc/features/28_federation_robustness.md`.
 
 ## To-do for v1.0
 
@@ -98,7 +101,17 @@
   friendlier visitor terms, and a tag-tree "New public share link…" entry. **Follow-up:** cross-instance
   save-a-copy (§10); Convert + share-back UI; reuse the full `UploadDialog` and read-only `ExifInlineEditor`
   on the public page; sort/filter on the public listing.
-- [ ] **Picture creator better integration** — Add picture creator support in query tagging services and in batch view/editing.
+- [x] **Picture creator better integration** — creator is now a **rule field** (`Field::Creator` over the
+  resolved displayed creator, feature 13 §2.2; `PipelineInput.creator` resolved in pipeline evaluation;
+  frontend `RULE_FIELDS` Ownership entry) and part of **batch view/editing**: the aggregate summary
+  carries a resolved-creator distinct `FieldAggregate` (`PictureRepository::aggregate_creator`), and
+  `PATCH /pictures/creator` (`batch_set_creator_selection`) sets it over a selection (owned →
+  authoritative `creator` re-announced, received → `creator_override`, `dry_run` breakdown). Creator
+  resolution refactored into reusable free fns in `domain::picture`. Frontend `BatchCreatorControl` +
+  `useBatchMutations().creator`. Also added a companion **`owner`** rule field (resolved owner identity
+  `@user:domain`, a string comparison alongside the `is_owned` boolean); both `owner` and `creator` are
+  **non-nullable** and drop the `is set`/`is not set` operators (frontend `FieldDef.nullable`, backend
+  rejects `is_present`). See `doc/features/26_picture_creator.md §11` and `13_better_rules.md §2.2`.
 - [x] **Frontend fixes** — `dark:` tailwind variant redefined via `@custom-variant` (`index.css`) to key off the in-app `.light` class on `<html>`
   instead of the browser's `prefers-color-scheme`.
 - [x] **Better trash** — trash is now a **filter over the main view**, not a separate page. Backend `PictureListFilter.trash`

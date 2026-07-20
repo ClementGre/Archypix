@@ -6,14 +6,16 @@
 //! requests the heavier `tags` (ltree ancestor expansion) / `exif` (per-field) sections only when
 //! those foldable sections are expanded.
 
-use crate::domain::picture::ExifSyncStatus;
+use crate::domain::picture::{ExifSyncStatus, format_identity};
 use crate::domain::tag::TagPath;
-use crate::repository::picture::PictureRepository;
+use crate::infra::settings::keys;
+use crate::repository::picture::{DistinctAgg, PictureRepository};
 use crate::repository::tag::TagRepository;
 use crate::services::selection::{self, PictureSelection};
 use archypix_common::error::AppError;
+use archypix_common::settings::Settings;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -75,11 +77,14 @@ const DATE_FIELDS: &[(&str, &str)] = &[
     ("updated_at", "p.updated_at"),
 ];
 
-/// Build the full aggregate response for `request`.
-#[tracing::instrument(skip(db, request), fields(user_id = %user_id))]
+/// Build the full aggregate response for `request`. `local_username` + the instance `global_domain`
+/// (from `settings`) resolve owner-default creators for the summary's creator histogram (feature 26).
+#[tracing::instrument(skip(db, settings, request), fields(user_id = %user_id))]
 pub async fn aggregate(
     db: &PgPool,
+    settings: &Settings,
     user_id: Uuid,
+    local_username: &str,
     request: AggregateRequest,
 ) -> Result<Value, AppError> {
     let sections = request
@@ -112,6 +117,13 @@ pub async fn aggregate(
             ),
         );
         out.insert("exif_sync".into(), exif_sync_histogram(&s.exif_sync));
+
+        // Resolved-creator histogram (feature 26) — a distinct FieldAggregate, so the panel reuses the
+        // "Mixed / common value" rendering. Cheap (all on the pictures row, one GROUP BY like `owners`).
+        let owner_default = format_identity(local_username, &settings.get(keys::GLOBAL_DOMAIN));
+        let creator =
+            PictureRepository::aggregate_creator(db, user_id, &resolved, &owner_default).await?;
+        out.insert("creator".into(), distinct_field(&creator));
     }
 
     if sections.contains(&AggregateSection::Tags) {
@@ -163,6 +175,31 @@ fn exif_sync_histogram(hist: &[(ExifSyncStatus, i64)]) -> Value {
     })
 }
 
+/// A distinct-value [`FieldAggregate`](§4.3) from a [`DistinctAgg`]: first `DISTINCT_CAP` values
+/// inline, the rest as `distinct_overflow`; `common` set when the field collapses to one value.
+fn distinct_field(agg: &DistinctAgg) -> Value {
+    let total_distinct = agg.values.len();
+    let overflow = total_distinct.saturating_sub(DISTINCT_CAP) as i64;
+    let common = if total_distinct == 1 && agg.null_count == 0 {
+        Some(Value::String(agg.values[0].0.clone()))
+    } else {
+        None
+    };
+    let distinct: Vec<Value> = agg
+        .values
+        .iter()
+        .take(DISTINCT_CAP)
+        .map(|(v, c)| json!({ "value": v, "count": c }))
+        .collect();
+    json!({
+        "type": "distinct",
+        "common": common,
+        "distinct": distinct,
+        "distinct_overflow": overflow,
+        "null_count": agg.null_count,
+    })
+}
+
 /// Build the per-field type-aware EXIF aggregate map (§4.3).
 async fn exif_section(
     db: &PgPool,
@@ -173,29 +210,7 @@ async fn exif_section(
 
     for (name, expr) in DISTINCT_FIELDS {
         let agg = PictureRepository::aggregate_distinct(db, user_id, resolved, expr).await?;
-        let total_distinct = agg.values.len();
-        let overflow = total_distinct.saturating_sub(DISTINCT_CAP) as i64;
-        let common = if total_distinct == 1 && agg.null_count == 0 {
-            Some(Value::String(agg.values[0].0.clone()))
-        } else {
-            None
-        };
-        let distinct: Vec<Value> = agg
-            .values
-            .iter()
-            .take(DISTINCT_CAP)
-            .map(|(v, c)| json!({ "value": v, "count": c }))
-            .collect();
-        map.insert(
-            (*name).into(),
-            json!({
-                "type": "distinct",
-                "common": common,
-                "distinct": distinct,
-                "distinct_overflow": overflow,
-                "null_count": agg.null_count,
-            }),
-        );
+        map.insert((*name).into(), distinct_field(&agg));
     }
 
     for (name, agg) in

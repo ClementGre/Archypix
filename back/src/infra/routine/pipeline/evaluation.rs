@@ -65,6 +65,14 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
         "pipeline: evaluating dirty pictures"
     );
 
+    // Owner identity for resolving owner-default creators on owned rows (feature 26 §5) — the
+    // `creator` rule field reads the displayed value. Fetched once; every dirty row is this user's.
+    let local_username = crate::repository::user::UserRepository::find_by_id(db, user_id)
+        .await?
+        .map(|u| u.username)
+        .unwrap_or_default();
+    let global_domain = run.settings.get(keys::GLOBAL_DOMAIN);
+
     // ── Process in batches of 100 ─────────────────────────────────────────────
     for chunk in dirty.chunks(100) {
         let picture_ids: Vec<Uuid> = chunk.iter().map(|p| p.id).collect();
@@ -108,6 +116,26 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
                 (Some(num), Some(den)) if den != 0 => Some(num as f64 / den as f64),
                 _ => None,
             };
+            // Resolved owner identity for the (non-nullable) `owner` rule field; unresolvable ⇒
+            // "Unknown" so it's never empty.
+            let owner = crate::domain::picture::owner_default_identity(
+                picture.is_owned,
+                picture.owner_username.as_deref(),
+                picture.owner_instance_domain.as_deref(),
+                &local_username,
+                &global_domain,
+            )
+            .unwrap_or_else(|| "Unknown".to_string());
+            // Displayed creator (feature 26) for the `creator` rule field; unresolvable ⇒ absent.
+            let creator = crate::domain::picture::display_creator_opt(
+                picture.creator.as_deref(),
+                picture.creator_override.as_deref(),
+                picture.is_owned,
+                picture.owner_username.as_deref(),
+                picture.owner_instance_domain.as_deref(),
+                &local_username,
+                &global_domain,
+            );
 
             for service in &services {
                 let input = PipelineInput {
@@ -131,6 +159,8 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
                     width: picture.width,
                     height: picture.height,
                     is_owned: picture.is_owned,
+                    owner: owner.clone(),
+                    creator: creator.clone(),
                 };
 
                 if !service.should_run(&gating_tags) {

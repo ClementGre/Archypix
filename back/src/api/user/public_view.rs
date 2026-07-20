@@ -185,8 +185,14 @@ pub async fn aggregate(
         optional_bearer(&headers).as_deref(),
     )
     .await?;
-    let result =
-        public::public_aggregate(&state.db, &share, body.include_ids, body.sections).await?;
+    let result = public::public_aggregate(
+        &state.db,
+        &state.settings,
+        &share,
+        body.include_ids,
+        body.sections,
+    )
+    .await?;
     Ok(Json(result))
 }
 

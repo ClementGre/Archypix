@@ -1103,6 +1103,82 @@ pub async fn set_picture_creator(
         .ok_or(AppError::NotFound)
 }
 
+/// Result of a batch creator edit: the dry-run breakdown, or the applied owned/received counts.
+pub enum CreatorBatchOutcome {
+    DryRun(crate::services::aggregate::DryRun),
+    Applied {
+        affected: i64,
+        edited: i64,
+        local_override: i64,
+    },
+}
+
+/// Batch-set the creator over a [`ResolvedSelection`] (feature 26 batch integration). Owned pictures
+/// get the owner-authoritative `creator` (set-based; re-announces via the pipeline); received pictures
+/// get the recipient-local `creator_override` (DB-only). `value = None`/blank resets/clears. Propose
+/// mode is not offered in batch (phase 2). With `dry_run` returns the §6.1 breakdown without mutating.
+#[tracing::instrument(skip(db, waker, sel), fields(user_id = %user_id, dry_run))]
+pub async fn batch_set_creator_selection(
+    db: &PgPool,
+    waker: &RoutineHandle<Uuid>,
+    user_id: Uuid,
+    sel: &crate::repository::picture::ResolvedSelection,
+    value: Option<String>,
+    dry_run: bool,
+) -> Result<CreatorBatchOutcome, AppError> {
+    // Normalise to the stored form (blank ⇒ reset/clear) + reject a forged system sigil (§3).
+    let value = value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(v) = value.as_deref() {
+        crate::domain::picture::validate_manual_creator(v).map_err(AppError::BadRequest)?;
+    }
+
+    if dry_run {
+        let affected = PictureRepository::count_selection(db, user_id, sel).await?;
+        let edited = PictureRepository::count_owned_selection(db, user_id, sel).await?;
+        return Ok(CreatorBatchOutcome::DryRun(
+            crate::services::aggregate::DryRun {
+                affected,
+                edited: Some(edited),
+                local_override: Some(affected - edited),
+                ..Default::default()
+            },
+        ));
+    }
+
+    let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+    let edited = PictureRepository::batch_set_creator_selection(
+        &mut *tx,
+        user_id,
+        sel,
+        value.as_deref(),
+        true,
+    )
+    .await? as i64;
+    let local_override = PictureRepository::batch_set_creator_selection(
+        &mut *tx,
+        user_id,
+        sel,
+        value.as_deref(),
+        false,
+    )
+    .await? as i64;
+    tx.commit().await.map_err(map_sqlx_error)?;
+
+    // Owned edits re-announce through the pipeline (updated_at bumped + re-dirtied). Debounced: a
+    // batch produces a burst that should collapse into one run.
+    if edited > 0 {
+        waker.trigger_debounced(user_id);
+    }
+
+    Ok(CreatorBatchOutcome::Applied {
+        affected: edited + local_override,
+        edited,
+        local_override,
+    })
+}
+
 /// The twelve editable EXIF fields, used to enumerate which fields a `set`/`clear` delta touches.
 const ALL_EXIF_FIELDS: [ExifField; 12] = {
     use crate::domain::job::ExifField::*;

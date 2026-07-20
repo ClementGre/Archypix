@@ -5,7 +5,7 @@
 //! bulk tag-assignment logic specific to pipeline output.
 
 use crate::domain::job::CameraExif;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use sqlx::types::Json;
 use sqlx::{Executor, PgPool, Postgres};
@@ -33,6 +33,14 @@ pub struct PipelinePicture {
     pub exif_data: Json<CameraExif>,
     /// `true` when this user owns the picture (`remote_picture_id IS NULL`).
     pub is_owned: bool,
+    /// Owner-authoritative creator credit (feature 26); resolved to the displayed value at
+    /// evaluation time for the `creator` rule field.
+    pub creator: Option<String>,
+    /// Recipient-local creator relabel (received rows only).
+    pub creator_override: Option<String>,
+    /// Origin owner identity (received rows only) — backs the owner-default creator resolution.
+    pub owner_username: Option<String>,
+    pub owner_instance_domain: Option<String>,
 }
 
 /// A tag to assign as output of the pipeline, with its source.
@@ -99,7 +107,8 @@ impl PipelineRepository {
                       p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                       p.filename, p.mime_type, p.file_size, p.width, p.height,
                       p.exif_data as "exif_data: Json<CameraExif>",
-                      (p.remote_picture_id IS NULL) as "is_owned!"
+                      (p.remote_picture_id IS NULL) as "is_owned!",
+                      p.creator, p.creator_override, p.owner_username, p.owner_instance_domain
                FROM pictures p
                WHERE p.local_user_id = $1
                  AND (

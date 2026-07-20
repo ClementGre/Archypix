@@ -854,6 +854,28 @@ no access, so the server accepts any well-formed identity.
 
 ---
 
+#### `PATCH /api/authenticated/pictures/creator`
+
+Batch-set the creator over a selection (feature 26 batch integration). Owned pictures get the
+authoritative `creator` (re-announced via the pipeline); received pictures get the recipient-local
+`creator_override`. Propose mode is not offered in batch.
+
+```ts
+{
+    selection?: PictureSelection;   // or a legacy explicit `picture_ids: string[]`
+    picture_ids?: string[];
+    value: string | null;           // null/blank ⇒ reset owned to owner default + clear received overrides
+    dry_run?: boolean;
+}
+```
+
+Same `value` validation as the single-picture endpoint (a `#` sigil / malformed `@…` → `400`).
+
+**Response `200`** (apply): `{ affected, edited, local_override }` (owned edited vs received overridden).
+With `dry_run: true`: the same breakdown as a `BatchDryRun` (`{ affected, edited, local_override }`).
+
+---
+
 ### 6.5 Pictures — Trash
 
 Soft-delete is deferred for owned pictures (purged after `trash_retention_days`) and local-only for
@@ -1189,7 +1211,10 @@ type RulePredicate =
 
 Fields: `captured_at` / `ingested_at` / `updated_at` (date), `gps_lat`/`gps_lng`/`gps_alt`,
 `iso_speed`, `f_number`, `focal_length_mm`, `exposure_time` (s), `orientation`, `camera_brand`,
-`camera_model`, `filename`, `mime_type`, `file_size`, `width`, `height`, `is_owned` (bool).
+`camera_model`, `filename`, `mime_type`, `file_size`, `width`, `height`, `is_owned` (bool),
+`owner` (str — the resolved owner identity `@user:domain`), `creator` (str — the resolved displayed
+creator, `coalesce(override, creator, owner default)`, feature 26). `owner` and `creator` are
+**non-nullable** (always resolve to a value), so they reject the `is_present` presence condition.
 Conditions by base type:
 
 - **int/float** — `eq`, `min`, `max` (combine `min`+`max` for a range)
@@ -1201,7 +1226,7 @@ Conditions by base type:
   `date_range: {from, to}` (each bound `YYYY-MM-DD` for a full day, or `YYYY-MM-DDTHH:MM:SS` for a
   precise instant), `time_range: {from, to}` (`HH:MM`, may cross midnight)
 - **bool** — `eq`
-- **any nullable field** — `is_present: boolean`
+- **any nullable field** — `is_present: boolean` (rejected on the non-nullable `owner`/`creator`)
 
 Example: `{"and": [{"field": "camera_brand", "eq": "fujifilm", "ignore_case": true}, {"field": "iso_speed", "min": 100, "max": 800}]}`.
 
@@ -1798,8 +1823,8 @@ The `flat` form mirrors `GET /pictures` (tag lists as arrays here, not comma str
 AND-ed with the scope/date params.
 
 Endpoints accepting a selection (all also accept a legacy `picture_ids` array as a pure explicit
-set, and `dry_run: true`): `PATCH /tags`, `PATCH /pictures/exif`, `POST /pictures/trash`,
-`POST /pictures/restore`, `POST /pictures/aggregate`.
+set, and `dry_run: true`): `PATCH /tags`, `PATCH /pictures/exif`, `PATCH /pictures/creator`,
+`POST /pictures/trash`, `POST /pictures/restore`, `POST /pictures/aggregate`.
 
 **Dry-run breakdown** (returned by every batch write when `dry_run: true`, §6.1):
 
@@ -1838,6 +1863,7 @@ select-all of 10k pictures is never materialised or downloaded.
   thumbnail_pending_count: number; duplicate_count: number;
   owners: Array<{ username: string; instance: string; count: number }>;  // distinct remote owners
   exif_sync: Record<ExifSyncStatus, number>;        // histogram incl. pending_job_creation
+  creator?: FieldAggregate;                          // resolved-creator histogram (distinct), feature 26
 
   // tags — only when "tags" requested; ancestor-inclusive counts
   tags?: Array<{

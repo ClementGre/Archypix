@@ -854,6 +854,8 @@ export interface AggregateResponse {
     duplicate_count: number
     owners: AggregateOwner[]
     exif_sync: Record<ExifSyncStatus, number>
+    /** Resolved-creator histogram (feature 26) — a distinct aggregate returned with the summary. */
+    creator?: FieldAggregate
     tags?: TagAggregate[]
     exif?: Record<string, FieldAggregate>
 }

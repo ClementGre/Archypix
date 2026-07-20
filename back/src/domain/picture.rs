@@ -113,24 +113,7 @@ impl Picture {
 
     /// The owner-default creator identity string `@username:domain` (feature 26 §3).
     pub fn format_identity(username: &str, domain: &str) -> String {
-        format!("@{username}:{domain}")
-    }
-
-    /// The identity to attribute an owner-default (`creator IS NULL`) to: for an owned row the local
-    /// holder (`local_username`/`global_domain`), for a received row the stored origin owner. Returns
-    /// `None` when the owner is unresolvable (e.g. a deleted account with no stored username).
-    fn owner_default_identity(&self, local_username: &str, global_domain: &str) -> Option<String> {
-        if self.is_owned() {
-            Some(Self::format_identity(local_username, global_domain))
-        } else {
-            match (
-                self.owner_username.as_deref(),
-                self.owner_instance_domain.as_deref(),
-            ) {
-                (Some(u), Some(d)) if !u.is_empty() => Some(Self::format_identity(u, d)),
-                _ => None,
-            }
-        }
+        format_identity(username, domain)
     }
 
     /// The **propagated** creator (no local override) — the value announced downstream and the
@@ -138,21 +121,157 @@ impl Picture {
     /// owned row `local_username`/`global_domain` is the owner; for a received row they are ignored
     /// (the stored origin owner is used). Falls back to a neutral placeholder if unresolvable (§9).
     pub fn propagated_creator(&self, local_username: &str, global_domain: &str) -> String {
-        self.creator
-            .clone()
-            .filter(|c| !c.is_empty())
-            .or_else(|| self.owner_default_identity(local_username, global_domain))
-            .unwrap_or_else(|| "Unknown".to_string())
+        propagated_creator(
+            self.creator.as_deref(),
+            self.is_owned(),
+            self.owner_username.as_deref(),
+            self.owner_instance_domain.as_deref(),
+            local_username,
+            global_domain,
+        )
     }
 
     /// The creator to display to the holder: `coalesce(creator_override, creator, owner_identity)`
     /// (§4/§5). `local_username`/`global_domain` resolve the owner default for owned rows.
     pub fn display_creator(&self, local_username: &str, global_domain: &str) -> String {
-        self.creator_override
-            .clone()
-            .filter(|c| !c.is_empty())
-            .unwrap_or_else(|| self.propagated_creator(local_username, global_domain))
+        display_creator(
+            self.creator.as_deref(),
+            self.creator_override.as_deref(),
+            self.is_owned(),
+            self.owner_username.as_deref(),
+            self.owner_instance_domain.as_deref(),
+            local_username,
+            global_domain,
+        )
     }
+}
+
+// ── Creator resolution (feature 26 §5) ──────────────────────────────────────────
+//
+// Free functions over the raw columns so the [`Picture`] reads *and* callers that hold only a
+// projection of those columns (the pipeline `creator` rule field, feature 26-better-integration)
+// resolve creators identically.
+
+/// The owner-default creator identity string `@username:domain` (feature 26 §3).
+pub fn format_identity(username: &str, domain: &str) -> String {
+    format!("@{username}:{domain}")
+}
+
+/// The identity to attribute an owner-default (`creator IS NULL`) to: for an owned row the local
+/// holder (`local_username`/`global_domain`), for a received row the stored origin owner. Returns
+/// `None` when the owner is unresolvable (e.g. a deleted account with no stored username).
+pub fn owner_default_identity(
+    is_owned: bool,
+    owner_username: Option<&str>,
+    owner_instance_domain: Option<&str>,
+    local_username: &str,
+    global_domain: &str,
+) -> Option<String> {
+    if is_owned {
+        Some(format_identity(local_username, global_domain))
+    } else {
+        match (owner_username, owner_instance_domain) {
+            (Some(u), Some(d)) if !u.is_empty() => Some(format_identity(u, d)),
+            _ => None,
+        }
+    }
+}
+
+/// The **propagated** creator (no local override): `coalesce(creator, owner_default)` (§6). `None`
+/// only when the owner is unresolvable — callers that must display a value use [`propagated_creator`].
+pub fn propagated_creator_opt(
+    creator: Option<&str>,
+    is_owned: bool,
+    owner_username: Option<&str>,
+    owner_instance_domain: Option<&str>,
+    local_username: &str,
+    global_domain: &str,
+) -> Option<String> {
+    creator
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            owner_default_identity(
+                is_owned,
+                owner_username,
+                owner_instance_domain,
+                local_username,
+                global_domain,
+            )
+        })
+}
+
+/// The **displayed** creator (§4/§5): `coalesce(creator_override, creator, owner_default)`. `None`
+/// only when the owner is unresolvable. The pipeline's `creator` rule field reads this (an unresolved
+/// creator is treated as absent); display callers use [`display_creator`].
+#[allow(clippy::too_many_arguments)]
+pub fn display_creator_opt(
+    creator: Option<&str>,
+    creator_override: Option<&str>,
+    is_owned: bool,
+    owner_username: Option<&str>,
+    owner_instance_domain: Option<&str>,
+    local_username: &str,
+    global_domain: &str,
+) -> Option<String> {
+    creator_override
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            propagated_creator_opt(
+                creator,
+                is_owned,
+                owner_username,
+                owner_instance_domain,
+                local_username,
+                global_domain,
+            )
+        })
+}
+
+/// The **propagated** creator for display: [`propagated_creator_opt`] with a neutral `"Unknown"`
+/// placeholder when unresolvable (§9).
+pub fn propagated_creator(
+    creator: Option<&str>,
+    is_owned: bool,
+    owner_username: Option<&str>,
+    owner_instance_domain: Option<&str>,
+    local_username: &str,
+    global_domain: &str,
+) -> String {
+    propagated_creator_opt(
+        creator,
+        is_owned,
+        owner_username,
+        owner_instance_domain,
+        local_username,
+        global_domain,
+    )
+    .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// The **displayed** creator for display: [`display_creator_opt`] with a neutral `"Unknown"`
+/// placeholder when unresolvable (§9).
+#[allow(clippy::too_many_arguments)]
+pub fn display_creator(
+    creator: Option<&str>,
+    creator_override: Option<&str>,
+    is_owned: bool,
+    owner_username: Option<&str>,
+    owner_instance_domain: Option<&str>,
+    local_username: &str,
+    global_domain: &str,
+) -> String {
+    display_creator_opt(
+        creator,
+        creator_override,
+        is_owned,
+        owner_username,
+        owner_instance_domain,
+        local_username,
+        global_domain,
+    )
+    .unwrap_or_else(|| "Unknown".to_string())
 }
 
 /// Validate a manually-entered creator (§3 sigil guard). The `#…` contribution sigil is system-owned

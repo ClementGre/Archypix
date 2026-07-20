@@ -44,6 +44,8 @@ pub enum Field {
     Width,
     Height,
     IsOwned,
+    Owner,
+    Creator,
 }
 
 impl Field {
@@ -68,6 +70,8 @@ impl Field {
             "width" => Field::Width,
             "height" => Field::Height,
             "is_owned" => Field::IsOwned,
+            "owner" => Field::Owner,
+            "creator" => Field::Creator,
             _ => return None,
         })
     }
@@ -86,11 +90,20 @@ impl Field {
             | Field::FileSize
             | Field::Width
             | Field::Height => BaseType::Int,
-            Field::CameraBrand | Field::CameraModel | Field::Filename | Field::MimeType => {
-                BaseType::Str
-            }
+            Field::CameraBrand
+            | Field::CameraModel
+            | Field::Filename
+            | Field::MimeType
+            | Field::Owner
+            | Field::Creator => BaseType::Str,
             Field::IsOwned => BaseType::Bool,
         }
+    }
+
+    /// Whether the field's value can be absent. Non-nullable fields (`owner`, `creator`) always
+    /// resolve to a concrete value, so they don't accept the `is_present` presence condition.
+    fn nullable(self) -> bool {
+        !matches!(self, Field::Owner | Field::Creator)
     }
 
     /// The picture's value for this field, as a comparable runtime value. `Bool` is always present.
@@ -115,6 +128,8 @@ impl Field {
             Field::Width => FieldValue::Int(input.width.map(i64::from)),
             Field::Height => FieldValue::Int(input.height.map(i64::from)),
             Field::IsOwned => FieldValue::Bool(input.is_owned),
+            Field::Owner => FieldValue::Str(Some(input.owner.as_str())),
+            Field::Creator => FieldValue::Str(input.creator.as_deref()),
         }
     }
 }
@@ -484,7 +499,7 @@ fn parse_field(
 }
 
 fn parse_condition(
-    _field: Field,
+    field: Field,
     bt: BaseType,
     key: &str,
     v: &Value,
@@ -500,6 +515,12 @@ fn parse_condition(
     };
     match key {
         "is_present" => {
+            if !field.nullable() {
+                return Err(format!(
+                    "{}: field '{field_name}' is always present; 'is_present' does not apply",
+                    at(path)
+                ));
+            }
             let b = v
                 .as_bool()
                 .ok_or_else(|| format!("{}: 'is_present' must be a boolean", at(path)))?;
@@ -717,6 +738,8 @@ mod tests {
             width: None,
             height: None,
             is_owned: true,
+            owner: "@alice:example.test".to_string(),
+            creator: None,
         }
     }
 
@@ -1089,6 +1112,68 @@ mod tests {
         .unwrap();
         assert!(wrap.matches(&input_dated("2024-08-15 23:30:00")));
         assert!(!wrap.matches(&input_dated("2024-08-15 12:00:00")));
+    }
+
+    #[test]
+    fn creator_string_field() {
+        let mut inp = blank_input();
+        inp.creator = Some("@alice:alice.test".to_string());
+        assert!(
+            Predicate::parse(&json!({"field": "creator", "eq": "@alice:alice.test"}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            Predicate::parse(&json!({"field": "creator", "contains": "alice"}))
+                .unwrap()
+                .matches(&inp)
+        );
+        inp.creator = Some("Grandpa's camera".to_string());
+        assert!(
+            Predicate::parse(
+                &json!({"field": "creator", "contains": "grandpa", "ignore_case": true})
+            )
+            .unwrap()
+            .matches(&inp)
+        );
+        // A missing creator (unresolvable owner) never satisfies a value condition.
+        inp.creator = None;
+        assert!(
+            !Predicate::parse(&json!({"field": "creator", "contains": "grandpa"}))
+                .unwrap()
+                .matches(&inp)
+        );
+    }
+
+    #[test]
+    fn owner_string_field() {
+        let mut inp = blank_input();
+        inp.owner = "@alice:instance.test".to_string();
+        // "owned by me" as a string comparison over the resolved owner identity.
+        assert!(
+            Predicate::parse(&json!({"field": "owner", "eq": "@alice:instance.test"}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            Predicate::parse(&json!({"field": "owner", "contains": "alice"}))
+                .unwrap()
+                .matches(&inp)
+        );
+        assert!(
+            !Predicate::parse(&json!({"field": "owner", "eq": "@bob:instance.test"}))
+                .unwrap()
+                .matches(&inp)
+        );
+    }
+
+    #[test]
+    fn owner_and_creator_reject_presence_condition() {
+        // Non-nullable fields (always resolve to a value) don't accept is_present / is_absent.
+        assert!(Predicate::parse(&json!({"field": "owner", "is_present": true})).is_err());
+        assert!(Predicate::parse(&json!({"field": "creator", "is_present": false})).is_err());
+        // Nullable fields still accept it.
+        assert!(Predicate::parse(&json!({"field": "gps_lat", "is_present": true})).is_ok());
     }
 
     #[test]

@@ -86,6 +86,7 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/pictures/{id}/copies/keep", post(pictures::keep_copy))
         .route("/pictures/{id}/exif", post(pictures::edit_received_exif))
         .route("/pictures/{id}/creator", post(pictures::set_creator))
+        .route("/pictures/creator", patch(pictures::batch_set_creator))
         .route("/settings", get(settings::get_settings))
         .route("/settings", patch(settings::update_settings))
         .route("/tags", get(tags::list).patch(tags::edit))

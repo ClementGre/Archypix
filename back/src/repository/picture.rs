@@ -809,6 +809,48 @@ impl PictureRepository {
         Ok(res.rows_affected() > 0)
     }
 
+    /// Batch-set the creator over a selection (feature 26 batch integration) — one set-based UPDATE.
+    /// `owned = true` targets the owner-authoritative `creator` on **owned** rows (bumps `updated_at`
+    /// and re-dirties the pipeline so the change re-announces to recipients); `owned = false` targets
+    /// the recipient-local `creator_override` on **received** rows (DB-only, never propagates).
+    /// `value = None` resets to the owner default (owned) / clears the override (received). Returns
+    /// rows changed.
+    #[tracing::instrument(skip(ex, sel), fields(user_id = %local_user_id, owned))]
+    pub async fn batch_set_creator_selection<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        value: Option<&str>,
+        owned: bool,
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if sel.is_empty() {
+            return Ok(0);
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET ");
+        if owned {
+            q.push("creator = ")
+                .push_bind(value.map(str::to_string))
+                .push(
+                    ", updated_at = (now() AT TIME ZONE 'utc'), last_pipeline_run_at = NULL WHERE ",
+                );
+        } else {
+            q.push("creator_override = ")
+                .push_bind(value.map(str::to_string))
+                .push(" WHERE ");
+        }
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.push(if owned {
+            " AND p.remote_picture_id IS NULL"
+        } else {
+            " AND p.remote_picture_id IS NOT NULL"
+        });
+        let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
     /// Set or clear `deleted_at` (+ `deleted_reason = 'manual'`) on a picture the user holds —
     /// owned or received (WebDAV `fullDelete` / un-delete on rematch, §7–8; the Trash API, 09 §5).
     /// Owned-picture trash keeps share coverage (the share-coverage query does not exclude
@@ -1780,6 +1822,44 @@ impl PictureRepository {
         q.push(expr).push(" AS v FROM pictures p WHERE ");
         Self::push_selection_where(&mut q, local_user_id, sel);
         q.push(") s GROUP BY v ORDER BY cnt DESC");
+        Self::fold_distinct(db, q).await
+    }
+
+    /// Distinct-value histogram of the **resolved displayed creator** (feature 26): `coalesce(
+    /// creator_override, creator, owner_default)`, where the owner default is `owner_default_identity`
+    /// for owned rows and the stored origin owner for received rows. `null_count` = unresolvable rows.
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
+    pub async fn aggregate_creator(
+        db: &PgPool,
+        local_user_id: Uuid,
+        sel: &ResolvedSelection,
+        owner_default_identity: &str,
+    ) -> Result<DistinctAgg, AppError> {
+        if sel.is_empty() {
+            return Ok(DistinctAgg::default());
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT v AS value, COUNT(*)::bigint AS cnt FROM (SELECT COALESCE(\
+             NULLIF(p.creator_override, ''), NULLIF(p.creator, ''), \
+             CASE WHEN p.remote_picture_id IS NULL THEN ",
+        );
+        q.push_bind(owner_default_identity.to_string());
+        q.push(
+            " WHEN COALESCE(p.owner_username, '') <> '' \
+             THEN '@' || p.owner_username || ':' || COALESCE(p.owner_instance_domain, '') \
+             ELSE NULL END) AS v FROM pictures p WHERE ",
+        );
+        Self::push_selection_where(&mut q, local_user_id, sel);
+        q.push(") s GROUP BY v ORDER BY cnt DESC");
+        Self::fold_distinct(db, q).await
+    }
+
+    /// Run a `(value, cnt)` distinct query built by the caller and fold it into a [`DistinctAgg`]
+    /// (NULLs land in `null_count`). Shared by [`aggregate_distinct`] and [`aggregate_creator`].
+    async fn fold_distinct(
+        db: &PgPool,
+        mut q: sqlx::QueryBuilder<Postgres>,
+    ) -> Result<DistinctAgg, AppError> {
         let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
         use sqlx::Row;
         let mut agg = DistinctAgg::default();

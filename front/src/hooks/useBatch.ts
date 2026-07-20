@@ -1,6 +1,6 @@
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {batchEditExif, type BatchExifBody, batchRestore, batchTrash} from '@/api/pictures'
+import {type BatchCreatorBody, batchEditExif, type BatchExifBody, batchRestore, batchSetCreator, batchTrash} from '@/api/pictures'
 import {batchEditTags, type BatchEditTagsBody} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
 import {invalidatePicturesAndTags, invalidateStorageDebounced} from '@/lib/invalidation'
@@ -45,6 +45,11 @@ export function useBatchMutations() {
         onSuccess: invalidate,
         onError: onError('Could not edit EXIF'),
     })
+    const creator = useMutation({
+        mutationFn: (body: BatchCreatorBody) => batchSetCreator(body),
+        onSuccess: invalidate,
+        onError: onError('Could not set creator'),
+    })
 
-    return {trash, restore, tags, exif}
+    return {trash, restore, tags, exif, creator}
 }

@@ -344,9 +344,10 @@ pub async fn public_picture_detail(
 /// visitor's explicitly-selected picture ids are honoured (no union-of-ids escape), and they are
 /// filtered to the share's coverage first, so a visitor can never aggregate outside the album. A
 /// view-only share drops the EXIF section.
-#[tracing::instrument(skip(db, share, include_ids, sections))]
+#[tracing::instrument(skip(db, settings, share, include_ids, sections))]
 pub async fn public_aggregate(
     db: &PgPool,
+    settings: &Settings,
     share: &PublicShare,
     include_ids: Vec<Uuid>,
     sections: Option<Vec<AggregateSection>>,
@@ -374,7 +375,12 @@ pub async fn public_aggregate(
         sections: Some(sections),
         tag_provenance: false,
     };
-    aggregate(db, share.owner_id, request).await
+    // The album owner is the aggregate principal; their identity resolves owner-default creators.
+    let owner_username = UserRepository::find_by_id(db, share.owner_id)
+        .await?
+        .map(|u| u.username)
+        .unwrap_or_default();
+    aggregate(db, settings, share.owner_id, &owner_username, request).await
 }
 
 // ── Contribution (anonymous upload, §7) ─────────────────────────────────────────

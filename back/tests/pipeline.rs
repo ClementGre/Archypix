@@ -5,8 +5,8 @@ mod common;
 
 use archypix_back::domain::tag::TagSource;
 use archypix_back::domain::tagging::ServiceType;
-use archypix_back::infra::routine::pipeline;
 use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::infra::routine::pipeline;
 use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::repository::tagging::TaggingServiceRepository;
@@ -28,8 +28,8 @@ async fn run_pipeline(db: &PgPool, user: Uuid) {
         &waker,
         user,
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 }
 
 /// Insert a picture captured in 2024 so a `captured_at` year=2024 rule matches it.
@@ -269,6 +269,70 @@ async fn pipeline_evaluates_composed_exif_predicate(db: PgPool) {
         .find(|t| t.tag_path == "Camera.Fuji")
         .expect("composed predicate matched");
     assert_eq!(tag.source, TagSource::Rule);
+}
+
+/// The `creator` field (feature 26 integration) resolves to the displayed creator and is matchable
+/// end-to-end: a picture with a set creator gets tagged; the owner-default of a NULL-creator picture
+/// (which resolves to `@owner:domain`, not the plain string) does not match a plain-text rule.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn pipeline_matches_creator_field(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pass").await;
+
+    let credited = Uuid::new_v4();
+    sqlx::query!(
+        r#"INSERT INTO pictures (id, local_user_id, creator) VALUES ($1, $2, 'Grandpa''s camera')"#,
+        credited,
+        user,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    // A NULL-creator owned picture resolves to the owner identity `@alice:…`, not "Grandpa".
+    let owner_default = common::seed_picture(&db, user).await;
+
+    let svc = create_rule_service(&db, user).await;
+    add_rule(
+        &db,
+        user,
+        svc,
+        serde_json::json!({"field": "creator", "contains": "grandpa", "ignore_case": true}),
+        "Family.Grandpa",
+    )
+    .await;
+    // The `owner` field resolves to `@alice:…` for both (owned) pictures — a string match on it.
+    add_rule(
+        &db,
+        user,
+        svc,
+        serde_json::json!({"field": "owner", "contains": "alice"}),
+        "Owned.Alice",
+    )
+    .await;
+
+    run_pipeline(&db, user).await;
+
+    let tags = TagRepository::list_for_picture(&db, user, credited)
+        .await
+        .unwrap();
+    assert!(
+        tags.iter().any(|t| t.tag_path == "Family.Grandpa"),
+        "creator rule matched the credited picture"
+    );
+    assert!(
+        tags.iter().any(|t| t.tag_path == "Owned.Alice"),
+        "owner rule matched (owned by alice)"
+    );
+    let other = TagRepository::list_for_picture(&db, user, owner_default)
+        .await
+        .unwrap();
+    assert!(
+        !other.iter().any(|t| t.tag_path == "Family.Grandpa"),
+        "owner-default creator does not match a plain-text creator rule"
+    );
+    assert!(
+        other.iter().any(|t| t.tag_path == "Owned.Alice"),
+        "owner rule matched the owner-default picture too (both owned by alice)"
+    );
 }
 
 /// Editing a rule's predicate re-derives its tags on the next pipeline run.

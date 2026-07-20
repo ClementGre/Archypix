@@ -227,6 +227,24 @@ export async function batchRestore(selection: PictureSelection, dryRun = false):
     return data
 }
 
+/** Body for the batch creator edit endpoint (`PATCH /pictures/creator`, feature 26). */
+export interface BatchCreatorBody {
+    selection: PictureSelection
+    /** New credit; `null`/blank resets owned pictures to the owner default and clears received overrides. */
+    value: string | null
+    dry_run?: boolean
+}
+
+/** Batch-set the creator over a selection (feature 26). Owned pictures get the authoritative
+ *  `creator` (re-announced), received pictures the recipient-local `creator_override`. `dry_run`
+ *  returns the owned (`edited`) vs received (`local_override`) breakdown. */
+export async function batchSetCreator(body: BatchCreatorBody & { dry_run: true }): Promise<BatchDryRun>
+export async function batchSetCreator(body: BatchCreatorBody): Promise<BatchDryRun>
+export async function batchSetCreator(body: BatchCreatorBody): Promise<BatchDryRun> {
+    const {data} = await apiClient.patch<BatchDryRun>('/api/authenticated/pictures/creator', body)
+    return data
+}
+
 /** Soft-delete a picture the user holds (owned or received). */
 export async function trashPicture(id: string): Promise<TrashResponse> {
     const {data} = await apiClient.post<TrashResponse>(`/api/authenticated/pictures/${id}/trash`)

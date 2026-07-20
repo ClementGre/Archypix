@@ -319,13 +319,16 @@ async fn aggregate_service_summary_and_exif(db: PgPool) {
         sections: Some(vec![AggregateSection::Summary, AggregateSection::Exif]),
         tag_provenance: false,
     };
-    let v = archypix_back::services::aggregate::aggregate(&db, user, req)
+    let settings = archypix_back::infra::settings::test_settings_with(&[]);
+    let v = archypix_back::services::aggregate::aggregate(&db, &settings, user, "alice", req)
         .await
         .unwrap();
     assert_eq!(v["count"], json!(1));
     assert!(v.get("exif").is_some());
     assert_eq!(v["exif"]["iso_speed"]["type"], json!("numeric"));
     assert_eq!(v["exif"]["gps"]["type"], json!("gps"));
+    // Creator histogram is part of the summary (feature 26): one owned picture ⇒ common owner default.
+    assert_eq!(v["creator"]["type"], json!("distinct"));
 }
 
 // ── Batch tags ──────────────────────────────────────────────────────────────────
@@ -428,6 +431,100 @@ async fn batch_trash_then_restore(db: PgPool) {
         .unwrap()
         .unwrap();
     assert!(pic.deleted_at.is_none());
+}
+
+// ── Batch creator (feature 26 integration) ───────────────────────────────────────
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn batch_creator_owned_and_received(db: PgPool) {
+    use archypix_back::services::pictures::{self, CreatorBatchOutcome};
+    let waker = RoutineHandle::<Uuid>::disconnected();
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let owned = common::seed_picture(&db, user).await;
+    let received = seed_received(&db, user, "bob", json!({})).await;
+    let sel = ResolvedSelection::explicit(vec![owned, received]);
+
+    // Dry-run partitions owned (→ creator) vs received (→ override) without mutating.
+    let out = pictures::batch_set_creator_selection(
+        &db,
+        &waker,
+        user,
+        &sel,
+        Some("Grandpa's camera".to_string()),
+        true,
+    )
+    .await
+    .unwrap();
+    match out {
+        CreatorBatchOutcome::DryRun(d) => {
+            assert_eq!(d.affected, 2);
+            assert_eq!(d.edited, Some(1));
+            assert_eq!(d.local_override, Some(1));
+        }
+        _ => panic!("expected dry-run"),
+    }
+
+    // Apply: owned row gets the authoritative creator, received row gets the local override.
+    let out = pictures::batch_set_creator_selection(
+        &db,
+        &waker,
+        user,
+        &sel,
+        Some("Grandpa's camera".to_string()),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        out,
+        CreatorBatchOutcome::Applied {
+            affected: 2,
+            edited: 1,
+            local_override: 1
+        }
+    ));
+    let owned_pic = PictureRepository::find_by_id(&db, owned)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owned_pic.creator.as_deref(), Some("Grandpa's camera"));
+    assert!(owned_pic.creator_override.is_none());
+    let recv_pic = PictureRepository::find_by_id(&db, received)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recv_pic.creator_override.as_deref(),
+        Some("Grandpa's camera")
+    );
+    assert!(recv_pic.creator.is_none());
+
+    // A forged system sigil (`#…`) is rejected before any write.
+    let err = pictures::batch_set_creator_selection(
+        &db,
+        &waker,
+        user,
+        &sel,
+        Some("#forged".to_string()),
+        false,
+    )
+    .await;
+    assert!(err.is_err());
+
+    // Blank resets the owner value / clears the override.
+    pictures::batch_set_creator_selection(&db, &waker, user, &sel, None, false)
+        .await
+        .unwrap();
+    let owned_pic = PictureRepository::find_by_id(&db, owned)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(owned_pic.creator.is_none());
+    let recv_pic = PictureRepository::find_by_id(&db, received)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(recv_pic.creator_override.is_none());
 }
 
 // ── Deferred EXIF jobs ────────────────────────────────────────────────────────

@@ -333,6 +333,8 @@ mod tests {
             width: None,
             height: None,
             is_owned: true,
+            owner: "@alice:example.test".to_string(),
+            creator: None,
         }
     }
 

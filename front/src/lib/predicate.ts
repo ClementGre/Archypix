@@ -21,6 +21,9 @@ export interface FieldDef {
     group: FieldGroup
     /** Suffix shown after a numeric input (e.g. `mm`, `s`). */
     unit?: string
+    /** Whether the value can be absent. Non-nullable fields (owner/creator, always resolved) drop the
+     *  "is set" / "is not set" operators. Defaults to true. */
+    nullable?: boolean
 }
 
 /** Every queryable field, mirroring the backend `Field` enum. */
@@ -44,6 +47,8 @@ export const RULE_FIELDS: FieldDef[] = [
     {name: 'width', label: 'Width', type: 'int', unit: 'px', group: 'File'},
     {name: 'height', label: 'Height', type: 'int', unit: 'px', group: 'File'},
     {name: 'is_owned', label: 'Owned by me', type: 'bool', group: 'Ownership'},
+    {name: 'owner', label: 'Owner', type: 'str', group: 'Ownership', nullable: false},
+    {name: 'creator', label: 'Creator', type: 'str', group: 'Ownership', nullable: false},
 ]
 
 export function fieldsByGroup(group: FieldGroup): FieldDef[] {
@@ -95,18 +100,24 @@ const DATE_OPS: OperatorDef[] = [
 ]
 const BOOL_OPS: OperatorDef[] = [{op: 'eq', label: 'is'}]
 
-export function operatorsFor(type: FieldType): OperatorDef[] {
-    switch (type) {
-        case 'int':
-        case 'float':
-            return NUM_OPS
-        case 'str':
-            return STR_OPS
-        case 'date':
-            return DATE_OPS
-        case 'bool':
-            return BOOL_OPS
-    }
+/** Presence operators (`is set` / `is not set`), dropped for non-nullable fields (owner/creator). */
+const PRESENCE_OPS = new Set(['is_present', 'is_absent'])
+
+export function operatorsFor(type: FieldType, nullable = true): OperatorDef[] {
+    const ops = (() => {
+        switch (type) {
+            case 'int':
+            case 'float':
+                return NUM_OPS
+            case 'str':
+                return STR_OPS
+            case 'date':
+                return DATE_OPS
+            case 'bool':
+                return BOOL_OPS
+        }
+    })()
+    return nullable ? ops : ops.filter((o) => !PRESENCE_OPS.has(o.op))
 }
 
 export const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const

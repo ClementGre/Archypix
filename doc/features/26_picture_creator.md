@@ -140,8 +140,11 @@ The owner identity is derived on read from the local user's `username` + the ins
   through the normal announcement-delta path (the announcement backstop already re-dirties tracking
   rows whose `announced_updated_at` trails `updated_at`).
 - **Reads:** the resolved/materialized creator is added to the picture-detail and list projections.
-- **Batch:** creator fits the feature-14 batch-edit surface (future); the single-picture edit is the
-  core delivered here.
+- **Batch:** `PATCH /api/authenticated/pictures/creator` sets the creator over a feature-14
+  `PictureSelection` (owned → `creator` re-announced, received → `creator_override`; `dry_run` returns
+  `{ affected, edited, local_override }`). The resolved creator is also a `creator` **rule field**
+  (feature 13 §2.2) and a distinct histogram in the batch **aggregate** summary (`creator`
+  `FieldAggregate`).
 
 ---
 
@@ -208,6 +211,20 @@ The owner identity is derived on read from the local user's `username` + the ins
   accept a well-formed `@user:domain` (`validate_manual_creator`).
 - [x] Tests: default resolution, sigil guard, propagation + override preservation, transitive
   no-leak, copy-carries-creator (`domain::picture` unit tests, `services_shares`, `physical_copy_dedup`).
+
+**Better integration (v1.0 roadmap item):**
+
+- [x] Creator resolution refactored into reusable free fns (`owner_default_identity`,
+  `display_creator_opt`/`propagated_creator_opt` + display wrappers) so `Picture` reads and the
+  pipeline projection resolve identically.
+- [x] `creator` **rule field** (feature 13): `Field::Creator` (str) over the displayed creator;
+  `PipelineInput.creator` resolved in pipeline evaluation; frontend `RULE_FIELDS` entry (Ownership).
+- [x] Batch **view**: `PictureRepository::aggregate_creator` (resolved-creator distinct) surfaced as a
+  top-level `creator` `FieldAggregate` in the summary; rendered in the multi-select panel.
+- [x] Batch **edit**: `PATCH /pictures/creator` + `batch_set_creator_selection` (owned/received
+  set-based partition, dry-run); frontend `BatchCreatorControl` (ContactInput in a confirm dialog).
+- [x] Tests: `creator` rule end-to-end (`pipeline`), batch creator owned/received + sigil guard +
+  reset (`batch_editing`), creator aggregate present in summary.
 
 **Phase 2 (soon):** propose-to-owner — a grant (reuse `allow_exif_edit` as a metadata-edit grant, or a
 dedicated `allow_creator_edit`) + a federation verb mirroring feature 10's `pictures/edit_request`;
