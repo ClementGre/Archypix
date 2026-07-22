@@ -139,7 +139,7 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   shifting (L213) · 7 Resolution algorithm (L239) · 8 Worked example (L258) · 9 Validation (L292) ·
   10 Storage: unified service config (L309) · 11 Migration of existing data (L393) · 12 Evaluation,
   API, frontend (L422) · 13 Out of scope: clustering (L478) · 14 What this does NOT change (L495)
-- **21_photos_fix_tools.md** — GPS fix (L5) · Capture date fix (L12)
+- **21_photos_fix_tools.md** — **superseded** by 29 + 30 (rough stub, kept for the trail).
 - **22_storage_quotas.md** — 1 Overview & goals (L3) · 2 Decisions (L20) · 3 What counts (L36) ·
   4 Schema changes (L55) · 5 Delta accounting & upload race (L98) · 6 Enforcement points (L135) ·
   7 Reconcile routine (L153) · 8 API (L163) · 9 Resolver seed (L210) · 10 Config (L223) ·
@@ -173,3 +173,13 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   (L190) · 7 Stale-announcement guard (L230) · 8 Delete `federation_messages` (L248) · 9 Rate limiting &
   observability (L266) · 10 Presign TTL + frontend auto-refresh (L300) · 11 Config (L314) · 12 Edge cases ·
   13 Frontend · 14 Testing · 15 Doc updates · 16 Work breakdown.
+- **29_query_proximity_and_missing_filter.md** — reusable gallery-query primitives (spec-only;
+  substrate for 30): 1 Overview (L3) · 2 Decisions (L17) · 3 `has_gps` list field (L34) ·
+  4 Presence filters — per-field `any|present|missing` + `missing_any` OR (L42) · 5 Directed
+  bracketing lookup (L62) · 6 Proximity sorts (L76) · 7 Selection threading (L96) ·
+  8 Frontend (L104) · 9 Edge cases (L116) · 10 Doc updates (L132) · 11 Work breakdown (L140).
+- **30_photos_fix_tools.md** — GPS/date fix modes (spec-only; depends on 29 + 04 + 09/10 + 14):
+  1 Overview (L3) · 2 Decisions (L14) · 3 Fix mode UI (L38) · 4 Grid presentation (L46) ·
+  5 GPS fix flow (L60) · 6 Capture-date fix flow (L88) · 7 Two-step selection (L112) ·
+  8 Bulk apply (L134) · 9 Received pictures (L146) · 10 Source-file-date schema (L158) ·
+  11 Write paths (L172) · 12 Edge cases (L188) · 13 Doc updates (L212) · 14 Work breakdown (L222).

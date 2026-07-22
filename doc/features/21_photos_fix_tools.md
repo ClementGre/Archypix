@@ -1,5 +1,11 @@
 # Photos fix tools
 
+> **Superseded.** This rough stub was split into two settled specs:
+> [29_query_proximity_and_missing_filter.md](29_query_proximity_and_missing_filter.md)
+> (the reusable `missing` filter + time/geo proximity sorts) and
+> [30_photos_fix_tools.md](30_photos_fix_tools.md) (the GPS/date fix modes). Kept for the
+> decision trail; do not implement from this file.
+
 These modes should be available through a tool button in the breadcumb, allowing to enable the corresponding mode.
 
 ## GPS FIX

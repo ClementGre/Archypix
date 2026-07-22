@@ -128,7 +128,12 @@
   three-state grid-header `TrashToggle` (Photos / All / Trash → `trash` URL param), removed the "Include trashed" checkbox, and the main
   gallery (metadata, tag filtering, batch restore in the selection panel) now serves trashed pictures directly — no client-side `deleted_at`
   filtering. Profile "Open trash" deep-links to `/?trash=only`.
-- [ ] **Photos fix tools** — quick tools for fixing missing EXIF info in files (feature 21).
+- [ ] **Query presence filters & proximity sorts** — reusable per-field `gps`/`capture_date` presence filters
+  (`present|missing`) + `missing_any` OR + `has_gps` list field + directed bracketing lookup + time/geo proximity
+  sorts; substrate for the fix tools. See `doc/features/29_query_proximity_and_missing_filter.md`.
+- [ ] **Photos fix tools** — guided GPS/capture-date fix modes: highlight-in-context, filename/mtime/ingested date
+  suggestions, grid-local GPS interpolation, explicit target→references selection, bulk preview; received pictures
+  included. Depends on feature 29. See `doc/features/30_photos_fix_tools.md` (supersedes the feature 21 stub).
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.
