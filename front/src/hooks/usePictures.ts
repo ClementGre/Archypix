@@ -5,11 +5,25 @@ import type {PictureFilters, PictureVariant} from '@/lib/types'
 
 export function usePictures(
     filters: PictureFilters,
-    opts?: { enabled?: boolean; variant?: PictureVariant },
+    opts?: {
+        enabled?: boolean
+        variant?: PictureVariant
+        /**
+         * A reference point for per-row great-circle distances (`distance_m` on each item), independent
+         * of the sort — the photos-fix date mode passes the picture-being-fixed's GPS so the grid badges
+         * "distance from it" without reordering (feature 30 §3). A `geo_near` sort's own `near_*`
+         * reference (from `filters`) takes precedence when set.
+         */
+        geoRef?: { lat: number; lng: number } | null
+    },
 ) {
     const variant = opts?.variant ?? 'medium'
+    const geoRef = opts?.geoRef ?? null
+    // A geo_near sort carries its own reference; otherwise fall back to the fix-mode geoRef.
+    const nearLat = filters.sort === 'geo_near' ? filters.nearLat : geoRef?.lat ?? null
+    const nearLng = filters.sort === 'geo_near' ? filters.nearLng : geoRef?.lng ?? null
     return useInfiniteQuery({
-        queryKey: [...queryKeys.pictures(filters), variant],
+        queryKey: [...queryKeys.pictures(filters), variant, nearLat, nearLng],
         enabled: opts?.enabled ?? true,
         // Keep the current grid visible while a zoom-change (variant) or filter refetch lands.
         placeholderData: keepPreviousData,
@@ -39,12 +53,9 @@ export function usePictures(
                             ? {capture_date: filters.captureDate}
                             : {}),
                     }),
-                ...(filters.sort === 'time_near' && filters.nearTime
-                    ? {near_time: filters.nearTime}
-                    : {}),
-                ...(filters.sort === 'geo_near' && filters.nearLat != null && filters.nearLng != null
-                    ? {near_lat: filters.nearLat, near_lng: filters.nearLng}
-                    : {}),
+                ...(filters.sort === 'time_near' && filters.nearTime ? {near_time: filters.nearTime} : {}),
+                ...(nearLat != null && nearLng != null ? {near_lat: nearLat, near_lng: nearLng} : {}),
+                ...(filters.undatedFirst ? {undated_first: true} : {}),
             }
             return listPictures(params)
         },

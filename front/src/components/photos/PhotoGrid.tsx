@@ -1,11 +1,17 @@
 import {Fragment, type MouseEvent, useCallback, useEffect, useMemo, useRef} from 'react'
 import {useSearchParams} from 'react-router-dom'
+import {useQuery} from '@tanstack/react-query'
 import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
 import {usePictures} from '@/hooks/usePictures'
+import {getPicture} from '@/api/pictures'
+import {queryKeys} from '@/lib/constants'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
 import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {isMemberSelected, useSelectionStore} from '@/stores/selection'
+import {useFixReference} from '@/stores/fixReference'
+import {useFixHighlight} from '@/stores/fixHighlight'
+import {useGridItems} from '@/stores/gridItems'
 import {useUIStore} from '@/stores/ui'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {apiErrorMessage} from '@/api/client'
@@ -19,6 +25,8 @@ import {ScopeToggle} from './ScopeToggle'
 import {SortMenu} from './SortMenu'
 import {DateFilter} from './DateFilter'
 import {SelectionActionBar} from './batch/SelectionActionBar'
+import {ReferenceBar} from './fix/ReferenceBar'
+import {toast} from "sonner";
 
 /** Breadcrumb for the active hierarchy directory; segments are clickable. */
 function HierarchyBreadcrumb() {
@@ -66,15 +74,45 @@ export function PhotoGrid() {
     const isMobile = useIsMobile()
     const [, setSp] = useSearchParams()
 
+    // Fix-mode state: highlight props for the cards, and the reference-picking phase overrides card
+    // selection to build the reference set (persistent across tag navigation, §7).
+    const referenceActive = useFixReference((s) => s.active)
+    const refIds = useFixReference((s) => s.refIds)
+    const toggleRef = useFixReference((s) => s.toggleRef)
+    const fixTargetIds = useFixReference((s) => s.targetIds)
+    const anchorIds = useFixHighlight((s) => s.anchorIds)
+
+    const query = useSelectionStore((s) => s.query)
+    const includeIds = useSelectionStore((s) => s.includeIds)
+    const excludeIds = useSelectionStore((s) => s.excludeIds)
+
+    // The picture being fixed (selected single, or the stashed reference target). Its detail drives the
+    // grid distance overlays: time proximity in GPS mode (client-side) and geo distance in date mode
+    // (§3, requested from the server via `geoRef` so the grid isn't reordered).
+    const fixTargetId = params.fix
+        ? referenceActive
+            ? fixTargetIds[0] ?? null
+            : query === null && includeIds.length === 1 ? includeIds[0] : null
+        : null
+    const fixTargetDetail = useQuery({
+        queryKey: queryKeys.picture(fixTargetId ?? ''),
+        enabled: !!fixTargetId,
+        queryFn: () => getPicture(fixTargetId!),
+    }).data
+    const fixRefTime = params.fix === 'gps' ? fixTargetDetail?.captured_at ?? null : null
+    const fixGeoRef = params.fix === 'date' && fixTargetDetail?.gps_lat != null && fixTargetDetail?.gps_lng != null
+        ? {lat: fixTargetDetail.gps_lat, lng: fixTargetDetail.gps_lng}
+        : null
+
     // Request a thumbnail variant sized to the current zoom (row height).
     const variant = variantForSize(rowHeight)
-    const picturesQ = usePictures(filters, {enabled: !isBrowsing, variant})
+    const picturesQ = usePictures(filters, {enabled: !isBrowsing, variant, geoRef: fixGeoRef})
     const browseQ = useHierarchyBrowse(params.hierarchy, params.hpath, filters, {enabled: isBrowsing, variant})
     const active = isBrowsing ? browseQ : picturesQ
-    const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage} = active
+    const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage, isPlaceholderData} = active
 
     // Dedup by id: as new pictures shift pagination, consecutive pages can overlap and re-emit an
-    // already-seen item — which would render a duplicate card (and, if selected, look doubly selected).
+    // already-seen item, which would render a duplicate card (and, if selected, look doubly selected).
     const items = useMemo(() => {
         const flat = data?.pages.flatMap((p) => p.items) ?? []
         const seen = new Set<string>()
@@ -83,15 +121,19 @@ export function PhotoGrid() {
 
     const orderedIds = useMemo(() => items.map((i) => i.id), [items])
 
-    const query = useSelectionStore((s) => s.query)
-    const includeIds = useSelectionStore((s) => s.includeIds)
-    const excludeIds = useSelectionStore((s) => s.excludeIds)
+    // Publish the loaded, sorted grid so the fix panels can scan for grid-local anchors (feature 30 §5.2).
+    const setGridItems = useGridItems((s) => s.setItems)
+    useEffect(() => setGridItems(items), [items, setGridItems])
+
     const multiSelect = useSelectionStore((s) => s.multiSelect)
     const select = useSelectionStore((s) => s.select)
     const toggle = useSelectionStore((s) => s.toggle)
     const selectTo = useSelectionStore((s) => s.selectTo)
     const enterMultiSelect = useSelectionStore((s) => s.enterMultiSelect)
     const selectAll = useSelectionStore((s) => s.selectAll)
+    const setSelection = useSelectionStore((s) => s.setSelection)
+    const queueLand = useSelectionStore((s) => s.queueLand)
+    const pendingLand = useSelectionStore((s) => s.pendingLand)
     const clear = useSelectionStore((s) => s.clear)
 
     // ⌘/Ctrl+A selects everything matching the current view (§2.1), unless focus is in a field.
@@ -100,6 +142,8 @@ export function PhotoGrid() {
             if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return
             const t = e.target as HTMLElement | null
             if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+            // In the reference-picking phase, ⌘A would hijack the reference set — ignore it.
+            if (useFixReference.getState().active) return
             e.preventDefault()
             selectAll(selectionFilter)
         }
@@ -111,11 +155,45 @@ export function PhotoGrid() {
     // Any view change (tag / scope / sort / hierarchy dir) clears the selection: a select-all's
     // membership would no longer match, and keeping an explicit selection across an unrelated view
     // is inconsistent. The cleared-on-mount run is a harmless no-op (selection already empty).
+    // Exception: the fix tools queued a "land here" intent (Apply/Skip restoring the pre-reference
+    // view) — keep it through the clear; the consume effect below resolves it once the restored grid
+    // has loaded. This effect is declared first so it runs before that one.
     const filterSig = JSON.stringify(selectionFilter)
     useEffect(() => {
+        if (useSelectionStore.getState().pendingLand !== null) return
         clear()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filterSig])
+
+    // Resolve a queued land intent (Apply / Skip / Cancel returning from the reference phase).
+    //
+    // Timing is the whole game here. Exiting the phase flips the reference store out (a Zustand
+    // update) but restores the URL through React Router — these land in **separate commits**. So in
+    // the first commit `referenceActive` is already false while the view is still the reference grid;
+    // resolving then would pick against the wrong grid and, worse, null `pendingLand` so the *next*
+    // commit's view-change clear wipes the fresh selection (the empty sidebar). We therefore wait
+    // until the on-screen view actually matches the intent's `destSig` (the signature of the view
+    // captured when picking began). `destSig === null` means no restore is pending (a plain apply
+    // without reference picking), so resolve in place. Only advancing also needs the restored grid's
+    // real data (`!isPlaceholderData`) to find the next still-missing picture.
+    useEffect(() => {
+        if (!pendingLand || referenceActive) return
+        const {anchorId, advance, destSig} = pendingLand
+        if (destSig != null && destSig !== filterSig) return
+        if (advance && params.fix) {
+            if (isPlaceholderData) return
+            const idx = items.findIndex((i) => i.id === anchorId)
+            const rest = idx === -1 ? items : items.slice(idx + 1)
+            const next = rest.find((i) => !i.deleted_at && (params.fix === 'gps' ? !i.has_gps : !i.captured_at))
+            if (!next) {
+                toast.info('No more pictures to land on.')
+            }
+            setSelection([next ? next.id : anchorId])
+        } else {
+            setSelection([anchorId])
+        }
+        queueLand(null)
+    }, [pendingLand, referenceActive, filterSig, isPlaceholderData, items, params.fix, setSelection, queueLand])
 
     const handleSelect = (id: string) => (e: MouseEvent) => {
         e.stopPropagation()
@@ -192,21 +270,48 @@ export function PhotoGrid() {
             <div className="h-full overflow-y-auto p-3" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
                 {/* select-none: shift-click range selection otherwise highlights the cards as text. */}
                 <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0 select-none">
-                    {items.map((it) => (
-                        <PhotoCard
-                            key={it.id}
-                            item={it}
-                            rowHeight={rowHeight}
-                            selected={isMemberSelected(query, includeIds, excludeIds, it.id)}
-                            multiSelect={multiSelect}
-                            showPurgeCountdown={trashOnly}
-                            retentionDays={retentionDays}
-                            proximityRefTime={params.sort === 'time_near' ? params.nearTime : null}
-                            onSelect={handleSelect(it.id)}
-                            onLongPress={handleLongPress(it.id)}
-                            onOpen={() => openViewer(it.id)}
-                        />
-                    ))}
+                    {items.map((it) => {
+                        // While picking references, only photos that HAVE the field being interpolated
+                        // can be a reference; the rest are dimmed + inert.
+                        const canRef = params.fix === 'gps' ? it.has_gps : params.fix === 'date' ? !!it.captured_at : false
+                        const refDisabled = referenceActive && !canRef
+                        return (
+                            <PhotoCard
+                                key={it.id}
+                                item={it}
+                                rowHeight={rowHeight}
+                                // In the reference phase a picked reference gets the interpolation-source
+                                // (sky ring + blue check) style, the same as an automatic anchor — not the
+                                // primary selection ring; a click toggles it (§7).
+                                selected={referenceActive ? false : isMemberSelected(query, includeIds, excludeIds, it.id)}
+                                multiSelect={multiSelect}
+                                showPurgeCountdown={trashOnly}
+                                retentionDays={retentionDays}
+                                proximityRefTime={params.sort === 'time_near' ? params.nearTime : fixRefTime}
+                                // No "missing" highlight while picking references — the context is choosing
+                                // sources, not fixing; non-eligible photos are dimmed instead.
+                                fixMode={referenceActive ? null : params.fix}
+                                dimmed={refDisabled}
+                                anchorRole={
+                                    referenceActive
+                                        ? refIds.includes(it.id) ? params.fix : null
+                                        : params.fix === 'gps' && anchorIds.includes(it.id) ? 'gps' : null
+                                }
+                                onSelect={
+                                    referenceActive
+                                        ? (e) => {
+                                            e.stopPropagation();
+                                            if (canRef) toggleRef(it.id)
+                                        }
+                                        : handleSelect(it.id)
+                                }
+                                onLongPress={referenceActive ? () => {
+                                    if (canRef) toggleRef(it.id)
+                                } : handleLongPress(it.id)}
+                                onOpen={() => openViewer(it.id)}
+                            />
+                        )
+                    })}
                     {/* Absorbs trailing space so the last row keeps natural sizing. */}
                     <li aria-hidden className="h-0" style={{flexGrow: 1e7, flexBasis: 0}}/>
                 </ul>
@@ -247,7 +352,7 @@ export function PhotoGrid() {
     return (
         <>
             {content}
-            <SelectionActionBar/>
+            {referenceActive ? <ReferenceBar/> : <SelectionActionBar/>}
         </>
     )
 }

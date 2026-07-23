@@ -98,6 +98,10 @@ pub struct PictureListFilter {
     /// Reference point for `PictureSortField::GeoNear`.
     pub near_lat: Option<f64>,
     pub near_lng: Option<f64>,
+    /// Date-fix mode (feature 30 §4): float undated rows (`captured_at IS NULL`) to the top with a
+    /// `filename, id` tiebreaker so the broken ones surface for fixing while the dated references stay
+    /// scrollable below. A prefix on top of the current column sort; ignored for proximity sorts.
+    pub undated_first: bool,
 }
 
 impl PictureListFilter {
@@ -232,6 +236,7 @@ impl PictureRepository {
         height: Option<i32>,
         exif_data: Option<serde_json::Value>,
         captured_at: Option<NaiveDateTime>,
+        original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -239,8 +244,8 @@ impl PictureRepository {
         let exif_json = exif_data.unwrap_or_else(|| serde_json::json!({}));
         sqlx::query_as!(
             Picture,
-            r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9)
+            r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at, original_file_created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -253,7 +258,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override"#,
+                         creator, creator_override, original_file_created_at"#,
             id,
             local_user_id,
             filename,
@@ -263,6 +268,7 @@ impl PictureRepository {
             height,
             serde_json::Value::from(exif_json) as serde_json::Value,
             captured_at,
+            original_file_created_at,
         )
             .fetch_one(ex)
             .await
@@ -318,7 +324,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override"#,
+                         creator, creator_override, original_file_created_at"#,
             id,
             local_user_id,
             filename,
@@ -421,7 +427,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override"#,
+                         creator, creator_override, original_file_created_at"#,
             recipient_id,
             remote_picture_id,
             owner_username,
@@ -675,7 +681,7 @@ impl PictureRepository {
                       p.exif_sync_status as "exif_sync_status: _",
                       p.content_hash, p.copy_source_owner_username,
                       p.copy_source_owner_instance, p.copy_source_picture_id,
-                      p.creator, p.creator_override
+                      p.creator, p.creator_override, p.original_file_created_at
                FROM pictures p
                JOIN tags t ON t.picture_id = p.id
                WHERE p.local_user_id = $1
@@ -714,7 +720,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override
+                      creator, creator_override, original_file_created_at
                FROM pictures WHERE id = ANY($1::uuid[])"#,
             ids as &[Uuid],
         )
@@ -742,7 +748,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override
+                      creator, creator_override, original_file_created_at
                FROM pictures WHERE id = $1"#,
             id
         )
@@ -779,7 +785,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override
+                      creator, creator_override, original_file_created_at
                FROM pictures
                WHERE local_user_id = $1 AND file_hash = $2
                  AND remote_picture_id IS NULL
@@ -1058,7 +1064,7 @@ impl PictureRepository {
                           p.thumbnails_generated_at, p.file_hash, p.exif_sync_status,
                           p.content_hash, p.copy_source_owner_username,
                           p.copy_source_owner_instance, p.copy_source_picture_id,
-                          p.creator, p.creator_override
+                          p.creator, p.creator_override, p.original_file_created_at
                    FROM pictures p WHERE p.local_user_id = "#,
             );
             q.push_bind(local_user_id);
@@ -1133,9 +1139,21 @@ impl PictureRepository {
                     // Proximity variants handled above.
                     PictureSortField::TimeNear | PictureSortField::GeoNear => unreachable!(),
                 };
+                // Date-fix mode (feature 30 §4): undated rows first, then the column sort, then the
+                // load-bearing `filename, id` tiebreak (undated rows have no captured_at to order by,
+                // and run interpolation relies on a stable filename-contiguous order across pages).
+                let missing_first = if filter.undated_first {
+                    "(p.captured_at IS NULL) DESC, "
+                } else {
+                    ""
+                };
+                let tiebreak = if filter.undated_first {
+                    format!(", p.filename {sort_dir}")
+                } else {
+                    String::new()
+                };
                 q.push(format!(
-                    " ORDER BY {} {} NULLS LAST, p.id {}",
-                    sort_col, sort_dir, sort_dir
+                    " ORDER BY {missing_first}{sort_col} {sort_dir} NULLS LAST{tiebreak}, p.id {sort_dir}"
                 ));
             }
         }
@@ -1296,7 +1314,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override"#,
+                         creator, creator_override, original_file_created_at"#,
             id,
             mime_type,
             file_size,
@@ -1365,7 +1383,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override"#,
+                         creator, creator_override, original_file_created_at"#,
             id,
             width,
             height,

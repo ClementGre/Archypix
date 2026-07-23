@@ -36,7 +36,7 @@ export function ZoomableArea({resetKey, children}: { resetKey: string; children:
     // Transition is disabled while actively zooming (so the image tracks the fingers 1:1, like a
     // native app) and re-enabled shortly after, so the double-click zoom still animates.
     const [smooth, setSmooth] = useState(true)
-    const smoothTimer = useRef<number>()
+    const smoothTimer = useRef<number | undefined>(undefined)
 
     useEffect(() => setT({scale: 1, x: 0, y: 0}), [resetKey])
 

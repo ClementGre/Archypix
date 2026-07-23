@@ -3,11 +3,13 @@
 // the user can both hunt for problem pictures (Missing) *and* isolate the good anchors (Present, the
 // invert). Writes the `gps` / `cdate` URL params via useGalleryParams.
 
-import {CalendarClock, MapPin, SlidersHorizontal} from 'lucide-react'
+import {CalendarClock, MapPin, SlidersHorizontal, Wrench} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
+import {useFixReference} from '@/stores/fixReference'
+import {useReferencePhase} from '@/hooks/useReferencePhase'
 import {Button} from '@/components/ui/button'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
-import type {PresenceFilter} from '@/lib/types'
+import type {FixMode, PresenceFilter} from '@/lib/types'
 import {cn} from '@/lib/utils'
 
 const STATES: { value: PresenceFilter; label: string }[] = [
@@ -56,22 +58,64 @@ function PresenceRow({
     )
 }
 
+const FIX_STATES: { value: FixMode | null; label: string }[] = [
+    {value: null, label: 'Off'},
+    {value: 'gps', label: 'GPS'},
+    {value: 'date', label: 'Date'},
+]
+
+/** Fix-tools enablement row (feature 30 §3): Off / GPS / Date — turns on the guided fix surface. */
+function FixRow({value, onChange}: { value: FixMode | null; onChange: (v: FixMode | null) => void }) {
+    return (
+        <div className="flex items-center gap-2 px-2 py-1.5">
+            <Wrench className="h-4 w-4 shrink-0 text-muted-foreground"/>
+            <span className="flex-1 text-sm">Fix tools</span>
+            <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                {FIX_STATES.map(({value: v, label: l}) => (
+                    <button
+                        key={l}
+                        type="button"
+                        onClick={() => onChange(v)}
+                        aria-pressed={value === v}
+                        className={cn(
+                            'rounded px-1.5 py-0.5 text-xs transition-colors',
+                            value === v ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+                        )}
+                    >
+                        {l}
+                    </button>
+                ))}
+            </div>
+        </div>
+    )
+}
+
 export function IssuesFilter() {
     const {params, update} = useGalleryParams()
+    const {exit} = useReferencePhase()
+
+    // Switch/clear fix mode: mid reference-picking, restore the pre-phase filters and set the new
+    // mode atomically; otherwise just write the `fix` param.
+    const setFix = (v: FixMode | null) => {
+        if (useFixReference.getState().active) exit(v)
+        else update({fix: v})
+    }
 
     // Setting a per-field state clears the `missing_any` OR (they are mutually exclusive server-side).
     const activeCount = (params.gps !== 'any' ? 1 : 0) + (params.captureDate !== 'any' ? 1 : 0)
-    const filtering = activeCount > 0 || params.missingAny
+    const filtering = activeCount > 0 || params.missingAny || params.fix !== null
 
-    const summary = params.missingAny
-        ? 'Any issue'
-        : activeCount === 0
-            ? 'Metadata'
-            : activeCount === 1
-                ? params.gps !== 'any'
-                    ? `GPS ${params.gps}`
-                    : `Date ${params.captureDate}`
-                : `${activeCount} filters`
+    const summary = params.fix
+        ? `Fix ${params.fix === 'gps' ? 'GPS' : 'date'}`
+        : params.missingAny
+            ? 'Any issue'
+            : activeCount === 0
+                ? 'Metadata'
+                : activeCount === 1
+                    ? params.gps !== 'any'
+                        ? `GPS ${params.gps}`
+                        : `Date ${params.captureDate}`
+                    : `${activeCount} filters`
 
     return (
         <DropdownMenu>
@@ -120,6 +164,10 @@ export function IssuesFilter() {
                         )}
                     />
                 </button>
+                <DropdownMenuSeparator/>
+                {/* Fix tools (feature 30): highlights problem pictures + adds the fix section to the
+                    details panel. Switching mode / turning off abandons any reference-picking phase. */}
+                <FixRow value={params.fix} onChange={setFix}/>
             </DropdownMenuContent>
         </DropdownMenu>
     )

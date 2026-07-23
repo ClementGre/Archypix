@@ -29,6 +29,18 @@ interface SelectionState {
      * while on, a plain tap toggles a photo instead of replacing the selection.
      */
     multiSelect: boolean
+    /**
+     * A deferred "land here" intent for the fix tools (feature 30 §8). Apply-and-next / Skip restore
+     * the pre-reference view (the user may have navigated away to find references), so the landing
+     * picture must be resolved **against the restored grid once it is showing**, not the reference
+     * grid. `destSig` is the selection-filter signature of that destination view (captured when
+     * reference picking began); `PhotoGrid` only resolves the intent once the on-screen view matches
+     * it — the restore navigation lands a render *after* the store flips out of reference mode, so
+     * without this the intent would resolve against the still-visible reference grid and the following
+     * view-change clear would wipe it. `null` `destSig` means no view restore is pending (a plain fix
+     * apply). `advance: false` keeps `anchorId`; `true` selects the next still-missing picture after it.
+     */
+    pendingLand: { anchorId: string; advance: boolean; destSig: string | null } | null
 
     select: (id: string) => void
     toggle: (id: string) => void
@@ -37,6 +49,8 @@ interface SelectionState {
     enterMultiSelect: (id: string) => void
     /** Replace the selection with an explicit id list. */
     setSelection: (ids: string[]) => void
+    /** Queue a deferred land intent (resolved once the destination view is back on screen). */
+    queueLand: (land: { anchorId: string; advance: boolean; destSig: string | null } | null) => void
     /** Adopt a query as a select-all (Ctrl+A) — clears the explicit deltas. */
     selectAll: (query: PictureFilter) => void
     /** Swap include/exclude relative to the query (only meaningful in select-all). */
@@ -50,10 +64,13 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     excludeIds: [],
     anchor: null,
     multiSelect: false,
+    pendingLand: null,
 
     // A plain single select always exits multi-select / select-all mode.
     select: (id) =>
         set({query: null, includeIds: [id], excludeIds: [], anchor: id, multiSelect: false}),
+
+    queueLand: (land) => set({pendingLand: land}),
 
     toggle: (id) => {
         const {query, includeIds, excludeIds, multiSelect} = get()
@@ -103,7 +120,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         set({includeIds: excludeIds, excludeIds: includeIds, query: new_query})
     },
 
-    clear: () => set({query: null, includeIds: [], excludeIds: [], anchor: null, multiSelect: false}),
+    clear: () => set({query: null, includeIds: [], excludeIds: [], anchor: null, multiSelect: false, pendingLand: null}),
 }))
 
 // ── Derived helpers ─────────────────────────────────────────────────────────

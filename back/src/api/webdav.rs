@@ -10,12 +10,12 @@ use crate::services::vfs::{ReadTarget, Vfs, VfsEntry};
 use crate::services::webdav;
 use crate::state::AppState;
 use archypix_common::error::AppError;
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{header, HeaderMap, Method, Request, StatusCode};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use axum::Router;
 use base64::Engine as _;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -172,6 +172,17 @@ async fn put(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Source file creation date (feature 30 §10): Nextcloud/ownCloud clients send the file's
+    // creation time as `X-OC-CTime` (unix seconds, UTC). Stored as a suggestion, never auto-applied
+    // to `captured_at`.
+    let original_file_created_at = headers
+        .get("x-oc-ctime")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&secs| secs > 0)
+        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+        .map(|dt| dt.naive_utc());
+
     // Stream the body to a temp file (never buffered in memory), then hash it with the common
     // crate's chunked hasher — we need the SHA-256 before deciding whether to upload to S3 or
     // just retag an existing picture (06_webdav.md §7–8).
@@ -179,7 +190,7 @@ async fn put(
         req.into_body(),
         state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES),
     )
-        .await?;
+    .await?;
 
     let created = vfs
         .put_file(
@@ -188,6 +199,7 @@ async fn put(
             &hash,
             size as i64,
             content_type.as_deref(),
+            original_file_created_at,
         )
         .await?;
     // `tmp` is dropped here, removing the temp file.
@@ -447,7 +459,7 @@ async fn staging(
                 req.into_body(),
                 state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES),
             )
-                .await?;
+            .await?;
             // An empty placeholder PUT (Finder/Preview issue one first) — accept, stage nothing.
             if size == 0 {
                 return Ok(empty(StatusCode::CREATED));

@@ -16,6 +16,7 @@ function toDetail(id: string, d: PublicPictureDetail): PictureDetail {
         captured_at: d.captured_at ?? null,
         ingested_at: d.ingested_at,
         updated_at: d.ingested_at,
+        original_file_created_at: null,
         gps_lat: d.gps_lat ?? null,
         gps_lng: d.gps_lng ?? null,
         gps_alt: d.gps_alt ?? null,

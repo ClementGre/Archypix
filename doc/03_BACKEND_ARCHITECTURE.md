@@ -332,9 +332,23 @@ hierarchy `browse`, and feature-14 selections filter identically. `PictureSortFi
 GeoNear}` are reference-point proximity sorts (`push_order_by`): nearest-first, `SortOrder` ignored,
 `id` tiebreaker, and rows missing the sort field are **excluded** by `push_filters` (not trailed);
 `near_time` is a naive instant; geo orders by the haversine central-angle term (exact for a sort,
-antimeridian-safe, no PostGIS/index). `PictureListItem` carries a derived
-`has_gps` and — only under `geo_near` — a Rust-computed `distance_m` (same haversine as the order).
+antimeridian-safe, no PostGIS/index). `PictureListItem` carries a derived `has_gps` and a Rust-computed
+`distance_m` (same haversine as the order) populated **whenever a `near_lat`/`near_lng` reference is
+given** — under a `geo_near` sort, or with any sort so the photos-fix date mode can badge distance
+from the picture being fixed without reordering the grid.
 See `doc/features/29_query_proximity_and_missing_filter.md`.
+
+**Photos fix tools (30)** — a mostly-frontend feature with two backend touchpoints. A nullable
+`pictures.original_file_created_at` (source file **creation** time, feature 30 §10) is captured at
+ingest: WebDAV `PUT` honours an `X-OC-CTime` header (`vfs::finalize_write` →
+`PictureRepository::create`); browser uploads can't provide a creation date, so the `complete` body
+carries the (optional) field but the web client leaves it unset. It is surfaced on the list/detail
+projections. It is **suggestion-only**, never applied to `captured_at`. The date-fix grid
+ordering adds `PictureListFilter::undated_first` (`?undated_first=true`): `push_order_by` prefixes
+`(captured_at IS NULL) DESC` and a `filename` tiebreak so undated pictures float to the top of the
+current sort (§4). No new write path — apply reuses the feature-04 single/batch EXIF endpoints
+(owned write-through) and the 09/10 received override/propose; bulk is the per-picture path looped
+client-side. See `doc/features/30_photos_fix_tools.md`.
 
 ## F) API Conventions
 

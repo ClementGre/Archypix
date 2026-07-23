@@ -137,13 +137,19 @@
   Missing date / Any issue), `SelectionPanel` "Nearby in time/place" actions, `FilterControls` proximity indicator +
   clear, per-tile distance badge. Substrate for the fix tools. See
   `doc/features/29_query_proximity_and_missing_filter.md`.
-- [ ] **Photos fix tools** — guided GPS/capture-date fix modes: highlight-in-context, filename/mtime/ingested date
-  suggestions, grid-local GPS interpolation, explicit target→references selection, bulk preview; received pictures
-  included. Depends on feature 29. See `doc/features/30_photos_fix_tools.md` (supersedes the feature 21 stub).
+- [x] **Photos fix tools** — guided GPS/capture-date fix modes: highlight-in-context, filename/source-file/ingested
+  date suggestions, grid-local GPS interpolation (directed-bracket fallback), explicit target→references selection,
+  bulk preview; received pictures (local override / propose). **Backend**: `pictures.original_file_created_at`
+  (migration `0012`, source file creation time via WebDAV `X-OC-CTime`, on list/detail) + `undated_first` date-fix
+  ordering. **Frontend**: `fix` param enabled from `IssuesFilter`, `photos/fix/*` (fix section in the details panel +
+  `GpsFixPanel`/`DateFixPanel`/`FixBulkDialog`/`FixBulkSection`/`ReferencePreview`/`ReferenceBar`),
+  `lib/filenameDate`/`gpsInterpolation`/`fixBulk`/`dateSuggestions`, date chips in the normal editor. Depends on feature 29. See
+  `doc/features/30_photos_fix_tools.md` (supersedes the feature 21 stub).
+  *Deferred:* date run-interpolation, null-island `(0,0)` heuristic, batched-propose endpoint, frontend test runner.
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
+- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.
-- [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Rate limiting & validators** — more rate limiting, real structured framework allowing to list the rate limiters in the admin dashboard with
   the window size + limit within window.

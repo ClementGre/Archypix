@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,\n                      p.owner_instance_domain, p.filename, p.mime_type, p.file_size,\n                      p.width, p.height, p.exif_data as \"exif_data: _\", p.metadata as \"metadata: _\",\n                      p.deleted_at, p.deleted_reason as \"deleted_reason: _\",\n                      p.owner_deleted_at, p.owner_purge_at,\n                      p.remote_exif_data as \"remote_exif_data: _\",\n                      p.local_exif_overrides as \"local_exif_overrides: _\",\n                      p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,\n                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.thumbnails_generated_at, p.file_hash,\n                      p.exif_sync_status as \"exif_sync_status: _\",\n                      p.content_hash, p.copy_source_owner_username,\n                      p.copy_source_owner_instance, p.copy_source_picture_id,\n                      p.creator, p.creator_override\n               FROM pictures p\n               JOIN tags t ON t.picture_id = p.id\n               WHERE p.local_user_id = $1\n                 AND p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NULL\n                 AND t.tag_path <@ $2::text::ltree",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at, remote_updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override, original_file_created_at\n               FROM pictures\n               WHERE local_user_id = $1 AND file_hash = $2\n                 AND remote_picture_id IS NULL\n                 AND ($3 OR deleted_at IS NULL)\n               ORDER BY deleted_at NULLS FIRST\n               LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -421,12 +421,24 @@
             "name": "creator_override"
           }
         }
+      },
+      {
+        "ordinal": 36,
+        "name": "original_file_created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "original_file_created_at"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Text"
+        "Text",
+        "Bool"
       ]
     },
     "nullable": [
@@ -465,8 +477,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "1df15d2c02e6dfcb6186a2fa5e60baf9d49f6fde5df1114b99efed89bd3ce2e8"
+  "hash": "81559129911877cc230f8d1c703404e52ee83a2c1dd4536d035d071683f93b2c"
 }

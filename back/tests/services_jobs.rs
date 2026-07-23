@@ -185,6 +185,42 @@ async fn edit_unsupported_format_is_db_only_no_job(db: PgPool) {
     assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
 }
 
+/// A format the worker touches for neither EXIF nor thumbnails never gets `thumbnails_generated_at`
+/// stamped, so the still-processing gate must not block its DB-only edit (regression: previously
+/// permanently rejected with 409).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn edit_unsupported_format_without_thumbnails_is_allowed(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    // image/svg+xml: not EXIF-capable and not thumbnailable → thumbnails_generated_at stays NULL.
+    sqlx::query!(
+        "UPDATE pictures SET mime_type = 'image/svg+xml' WHERE id = $1",
+        pic_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let (set, clear) = gps_edit();
+    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.unsupported, vec![pic_id]);
+    assert!(
+        outcome.jobs.is_empty(),
+        "no reconcile job for unsupported format"
+    );
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
+}
+
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn set_and_clear_conflict_is_rejected(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;

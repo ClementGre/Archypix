@@ -311,7 +311,11 @@ This reuses the existing deliver-then-record machinery; no new federation verb.
 2. **Edit during initial extraction.** A picture whose initial `gen_thumbnail` (EXIF
    extraction) has not completed has no authoritative DB EXIF yet. Reject edits with `409`
    ("picture still processing") until `thumbnails_generated_at IS NOT NULL`, to avoid the
-   extraction racing/overwriting the user's edit.
+   extraction racing/overwriting the user's edit. **Exception:** the gate only applies to
+   formats the worker extracts from (`supports_exif || supports_thumbnail`, unknown MIME
+   included). A format the worker touches for neither never gets `thumbnails_generated_at`
+   stamped, so gating on it would permanently block its (DB-only, `unsupported`) edit — those
+   are allowed straight through.
 3. **`captured_at` change** moves a picture between segments — handled by the §3.1 pipeline
    wake; overlap warnings still apply.
 4. **Clearing a pipeline-relevant field** (e.g. GPS) drops dependent rule tags

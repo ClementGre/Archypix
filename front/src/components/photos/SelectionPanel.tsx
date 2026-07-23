@@ -49,6 +49,9 @@ import {PlayBadge} from '@/components/photos/PlayBadge'
 import {MediaPlayer} from '@/components/photos/MediaPlayer'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
+import {FixSection} from '@/components/photos/fix/FixSection'
+import {BatchReferencePanel} from '@/components/photos/fix/BatchReferencePanel'
+import {useFixReference} from '@/stores/fixReference'
 import {useExifDraft} from '@/hooks/useExifDraft'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {queryKeys} from '@/lib/constants'
@@ -680,6 +683,10 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
 
             {/* Sections */}
             <div className="px-3">
+                {/* Fix-tools section (feature 30) — shown before Tags only when fix mode is on and this
+                    picture is missing the active field. */}
+                <FixSection picture={picture} allowExifEdit={!!incomingShare?.allow_exif_edit}/>
+
                 <Section
                     id="tags"
                     title="Tags"
@@ -793,6 +800,15 @@ export function SelectionPanel() {
 
     const single = query === null && includeIds.length === 1 && excludeIds.length === 0
     const hasSelection = query !== null || includeIds.length > 0
+    // During the fix-tools reference-picking phase, keep the sidebar showing the (stashed) target
+    // picture — its fix section shows the reference preview in place of the fix options (§7) — since
+    // grid clicks build the reference set, not the normal selection.
+    const referenceActive = useFixReference((s) => s.active)
+    const referenceTargetIds = useFixReference((s) => s.targetIds)
+    // A fix-tools land intent pending while we return from the reference phase: the grid clears its
+    // selection on the view change and re-selects the target once the restored grid is in, so bridge
+    // that gap here to keep the target shown rather than briefly blanking the sidebar (§8).
+    const pendingLand = useSelectionStore((s) => s.pendingLand)
 
     const [sp] = useSearchParams()
     const queryClient = useQueryClient()
@@ -815,6 +831,30 @@ export function SelectionPanel() {
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
     }, [single, sp, includeIds, queryClient, trash])
+
+    if (referenceActive && referenceTargetIds.length > 0) {
+        // Single target: keep its full sidebar (its fix pane shows reference mode inline). Multiple:
+        // a compact batch reference pane (no single picture to anchor the sidebar on).
+        return referenceTargetIds.length === 1 ? (
+            <div className="h-full overflow-y-auto">
+                <SinglePicture id={referenceTargetIds[0]}/>
+            </div>
+        ) : (
+            <div className="h-full overflow-y-auto px-3">
+                <BatchReferencePanel/>
+            </div>
+        )
+    }
+
+    // Returning from the reference phase: the target is momentarily unselected (grid clears on the
+    // view change, re-selects once the restored data loads). Keep the target shown in the meantime.
+    if (!hasSelection && pendingLand) {
+        return (
+            <div className="h-full overflow-y-auto">
+                <SinglePicture id={pendingLand.anchorId}/>
+            </div>
+        )
+    }
 
     // The panel is now toggle-driven (it stays mounted with nothing selected so the grid never
     // shifts); render an unobtrusive placeholder rather than collapsing the layout.

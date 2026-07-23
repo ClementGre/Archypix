@@ -6,6 +6,7 @@ import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 import {Section} from './Section'
 import {FieldLabel} from './FieldLabel'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
+import {dateSuggestions} from '@/lib/dateSuggestions'
 import {GpsPickerPopover} from './GpsPickerPopover'
 import {OverwrittenBadge} from './OverwrittenBadge'
 import {cn, formatDuration, isAudioMime, isVideoMime} from '@/lib/utils'
@@ -390,13 +391,18 @@ export function ExifInlineEditor({
                             <DateTimePickerPopover
                                 value={draft.captured_at || null}
                                 onChange={(v) => set('captured_at', v ?? '')}
+                                // When the capture date is empty, offer "From filename / file date /
+                                // upload" prefills (feature 30 §6) so pictures get fixed inline.
+                                suggestions={draft.captured_at ? undefined : dateSuggestions(picture)}
                             >
-                                <button className="truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted">
-                                    {formatNaive(draft.captured_at || null)}
+                                <button
+                                    className={cn('truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted', !draft.captured_at && 'text-muted-foreground')}>
+                                    {formatNaive(draft.captured_at || null) || 'Set date'}
                                 </button>
                             </DateTimePickerPopover>
                         ) : (
-                            <span className="truncate text-right text-xs">{formatNaive(draft.captured_at || null)}</span>
+                            <span
+                                className="truncate text-right text-xs text-muted-foreground">{formatNaive(draft.captured_at || null) || 'Not set'}</span>
                         )}
                     </div>
                     <ResetSlot isDirty={dirty('captured_at')} onReset={() => reset('captured_at')}/>

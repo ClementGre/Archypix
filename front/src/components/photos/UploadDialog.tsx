@@ -295,6 +295,9 @@ export function UploadDialog({open, onOpenChange, initialFiles, source = AUTH_UP
                 await source.complete(
                     pictureId,
                     {mime_type: file.type || undefined, file_size: file.size, file_hash: hash},
+                    // The browser File API exposes only `lastModified` (a modification time), never a
+                    // creation date, so uploads don't populate `original_file_created_at` (feature 30 §10)
+                    // — that source-date suggestion comes from WebDAV's `X-OC-CTime` instead.
                     ctx,
                 )
                 patchItem(key, {status: 'done', progress: 100})

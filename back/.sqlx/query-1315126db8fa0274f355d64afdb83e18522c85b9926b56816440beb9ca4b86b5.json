@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE pictures\n               SET width       = COALESCE($2,  width),\n                   height      = COALESCE($3,  height),\n                   captured_at = COALESCE($4,  captured_at),\n                   gps_lat     = COALESCE($5,  gps_lat),\n                   gps_lng     = COALESCE($6,  gps_lng),\n                   gps_alt     = COALESCE($7,  gps_alt),\n                   orientation = COALESCE($8,  orientation),\n                   blurhash    = COALESCE($9,  blurhash),\n                   exif_data   = CASE WHEN $10::jsonb IS NOT NULL\n                                      THEN exif_data || $10::jsonb\n                                      ELSE exif_data\n                                 END,\n                   file_size   = COALESCE($11, file_size),\n                   file_hash   = COALESCE($12, file_hash),\n                   content_hash = COALESCE($13, content_hash),\n                   thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc'),\n                   last_pipeline_run_at = NULL\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override",
+  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at, original_file_created_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at",
   "describe": {
     "columns": [
       {
@@ -421,23 +421,31 @@
             "name": "creator_override"
           }
         }
+      },
+      {
+        "ordinal": 36,
+        "name": "original_file_created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "original_file_created_at"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Int4",
-        "Int4",
-        "Timestamp",
-        "Float8",
-        "Float8",
-        "Int4",
-        "Int2",
-        "Text",
-        "Jsonb",
+        "Uuid",
+        "Varchar",
+        "Varchar",
         "Int8",
-        "Text",
-        "Text"
+        "Int4",
+        "Int4",
+        "Jsonb",
+        "Timestamp",
+        "Timestamp"
       ]
     },
     "nullable": [
@@ -476,8 +484,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "9e132650891c6a937b4f5eb3ec7f0de2c079d651a2997b72b0221a276d1e2ff7"
+  "hash": "1315126db8fa0274f355d64afdb83e18522c85b9926b56816440beb9ca4b86b5"
 }

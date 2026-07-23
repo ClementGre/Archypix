@@ -7,7 +7,7 @@
 
 use crate::domain::hierarchy::{NamingStrategy, SafeDeleteMode, TagOp, TagOpKind};
 use crate::domain::tag::TagPath;
-use crate::infra::redis::{cache_get_json, cache_set_json_ex, RedisKey};
+use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::s3;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
@@ -344,6 +344,7 @@ impl<'a> Vfs<'a> {
         hash: &str,
         size: i64,
         content_type: Option<&str>,
+        original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<bool, AppError> {
         self.finalize_write(
             segments,
@@ -351,6 +352,7 @@ impl<'a> Vfs<'a> {
             hash,
             size,
             content_type,
+            original_file_created_at,
         )
         .await
     }
@@ -369,6 +371,7 @@ impl<'a> Vfs<'a> {
         hash: &str,
         size: i64,
         content_type: Option<&str>,
+        original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<bool, AppError> {
         let (parent, name) = split_last(segments)?;
 
@@ -561,6 +564,7 @@ impl<'a> Vfs<'a> {
             None,
             None,
             None,
+            original_file_created_at,
         )
         .await?;
         // Persist the inline hash so the ETag is correct and a quick re-upload dedupes (§8).
@@ -1286,6 +1290,8 @@ impl<'a> Vfs<'a> {
                 &hash,
                 f.size,
                 f.content_type.as_deref(),
+                // Preview-edit staging promotion (08_webdav_issues) carries no source mtime.
+                None,
             )
             .await?;
         if remove_source {

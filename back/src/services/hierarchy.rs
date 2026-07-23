@@ -727,6 +727,9 @@ pub async fn browse(
         near_time: params.near_time,
         near_lat: params.near_lat,
         near_lng: params.near_lng,
+        // Hierarchy browse order is directory/name-based, so date-fix float-to-top does not apply
+        // (feature 30 §12 edge 10).
+        undated_first: false,
     };
     filter.validate()?;
 

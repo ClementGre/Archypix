@@ -92,7 +92,7 @@ async fn put(
     tmp.flush().unwrap();
     let path = tmp.path().to_path_buf();
     let hash = archypix_common::hash::hash_file(&path).unwrap();
-    vfs.put_file(&seg(segments), &path, &hash, bytes.len() as i64, ct)
+    vfs.put_file(&seg(segments), &path, &hash, bytes.len() as i64, ct, None)
         .await
 }
 

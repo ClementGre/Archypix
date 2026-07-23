@@ -35,7 +35,12 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>{children}</PopoverTrigger>
-            <PopoverContent className="w-96 space-y-3 p-3" side="left" align="start">
+            <PopoverContent
+                className="max-h-[85vh] w-[min(24rem,92vw)] space-y-3 overflow-y-auto p-3"
+                side="left"
+                align="start"
+                collisionPadding={8}
+            >
                 <div className="flex items-center justify-between">
                     <p className="text-sm font-medium">GPS location</p>
                     <Button

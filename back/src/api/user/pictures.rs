@@ -232,6 +232,8 @@ pub async fn details(
         "captured_at": d.picture.captured_at,
         "ingested_at": d.picture.ingested_at,
         "updated_at": d.picture.updated_at,
+        // Source file date (feature 30 §10) — a suggestion source for the date-fix chip.
+        "original_file_created_at": d.picture.original_file_created_at,
         "gps_lat": d.picture.gps_lat,
         "gps_lng": d.picture.gps_lng,
         "gps_alt": d.picture.gps_alt,

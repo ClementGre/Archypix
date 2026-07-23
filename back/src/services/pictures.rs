@@ -88,6 +88,9 @@ pub struct UploadMetadata {
     pub height: Option<i32>,
     pub exif_data: Option<serde_json::Value>,
     pub captured_at: Option<NaiveDateTime>,
+    /// Optional source file creation time (feature 30 §10) for clients that can provide one. The web
+    /// upload leaves it unset (browsers expose no creation date); persisted, never applied to `captured_at`.
+    pub original_file_created_at: Option<NaiveDateTime>,
     pub initial_tags: Option<Vec<String>>,
     /// Front-provided import label (`Uploaded.YYYY_MM_DD_HH_MM`, fixed per batch). When set, the
     /// picture is tagged with it (feature 15). A single ltree label, validated server-side.
@@ -159,6 +162,10 @@ pub struct PictureListParams {
     pub near_time: Option<NaiveDateTime>,
     pub near_lat: Option<f64>,
     pub near_lng: Option<f64>,
+    /// Date-fix mode (feature 30 §4): float undated pictures to the top of the current sort so the
+    /// user can fix them while the dated references stay scrollable below (`?undated_first=true`).
+    #[serde(default)]
+    pub undated_first: bool,
     pub thumbnail: Option<ThumbnailSize>,
 }
 
@@ -171,6 +178,9 @@ pub struct PictureListItem {
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
     pub ingested_at: NaiveDateTime,
+    /// Source file modification time captured at ingest (feature 30 §10). Suggestion-only date source
+    /// for the date-fix chip; `None` when unknown (most received / WebDAV rows).
+    pub original_file_created_at: Option<NaiveDateTime>,
     /// Derived GPS presence (feature 29 §3): `gps_lat IS NOT NULL AND gps_lng IS NOT NULL`, for owned
     /// **and** received rows (received GPS lives in the promoted columns). Drives client-side
     /// highlight-in-context and the fix-tools grid-local anchor scan without a round-trip.
@@ -581,6 +591,7 @@ pub async fn complete_upload(
         meta.height,
         meta.exif_data.clone(),
         meta.captured_at,
+        meta.original_file_created_at,
     )
     .await?;
 
@@ -1550,6 +1561,7 @@ pub async fn list_pictures(
         near_time: params.near_time,
         near_lat: params.near_lat,
         near_lng: params.near_lng,
+        undated_first: params.undated_first,
     };
     filter.validate()?;
 
@@ -1594,12 +1606,10 @@ pub async fn list_with_filter(
         .unwrap_or_default();
     let global_domain = settings.get(keys::GLOBAL_DOMAIN);
 
-    // Under a geo-proximity sort, surface the per-row great-circle distance so the client can badge
-    // it (feature 29 §6). Only geotagged rows get a value; `validate()` already guaranteed the ref.
-    let geo_ref = match filter.sort {
-        PictureSortField::GeoNear => filter.near_lat.zip(filter.near_lng),
-        _ => None,
-    };
+    // Surface the per-row great-circle distance whenever a reference point is given (feature 29 §6),
+    // regardless of the sort — so the photos-fix date mode can badge "distance from the picture being
+    // fixed" without reordering the grid. Only geotagged rows get a value.
+    let geo_ref = filter.near_lat.zip(filter.near_lng);
 
     // Batch-presign thumbnails: one cache lookup + one HTTP call per remote owner backend
     // instead of N sequential calls.
@@ -1625,6 +1635,7 @@ pub async fn list_with_filter(
             height: pic.height,
             captured_at: pic.captured_at,
             ingested_at: pic.ingested_at,
+            original_file_created_at: pic.original_file_created_at,
             has_gps: pic.gps_lat.is_some() && pic.gps_lng.is_some(),
             distance_m: geo_ref
                 .zip(pic.gps_lat.zip(pic.gps_lng))

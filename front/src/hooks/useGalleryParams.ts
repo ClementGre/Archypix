@@ -1,6 +1,6 @@
 import {useCallback, useMemo} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import type {PictureFilter, PictureFilters, PresenceFilter, SortField, SortOrder, TrashFilter,} from '@/lib/types'
+import type {FixMode, PictureFilter, PictureFilters, PresenceFilter, SortField, SortOrder, TrashFilter,} from '@/lib/types'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
@@ -38,6 +38,8 @@ export interface GalleryParams {
     hpath: string
     /** Hierarchy id whose config editor occupies the center view (overrides the grid). */
     hedit: string | null
+    /** Photos-fix mode (feature 30 §3): `gps` | `date` | null (off). Highlights problem pictures. */
+    fix: FixMode | null
 }
 
 /** Patch applied to the URL state; omitted keys are left unchanged. */
@@ -63,6 +65,7 @@ export interface GalleryParamsPatch {
     hierarchy?: string | null
     hpath?: string
     hedit?: string | null
+    fix?: FixMode | null
 }
 
 const DEFAULT_SORT: SortField = 'captured_at'
@@ -105,6 +108,7 @@ export function useGalleryParams() {
             hierarchy: sp.get('hierarchy'),
             hpath: sp.get('hpath') ?? '',
             hedit: sp.get('hedit'),
+            fix: (sp.get('fix') as FixMode) || null,
         }),
         [sp],
     )
@@ -139,6 +143,7 @@ export function useGalleryParams() {
                     if ('hierarchy' in patch) setOrDelete('hierarchy', patch.hierarchy, false)
                     if ('hpath' in patch) setOrDelete('hpath', patch.hpath, false)
                     if ('hedit' in patch) setOrDelete('hedit', patch.hedit, false)
+                    if ('fix' in patch) setOrDelete('fix', patch.fix, false)
                     return next
                 },
                 {replace: opts?.replace},
@@ -189,6 +194,8 @@ export function useGalleryParams() {
             nearTime: params.nearTime,
             nearLat: params.nearLat,
             nearLng: params.nearLng,
+            // Date-fix mode floats undated pictures to the top so they surface for fixing (feature 30 §4).
+            undatedFirst: params.fix === 'date',
         }),
         [params],
     )

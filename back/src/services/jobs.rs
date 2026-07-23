@@ -9,8 +9,8 @@ use crate::repository::job::JobRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
 use crate::services::aggregate::DryRun;
-use archypix_common::error::{map_sqlx_error, AppError};
-use archypix_common::mime::{supports_exif, MIME_TYPES_EXIF};
+use archypix_common::error::{AppError, map_sqlx_error};
+use archypix_common::mime::{MIME_TYPES_EXIF, supports_exif, supports_thumbnail};
 use archypix_common::settings::Settings;
 use sqlx::{Executor, PgPool, Postgres};
 use std::sync::Arc;
@@ -160,7 +160,17 @@ pub async fn edit_pictures_exif(
                 "Cannot edit picture {id}: received via federation"
             )));
         }
-        if picture.thumbnails_generated_at.is_none() {
+        // §11.2: reject edits until the initial extraction has landed, so it can't race/overwrite the
+        // edit. `thumbnails_generated_at` is stamped whenever the worker extracts EXIF or a thumbnail,
+        // so it only ever lands for formats the worker touches — a format that supports neither is
+        // never stamped, and its edit is a DB-only `unsupported` write with no extraction to race.
+        // An unknown MIME is treated as still-extracting (the worker attempts EXIF extraction anyway).
+        let extracts = picture
+            .mime_type
+            .as_deref()
+            .map(|m| supports_exif(m) || supports_thumbnail(m))
+            .unwrap_or(true);
+        if extracts && picture.thumbnails_generated_at.is_none() {
             return Err(AppError::Conflict(format!(
                 "Picture {id} is still processing; try again once extraction completes"
             )));

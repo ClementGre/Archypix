@@ -454,6 +454,7 @@ the file's MIME type.
     height ? : number;
     exif_data ? : object;      // arbitrary EXIF key-value pairs
     captured_at ? : string;    // ISO 8601 datetime
+    original_file_created_at ? : string; // source file creation time (feature 30 §10), naive datetime; suggestion-only, never applied to captured_at (the web client leaves it unset — browsers expose no creation date)
     initial_tags ? : string[]; // ltree wire-form paths — assigned as manual tags atomically with picture creation
     upload_label ? : string;   // single ltree label (`Uploaded.YYYY_MM_DD_HH_MM`) — also assigned as a manual tag (feature 15)
   defer_pipeline ? : boolean; // default false — when true, this completion does NOT wake the pipeline
@@ -530,7 +531,10 @@ NULL. AND-composed |
 `capture_date` |
 | `near_time` | `string` | — | **Naive** datetime (no offset, e.g. `2025-09-17T23:06:20`) reference for `sort=time_near`, compared against the naive
 `captured_at` — pass a picture's `captured_at` straight through (**400** if that sort is set without it) |
-| `near_lat` / `near_lng` | `number` | — | Reference point for `sort=geo_near` (**400** if that sort is set without both) |
+| `near_lat` / `near_lng` | `number` | — | Reference point. Required for `sort=geo_near` (**400** if that sort is set without both); may also be given
+with **any** sort to get per-row `distance_m` without reordering (feature 30 date-fix overlay) |
+| `undated_first` | `boolean` | `false` | Date-fix mode (feature 30 §4): float undated pictures (`captured_at IS NULL`) to the top of the current
+sort, with a `filename, id` tiebreak |
 | `thumbnail` | `"original" \| "small" \| "medium" \| "large"` | — | If set, each item includes a `thumbnail_url` presigned for this variant |
 
 **Response `200`:**
@@ -551,9 +555,10 @@ interface PictureListItem {
     height: number | null;
     captured_at: string | null;
     ingested_at: string;
+    original_file_created_at: string | null; // source file creation time at ingest (feature 30 §10); suggestion-only
     has_gps: boolean;              // derived gps_lat & gps_lng presence (owned + received) — feature 29 §3
-    distance_m?: number;           // great-circle metres from near_lat/near_lng; present ONLY under
-                                   // sort=geo_near (which excludes ungeotagged rows), omitted otherwise (§6)
+    distance_m?: number;           // great-circle metres from near_lat/near_lng; present whenever a
+                                   // near_lat/near_lng reference is given (any sort), omitted otherwise
     blurhash: string | null;
     orientation: number | null;    // EXIF orientation (1–8); thumbnails are raw pixels — the client rotates them
     thumbnail_url: string | null;  // presigned URL for the `thumbnail` variant; null when that param
@@ -592,6 +597,7 @@ Full picture details including version history.
     captured_at: string | null;
     ingested_at: string;
     updated_at: string;
+    original_file_created_at: string | null; // source file creation time at ingest (feature 30 §10); suggestion-only
     gps_lat: number | null;        // f64
     gps_lng: number | null;
     gps_alt: number | null;        // metres (i32)
@@ -1770,8 +1776,10 @@ node wins" predicate and reuses the picture list machinery — the client only e
 Each hierarchy can be mounted as a WebDAV drive at `{scheme}://{back_domain}/webdav/{slug}`
 (`slug` = the slugified hierarchy name). The mount is authenticated with HTTP **Basic** — the
 username is the `@user` and the password is the per-hierarchy **token** below. The token is
-stored encrypted at rest and shown here so the owner can paste it into a client. See
-`doc/features/06_webdav.md`.
+stored encrypted at rest and shown here so the owner can paste it into a client. A `PUT` that ingests
+a new picture honours an `X-OC-CTime` request header (unix seconds — the file's creation time, sent by
+Nextcloud/ownCloud-style clients), stored as the picture's `original_file_created_at` source-file date
+(feature 30 §10). See `doc/features/06_webdav.md`.
 
 ```ts
 interface WebdavResponse {

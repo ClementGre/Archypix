@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE pictures\n               SET mime_type = COALESCE($2, mime_type),\n                   file_size = COALESCE($3, file_size),\n                   width = COALESCE($4, width),\n                   height = COALESCE($5, height),\n                   exif_data = COALESCE($6, exif_data),\n                   captured_at = COALESCE($7, captured_at)\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override",
+  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, metadata,\n                    blurhash, file_hash, content_hash, thumbnails_generated_at,\n                    remote_exif_data, owner_deleted_at, owner_purge_at, creator, remote_updated_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,\n                       $10, $11, $16, $12, $13, $14, $15, $17, $18)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),\n                   content_hash = COALESCE(EXCLUDED.content_hash, pictures.content_hash),\n                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,\n                                                      pictures.thumbnails_generated_at),\n                   -- Owner-authoritative state is refreshed; local_exif_overrides + creator_override\n                   -- (the recipient's own relabel) are preserved. The stale-announce guard (§7) is\n                   -- applied by the caller before this upsert; here we just stamp the new value.\n                   remote_exif_data = EXCLUDED.remote_exif_data,\n                   owner_deleted_at = EXCLUDED.owner_deleted_at,\n                   owner_purge_at   = EXCLUDED.owner_purge_at,\n                   creator          = EXCLUDED.creator,\n                   remote_updated_at = COALESCE(EXCLUDED.remote_updated_at, pictures.remote_updated_at)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at",
   "describe": {
     "columns": [
       {
@@ -421,16 +421,38 @@
             "name": "creator_override"
           }
         }
+      },
+      {
+        "ordinal": 36,
+        "name": "original_file_created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "original_file_created_at"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
         "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
         "Int8",
         "Int4",
         "Int4",
+        "Text",
+        "Text",
+        "Timestamp",
         "Jsonb",
+        "Timestamp",
+        "Timestamp",
+        "Text",
+        "Text",
         "Timestamp"
       ]
     },
@@ -470,8 +492,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "c0b3f64b9cd7ab2d7019fe1052f28f0a9560d19064946561058365df30c80b2c"
+  "hash": "2f91b80bc0d7b5a12e93d32d2561a10c441eb29e5a11190d359ab4336fe6d13e"
 }

@@ -1,7 +1,7 @@
 import {memo, type MouseEvent, type PointerEvent, type ReactNode, useRef, useState} from 'react'
-import {AlertTriangle, Check, Clock, CloudOff, MapPin, RefreshCw, Trash2} from 'lucide-react'
+import {AlertTriangle, CalendarClock, CalendarOff, Check, Clock, CloudOff, MapPin, MapPinOff, RefreshCw, Trash2} from 'lucide-react'
 import {useQueryClient} from '@tanstack/react-query'
-import type {PictureListItem} from '@/lib/types'
+import type {FixMode, PictureListItem} from '@/lib/types'
 import {getPictureUrl} from '@/api/pictures'
 import {usePresignRefresh} from '@/hooks/usePresignRefresh'
 import {useIsMobile} from '@/hooks/useMediaQuery'
@@ -77,6 +77,16 @@ interface PhotoCardProps {
     retentionDays?: number
     /** Reference instant under a `time_near` sort — drives the per-tile time-delta badge (feature 29). */
     proximityRefTime?: string | null
+    /** Fix mode (feature 30): highlight pictures missing the active field (`gps` / `date`). */
+    fixMode?: FixMode | null
+    /**
+     * Marks this card as an interpolation source (feature 30): a GPS-fix before/after anchor, or a
+     * picked reference while choosing references. Rendered with a sky ring + a corner icon (`gps` → a
+     * pin, `date` → a clock) — the same treatment for automatic anchors and manual references.
+     */
+    anchorRole?: FixMode | null
+    /** Dimmed + non-selectable (e.g. a photo with no GPS/date while picking references). */
+    dimmed?: boolean
     onSelect: (event: MouseEvent) => void
     /** Long-press (touch) on the card — enters/extends multi-select. */
     onLongPress: () => void
@@ -102,6 +112,9 @@ export const PhotoCard = memo(function PhotoCard({
                                                      showPurgeCountdown,
                                                      retentionDays,
                                                      proximityRefTime,
+                                                     fixMode,
+                                                     anchorRole,
+                                                     dimmed,
                                                      onSelect,
                                                      onLongPress,
                                                      onOpen
@@ -162,6 +175,9 @@ export const PhotoCard = memo(function PhotoCard({
     const blurhash = orientedCoverStyle(item.orientation, item.width, item.height)
 
     const trashed = !!item.deleted_at
+    // Fix-mode highlight (feature 30 §4): the picture is missing the active field. Detection is
+    // scoped to non-trashed rows (§12.9) — fixing metadata on a purge-bound picture is noise.
+    const fixMissing = !trashed && (fixMode === 'gps' ? !item.has_gps : fixMode === 'date' ? !item.captured_at : false)
     const ownerDeleted = !item.owned && !!item.owner_deleted_at
     // Cross-instance owner whose backend was unreachable at presign time (§3.2) — a distinct
     // "owner offline" tile, not the generic no-thumbnail file icon.
@@ -219,7 +235,12 @@ export const PhotoCard = memo(function PhotoCard({
             className={cn(
                 'group relative cursor-pointer overflow-hidden rounded-[3px] bg-checkerboard',
                 selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
+                // Fix-mode rings compose under the selection ring (selection wins when both apply).
+                !selected && anchorRole && 'ring-2 ring-sky-400/80',
+                !selected && fixMissing && 'ring-2 ring-amber-400/80',
                 trashed && 'opacity-60',
+                // A photo that can't be a reference (no GPS/date while picking) is dimmed + inert.
+                dimmed && 'cursor-not-allowed opacity-30 grayscale',
             )}
             onClick={handleClick}
             onDoubleClick={isMobile ? undefined : onOpen}
@@ -281,9 +302,11 @@ export const PhotoCard = memo(function PhotoCard({
                     'absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border border-white/70 bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100',
                     multiSelect && 'opacity-100',
                     selected && 'border-primary bg-primary text-primary-foreground opacity-100',
+                    // A picked reference / anchor shows a sky-blue check instead of the primary one.
+                    !selected && anchorRole && 'border-sky-400 bg-sky-400 text-white opacity-100',
                 )}
             >
-                {selected && <Check className="h-3.5 w-3.5"/>}
+                {(selected || anchorRole) && <Check className="h-3.5 w-3.5"/>}
             </div>
 
             {!item.owned && item.owner_username && (
@@ -295,6 +318,24 @@ export const PhotoCard = memo(function PhotoCard({
                 >
                     {ownerDeleted && <AlertTriangle className="h-2.5 w-2.5"/>}
                     @{item.owner_username}
+                </CornerLabel>
+            )}
+
+            {fixMissing && (
+                <CornerLabel
+                    top
+                    left={false}
+                    title={fixMode === 'gps' ? 'No GPS location' : 'No capture date'}
+                    className="bg-amber-500/85 justify-center py-0.5"
+                >
+                    {fixMode === 'gps' ? <MapPinOff className="h-3 w-3"/> : <CalendarOff className="h-3 w-3"/>}
+                </CornerLabel>
+            )}
+
+            {anchorRole && !fixMissing && (
+                <CornerLabel top left={false} title={anchorRole === 'gps' ? 'Location reference' : 'Time reference'}
+                             className="bg-sky-500/85 justify-center py-0.5">
+                    {anchorRole === 'gps' ? <MapPin className="h-3 w-3"/> : <CalendarClock className="h-3 w-3"/>}
                 </CornerLabel>
             )}
 

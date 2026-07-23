@@ -40,6 +40,8 @@ export interface PictureListItem {
     height: number | null
     captured_at: string | null
     ingested_at: string
+    /** Source file modification time captured at ingest (feature 30 §10); suggestion-only. */
+    original_file_created_at: string | null
     /** Derived GPS presence (feature 29 §3) — owned + received. Drives highlight/scan without a fetch. */
     has_gps: boolean
     /** Great-circle metres from `near_lat`/`near_lng`; present ONLY under `sort=geo_near` (§6). */
@@ -93,6 +95,8 @@ export interface PictureDetail {
     captured_at: string | null
     ingested_at: string
     updated_at: string
+    /** Source file modification time captured at ingest (feature 30 §10); suggestion-only. */
+    original_file_created_at: string | null
     gps_lat: number | null
     gps_lng: number | null
     gps_alt: number | null
@@ -216,7 +220,12 @@ export interface PictureFilters {
     nearTime?: string | null
     nearLat?: number | null
     nearLng?: number | null
+    /** Date-fix mode (feature 30 §4): float undated pictures to the top of the current sort. */
+    undatedFirst?: boolean
 }
+
+/** Photos-fix mode (feature 30 §3): repair GPS location or capture date from the gallery. */
+export type FixMode = 'gps' | 'date'
 
 // ---------- Hierarchies ----------
 

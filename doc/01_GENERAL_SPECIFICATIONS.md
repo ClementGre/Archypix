@@ -408,3 +408,10 @@ delete. `safeDeleteMode: singleBranch` mitigates this — recommended default fo
 
 **Offline sender availability.** If Alice's backend is offline, Bob and Carol cannot fetch her pictures — inherent limitation of the decentralised
 model, no special handling needed.
+
+**Source file date is not a capture date.** A picture stores `original_file_created_at` — the source
+file's **creation** time captured at ingest, from the `X-OC-CTime` header WebDAV clients
+(Nextcloud/ownCloud) send on `PUT` (the browser File API exposes no creation date, so ordinary uploads
+leave it unset). It is **suggestion-only**: surfaced by the photos-fix tools as a candidate capture
+date but **never auto-applied** to `captured_at` (a file timestamp is not a capture time). See
+`doc/features/30_photos_fix_tools.md`.

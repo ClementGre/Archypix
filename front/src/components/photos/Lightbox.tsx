@@ -470,7 +470,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     // scoped to the current id so navigating to another picture still resets as intended. The variant
     // is tracked alongside so `srcOriented` matches what's actually on screen (the kept URL is still
     // the thumbnail until the original resolves), avoiding a brief mis-rotation.
-    const shownUrl = useRef<{ id: string; url: string; variant: PictureVariant } | null>(null)
+    const shownUrl = useRef<{ id: string; url: string; variant: 'original' | 'large' } | null>(null)
     let url = urlData?.url ?? null
     let shownVariant = variant
     if (current) {

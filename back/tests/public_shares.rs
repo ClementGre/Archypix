@@ -256,6 +256,7 @@ async fn anonymous_contribution_lands_owned_tagged_and_credited(db: PgPool) {
         height: Some(10),
         exif_data: None,
         captured_at: None,
+        original_file_created_at: None,
         initial_tags: None,
         upload_label: None,
         defer_pipeline: true,

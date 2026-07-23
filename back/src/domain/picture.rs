@@ -68,6 +68,9 @@ pub struct Picture {
     /// Recipient-local relabel of the creator (received pictures only). Never propagates, not even
     /// transitively. Displayed creator = `coalesce(creator_override, creator, owner_identity)`.
     pub creator_override: Option<String>,
+    /// Source file **creation** time captured at ingest (feature 30 §10) from the `X-OC-CTime` WebDAV
+    /// header (browser uploads can't provide one). Suggestion-only — never auto-applied to `captured_at`.
+    pub original_file_created_at: Option<NaiveDateTime>,
 }
 
 /// Why a picture was soft-deleted (set with `deleted_at`). Feature 09 only produces `Manual`; the
@@ -374,6 +377,7 @@ mod tests {
             copy_source_picture_id: None,
             creator: None,
             creator_override: None,
+            original_file_created_at: None,
         }
     }
 

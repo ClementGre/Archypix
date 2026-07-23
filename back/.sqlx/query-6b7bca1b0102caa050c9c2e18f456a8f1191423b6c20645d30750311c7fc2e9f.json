@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at, remote_updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override\n               FROM pictures WHERE id = $1",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at, remote_updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override, original_file_created_at\n               FROM pictures WHERE id = ANY($1::uuid[])",
   "describe": {
     "columns": [
       {
@@ -421,11 +421,22 @@
             "name": "creator_override"
           }
         }
+      },
+      {
+        "ordinal": 36,
+        "name": "original_file_created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "original_file_created_at"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -464,8 +475,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "4514a2b8db64cea48ecbecee821ab25547e924624eb502ce160b7135aa9fd8fd"
+  "hash": "6b7bca1b0102caa050c9c2e18f456a8f1191423b6c20645d30750311c7fc2e9f"
 }

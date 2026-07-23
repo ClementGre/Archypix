@@ -8,6 +8,7 @@ import {TagPicker} from '@/components/tags/TagPicker'
 import {BatchConfirmDialog} from './BatchConfirmDialog'
 import {BatchExifSection, BatchMetadataSection} from './BatchExifSection'
 import {BatchCreatorControl} from './BatchCreatorControl'
+import {FixBulkSection} from '@/components/photos/fix/FixBulkSection'
 import {batchRestore, batchTrash} from '@/api/pictures'
 import {batchEditTags} from '@/api/tags'
 import {useAggregate} from '@/hooks/useAggregate'
@@ -226,6 +227,9 @@ export function MultiSelectionPanel() {
                     <div className="h-16 animate-pulse rounded bg-muted"/>
                 )}
             </Section>
+
+            {/* Fix-tools bulk section (feature 30) — shown before Tags when fix mode is on. */}
+            <FixBulkSection/>
 
             {/* Tags (tristate, with per-source provenance counts) */}
             <Section

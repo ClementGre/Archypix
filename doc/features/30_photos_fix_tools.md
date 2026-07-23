@@ -283,21 +283,32 @@ edits re-evaluate `gps_within_bbox` / `capture_year` / segments for free (featur
 
 ## 14. Work breakdown
 
-- [ ] Schema: `pictures.original_file_created_at`; capture at upload (`File.lastModified`) +
-  WebDAV (`X-OC-Mtime`); expose on list/detail; `sqlx prepare`.
-- [ ] Fix mode: `fix` param + header toggle + GPS/Date sub-segment; highlight-in-context;
-  date-mode missing-first sort prefix (extends feature 29 sort).
-- [ ] `GpsFixPanel`: grid-local before/after interpolation, out-of-view directed-bracket fallback,
-  copy-from-one, draggable pin, far-apart warn, next-missing.
-- [ ] `DateFixPanel` + `lib/filenameDate.ts` parser (pattern table + tests); chips (filename /
-  mtime / ingested); normal-editor + upload pre-fill; optional run interpolation.
-- [ ] Two-step selection: target stash + reference-picking phase (persistent selection scoped
-  to the phase) + preview.
-- [ ] Bulk preview popup (per-row nullable value, include toggles) over both fields.
-- [ ] Received targets: local/propose routing; mixed-selection batch EXIF split (owned
-  write-through / received-local batch / received-propose per-picture loop) + per-route dry-run
-  breakdown.
-- [ ] Tests: filename parser matrix; grid-local + fallback interpolation; reference average
-  (time-weighted 2 vs centroid N); bulk skip-on-null; received override/propose routing;
-  mixed-selection split; pipeline re-eval on date/GPS edit.
-- [ ] Docs (§13).
+- [x] Schema: `pictures.original_file_created_at` (migration `0012_source_file_date`), the source
+  file **creation** time — WebDAV `PUT` `X-OC-CTime` header (browsers expose no creation date, so
+  web uploads leave it unset); expose on list/detail; `sqlx prepare`.
+- [x] Fix mode: `fix` param (`useGalleryParams`) enabled from the grid-header `IssuesFilter` (a Fix
+  tools Off/GPS/Date line); highlight-in-context (`PhotoCard` ring + badge, `fixMode`/`isAnchor`);
+  date-mode missing-first sort (`undated_first` on `PictureListFilter`/`push_order_by`, extends
+  feature 29 sort). The fix UI is a **section before Tags** in the existing details panel (shown
+  only when the picture is missing the field), not a panel swap.
+- [x] `GpsFixPanel`: grid-local before/after interpolation (`useFixAnchors` + loaded-grid store),
+  out-of-view directed-bracket fallback, copy-from-one (single reference), draggable pin
+  (`MapView` `extraMarkers`), far-apart warn, next-missing.
+- [x] `DateFixPanel` + `lib/filenameDate.ts` parser (pattern table); chips (filename / source-file /
+  uploaded, `lib/dateSuggestions.ts`); normal-editor prefill (`DateTimePickerPopover` suggestions)
+    + upload `original_file_created_at`. *(Run interpolation deferred — noted below.)*
+- [x] Two-step selection: target stash + reference-picking phase (`stores/fixReference`, persistent
+  selection scoped to the phase, `ReferenceBar`) + derived-value preview (`FixPanel`).
+- [x] Bulk preview popup (`FixBulkDialog` — per-row nullable value, include toggles, editable) over
+  both fields.
+- [x] Received targets: local/propose routing (`useFixApply` per-type). Bulk uses the **looped
+  per-picture path** (owned `POST /edit`, received `POST /exif` local|propose) — the spec's
+  set-based mixed-selection endpoint was not needed and is deferred as an optimisation.
+- [x] Tests: backend `undated_first` ordering + `original_file_created_at` round-trip
+  (`back/tests/photos_fix_tools.rs`). *(Frontend has no test runner configured; the parser +
+  interpolation math are pure and documented — a vitest matrix is a follow-up.)*
+- [x] Docs (§13).
+
+**Deferred (follow-ups):** date **run-interpolation** (§6, evenly spacing undated targets between
+two dated ends); the optional **null-island `(0,0)`** client heuristic (§12.11); a single batched
+propose/mixed-selection EXIF endpoint (§11 optimisation); frontend vitest suite.

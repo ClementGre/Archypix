@@ -29,6 +29,9 @@ export interface UploadCompleteMeta {
     mime_type?: string
     file_size?: number
     file_hash?: string
+    /** Optional source file creation time (feature 30 §10). The web upload leaves it unset — the
+     *  browser File API exposes no creation date; it's populated via WebDAV's `X-OC-CTime` instead. */
+    original_file_created_at?: string
 }
 
 /**
@@ -66,6 +69,7 @@ export const AUTH_UPLOAD_SOURCE: UploadSource = {
             mime_type: meta.mime_type,
             file_size: meta.file_size,
             file_hash: meta.file_hash,
+            original_file_created_at: meta.original_file_created_at,
             initial_tags: ctx.tags?.length ? ctx.tags : undefined,
             upload_label: ctx.label || undefined,
         })

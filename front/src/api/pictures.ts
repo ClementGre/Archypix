@@ -48,6 +48,9 @@ export interface CompleteUploadBody {
     width?: number
     height?: number
     captured_at?: string
+    /** Optional source file creation time (feature 30 §10). The web upload leaves it unset (browsers
+     *  expose no creation date); populated via WebDAV's `X-OC-CTime` instead. */
+    original_file_created_at?: string
     initial_tags?: string[]
     /** Front-fixed import label (`Uploaded_YYYY_MM_DD_HH_MM`) — tags the new picture (feature 15). */
     upload_label?: string
@@ -81,6 +84,8 @@ export interface ListPicturesParams {
     near_time?: string
     near_lat?: number
     near_lng?: number
+    /** Date-fix mode (feature 30 §4): float undated pictures to the top of the current sort. */
+    undated_first?: boolean
     thumbnail?: PictureVariant
 }
 

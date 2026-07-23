@@ -231,6 +231,7 @@ async fn complete_upload_hard_check_rejects_over_quota(db: PgPool) {
             height: None,
             exif_data: None,
             captured_at: None,
+            original_file_created_at: None,
             initial_tags: None,
             upload_label: None,
             defer_pipeline: true,

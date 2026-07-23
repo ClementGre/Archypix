@@ -5,29 +5,11 @@ import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Button} from '@/components/ui/button'
+import {buildNaive, parseNaive} from '@/lib/fixDate'
 
-/** Parse "YYYY-MM-DDTHH:MM:SS" (NaiveDateTime, no tz) into { date, time }. */
-function parseNaive(iso: string): { date: Date; time: string } {
-    const [datePart = '', timePart = '00:00:00'] = iso.split('T')
-    const [y = 2000, mo = 1, d = 1] = datePart.split('-').map(Number)
-    return {
-        date: new Date(y, mo - 1, d),
-        time: timePart.slice(0, 5), // "HH:MM"
-    }
-}
-
-/** Build "YYYY-MM-DDTHH:MM:SS" from a local Date + "HH:MM" string. */
-function buildNaive(date: Date, time: string): string {
-    const y = date.getFullYear()
-    const mo = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    const t = time.length >= 5 ? time.slice(0, 5) + ':00' : '00:00:00'
-    return `${y}-${mo}-${d}T${t}`
-}
-
-/** Format "YYYY-MM-DDTHH:MM:SS" for display. */
+/** Format "YYYY-MM-DDTHH:MM:SS" for display; empty string when unset (callers add any placeholder). */
 export function formatNaive(iso: string | null | undefined): string {
-    if (!iso) return '—'
+    if (!iso) return ''
     const {date, time} = parseNaive(iso)
     const dateStr = date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
     return `${dateStr} ${time}`
@@ -40,9 +22,15 @@ interface DateTimePickerPopoverProps {
     children: ReactNode
     /** Disable days before today (e.g. an expiry can't be in the past). */
     disablePast?: boolean
+    /**
+     * Optional "From …" prefill chips (feature 30 §6): a labelled candidate date the user can apply
+     * with one click (e.g. from the filename / source file date / upload date). Shown above the
+     * calendar, typically only when the field is empty.
+     */
+    suggestions?: { label: string; value: string; lowConfidence?: boolean }[]
 }
 
-export function DateTimePickerPopover({value, onChange, children, disablePast}: DateTimePickerPopoverProps) {
+export function DateTimePickerPopover({value, onChange, children, disablePast, suggestions}: DateTimePickerPopoverProps) {
     const [open, setOpen] = useState(false)
 
     const parsed = value ? parseNaive(value) : null
@@ -66,7 +54,23 @@ export function DateTimePickerPopover({value, onChange, children, disablePast}: 
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>{children}</PopoverTrigger>
-            <PopoverContent className="w-auto space-y-3 p-3" side="left" align="start">
+            <PopoverContent className="max-h-[85vh] w-auto max-w-[min(92vw,18rem)] space-y-3 overflow-y-auto p-3" side="left" align="start"
+                            collisionPadding={8}>
+                {suggestions && suggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 border-b border-border pb-2">
+                        {suggestions.map((s) => (
+                            <button
+                                key={s.label}
+                                type="button"
+                                onClick={() => onChange(s.value)}
+                                title={formatNaive(s.value)}
+                                className="max-w-full rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/60 hover:text-primary"
+                            >
+                                <span className={s.lowConfidence ? 'text-amber-500' : undefined}>{s.label}</span>: {formatNaive(s.value)}
+                            </button>
+                        ))}
+                    </div>
+                )}
                 <Calendar
                     mode="single"
                     weekStartsOn={1}

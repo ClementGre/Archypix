@@ -44,6 +44,11 @@ interface MapViewProps {
      * Used by the batch-aggregate GPS preview.
      */
     interactive?: boolean
+    /**
+     * Extra static (non-draggable) markers layered on the map — the GPS-fix before/after
+     * interpolation anchors (feature 30 §5.1). Default colour is a neutral slate.
+     */
+    extraMarkers?: { lat: number; lng: number; color?: string; label?: string }[]
 }
 
 const HANDLE_HTML = (color: string) =>
@@ -52,7 +57,7 @@ const FAV_HTML =
     `<div style="font-size:18px;line-height:14px;color:#f59e0b;text-shadow:0 0 2px rgba(0,0,0,.6),0 0 2px rgba(0,0,0,.6)">★</div>`
 
 export function MapView(props: MapViewProps) {
-    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true, interactive = true} = props
+    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true, interactive = true, extraMarkers} = props
     const containerRef = useRef<HTMLDivElement>(null)
     const mapRef = useRef<LMap | null>(null)
     const tileRef = useRef<LLayer | null>(null)
@@ -83,6 +88,51 @@ export function MapView(props: MapViewProps) {
     const favMarkers = useRef<LMarker[]>([])
     const favoritesRef = useRef<FavoriteLocation[]>(favorites)
     favoritesRef.current = favorites
+    const extraLayers = useRef<LMarker[]>([])
+    const extraRef = useRef(extraMarkers)
+    extraRef.current = extraMarkers
+
+    // (Re)draw the static extra markers (GPS-fix anchors). Safe to call before/after map init.
+    const renderExtra = useRef<() => void>(() => {
+    })
+    renderExtra.current = () => {
+        const map = mapRef.current
+        const L = window.L
+        if (!map || !L) return
+        extraLayers.current.forEach((m) => m.remove())
+        extraLayers.current = (extraRef.current ?? []).map((e) =>
+            L.marker([e.lat, e.lng], {
+                icon: L.divIcon({className: '', html: HANDLE_HTML(e.color ?? '#64748b'), iconSize: [14, 14], iconAnchor: [7, 7]}),
+                interactive: false,
+                // Keep these static markers (GPS-fix reference points) below the draggable pin so the
+                // picture's own point is always visible where they overlap.
+                zIndexOffset: -1000,
+            }).addTo(map),
+        )
+    }
+
+    // Fit the map so the pin AND all extra markers (GPS-fix anchors / references) are visible.
+    const fitPoints = useRef<() => void>(() => {
+    })
+    fitPoints.current = () => {
+        const map = mapRef.current
+        if (!map || mode !== 'point') return
+        const pts: [number, number][] = []
+        const p = latest.current.point
+        if (p?.lat != null && p?.lng != null) pts.push([p.lat, p.lng])
+        for (const e of extraRef.current ?? []) pts.push([e.lat, e.lng])
+        if (pts.length === 0) return
+        if (pts.length === 1) {
+            map.setView(pts[0], 13)
+            return
+        }
+        const lats = pts.map((q) => q[0])
+        const lngs = pts.map((q) => q[1])
+        map.fitBounds(
+            [[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]],
+            {padding: [30, 30], maxZoom: 15},
+        )
+    }
 
     // (Re)draw favourite pins from the latest list. Safe to call before/after map init.
     const renderFavorites = useRef<() => void>(() => {
@@ -144,8 +194,12 @@ export function MapView(props: MapViewProps) {
         const map = mapRef.current
         if (!map) return
         if (mode === 'point') {
-            const p = latest.current.point
-            if (p?.lat != null && p?.lng != null) map.setView([p.lat, p.lng], 13)
+            // With extra markers, frame them all; otherwise just re-centre on the pin.
+            if (extraRef.current?.length) fitPoints.current()
+            else {
+                const p = latest.current.point
+                if (p?.lat != null && p?.lng != null) map.setView([p.lat, p.lng], 13)
+            }
         } else if (mode === 'bbox') {
             const b = latest.current.bbox!
             map.fitBounds(boundsOf(b), {padding: [20, 20], maxZoom: 13})
@@ -158,6 +212,7 @@ export function MapView(props: MapViewProps) {
     // Init map + the mode's overlay once Leaflet is ready.
     useEffect(() => {
         let cancelled = false
+        let sizeTimer: ReturnType<typeof setTimeout> | undefined
         loadLeaflet().then((L) => {
             if (cancelled || !containerRef.current || mapRef.current) return
             const map = L.map(
@@ -284,10 +339,21 @@ export function MapView(props: MapViewProps) {
             }
 
             renderFavorites.current()
-            setTimeout(() => map.invalidateSize(), 60)
+            renderExtra.current()
+            // Defer sizing to the next frame: the map may still be laid out (sidebar transitions), and
+            // fitting bounds before the container has a real size can throw. Guard against the map being
+            // torn down (fast unmount/remount when the fix panel switches targets) in the interval —
+            // otherwise `invalidateSize`/`fitBounds` run against a removed map (`_leaflet_pos` undefined).
+            sizeTimer = setTimeout(() => {
+                if (cancelled || !mapRef.current) return
+                map.invalidateSize()
+                // With extra markers present, frame all points rather than just centring on the pin.
+                if (extraRef.current?.length) fitPoints.current()
+            }, 60)
         })
         return () => {
             cancelled = true
+            if (sizeTimer) clearTimeout(sizeTimer)
             mapRef.current?.remove()
             mapRef.current = null
             pin.current = null
@@ -295,6 +361,7 @@ export function MapView(props: MapViewProps) {
             circ.current = null
             handles.current = []
             favMarkers.current = []
+            extraLayers.current = []
             tileRef.current = null
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -346,6 +413,12 @@ export function MapView(props: MapViewProps) {
     useEffect(() => {
         renderFavorites.current()
     }, [favorites])
+
+    // Re-render the static extra markers when they change, and re-frame all points (no-op until ready).
+    useEffect(() => {
+        renderExtra.current()
+        if (extraMarkers?.length) fitPoints.current()
+    }, [extraMarkers])
 
     const handleMyLocation = () => {
         if (!navigator.geolocation) return
@@ -483,6 +556,7 @@ export function MapView(props: MapViewProps) {
                             onCircle={onCircle}
                             className="h-[70vh] w-full"
                             expandable={false}
+                            extraMarkers={extraMarkers}
                         />
                     </DialogContent>
                 </Dialog>

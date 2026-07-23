@@ -131,24 +131,25 @@ session exists.
 The gallery view lives entirely in the URL so it is shareable and back/forward-friendly. `useGalleryParams()` returns typed `params`, derived
 `filters` (for `usePictures`), and `update(patch, { replace })`. Params (defaults are **omitted** from the URL):
 
-| Param                  | Meaning                                                                                                                                                       |
-|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `tag`                  | active (primary) tag filter (wire form) — set by a plain tag click                                                                                            |
-| `inc` / `exc` / `exa`  | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                                   |
-| `scope`                | `all` \| `owned` \| `shared`                                                                                                                                  |
-| `trash`                | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle`        |
-| `sort`                 | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` \| `time_near` \| `geo_near` (proximity, feature 29 §6)                 |
-| `order`                | `asc` \| `desc` (ignored for proximity sorts)                                                                                                                 |
-| `after` / `before`     | capture-date bounds (ISO)                                                                                                                                     |
-| `gps` / `cdate`        | presence filters (feature 29 §4): `any` (default, omitted) \| `present` \| `missing` — GPS / capture-date completeness, set by the grid-header `IssuesFilter` |
-| `issue`                | `1` ⇒ the `missing_any` OR (any picture missing GPS **or** date); mutually exclusive with `gps`/`cdate`                                                       |
-| `nt` / `nlat` / `nlng` | proximity-sort references: `near_time` (ISO) for `time_near`, `near_lat`/`near_lng` for `geo_near` — set by `SelectionPanel`'s "Nearby in time/place"         |
-| `panel`                | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                                                                                          |
-| `share`                | incoming share id to highlight (cross-link target)                                                                                                            |
-| `hierarchy`            | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                          |
-| `hpath`                | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                               |
-| `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                                |
-| `view`                 | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                                     |
+| Param                  | Meaning                                                                                                                                                                         |
+|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `tag`                  | active (primary) tag filter (wire form) — set by a plain tag click                                                                                                              |
+| `inc` / `exc` / `exa`  | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                                                     |
+| `scope`                | `all` \| `owned` \| `shared`                                                                                                                                                    |
+| `trash`                | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle`                          |
+| `sort`                 | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` \| `time_near` \| `geo_near` (proximity, feature 29 §6)                                   |
+| `order`                | `asc` \| `desc` (ignored for proximity sorts)                                                                                                                                   |
+| `after` / `before`     | capture-date bounds (ISO)                                                                                                                                                       |
+| `gps` / `cdate`        | presence filters (feature 29 §4): `any` (default, omitted) \| `present` \| `missing` — GPS / capture-date completeness, set by the grid-header `IssuesFilter`                   |
+| `issue`                | `1` ⇒ the `missing_any` OR (any picture missing GPS **or** date); mutually exclusive with `gps`/`cdate`                                                                         |
+| `nt` / `nlat` / `nlng` | proximity-sort references: `near_time` (ISO) for `time_near`, `near_lat`/`near_lng` for `geo_near` — set by `SelectionPanel`'s "Nearby in time/place"                           |
+| `panel`                | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                                                                                                            |
+| `share`                | incoming share id to highlight (cross-link target)                                                                                                                              |
+| `hierarchy`            | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                                            |
+| `hpath`                | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                                                 |
+| `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                                                  |
+| `view`                 | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                                                       |
+| `fix`                  | photos-fix mode (feature 30): `gps` \| `date` \| absent — highlights problem pictures, swaps the right panel for the fix surface, and (date) floats undated pictures to the top |
 
 ---
 
@@ -270,6 +271,33 @@ distinct values with an **(i)** popover for the rest. Editable fields are click-
 local/suggest mode toggle re-running it when received pictures are present); the GPS aggregate renders its bbox on a
 read-only `MapView`. `BatchConfirmDialog` is the mandatory confirmation gate: runs the endpoint's `dry_run` on open
 (re-running when `dryRunKey` changes) before enabling Confirm; trigger-based or programmatically-controlled.
+**`photos/fix/`** (feature 30 photos-fix tools) — enabled from the grid-header **`IssuesFilter`** (a *Fix tools*
+Off/GPS/Date line under the presence filters), setting the `fix` URL param. `PhotoCard` highlights pictures missing the
+active field (amber ring + `MapPinOff`/`CalendarOff` badge, non-trashed only) and the GPS before/after anchors (sky
+ring, `isAnchor`); while a target is selected, every card shows a **distance-from-the-target badge** — time proximity in
+GPS mode (`PhotoGrid` threads the target's `captured_at`), and **geo distance** in Date mode (the target's coordinates
+go to the list query as a `geoRef`, so the server returns per-row `distance_m` without reordering the grid). The fix UI
+is a **non-collapsible pane** (`FixPane`) in the details panel right before Tags, shown only when the selected picture
+is **missing** the active field. `GpsFixPanel` = a **full-bleed** `MapView` (border kept, auto-fits all points) with the
+draggable proposed pin; below it the before/after anchors from `useFixAnchors` (grid-local scan → directed bracketing
+fallback), the "N km apart" distance (amber + warning when the anchors are > 50 km apart or ≥ 24 h from the target), and
+2-decimal `N`/`E` coordinates. `DateFixPanel` = a small centered inline calendar on a full-width background + a compact
+time input + priority suggestion chips (`lib/dateSuggestions`). Apply is an `ApplyControls` split button whose main
+action is the last-used one (Apply, or Apply & next — persisted in `stores/fixPrefs`) with a dropdown for either, plus a
+**Skip** that advances without writing. **Pick references** (one consistent button everywhere) enters the phase
+(`stores/fixReference` + `useReferencePhase`: snapshots/restores the gallery filters/sort, closes the mobile drawer):
+card clicks route to `toggleRef`, the floating `ReferenceBar` replaces `SelectionActionBar` (with a mobile **Review**
+button to reopen the drawer). The reference view sits **inline** — it replaces the before/after zone (GPS) or the
+suggestion chips (Date) with a reference summary (derived value on the same map / a `DateTimelinePreview`), the map /
+calendar staying for manual tweaks, plus a **Show photos nearby in time/place** proximity shortcut
+(`NearbyReferenceSort`). A **multi-selection** shows `FixBulkSection` (`BatchReferencePanel` during reference picking)
+and opens the rich **`FixBulkDialog`**: one row per target with its proposed value, **provenance** (Filename / File date
+/ Upload / Interpolated / References — switchable per row and toggleable in bulk to include/exclude a whole source), the
+GPS before/after reference thumbnails, an overview map of the proposed points, per-row edit (calendar / map picker), and
+per-row include. Derivation lives in `lib/fixBulk` (provenance-carrying rows) + `useReferenceDerivation`. Apply routes
+per type (`useFixApply`): owned → `POST /pictures/{id}/edit`, received → `POST /pictures/{id}/exif` (`local`/`propose`);
+bulk loops the per-picture path. The date chips also appear in the normal EXIF editor's `DateTimePickerPopover`
+(`suggestions`, when `captured_at` is empty); the source-file date is populated only over WebDAV (`X-OC-CTime`).
 **`photos/detail/`** — `Section` (compact foldable section, collapse persisted per id — optionally **controlled** via `open`/`onOpenChange` for lazy
 fetching), `CreatorField` (feature 26 "Created by" line: parses the resolved `creator` by leading sigil — `@user:domain` identity handle / `#name`
 "Created by {name}" + a **"public share"** chip / plain — click-to-edit through `useSetCreator` via the shared `ContactInput` (`common/`, plain text
