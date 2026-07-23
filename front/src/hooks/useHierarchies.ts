@@ -61,6 +61,20 @@ export function useHierarchyBrowse(
                 ...(filters.trash && filters.trash !== 'exclude' ? {trash: filters.trash} : {}),
                 ...(filters.capturedAfter ? {captured_after: filters.capturedAfter} : {}),
                 ...(filters.capturedBefore ? {captured_before: filters.capturedBefore} : {}),
+                ...(filters.missingAny
+                    ? {missing_any: true}
+                    : {
+                        ...(filters.gps && filters.gps !== 'any' ? {gps: filters.gps} : {}),
+                        ...(filters.captureDate && filters.captureDate !== 'any'
+                            ? {capture_date: filters.captureDate}
+                            : {}),
+                    }),
+                ...(filters.sort === 'time_near' && filters.nearTime
+                    ? {near_time: filters.nearTime}
+                    : {}),
+                ...(filters.sort === 'geo_near' && filters.nearLat != null && filters.nearLng != null
+                    ? {near_lat: filters.nearLat, near_lng: filters.nearLng}
+                    : {}),
             }),
         getNextPageParam: (last) =>
             last.page * last.page_size < last.total ? last.page + 1 : undefined,

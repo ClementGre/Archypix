@@ -128,9 +128,15 @@
   three-state grid-header `TrashToggle` (Photos / All / Trash → `trash` URL param), removed the "Include trashed" checkbox, and the main
   gallery (metadata, tag filtering, batch restore in the selection panel) now serves trashed pictures directly — no client-side `deleted_at`
   filtering. Profile "Open trash" deep-links to `/?trash=only`.
-- [ ] **Query presence filters & proximity sorts** — reusable per-field `gps`/`capture_date` presence filters
-  (`present|missing`) + `missing_any` OR + `has_gps` list field + directed bracketing lookup + time/geo proximity
-  sorts; substrate for the fix tools. See `doc/features/29_query_proximity_and_missing_filter.md`.
+- [x] **Query presence filters & proximity sorts** — reusable per-field `gps`/`capture_date` presence filters
+  (`present|missing`) + `missing_any` OR (mutual-exclusion 400) + `has_gps` list field + directed bracketing lookup +
+  time/geo proximity sorts (`sort=time_near|geo_near` + `near_*`, required-param 400, `id` tiebreak, **haversine**
+  geo ordering — antimeridian-safe, no index/PostGIS). Threaded through the flat list, hierarchy `browse`, and
+  feature-14 selections. `PictureListItem` also carries a geo-sort-only `distance_m` (Rust haversine over the page).
+  **Frontend**: `useGalleryParams` presence/proximity URL state, grid-header **Issues filter** (All / Missing GPS /
+  Missing date / Any issue), `SelectionPanel` "Nearby in time/place" actions, `FilterControls` proximity indicator +
+  clear, per-tile distance badge. Substrate for the fix tools. See
+  `doc/features/29_query_proximity_and_missing_filter.md`.
 - [ ] **Photos fix tools** — guided GPS/capture-date fix modes: highlight-in-context, filename/mtime/ingested date
   suggestions, grid-local GPS interpolation, explicit target→references selection, bulk preview; received pictures
   included. Depends on feature 29. See `doc/features/30_photos_fix_tools.md` (supersedes the feature 21 stub).
@@ -139,7 +145,8 @@
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.
 - [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
-- [ ] **Rate limiting & validators** — more rate limiting.
+- [ ] **Rate limiting & validators** — more rate limiting, real structured framework allowing to list the rate limiters in the admin dashboard with
+  the window size + limit within window.
 - [~] **Video & audio playback** — Tier 1 done (inline playback via `@vidstack/react`); Tier 2 todo (ffmpeg transcode worker); Tier 3 later (HLS). See
   `doc/05_FRONTEND_ARCHITECTURE.md §9`.
 

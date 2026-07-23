@@ -2,7 +2,7 @@
 // filter: included / included-exactly / excluded tags, each with inline controls (switch an include
 // to "exactly" and back, remove) plus a clear-all. Rendered at the top of the centre grid.
 
-import {Ban, Equal, Hash, ListFilter, X} from 'lucide-react'
+import {Ban, Equal, Hash, X} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {cn, TagPath} from '@/lib/utils'
@@ -80,9 +80,10 @@ export function TagFilterBar() {
         update({exact: without(exact, p), include: [...new Set([...include, p])]})
     const clearAll = () => update({tag: null, include: [], exact: [], exclude: []})
 
+    const tot_length = includes.length + exact.length + exclude.length
+
     return (
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
-            <ListFilter className="mr-0.5 h-4 w-4 shrink-0 text-muted-foreground"/>
             {includes.map((p) => (
                 <Chip key={`inc:${p}`} path={p} kind="inc" switchTo="exa" onSwitch={() => toExact(p)} onRemove={() => remove(p)}/>
             ))}
@@ -92,12 +93,14 @@ export function TagFilterBar() {
             {exclude.map((p) => (
                 <Chip key={`exc:${p}`} path={p} kind="exc" onRemove={() => remove(p)}/>
             ))}
-            <button
-                onClick={clearAll}
-                className="ml-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-                Clear
-            </button>
+            {tot_length > 1 && (
+                <button
+                    onClick={clearAll}
+                    className="ml-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                    Clear
+                </button>
+            )}
         </div>
     )
 }

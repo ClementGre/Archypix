@@ -495,12 +495,8 @@ async fn trash_filter_three_states(db: PgPool) {
             page_size: 50,
             sort: PictureSortField::IngestedAt,
             order: SortOrder::Desc,
-            predicate: None,
-            owned_only: false,
-            shared_with_me: false,
             trash,
-            captured_after: None,
-            captured_before: None,
+            ..Default::default()
         };
         let (items, _) = PictureRepository::list(db, user, &filter).await.unwrap();
         items.into_iter().map(|p| p.id).collect()

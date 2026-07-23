@@ -13,7 +13,7 @@
 use crate::domain::hierarchy::TagPredicate;
 use crate::domain::tag::TagPath;
 use crate::repository::picture::{
-    PictureListFilter, PictureSortField, ResolvedSelection, SortOrder, TrashFilter,
+    PictureListFilter, PresenceFilter, ResolvedSelection, TrashFilter,
 };
 use crate::services::hierarchy;
 use archypix_common::error::AppError;
@@ -34,6 +34,13 @@ pub struct ScopeParams {
     pub trash: TrashFilter,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
+    /// Presence filters (feature 29 §4, §7): a selection can target "everything missing GPS".
+    #[serde(default)]
+    pub gps: PresenceFilter,
+    #[serde(default)]
+    pub capture_date: PresenceFilter,
+    #[serde(default)]
+    pub missing_any: bool,
 }
 
 /// The flat gallery filter — the `GET /pictures` tag-set params. Tag lists are arrays here (JSON
@@ -163,19 +170,22 @@ async fn hierarchy_to_filter(
         .map(|pred| filter_from(Some(pred), &h.scope)))
 }
 
-/// Assemble a [`PictureListFilter`] from a predicate and the shared scope params.
+/// Assemble a [`PictureListFilter`] from a predicate and the shared scope params. Proximity sorts
+/// don't apply to a set (§7), so only the presence filters carry over.
 fn filter_from(predicate: Option<TagPredicate>, scope: &ScopeParams) -> PictureListFilter {
     PictureListFilter {
         page: 1,
         page_size: 1,
-        sort: PictureSortField::default(),
-        order: SortOrder::default(),
         predicate,
         owned_only: scope.owned_only,
         shared_with_me: scope.shared_with_me,
         trash: scope.trash,
         captured_after: scope.captured_after.map(|dt| dt.naive_utc()),
         captured_before: scope.captured_before.map(|dt| dt.naive_utc()),
+        gps: scope.gps,
+        capture_date: scope.capture_date,
+        missing_any: scope.missing_any,
+        ..Default::default()
     }
 }
 
@@ -193,6 +203,10 @@ pub async fn resolve(
         Some(PictureFilter::Flat(f)) => Some(flat_to_filter(f)?),
         Some(PictureFilter::Hierarchy(h)) => hierarchy_to_filter(db, user_id, h).await?,
     };
+    // Reject the mutually-exclusive presence combination (§4) before the batch action runs.
+    if let Some(f) = &filter {
+        f.validate()?;
+    }
     Ok(ResolvedSelection {
         filter,
         include_ids: selection.include_ids.clone(),

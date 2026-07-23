@@ -2,8 +2,26 @@ import {useEffect, useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {AlertTriangle, ArchiveRestore, Copy, Download, ImageIcon, List, Loader2, Plus, RotateCcw, RotateCw, Table2, Trash2, X} from 'lucide-react'
+import {
+    AlertTriangle,
+    ArchiveRestore,
+    Clock,
+    Copy,
+    Download,
+    ImageIcon,
+    List,
+    Loader2,
+    MapPin,
+    MoreHorizontal,
+    Plus,
+    RotateCcw,
+    RotateCw,
+    Table2,
+    Trash2,
+    X
+} from 'lucide-react'
 import {Button} from '@/components/ui/button'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
@@ -198,7 +216,10 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // Reuse a higher-or-equal variant the browser already loaded (e.g. the lightbox's large image)
     // instead of a fresh medium presign; use a lower loaded variant as a progressive placeholder.
     const entry = useImageCache((s) => s.entries[id])
-    const cached = useMemo(() => bestLoaded(entry), [entry])
+    // Cap at `large`: never reuse a viewed `original` as the preview — it would double-rotate (browser
+    // auto-orients the EXIF-bearing original, then `OrientedImage` rotates again) and forces a full-res
+    // decode for a small preview.
+    const cached = useMemo(() => bestLoaded(entry, 'large'), [entry])
     const reuseCached = !!cached && VARIANT_RANK[cached.variant] >= VARIANT_RANK[previewVariant]
     // Images and videos both have thumbnails (video's is a frame-grab); audio has none.
     const {data: preview, refetch: refetchPreview} = useQuery({
@@ -468,16 +489,81 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     </p>
                 </div>
                 <div className="flex shrink-0 items-center">
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        title="Download original"
-                        disabled={downloading}
-                        onClick={download}
-                    >
-                        {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Download className="h-4 w-4"/>}
-                    </Button>
+                    {/* Overflow menu: download + the feature-29 "Nearby in time/place" explore actions
+                        (which reorder the flat gallery by proximity to this picture, clearing tag,
+                        hierarchy and presence filters). Keeps the header row compact. */}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                title="More actions"
+                                disabled={downloading}
+                            >
+                                {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <MoreHorizontal className="h-4 w-4"/>}
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem onSelect={download} disabled={downloading} className="gap-2">
+                                <Download className="h-4 w-4"/>
+                                Download original
+                            </DropdownMenuItem>
+                            {(picture.captured_at || (picture.gps_lat != null && picture.gps_lng != null)) && (
+                                <DropdownMenuSeparator/>
+                            )}
+                            {picture.captured_at && (
+                                <DropdownMenuItem
+                                    className="gap-2"
+                                    onSelect={() =>
+                                        update({
+                                            sort: 'time_near',
+                                            nearTime: picture.captured_at,
+                                            nearLat: null,
+                                            nearLng: null,
+                                            gps: 'any',
+                                            captureDate: 'any',
+                                            missingAny: false,
+                                            tag: null,
+                                            include: [],
+                                            exclude: [],
+                                            exact: [],
+                                            hierarchy: null,
+                                            hpath: '',
+                                        })
+                                    }
+                                >
+                                    <Clock className="h-4 w-4"/>
+                                    Find nearby in time
+                                </DropdownMenuItem>
+                            )}
+                            {picture.gps_lat != null && picture.gps_lng != null && (
+                                <DropdownMenuItem
+                                    className="gap-2"
+                                    onSelect={() =>
+                                        update({
+                                            sort: 'geo_near',
+                                            nearLat: picture.gps_lat,
+                                            nearLng: picture.gps_lng,
+                                            nearTime: null,
+                                            gps: 'any',
+                                            captureDate: 'any',
+                                            missingAny: false,
+                                            tag: null,
+                                            include: [],
+                                            exclude: [],
+                                            exact: [],
+                                            hierarchy: null,
+                                            hpath: '',
+                                        })
+                                    }
+                                >
+                                    <MapPin className="h-4 w-4"/>
+                                    Find nearby in place
+                                </DropdownMenuItem>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                     {/* Copy ("rescue") a received picture into your own library (feature 11). */}
                     {!owned && (
                         <Button

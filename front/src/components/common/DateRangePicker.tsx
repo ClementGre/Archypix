@@ -19,6 +19,7 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Switch} from '@/components/ui/switch'
+import {cn} from '@/lib/utils'
 
 interface DateRangePickerProps {
     mode: 'date' | 'datetime'
@@ -27,6 +28,8 @@ interface DateRangePickerProps {
     to: string
     onChange: (from: string, to: string) => void
     placeholder?: string
+    /** Extra classes merged onto the trigger button (e.g. an active/primary highlight). */
+    triggerClassName?: string
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -57,7 +60,7 @@ function fmtDisplay(s: string, mode: 'date' | 'datetime'): string {
     return base
 }
 
-export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a range'}: DateRangePickerProps) {
+export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a range', triggerClassName}: DateRangePickerProps) {
     const [open, setOpen] = useState(false)
     const [picking, setPicking] = useState<'start' | 'end'>('start')
     const [withTimes, setWithTimes] = useState(
@@ -102,6 +105,7 @@ export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a
     const clear = () => {
         onChange('', '')
         setPicking('start')
+        setOpen(false)
     }
 
     const label =
@@ -122,8 +126,8 @@ export function DateRangePicker({mode, from, to, onChange, placeholder = 'Pick a
             }}
         >
             <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 justify-start gap-1.5 text-xs font-normal">
-                    <CalendarRange className="h-3.5 w-3.5 text-muted-foreground"/>
+                <Button variant="outline" size="sm" className={cn('h-8 justify-start gap-1.5 text-xs font-normal', triggerClassName)}>
+                    <CalendarRange className={cn('h-3.5 w-3.5', !triggerClassName && 'text-muted-foreground')}/>
                     <span className={from || to ? '' : 'text-muted-foreground'}>{label}</span>
                 </Button>
             </PopoverTrigger>

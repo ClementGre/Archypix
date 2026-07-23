@@ -1,51 +1,59 @@
-// Three-state trash filter, rendered at the right of the grid header. The trash is a filter over the
-// main view (feature "Better trash") rather than a separate page: hide trashed (default), show
-// everything, or show the trash only. Writes the `trash` URL param via useGalleryParams.
+// Three-state trash filter as a grid-header dropdown (feature "Better trash" — the trash is a filter
+// over the main view, not a separate page): hide trashed (default), show everything, or show the
+// trash only. Writes the `trash` URL param via useGalleryParams.
 
-import {Images, Layers, Trash2} from 'lucide-react'
+import {Check, Images, Layers, Trash2} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
-import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
+import {Button} from '@/components/ui/button'
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,} from '@/components/ui/dropdown-menu'
 import type {TrashFilter} from '@/lib/types'
 import {cn} from '@/lib/utils'
 
-const OPTIONS: { value: TrashFilter; label: string; tip: string; Icon: typeof Images }[] = [
-    {value: 'exclude', label: 'Photos', tip: 'Hide trashed', Icon: Images},
-    {value: 'include', label: 'All', tip: 'Include trashed', Icon: Layers},
-    {value: 'only', label: 'Trash', tip: 'Trashed only', Icon: Trash2},
+const OPTIONS: { value: TrashFilter; label: string; Icon: typeof Images }[] = [
+    {value: 'exclude', label: 'Photos', Icon: Images},
+    {value: 'include', label: 'All', Icon: Layers},
+    {value: 'only', label: 'Trashed', Icon: Trash2},
 ]
 
 export function TrashToggle() {
     const {params, update} = useGalleryParams()
+    const active = OPTIONS.find((o) => o.value === params.trash) ?? OPTIONS[0]
+    const isDefault = params.trash === 'exclude'
+    // The trigger carries the control's identity (a trash can) at its default; once filtering it
+    // shows the active option's icon.
+    const TriggerIcon = isDefault ? Trash2 : active.Icon
 
     return (
-        <div
-            role="group"
-            aria-label="Trash filter"
-            className="flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5"
-        >
-            {OPTIONS.map(({value, label, tip, Icon}) => {
-                const active = params.trash === value
-                const activeCls = value === 'only' ? 'bg-destructive/15 text-destructive' : 'bg-primary/15 text-primary'
-                return (
-                    <Tooltip key={value} delayDuration={300}>
-                        <TooltipTrigger asChild>
-                            <button
-                                type="button"
-                                onClick={() => update({trash: value})}
-                                aria-pressed={active}
-                                className={cn(
-                                    'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
-                                    active ? activeCls : 'text-muted-foreground hover:text-foreground',
-                                )}
-                            >
-                                <Icon className="h-3.5 w-3.5"/>
-                                <span className="hidden sm:inline">{label}</span>
-                            </button>
-                        </TooltipTrigger>
-                        <TooltipContent className="text-xs">{tip}</TooltipContent>
-                    </Tooltip>
-                )
-            })}
-        </div>
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="Trash filter"
+                    className={cn(
+                        'gap-1.5 text-xs font-normal',
+                        isDefault
+                            ? 'text-muted-foreground'
+                            : params.trash === 'only'
+                                ? 'border-destructive/50 text-destructive'
+                                : 'border-primary/50 text-primary',
+                    )}
+                >
+                    <TriggerIcon className="h-3.5 w-3.5"/>
+                    {/* At the default (hide trashed), show the filter's name rather than "Photos". */}
+                    <span className="hidden sm:inline">{isDefault ? 'Trash' : active.label}</span>
+                </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuLabel>Trash</DropdownMenuLabel>
+                {OPTIONS.map(({value, label, Icon}) => (
+                    <DropdownMenuItem key={value} onSelect={() => update({trash: value})} className="gap-2">
+                        <Icon className="h-4 w-4"/>
+                        <span className="flex-1">{label}</span>
+                        {params.trash === value && <Check className="h-4 w-4"/>}
+                    </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+        </DropdownMenu>
     )
 }

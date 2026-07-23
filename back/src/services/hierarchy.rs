@@ -18,12 +18,14 @@ use crate::infra::s3::Storage;
 use crate::infra::settings;
 use crate::infra::settings::keys;
 use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
-use crate::repository::picture::{PictureListFilter, PictureSortField, SortOrder, TrashFilter};
+use crate::repository::picture::{
+    PictureListFilter, PictureSortField, PresenceFilter, SortOrder, TrashFilter,
+};
 use crate::repository::tag::TagRepository;
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
 use archypix_common::error::AppError;
 use archypix_common::settings::Settings;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -557,14 +559,8 @@ fn predicate_filter(pred: &TagPredicate) -> PictureListFilter {
     PictureListFilter {
         page: 1,
         page_size: 1,
-        sort: PictureSortField::default(),
-        order: SortOrder::default(),
         predicate: Some(pred.clone()),
-        owned_only: false,
-        shared_with_me: false,
-        trash: TrashFilter::Exclude,
-        captured_after: None,
-        captured_before: None,
+        ..Default::default()
     }
 }
 
@@ -668,6 +664,13 @@ pub struct BrowseParams {
     pub shared_with_me: bool,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
+    /// Presence + proximity params (feature 29 §4, §6) threaded through the directory listing.
+    pub gps: PresenceFilter,
+    pub capture_date: PresenceFilter,
+    pub missing_any: bool,
+    pub near_time: Option<NaiveDateTime>,
+    pub near_lat: Option<f64>,
+    pub near_lng: Option<f64>,
     pub thumbnail: Option<ThumbnailSize>,
 }
 
@@ -718,7 +721,14 @@ pub async fn browse(
         trash: params.trash,
         captured_after: params.captured_after.map(|dt| dt.naive_utc()),
         captured_before: params.captured_before.map(|dt| dt.naive_utc()),
+        gps: params.gps,
+        capture_date: params.capture_date,
+        missing_any: params.missing_any,
+        near_time: params.near_time,
+        near_lat: params.near_lat,
+        near_lng: params.near_lng,
     };
+    filter.validate()?;
 
     crate::services::pictures::list_with_filter(
         db,
@@ -778,14 +788,8 @@ pub fn list_filter_for(pred: &TagPredicate, page_size: i64) -> PictureListFilter
     PictureListFilter {
         page: 1,
         page_size,
-        sort: PictureSortField::default(),
-        order: SortOrder::default(),
         predicate: Some(pred.clone()),
-        owned_only: false,
-        shared_with_me: false,
-        trash: TrashFilter::Exclude,
-        captured_after: None,
-        captured_before: None,
+        ..Default::default()
     }
 }
 

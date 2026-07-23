@@ -16,6 +16,7 @@ import type {
     PictureListResponse,
     PictureSelection,
     PictureVariant,
+    PresenceFilter,
     SetCreatorResponse,
     TrashFilter,
     TrashResponse,
@@ -71,6 +72,15 @@ export interface ListPicturesParams {
     trash?: TrashFilter
     captured_after?: string
     captured_before?: string
+    /** Presence filters (feature 29 §4): `any` (omit) | `present` | `missing`. */
+    gps?: PresenceFilter
+    capture_date?: PresenceFilter
+    /** OR convenience; 400 if combined with a non-`any` `gps`/`capture_date`. */
+    missing_any?: boolean
+    /** Proximity-sort references (feature 29 §6). */
+    near_time?: string
+    near_lat?: number
+    near_lng?: number
     thumbnail?: PictureVariant
 }
 

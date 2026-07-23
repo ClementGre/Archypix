@@ -6,6 +6,7 @@ import type {
     HierarchyTreeResponse,
     PictureListResponse,
     PictureVariant,
+    PresenceFilter,
     TrashFilter,
     WebdavResponse,
 } from '@/lib/types'
@@ -95,6 +96,13 @@ export interface BrowseParams {
     shared_with_me?: boolean
     captured_after?: string
     captured_before?: string
+    /** Presence + proximity params (feature 29 §4, §6). */
+    gps?: PresenceFilter
+    capture_date?: PresenceFilter
+    missing_any?: boolean
+    near_time?: string
+    near_lat?: number
+    near_lng?: number
     thumbnail?: PictureVariant
 }
 

@@ -1,7 +1,7 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::hierarchy::HierarchyConfig;
 use crate::repository::hierarchy::HierarchyRow;
-use crate::repository::picture::{PictureSortField, SortOrder, TrashFilter};
+use crate::repository::picture::{PictureSortField, PresenceFilter, SortOrder, TrashFilter};
 use crate::services;
 use crate::services::hierarchy::{BrowseParams, TreeResult};
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
@@ -288,6 +288,15 @@ pub struct BrowseQuery {
     pub shared_with_me: bool,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub gps: PresenceFilter,
+    #[serde(default)]
+    pub capture_date: PresenceFilter,
+    #[serde(default)]
+    pub missing_any: bool,
+    pub near_time: Option<NaiveDateTime>,
+    pub near_lat: Option<f64>,
+    pub near_lng: Option<f64>,
     pub thumbnail: Option<ThumbnailSize>,
 }
 
@@ -308,6 +317,12 @@ pub async fn browse(
         shared_with_me: query.shared_with_me,
         captured_after: query.captured_after,
         captured_before: query.captured_before,
+        gps: query.gps,
+        capture_date: query.capture_date,
+        missing_any: query.missing_any,
+        near_time: query.near_time,
+        near_lat: query.near_lat,
+        near_lng: query.near_lng,
         thumbnail: query.thumbnail,
     };
     let result = services::hierarchy::browse(

@@ -136,6 +136,14 @@ interface OrientedContainImageProps {
     className?: string
     /** Click handler attached to the sized image box only (not the surrounding centring area). */
     onClick?: React.MouseEventHandler<HTMLDivElement>
+    /**
+     * The `src` is the untouched original blob, which keeps its EXIF orientation — the browser already
+     * auto-rotates it (`image-orientation: from-image`, the default, which works cross-origin). When
+     * set, the app's CSS rotation is skipped for the main image only, avoiding a double-rotation. The
+     * box is still laid out at the display aspect ratio, and the blurhash / low-res placeholder (raw
+     * pixels with no EXIF) keep the app's rotation.
+     */
+    srcOriented?: boolean
 }
 
 /**
@@ -158,6 +166,7 @@ export function OrientedContainImage({
                                          onLoad,
                                          onError,
                                          onClick,
+                                         srcOriented,
                                      }: OrientedContainImageProps) {
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
     const aspect = dW && dH ? dW / dH : 1
@@ -240,7 +249,9 @@ export function OrientedContainImage({
                             key={src}
                             src={src}
                             alt={alt}
-                            orientation={orientation}
+                            // The original blob is auto-rotated by the browser from its EXIF — passing 1
+                            // skips the app's CSS rotation so it isn't rotated twice.
+                            orientation={srcOriented ? 1 : orientation}
                             width={width}
                             height={height}
                             loading="eager"

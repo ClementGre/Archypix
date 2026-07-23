@@ -79,6 +79,7 @@ function LightboxImageWithDraft({picture, url, variant, blurhash, placeholderSrc
                     placeholderSrc={placeholderSrc}
                     alt={picture.filename ?? ''}
                     orientation={draftOrientation}
+                    srcOriented={variant === 'original'}
                     width={picture.width}
                     height={picture.height}
                     onLoad={() => recordImage(picture.id, variant, url, true)}
@@ -275,6 +276,7 @@ function LightboxImage({item, url, variant, loading, showRotate, onError}: {
             placeholderSrc={placeholderSrc}
             alt={item.filename ?? ''}
             orientation={item.orientation}
+            srcOriented={variant === 'original'}
             width={item.width}
             height={item.height}
             onLoad={() => url && recordImage(item.id, variant, url, true)}
@@ -463,6 +465,22 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     // Re-presign a fresh URL if the current one expired / 403s while the image was rendered (§10).
     const onImgError = usePresignRefresh(() => void refetchUrl())
 
+    // While a variant switch (original-quality toggle) re-presigns, `urlData` is briefly undefined for
+    // the same picture. Keep showing the last URL so the image (and its zoom/pan) never unmounts —
+    // scoped to the current id so navigating to another picture still resets as intended. The variant
+    // is tracked alongside so `srcOriented` matches what's actually on screen (the kept URL is still
+    // the thumbnail until the original resolves), avoiding a brief mis-rotation.
+    const shownUrl = useRef<{ id: string; url: string; variant: PictureVariant } | null>(null)
+    let url = urlData?.url ?? null
+    let shownVariant = variant
+    if (current) {
+        if (url) shownUrl.current = {id: current.id, url, variant}
+        else if (shownUrl.current?.id === current.id) {
+            url = shownUrl.current.url
+            shownVariant = shownUrl.current.variant
+        }
+    }
+
     // File size lives on the detail (not the list item); reuse the cached detail query.
     const {data: detail} = useQuery({
         queryKey: source.detailKey(current?.id ?? ''),
@@ -623,7 +641,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                     <ChevronLeft className="h-6 w-6"/>
                 </button>
 
-                <LightboxImage item={current} url={urlData?.url ?? null} variant={variant} loading={urlData === undefined}
+                <LightboxImage item={current} url={url} variant={shownVariant} loading={urlData === undefined}
                                showRotate={showRotate} onError={onImgError}/>
 
                 <button

@@ -14,6 +14,10 @@ import {TagFilterBar} from '@/components/tags/TagFilterBar'
 import {PhotoCard} from './PhotoCard'
 import {Lightbox} from './Lightbox'
 import {TrashToggle} from './TrashToggle'
+import {IssuesFilter} from './IssuesFilter'
+import {ScopeToggle} from './ScopeToggle'
+import {SortMenu} from './SortMenu'
+import {DateFilter} from './DateFilter'
 import {SelectionActionBar} from './batch/SelectionActionBar'
 
 /** Breadcrumb for the active hierarchy directory; segments are clickable. */
@@ -197,6 +201,7 @@ export function PhotoGrid() {
                             multiSelect={multiSelect}
                             showPurgeCountdown={trashOnly}
                             retentionDays={retentionDays}
+                            proximityRefTime={params.sort === 'time_near' ? params.nearTime : null}
                             onSelect={handleSelect(it.id)}
                             onLongPress={handleLongPress(it.id)}
                             onOpen={() => openViewer(it.id)}
@@ -219,11 +224,21 @@ export function PhotoGrid() {
     // the three-state trash toggle — the trash is a filter over this view, not a separate page.
     const content = (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-                <div className="min-w-0 flex-1">
+            {/* Unified filter/sort toolbar. `mr-auto` on the breadcrumb (content-sized, not flex-1)
+                pushes the control cluster right and — crucially — lets it wrap to the next line when a
+                long breadcrumb leaves no room, instead of the cluster overflowing. The breadcrumb keeps
+                `min-w-0` so its own chips wrap rather than forcing horizontal overflow. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-1.5">
+                <div className="mr-auto min-w-0 max-w-full">
                     {isBrowsing ? <HierarchyBreadcrumb/> : <TagFilterBar/>}
                 </div>
-                <TrashToggle/>
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <DateFilter/>
+                    <IssuesFilter/>
+                    <ScopeToggle/>
+                    <TrashToggle/>
+                    <SortMenu/>
+                </div>
             </div>
             <div className="min-h-0 flex-1">{body}</div>
         </div>

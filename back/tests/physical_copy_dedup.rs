@@ -359,12 +359,8 @@ async fn trash_view_hides_dedupe_and_boomerang(db: PgPool) {
         page_size: 50,
         sort: PictureSortField::IngestedAt,
         order: SortOrder::Desc,
-        predicate: None,
-        owned_only: false,
-        shared_with_me: false,
         trash: TrashFilter::Only, // trash view
-        captured_after: None,
-        captured_before: None,
+        ..Default::default()
     };
     let (items, _total) = PictureRepository::list(&db, user, &filter).await.unwrap();
     let ids: Vec<_> = items.iter().map(|p| p.id).collect();

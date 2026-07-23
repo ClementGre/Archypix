@@ -4,9 +4,20 @@ export type ExifSyncStatus = 'synced' | 'pending' | 'pending_job_creation' | 'un
 
 export type PictureVariant = 'original' | 'small' | 'medium' | 'large'
 
-export type SortField = 'captured_at' | 'ingested_at' | 'updated_at' | 'file_size' | 'filename'
+export type SortField =
+    | 'captured_at'
+    | 'ingested_at'
+    | 'updated_at'
+    | 'file_size'
+    | 'filename'
+    /** Proximity sorts (feature 29 §6): nearest-first, need a `near_*` reference, `order` ignored. */
+    | 'time_near'
+    | 'geo_near'
 
 export type SortOrder = 'asc' | 'desc'
+
+/** Per-field metadata-presence filter (feature 29 §4). */
+export type PresenceFilter = 'any' | 'present' | 'missing'
 
 export type ShareStatus =
     | 'pending'
@@ -29,6 +40,10 @@ export interface PictureListItem {
     height: number | null
     captured_at: string | null
     ingested_at: string
+    /** Derived GPS presence (feature 29 §3) — owned + received. Drives highlight/scan without a fetch. */
+    has_gps: boolean
+    /** Great-circle metres from `near_lat`/`near_lng`; present ONLY under `sort=geo_near` (§6). */
+    distance_m?: number
     blurhash: string | null
     orientation: number | null
     thumbnail_url: string | null
@@ -193,6 +208,14 @@ export interface PictureFilters {
     order?: SortOrder
     capturedAfter?: string | null
     capturedBefore?: string | null
+    /** Presence filters (feature 29 §4). */
+    gps?: PresenceFilter
+    captureDate?: PresenceFilter
+    missingAny?: boolean
+    /** Proximity-sort references (feature 29 §6): required by `sort=time_near` / `geo_near`. */
+    nearTime?: string | null
+    nearLat?: number | null
+    nearLng?: number | null
 }
 
 // ---------- Hierarchies ----------
@@ -786,6 +809,9 @@ export type PictureFilter =
     trash?: TrashFilter
     captured_after?: string
     captured_before?: string
+    gps?: PresenceFilter
+    capture_date?: PresenceFilter
+    missing_any?: boolean
 }
     | {
     kind: 'hierarchy'
@@ -796,6 +822,9 @@ export type PictureFilter =
     trash?: TrashFilter
     captured_after?: string
     captured_before?: string
+    gps?: PresenceFilter
+    capture_date?: PresenceFilter
+    missing_any?: boolean
 }
 
 /**

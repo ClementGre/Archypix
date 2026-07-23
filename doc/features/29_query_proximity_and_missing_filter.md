@@ -34,9 +34,16 @@ Read/query only — no schema change beyond a derived list field, no write path.
   interleaved by absolute delta) and is *not* used for anchors, because a side with many
   closer neighbours can push the other side's nearest off the first page.
 - **Proximity sort needs a reference point** (`near_time`, or `near_lat`/`near_lng`); rows
-  missing the sort field sort last; `SortOrder` is ignored (always nearest-first).
-- **Geo distance is approximate, sort-only** — a cheap equirectangular metric, no
-  PostGIS/`earthdistance` dependency, never surfaced as a number.
+  missing the sort field are **excluded** from the result (a proximity sort by X is meaningless for a
+  row with no X — it would only ever trail the page as noise); `SortOrder` is ignored (always
+  nearest-first). `near_time` is a **naive** instant (no offset), compared against the naive
+  `captured_at` column — the client passes a picture's `captured_at` string straight through.
+- **Geo distance is haversine, sort-only** — order by the haversine central-angle term `a`
+  (monotonic with true great-circle distance, so exact *for an ordering* while skipping the final
+  `asin`/`R` scaling). No PostGIS/`earthdistance` dependency and no index: the sort runs on the
+  per-user, gps-present candidate set (already covered by `idx_pictures_gps`) as a top-N heapsort,
+  which is sub-10ms at 10–50k rows — a KNN GiST index only pays off on huge, lightly-filtered
+  scopes and composes poorly with the tag/trash filters. The distance is never surfaced as a number.
 - No new endpoints — extend the existing query surfaces.
 
 ## 3. `has_gps` on the list item
@@ -87,35 +94,35 @@ Extend `PictureSortField` with `TimeNear` / `GeoNear`, each requiring its refere
 (400 if absent). For the general "browse what's nearby" UX — interleaves both sides by
 distance; a consumer wanting a strict bracket uses §5 instead.
 
-Time:
+**Rows missing the sort field are excluded, not trailed.** A proximity sort by X is meaningless for a
+row with no X, so `push_filters` appends `captured_at IS NOT NULL` (time) / `gps_lat IS NOT NULL AND
+gps_lng IS NOT NULL` (geo) under the respective sort — the `total` count and the page agree, and the
+ORDER BY drops the old "nulls last" leading key.
+
+Time (`near_time` is a naive instant):
 
 ```sql
-ORDER BY (captured_at IS NULL),                       -- undated last
-         abs(extract(epoch FROM (captured_at -
+ORDER BY abs(extract(epoch FROM (captured_at -
 $near_time
 )
 )
 )
+ASC,
+id
 ASC
 ```
 
-Geo (equirectangular, sort-only):
+Geo (haversine central-angle term, sort-only):
 
 ```sql
-ORDER BY (gps_latitude IS NULL OR gps_longitude IS NULL),   -- ungeotagged last
-         (gps_latitude -
+ORDER BY sin(radians(gps_lat -
 $near_lat
+) /
+2
 )
 ^
 2
 +
-(
-(
-gps_longitude
--
-$near_lng
-)
-*
 cos
 (
 radians
@@ -123,14 +130,43 @@ radians
 $near_lat
 )
 )
+*
+cos
+(
+radians
+(
+gps_lat
+)
+)
+*
+sin
+(
+radians
+(
+gps_lng
+-
+$near_lng
+) /
+2
 )
 ^
 2
+ASC,
+id
 ASC
 ```
 
-Append a stable tiebreaker (`id`) so pagination is deterministic when many rows share a
-distance.
+Ordering by the haversine `a` term is monotonic with the great-circle distance, so it is exact for
+a sort without the final `asin`/earth-radius scaling; `sin²(Δlng/2)` folds the antimeridian
+correctly. The stable `id` tiebreaker keeps pagination deterministic when many rows share a distance.
+
+**Distance surfaced on the list item (geo only).** Under a `geo_near` sort, `PictureListItem` gains
+`distance_m: Option<f64>` — the great-circle distance in metres from the reference, computed **in
+Rust** over the returned page (`services/pictures.rs`, the same haversine as the ORDER BY, so the
+badge and the ordering never disagree). `None` off a geo sort and for ungeotagged rows;
+`skip_serializing_if` keeps it off the wire otherwise. It is geo-specific by necessity: the client
+already knows `near_time` + each row's `captured_at` (so a *time* delta is client-derivable), but the
+list item never exposes raw GPS coordinates, so the geo distance can only come from the server.
 
 ## 7. Selection threading
 
@@ -144,12 +180,18 @@ set, not an ordered page).
 - `useGalleryParams`: add `gps`/`capture_date` (`?…=present|missing`, default `any`),
   `missing_any`, and the two proximity sorts (`sort=time_near|geo_near` with `near_time` /
   `near_lat,near_lng`).
-- A small **issues filter** control near `TrashToggle`: *All · Missing GPS · Missing date ·
-  Any issue* → writes `gps=missing` / `capture_date=missing` / `missing_any=true`. Standalone
-  value: users find problem pictures without a tagging service.
-- Proximity sorts are mostly programmatic — a picture context action **"Find nearby in time /
-  place"** sets `sort` + `near_*` and clears tag filters. Minimal UI here; the fix tools (30)
-  drive the metadata-repair path.
+- An **`IssuesFilter`** dropdown next to `TrashToggle`: GPS and capture-date are each an independent
+  **three-state** control (*Any · Present · Missing*) so the user can hunt for problem pictures
+  *and* isolate the good anchors (the `present` invert), plus an *Any issue* toggle for the
+  `missing_any` OR (mutually exclusive with the per-field states). On phones the grid-header
+  breadcrumb and these buttons stack vertically so neither is squeezed.
+- Proximity sorts are programmatic — `SelectionPanel`'s overflow (`⋯`) menu carries **Find nearby in
+  time / place** alongside Download; each sets `sort` + `near_*` and clears tag, hierarchy **and**
+  presence filters (the last matters because a geo sort already excludes ungeotagged rows).
+  `FilterControls`' Sort menu surfaces the active proximity mode with a one-click clear.
+- Under a `geo_near` sort each tile shows a **distance badge** from `distance_m` (formatted `m`/`km`);
+  under `time_near` the tile shows a **time-delta badge** computed client-side from `captured_at` −
+  `near_time` (auto unit s/min/h/d/mo/y — no backend field needed, both timestamps naive).
 
 ## 9. Edge cases
 
@@ -157,8 +199,9 @@ set, not an ordered page).
 2. **`missing_any` combined with a per-field presence** → 400 (§4).
 3. **Received rows** report `has_gps` / capture-date presence from their last-announced
    columns; announcement staleness is the normal federation caveat, not a bug here.
-4. **Antimeridian / poles** distort the equirectangular geo metric — acceptable for a *sort*
-   (worst case a slightly wrong ordering of far-apart candidates); documented, not fixed.
+4. **Antimeridian / poles** — the haversine `a` term folds longitude wraparound correctly
+   (`sin²(Δlng/2)`) and stays well-behaved at the poles, so the geo ordering is exact there (this is
+   the reason for haversine over the cheaper equirectangular metric).
 5. **Null-island GPS `(0,0)`** counts as *present* (it is non-NULL). Some devices write it for
    a failed fix; treating it as missing is a heuristic left to the fix tools (30 §12), not this
    filter.
@@ -167,20 +210,23 @@ set, not an ordered page).
 
 - `doc/06_API_REFERENCE.md` — list/browse/selection params gain `gps`, `capture_date`,
   `missing_any`, `sort=time_near|geo_near`, `near_time`, `near_lat`, `near_lng`;
-  `PictureListItem.has_gps`.
+  `PictureListItem.has_gps` + `distance_m` (geo-sort only).
 - `doc/03_BACKEND_ARCHITECTURE.md` — presence + proximity arms in `push_filters` / sort SQL.
 - `doc/05_FRONTEND_ARCHITECTURE.md` — `useGalleryParams` params; the issues-filter control.
 
 ## 11. Work breakdown
 
-- [ ] `PresenceFilter` + `missing_any`; `push_filters` arms + `missing_any` mutual-exclusion
-  400; thread through `PictureListParams`, hierarchy `browse`, `PictureFilter`; `sqlx prepare`.
-- [ ] `has_gps` derived field on `PictureListItem` (owned + received).
-- [ ] `PictureSortField::{TimeNear, GeoNear}` + `near_*` params + required-param 400 + stable
-  tiebreaker; sort SQL.
-- [ ] Frontend `useGalleryParams` params + issues-filter control + "Find nearby" context action.
-- [ ] Tests: presence arms (present/missing per field) + AND composition + `missing_any` OR +
-  mutual-exclusion 400; directed bracketing lookup (§5) returns the right single row per side;
-  proximity ordering + field-missing-last + stable tiebreak; selection `count_selection` with a
-  presence filter.
-- [ ] Docs (§10).
+- [x] `PresenceFilter` + `missing_any`; `push_filters` arms + `missing_any` mutual-exclusion
+  400 (`PictureListFilter::validate`); thread through `PictureListParams`, hierarchy `browse`,
+  `PictureFilter` (via `ScopeParams`). (Query-builder SQL — no `.sqlx` macro to prepare.)
+- [x] `has_gps` derived field on `PictureListItem` (owned + received); geo-sort-only `distance_m`.
+- [x] `PictureSortField::{TimeNear, GeoNear}` + `near_*` params + required-param 400 + stable
+  `id` tiebreaker; `push_order_by` sort SQL (haversine geo ordering).
+- [x] Frontend `useGalleryParams` params + `IssuesFilter` control + `SelectionPanel` "Nearby in
+  time/place" actions + `FilterControls` proximity indicator/clear + `PhotoCard` distance badge.
+- [x] Tests (`back/tests/presence_and_proximity.rs`): presence arms (present/missing per field) +
+  AND composition + `missing_any` OR + mutual-exclusion 400 + proximity required-param 400; directed
+  bracketing lookup (§5) returns the right single row per side; proximity ordering +
+  field-missing-last + stable tiebreak + antimeridian; selection `count_selection` with a presence
+  filter.
+- [x] Docs (§10): 06 API reference, 03 backend architecture, 05 frontend (below).

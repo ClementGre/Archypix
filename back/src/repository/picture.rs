@@ -16,6 +16,38 @@ pub enum PictureSortField {
     UpdatedAt,
     FileSize,
     Filename,
+    /// Proximity sort by `|captured_at − near_time|` (feature 29 §6). Requires `near_time`; rows
+    /// without a capture date sort last; `SortOrder` is ignored (always nearest-first).
+    TimeNear,
+    /// Proximity sort by approximate (equirectangular) distance to `near_lat`/`near_lng` (feature 29
+    /// §6). Requires both; ungeotagged rows sort last; `SortOrder` is ignored.
+    GeoNear,
+}
+
+impl PictureSortField {
+    /// Whether this is a reference-point proximity sort (nearest-first, order-agnostic).
+    fn is_proximity(&self) -> bool {
+        matches!(self, Self::TimeNear | Self::GeoNear)
+    }
+}
+
+/// Per-field metadata-presence filter (feature 29 §4). AND-composed with every other list arm.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceFilter {
+    /// No constraint.
+    #[default]
+    Any,
+    /// The field is populated.
+    Present,
+    /// The field is NULL.
+    Missing,
+}
+
+impl PresenceFilter {
+    fn is_any(&self) -> bool {
+        matches!(self, Self::Any)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -40,7 +72,7 @@ pub enum TrashFilter {
     Only,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PictureListFilter {
     pub page: i64,
     pub page_size: i64,
@@ -54,6 +86,45 @@ pub struct PictureListFilter {
     pub trash: TrashFilter,
     pub captured_after: Option<NaiveDateTime>,
     pub captured_before: Option<NaiveDateTime>,
+    /// GPS-presence filter (feature 29 §4). AND-composed with the other arms.
+    pub gps: PresenceFilter,
+    /// Capture-date presence filter (over `captured_at`).
+    pub capture_date: PresenceFilter,
+    /// "Any issue" OR convenience (§4): `(gps IS NULL OR captured_at IS NULL)`. Mutually exclusive
+    /// with a non-`Any` `gps`/`capture_date` (rejected at construction).
+    pub missing_any: bool,
+    /// Reference instant for `PictureSortField::TimeNear`.
+    pub near_time: Option<NaiveDateTime>,
+    /// Reference point for `PictureSortField::GeoNear`.
+    pub near_lat: Option<f64>,
+    pub near_lng: Option<f64>,
+}
+
+impl PictureListFilter {
+    /// Reject the mutually-exclusive presence combination (§4) and a proximity sort missing its
+    /// reference param (§6). Called at the wire-parse boundary so a bad request surfaces as a 400.
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.missing_any && (!self.gps.is_any() || !self.capture_date.is_any()) {
+            return Err(AppError::BadRequest(
+                "missing_any cannot be combined with a per-field gps/capture_date presence filter"
+                    .to_string(),
+            ));
+        }
+        match self.sort {
+            PictureSortField::TimeNear if self.near_time.is_none() => {
+                return Err(AppError::BadRequest(
+                    "sort=time_near requires near_time".to_string(),
+                ));
+            }
+            PictureSortField::GeoNear if self.near_lat.is_none() || self.near_lng.is_none() => {
+                return Err(AppError::BadRequest(
+                    "sort=geo_near requires near_lat and near_lng".to_string(),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 /// A picture selection (feature 14 §2) resolved against the DB: the query lowered to a
@@ -384,7 +455,7 @@ impl PictureRepository {
         remote_picture_id: &str,
     ) -> Result<Option<Option<NaiveDateTime>>, AppError>
     where
-        E: Executor<'e, Database=Postgres>,
+        E: Executor<'e, Database = Postgres>,
     {
         let row = sqlx::query!(
             r#"SELECT remote_updated_at FROM pictures
@@ -392,9 +463,9 @@ impl PictureRepository {
             recipient_id,
             remote_picture_id,
         )
-            .fetch_optional(ex)
-            .await
-            .map_err(map_sqlx_error)?;
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)?;
         Ok(row.map(|r| r.remote_updated_at))
     }
 
@@ -956,13 +1027,7 @@ impl PictureRepository {
         local_user_id: Uuid,
         filter: &PictureListFilter,
     ) -> Result<(Vec<Picture>, i64), AppError> {
-        let sort_col = match filter.sort {
-            PictureSortField::CapturedAt => "p.captured_at",
-            PictureSortField::IngestedAt => "p.ingested_at",
-            PictureSortField::UpdatedAt => "p.updated_at",
-            PictureSortField::FileSize => "p.file_size",
-            PictureSortField::Filename => "p.filename",
-        };
+        filter.validate()?;
         let sort_dir = match filter.order {
             SortOrder::Asc => "ASC",
             SortOrder::Desc => "DESC",
@@ -998,12 +1063,8 @@ impl PictureRepository {
             );
             q.push_bind(local_user_id);
             Self::push_filters(&mut q, filter);
-            // `NULLS LAST` keeps undated/sizeless pictures out of the way; the `p.id` tiebreaker
-            // makes ordering total so pagination is stable (no rows shifting between pages).
-            q.push(format!(
-                " ORDER BY {} {} NULLS LAST, p.id {} LIMIT ",
-                sort_col, sort_dir, sort_dir
-            ));
+            Self::push_order_by(&mut q, filter, sort_dir);
+            q.push(" LIMIT ");
             q.push_bind(filter.page_size);
             q.push(" OFFSET ");
             q.push_bind(offset);
@@ -1035,6 +1096,51 @@ impl PictureRepository {
             .map_err(map_sqlx_error)
     }
 
+    /// Emit the `ORDER BY` clause. Column sorts use `NULLS LAST` + the `p.id` tiebreaker (total
+    /// order ⇒ stable pagination). Proximity sorts (feature 29 §6) are always nearest-first,
+    /// sort field-missing rows last, and ignore `SortOrder`; the reference params are bound.
+    fn push_order_by(
+        q: &mut sqlx::QueryBuilder<Postgres>,
+        filter: &PictureListFilter,
+        sort_dir: &str,
+    ) {
+        match filter.sort {
+            PictureSortField::TimeNear => {
+                // |captured_at − near_time|. Undated rows are already excluded (push_filters).
+                q.push(" ORDER BY abs(extract(epoch FROM (p.captured_at - ");
+                q.push_bind(filter.near_time);
+                q.push("))) ASC, p.id ASC");
+            }
+            PictureSortField::GeoNear => {
+                // Haversine central-angle term `a` (§6): monotonic with true great-circle distance,
+                // so exact for a sort while skipping the final `asin`/`R` scaling; `sin²(Δlng/2)`
+                // wraps the antimeridian correctly. Ungeotagged rows are excluded (push_filters).
+                q.push(" ORDER BY sin(radians(p.gps_lat - ");
+                q.push_bind(filter.near_lat);
+                q.push(")/2)^2 + cos(radians(");
+                q.push_bind(filter.near_lat);
+                q.push(")) * cos(radians(p.gps_lat)) * sin(radians(p.gps_lng - ");
+                q.push_bind(filter.near_lng);
+                q.push(")/2)^2 ASC, p.id ASC");
+            }
+            _ => {
+                let sort_col = match filter.sort {
+                    PictureSortField::CapturedAt => "p.captured_at",
+                    PictureSortField::IngestedAt => "p.ingested_at",
+                    PictureSortField::UpdatedAt => "p.updated_at",
+                    PictureSortField::FileSize => "p.file_size",
+                    PictureSortField::Filename => "p.filename",
+                    // Proximity variants handled above.
+                    PictureSortField::TimeNear | PictureSortField::GeoNear => unreachable!(),
+                };
+                q.push(format!(
+                    " ORDER BY {} {} NULLS LAST, p.id {}",
+                    sort_col, sort_dir, sort_dir
+                ));
+            }
+        }
+    }
+
     fn push_filters(q: &mut sqlx::QueryBuilder<Postgres>, filter: &PictureListFilter) {
         // Content-dedup rows (`content_dedupe`/`boomerang`) are internal hidden state — they never
         // surface in gallery or trash listings, only via the per-picture copies endpoint. Any state
@@ -1062,6 +1168,41 @@ impl PictureRepository {
         }
         if let Some(v) = filter.captured_before {
             q.push(" AND p.captured_at <= ").push_bind(v);
+        }
+        // Presence filters (feature 29 §4). `missing_any` is the OR convenience; the per-field
+        // arms are AND-composed (mutual exclusion enforced by `PictureListFilter::validate`).
+        if filter.missing_any {
+            q.push(" AND (p.captured_at IS NULL OR p.gps_lat IS NULL OR p.gps_lng IS NULL)");
+        } else {
+            match filter.gps {
+                PresenceFilter::Any => {}
+                PresenceFilter::Present => {
+                    q.push(" AND p.gps_lat IS NOT NULL AND p.gps_lng IS NOT NULL");
+                }
+                PresenceFilter::Missing => {
+                    q.push(" AND (p.gps_lat IS NULL OR p.gps_lng IS NULL)");
+                }
+            }
+            match filter.capture_date {
+                PresenceFilter::Any => {}
+                PresenceFilter::Present => {
+                    q.push(" AND p.captured_at IS NOT NULL");
+                }
+                PresenceFilter::Missing => {
+                    q.push(" AND p.captured_at IS NULL");
+                }
+            }
+        }
+        // A proximity sort is meaningless for rows missing its field — exclude them entirely
+        // (feature 29 §6) rather than trailing them at the end of the page.
+        match filter.sort {
+            PictureSortField::TimeNear => {
+                q.push(" AND p.captured_at IS NOT NULL");
+            }
+            PictureSortField::GeoNear => {
+                q.push(" AND p.gps_lat IS NOT NULL AND p.gps_lng IS NOT NULL");
+            }
+            _ => {}
         }
         if let Some(ref predicate) = filter.predicate {
             q.push(" AND ");

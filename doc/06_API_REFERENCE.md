@@ -508,8 +508,10 @@ Paginated picture list.
 |---|---|---|---|
 | `page` | `number` | `1` | Page number (1-indexed) |
 | `page_size` | `number` | `50` | Items per page |
-| `sort` | `"captured_at" \| "ingested_at" \| "updated_at" \| "file_size" \| "filename"` | `"ingested_at"` | Sort field. Ordering is stable (`NULLS LAST`, `id` tiebreaker) |
-| `order` | `"asc" \| "desc"` | `"desc"` | Sort direction |
+| `sort` | `"captured_at" \| "ingested_at" \| "updated_at" \| "file_size" \| "filename" \| "time_near" \| "geo_near"` | `"ingested_at"` | Sort field.
+Ordering is stable (`NULLS LAST`, `id` tiebreaker). `time_near`/`geo_near` are proximity sorts (feature 29 §6): always nearest-first, `order` ignored,
+and rows **missing the sort field are excluded** (undated for `time_near`, ungeotagged for `geo_near`) |
+| `order` | `"asc" \| "desc"` | `"desc"` | Sort direction (ignored for proximity sorts) |
 | `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match`. For a single tag, pass one entry |
 | `exclude_tags` | `string` | — | Comma-separated ltree paths; reject the picture if it has any (inclusive) |
 | `exact` | `string` | — | Comma-separated ltree paths matched **exactly** (`tag_path = p`, no descendants) — strict tag navigation; combined with `include`/`exclude` per `match` |
@@ -521,6 +523,14 @@ Paginated picture list.
 trashed only (the trash view). A filter over the main view — there is no separate trash endpoint |
 | `captured_after` | `string` | — | ISO 8601 datetime — lower bound on capture date |
 | `captured_before` | `string` | — | ISO 8601 datetime — upper bound on capture date |
+| `gps` | `"any" \| "present" \| "missing"` | `"any"` | Presence filter over GPS (feature 29 §4). `present` = both coords set; `missing` = either
+NULL. AND-composed |
+| `capture_date` | `"any" \| "present" \| "missing"` | `"any"` | Presence filter over `captured_at`. AND-composed |
+| `missing_any` | `boolean` | `false` | OR convenience: `(gps missing OR capture_date missing)`. **400** if combined with a non-`any` `gps`/
+`capture_date` |
+| `near_time` | `string` | — | **Naive** datetime (no offset, e.g. `2025-09-17T23:06:20`) reference for `sort=time_near`, compared against the naive
+`captured_at` — pass a picture's `captured_at` straight through (**400** if that sort is set without it) |
+| `near_lat` / `near_lng` | `number` | — | Reference point for `sort=geo_near` (**400** if that sort is set without both) |
 | `thumbnail` | `"original" \| "small" \| "medium" \| "large"` | — | If set, each item includes a `thumbnail_url` presigned for this variant |
 
 **Response `200`:**
@@ -541,6 +551,9 @@ interface PictureListItem {
     height: number | null;
     captured_at: string | null;
     ingested_at: string;
+    has_gps: boolean;              // derived gps_lat & gps_lng presence (owned + received) — feature 29 §3
+    distance_m?: number;           // great-circle metres from near_lat/near_lng; present ONLY under
+                                   // sort=geo_near (which excludes ungeotagged rows), omitted otherwise (§6)
     blurhash: string | null;
     orientation: number | null;    // EXIF orientation (1–8); thumbnails are raw pixels — the client rotates them
     thumbnail_url: string | null;  // presigned URL for the `thumbnail` variant; null when that param
@@ -1746,7 +1759,8 @@ node wins" predicate and reuses the picture list machinery — the client only e
 
 **Query params:** `path` (default root) plus the same pagination/filter params as
 `GET /pictures`: `page`, `page_size`, `sort`, `order`, `trash`, `owned_only`,
-`shared_with_me`, `captured_after`, `captured_before`, `thumbnail`.
+`shared_with_me`, `captured_after`, `captured_before`, `gps`, `capture_date`, `missing_any`,
+`near_time`, `near_lat`, `near_lng`, `thumbnail` (same presence/proximity semantics and 400s).
 
 **Response `200`:** identical shape to `GET /pictures` (`{ total, page, page_size, items }`). A
 `static` directory (no direct files) returns an empty page.
@@ -1810,17 +1824,20 @@ type PictureFilter =
   | { kind: "flat"; include_tags?: string[]; exclude_tags?: string[];
       exact?: string[];  // exactly-matched paths (strict tag nav)
       match?: "all" | "any"; untagged?: boolean;
-      // shared scope/date params:
+      // shared scope/date/presence params:
   owned_only?: boolean; shared_with_me?: boolean;
   trash?: "exclude" | "include" | "only";
-      captured_after?: string; captured_before?: string }
+      captured_after?: string; captured_before?: string;
+      gps?: "any" | "present" | "missing"; capture_date?: "any" | "present" | "missing";
+      missing_any?: boolean }  // e.g. target "everything missing GPS" for a batch action
   | { kind: "hierarchy"; hierarchy_id: string; path: string;
-      /* + the same shared scope/date params */ };
+      /* + the same shared scope/date/presence params */ };
 ```
 
 The `flat` form mirrors `GET /pictures` (tag lists as arrays here, not comma strings). The
 `hierarchy` form resolves the directory `path` to its "most-specific node wins" direct predicate,
-AND-ed with the scope/date params.
+AND-ed with the scope/date/presence params. Proximity **sorts** don't apply to a selection (a set,
+not an ordered page); the same `missing_any` mutual-exclusion 400 applies.
 
 Endpoints accepting a selection (all also accept a legacy `picture_ids` array as a pure explicit
 set, and `dry_run: true`): `PATCH /tags`, `PATCH /pictures/exif`, `PATCH /pictures/creator`,

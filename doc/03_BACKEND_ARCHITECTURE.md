@@ -324,6 +324,18 @@ WebDAV `PUT` (net delta), and `copy_picture`. The `storage_reconcile` routine re
 daily (drift safety net). `Storage::prefix_usage` (paginated `ListObjectsV2`) backs the admin S3
 storage-audit. `NULL`/`0` quota = unlimited. See `doc/features/22_storage_quotas.md`.
 
+**Query presence filters & proximity sorts (29)** — `PictureListFilter` gains AND-composed
+`PresenceFilter` (`any|present|missing`) arms over GPS and `captured_at` plus a `missing_any` OR
+convenience (`PictureListFilter::validate` rejects the mutually-exclusive combo and a proximity sort
+missing its reference — the wire-parse 400s), all emitted in `push_filters` so the flat list,
+hierarchy `browse`, and feature-14 selections filter identically. `PictureSortField::{TimeNear,
+GeoNear}` are reference-point proximity sorts (`push_order_by`): nearest-first, `SortOrder` ignored,
+`id` tiebreaker, and rows missing the sort field are **excluded** by `push_filters` (not trailed);
+`near_time` is a naive instant; geo orders by the haversine central-angle term (exact for a sort,
+antimeridian-safe, no PostGIS/index). `PictureListItem` carries a derived
+`has_gps` and — only under `geo_near` — a Rust-computed `distance_m` (same haversine as the order).
+See `doc/features/29_query_proximity_and_missing_filter.md`.
+
 ## F) API Conventions
 
 See [`06_API_REFERENCE.md`](06_API_REFERENCE.md) for the complete endpoint catalog.

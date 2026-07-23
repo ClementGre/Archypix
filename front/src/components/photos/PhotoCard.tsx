@@ -1,5 +1,5 @@
-import {memo, type MouseEvent, type PointerEvent, useRef, useState} from 'react'
-import {AlertTriangle, Check, Clock, CloudOff, RefreshCw, Trash2} from 'lucide-react'
+import {memo, type MouseEvent, type PointerEvent, type ReactNode, useRef, useState} from 'react'
+import {AlertTriangle, Check, Clock, CloudOff, MapPin, RefreshCw, Trash2} from 'lucide-react'
 import {useQueryClient} from '@tanstack/react-query'
 import type {PictureListItem} from '@/lib/types'
 import {getPictureUrl} from '@/api/pictures'
@@ -13,6 +13,57 @@ import {FileTypeIcon} from './FileTypeIcon'
 import {PlayBadge} from './PlayBadge'
 import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
 
+/** Compact magnitude of a time span (ms) with an auto unit: s / min / h / d / mo / y. */
+function formatDuration(ms: number): string {
+    const negative = ms < 0
+    if (negative) ms = -ms
+    const prefix = negative ? '-' : '+'
+
+    const s = Math.round(ms / 1000)
+    if (s == 0) return '0s'
+    if (s < 60) return `${prefix}${s}s`
+    const m = Math.round(s / 60)
+    if (m < 60) return `${prefix}${m}min`
+    const h = Math.round(m / 60)
+    if (h < 24) return `${prefix}${h}h`
+    const d = Math.round(h / 24)
+    if (d < 30) return `${prefix}${d}d`
+    const mo = Math.round(d / 30)
+    if (mo < 12) return `${prefix}${mo}mo`
+    return `${prefix}${Math.round(d / 365)}y`
+}
+
+/**
+ * A small tag sitting flush in one corner of the card (trash / owner / purge / proximity). `left` and
+ * `top` pick the corner (`false` → right / bottom); only the corner facing into the card is rounded.
+ * `className` is merged over the defaults, so callers can retint the background or tweak spacing.
+ */
+function CornerLabel({top, left, title, className, children}: {
+    top: boolean
+    left: boolean
+    title?: string
+    className?: string
+    children: ReactNode
+}) {
+    // Flush to the corner: round only the corner facing into the card. The two edges (and the outer
+    // corner) stay square so the tag sits flush against the card border.
+    const innerRound = top ? (left ? 'rounded-br' : 'rounded-bl') : left ? 'rounded-tr' : 'rounded-tl'
+    return (
+        <span
+            title={title}
+            className={cn(
+                'absolute flex items-center gap-0.5 bg-black/55 px-1 text-[10px] leading-4 text-white',
+                top ? 'top-0' : 'bottom-0',
+                left ? 'left-0' : 'right-0',
+                innerRound,
+                className,
+            )}
+        >
+            {children}
+        </span>
+    )
+}
+
 interface PhotoCardProps {
     item: PictureListItem
     /** Baseline row height (px); flex-basis is derived from it and the aspect ratio. */
@@ -24,6 +75,8 @@ interface PhotoCardProps {
     showPurgeCountdown?: boolean
     /** Owner's `trash_retention_days` (for the purge deadline); defaults to 30. */
     retentionDays?: number
+    /** Reference instant under a `time_near` sort — drives the per-tile time-delta badge (feature 29). */
+    proximityRefTime?: string | null
     onSelect: (event: MouseEvent) => void
     /** Long-press (touch) on the card — enters/extends multi-select. */
     onLongPress: () => void
@@ -48,6 +101,7 @@ export const PhotoCard = memo(function PhotoCard({
                                                      multiSelect,
                                                      showPurgeCountdown,
                                                      retentionDays,
+                                                     proximityRefTime,
                                                      onSelect,
                                                      onLongPress,
                                                      onOpen
@@ -120,6 +174,19 @@ export const PhotoCard = memo(function PhotoCard({
     const purgeCountdown = purgeAt ? countdown(purgeAt) : null
     // Play badge only over a real video frame thumbnail — never over the fallback file-type icon.
     const showPlayBadge = isVideoMime(item.mime_type) && !!item.thumbnail_url
+    // Proximity badges (feature 29 §6), at most one active at a time. Geo distance comes from the
+    // backend (`distance_m`); the time delta is computed client-side from the reference instant
+    // (both timestamps are naive — `new Date()` shifts both by the same offset, so the delta holds).
+    const distanceLabel =
+        item.distance_m == null
+            ? null
+            : item.distance_m < 1000
+                ? `${Math.round(item.distance_m)}m`
+                : `${(item.distance_m / 1000).toFixed(item.distance_m < 10000 ? 1 : 0)}km`
+    const timeDeltaLabel =
+        proximityRefTime && item.captured_at
+            ? formatDuration(new Date(item.captured_at).getTime() - new Date(proximityRefTime).getTime())
+            : null
 
     // Once the thumbnail loads, fade the blurhash out so transparent (PNG) areas reveal the
     // checkerboard backdrop rather than the blurry placeholder.
@@ -220,39 +287,42 @@ export const PhotoCard = memo(function PhotoCard({
             </div>
 
             {!item.owned && item.owner_username && (
-                <span
-                    className={cn(
-                        'absolute bottom-1 left-1 flex items-center gap-0.5 rounded px-1 text-[10px] leading-4 text-white',
-                        ownerDeleted ? 'bg-destructive/85' : 'bg-black/55',
-                    )}
-                    title={
-                        ownerDeleted
-                            ? `Owner deleted this. ${countdown(item.owner_purge_at)}`
-                            : undefined
-                    }
+                <CornerLabel
+                    top={false}
+                    left
+                    className={ownerDeleted ? 'bg-destructive/85' : undefined}
+                    title={ownerDeleted ? `Owner deleted this. ${countdown(item.owner_purge_at)}` : undefined}
                 >
                     {ownerDeleted && <AlertTriangle className="h-2.5 w-2.5"/>}
                     @{item.owner_username}
-                </span>
+                </CornerLabel>
             )}
 
             {trashed && (
-                <span
-                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white"
-                    title="In trash"
-                >
+                <CornerLabel top left={false} title="In trash" className="justify-center py-0.5">
                     <Trash2 className="h-3 w-3"/>
-                </span>
+                </CornerLabel>
             )}
 
             {purgeCountdown && (
-                <div
-                    className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-destructive/85 px-1 text-[10px] font-medium leading-4 text-white"
-                    title={`Permanently deleted ${deadlineLabel(purgeAt)}`}
-                >
+                <CornerLabel top={false} left title={`Permanently deleted ${deadlineLabel(purgeAt)}`} className="gap-1 bg-destructive/85 font-medium">
                     <Clock className="h-2.5 w-2.5 shrink-0"/>
                     <span className="truncate">{purgeCountdown}</span>
-                </div>
+                </CornerLabel>
+            )}
+
+            {distanceLabel && (
+                <CornerLabel top={false} left={false} title="Distance from the reference point">
+                    <MapPin className="h-2.5 w-2.5 shrink-0"/>
+                    {distanceLabel}
+                </CornerLabel>
+            )}
+
+            {timeDeltaLabel && (
+                <CornerLabel top={false} left={false} title="Time from the reference photo">
+                    <Clock className="h-2.5 w-2.5 shrink-0"/>
+                    {timeDeltaLabel}
+                </CornerLabel>
             )}
         </li>
     )

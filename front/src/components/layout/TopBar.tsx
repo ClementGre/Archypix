@@ -11,7 +11,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {FilterControls} from '@/components/photos/FilterControls'
 import {Logo} from '@/components/common/Logo'
 import {useAuthStore} from '@/stores/auth'
 import {useThemeStore} from '@/stores/theme'
@@ -118,7 +117,8 @@ export function TopBar() {
                 ))}
             </nav>
 
-            <div className="ml-2 flex min-w-0 flex-1 items-center gap-2 sm:ml-3">{isGallery && <FilterControls/>}</div>
+            {/* Spacer — gallery filters/sort now live in the grid header (see PhotoGrid). */}
+            <div className="min-w-0 flex-1"/>
 
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
                 {isGallery && (

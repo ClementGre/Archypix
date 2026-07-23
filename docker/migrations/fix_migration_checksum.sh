@@ -14,18 +14,18 @@ set -euo pipefail
 
 CONTAINER="${PG_CONTAINER:-archypix-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UP_SQL7="${SCRIPT_DIR}/../../back/migrations/0009_picture_creator.up.sql"
+UP_SQL="${SCRIPT_DIR}/../../back/migrations/0011_federation_robustness.up.sql"
 
-CHECKSUM7="$(shasum -a 384 "$UP_SQL7" | awk '{print $1}')"
+CHECKSUM="$(shasum -a 384 "$UP_SQL" | awk '{print $1}')"
 
 # The dev DB (archypix_back) is rebuilt via `sqlx migrate revert/run`; only the seeded test DBs
 # need patching. Override with e.g. `DBS="archypix_back archypix_back1"` if needed.
 DBS="${DBS:-archypix_back archypix_back1 archypix_back2 archypix_back3}"
 
 for db in $DBS; do
-  echo "==> patching ${db} _sqlx_migrations version 1"
+  echo "==> patching ${db} _sqlx_migrations"
   docker exec -i "$CONTAINER" psql -U archypix -d "$db" -v ON_ERROR_STOP=1 \
-    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM7}', 'hex') WHERE version = 9;"
+    -c "UPDATE _sqlx_migrations SET checksum = decode('${CHECKSUM}', 'hex') WHERE version = 11;"
 done
 
 echo "Migration checksums updated."

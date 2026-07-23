@@ -44,7 +44,10 @@ function CarouselThumb({item, gridVariant, active, rootRef, onClick}: {
     }, [inView, rootRef])
 
     const entry = useImageCache((s) => s.entries[item.id])
-    const loaded = useMemo(() => bestLoaded(entry), [entry])
+    // Cap at `large`: never reuse a viewed `original` here — it would double-rotate (the browser
+    // auto-orients the EXIF-bearing original, then `OrientedImage` rotates again) and forces a
+    // full-res decode to paint a tiny thumbnail.
+    const loaded = useMemo(() => bestLoaded(entry, 'large'), [entry])
 
     const source = usePictureSource()
     const useListThumb = !loaded && gridVariant !== 'large' && !!item.thumbnail_url

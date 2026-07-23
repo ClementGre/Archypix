@@ -8,8 +8,8 @@ use crate::infra::s3::{self, Storage};
 use crate::infra::settings::keys;
 use crate::repository::dedup::DedupRepository;
 use crate::repository::picture::{
-    PictureListFilter, PictureRepository, PictureSortField, ResolvedSelection, SortOrder,
-    TrashFilter,
+    PictureListFilter, PictureRepository, PictureSortField, PresenceFilter, ResolvedSelection,
+    SortOrder, TrashFilter,
 };
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
@@ -103,6 +103,17 @@ fn default_page_size() -> u32 {
     50
 }
 
+/// Great-circle distance in metres (haversine). Used to surface the per-row distance under a
+/// `geo_near` sort — the same metric the DB orders by (feature 29 §6), so badge and order agree.
+fn haversine_m(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
+    const EARTH_RADIUS_M: f64 = 6_371_000.0;
+    let (a_lat, b_lat) = (lat1.to_radians(), lat2.to_radians());
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lng = (lng2 - lng1).to_radians();
+    let a = (d_lat / 2.0).sin().powi(2) + a_lat.cos() * b_lat.cos() * (d_lng / 2.0).sin().powi(2);
+    2.0 * EARTH_RADIUS_M * a.sqrt().asin()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PictureListParams {
     #[serde(default = "default_page")]
@@ -134,6 +145,20 @@ pub struct PictureListParams {
     pub trash: TrashFilter,
     pub captured_after: Option<DateTime<Utc>>,
     pub captured_before: Option<DateTime<Utc>>,
+    /// Presence filters (feature 29 §4): `?gps=present|missing`, `?capture_date=present|missing`,
+    /// `?missing_any=true` (the OR convenience, mutually exclusive with a per-field presence).
+    #[serde(default)]
+    pub gps: PresenceFilter,
+    #[serde(default)]
+    pub capture_date: PresenceFilter,
+    #[serde(default)]
+    pub missing_any: bool,
+    /// Proximity-sort reference points (feature 29 §6): required by `sort=time_near` / `geo_near`.
+    /// `near_time` is a **naive** instant (no offset), compared against the naive `captured_at`
+    /// column — matches the `captured_at` string the client reads back from a picture detail.
+    pub near_time: Option<NaiveDateTime>,
+    pub near_lat: Option<f64>,
+    pub near_lng: Option<f64>,
     pub thumbnail: Option<ThumbnailSize>,
 }
 
@@ -146,6 +171,16 @@ pub struct PictureListItem {
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
     pub ingested_at: NaiveDateTime,
+    /// Derived GPS presence (feature 29 §3): `gps_lat IS NOT NULL AND gps_lng IS NOT NULL`, for owned
+    /// **and** received rows (received GPS lives in the promoted columns). Drives client-side
+    /// highlight-in-context and the fix-tools grid-local anchor scan without a round-trip.
+    pub has_gps: bool,
+    /// Great-circle distance in metres from the `near_lat`/`near_lng` reference, populated **only**
+    /// under a `geo_near` sort (feature 29 §6) so the client can show a "N km away" badge. `None`
+    /// for other sorts and for ungeotagged rows. The list item never exposes raw coordinates, so
+    /// this is the only way the client gets a per-picture distance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_m: Option<f64>,
     /// BlurHash string for progressive loading. `None` until the thumbnail worker runs.
     pub blurhash: Option<String>,
     /// EXIF orientation value (1–8). Thumbnails are stored in raw pixel orientation, so the
@@ -1509,7 +1544,14 @@ pub async fn list_pictures(
         trash: params.trash,
         captured_after: params.captured_after.map(|dt| dt.naive_utc()),
         captured_before: params.captured_before.map(|dt| dt.naive_utc()),
+        gps: params.gps,
+        capture_date: params.capture_date,
+        missing_any: params.missing_any,
+        near_time: params.near_time,
+        near_lat: params.near_lat,
+        near_lng: params.near_lng,
     };
+    filter.validate()?;
 
     list_with_filter(
         db,
@@ -1552,6 +1594,13 @@ pub async fn list_with_filter(
         .unwrap_or_default();
     let global_domain = settings.get(keys::GLOBAL_DOMAIN);
 
+    // Under a geo-proximity sort, surface the per-row great-circle distance so the client can badge
+    // it (feature 29 §6). Only geotagged rows get a value; `validate()` already guaranteed the ref.
+    let geo_ref = match filter.sort {
+        PictureSortField::GeoNear => filter.near_lat.zip(filter.near_lng),
+        _ => None,
+    };
+
     // Batch-presign thumbnails: one cache lookup + one HTTP call per remote owner backend
     // instead of N sequential calls.
     let thumbnail_urls = if let Some(variant) = thumbnail {
@@ -1576,6 +1625,10 @@ pub async fn list_with_filter(
             height: pic.height,
             captured_at: pic.captured_at,
             ingested_at: pic.ingested_at,
+            has_gps: pic.gps_lat.is_some() && pic.gps_lng.is_some(),
+            distance_m: geo_ref
+                .zip(pic.gps_lat.zip(pic.gps_lng))
+                .map(|((ref_lat, ref_lng), (lat, lng))| haversine_m(ref_lat, ref_lng, lat, lng)),
             blurhash: pic.blurhash,
             orientation: pic.orientation,
             thumbnail_url: thumbnail_urls
@@ -1904,7 +1957,11 @@ pub async fn presign_variant_for_picture(
     let cache_ttl = truthful_cache_ttl(ttl, remote_expires_at);
     if cache_ttl > 0 {
         cache
-            .set_str_ex(RedisKey::PictureUrl(pic.id, variant.as_str()), &url, cache_ttl)
+            .set_str_ex(
+                RedisKey::PictureUrl(pic.id, variant.as_str()),
+                &url,
+                cache_ttl,
+            )
             .await?;
     }
     Ok(Some(url))

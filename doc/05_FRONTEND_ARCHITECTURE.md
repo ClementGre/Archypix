@@ -131,21 +131,24 @@ session exists.
 The gallery view lives entirely in the URL so it is shareable and back/forward-friendly. `useGalleryParams()` returns typed `params`, derived
 `filters` (for `usePictures`), and `update(patch, { replace })`. Params (defaults are **omitted** from the URL):
 
-| Param                 | Meaning                                                                                                                                                |
-|-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `tag`                 | active (primary) tag filter (wire form) — set by a plain tag click                                                                                     |
-| `inc` / `exc` / `exa` | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                            |
-| `scope`               | `all` \| `owned` \| `shared`                                                                                                                           |
-| `trash`               | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle` |
-| `sort`                | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename`                                                                  |
-| `order`               | `asc` \| `desc`                                                                                                                                        |
-| `after` / `before`    | capture-date bounds (ISO)                                                                                                                              |
-| `panel`               | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                                                                                   |
-| `share`               | incoming share id to highlight (cross-link target)                                                                                                     |
-| `hierarchy`           | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                   |
-| `hpath`               | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                        |
-| `hedit`               | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                         |
-| `view`                | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                              |
+| Param                  | Meaning                                                                                                                                                       |
+|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `tag`                  | active (primary) tag filter (wire form) — set by a plain tag click                                                                                            |
+| `inc` / `exc` / `exa`  | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                                   |
+| `scope`                | `all` \| `owned` \| `shared`                                                                                                                                  |
+| `trash`                | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle`        |
+| `sort`                 | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` \| `time_near` \| `geo_near` (proximity, feature 29 §6)                 |
+| `order`                | `asc` \| `desc` (ignored for proximity sorts)                                                                                                                 |
+| `after` / `before`     | capture-date bounds (ISO)                                                                                                                                     |
+| `gps` / `cdate`        | presence filters (feature 29 §4): `any` (default, omitted) \| `present` \| `missing` — GPS / capture-date completeness, set by the grid-header `IssuesFilter` |
+| `issue`                | `1` ⇒ the `missing_any` OR (any picture missing GPS **or** date); mutually exclusive with `gps`/`cdate`                                                       |
+| `nt` / `nlat` / `nlng` | proximity-sort references: `near_time` (ISO) for `time_near`, `near_lat`/`near_lng` for `geo_near` — set by `SelectionPanel`'s "Nearby in time/place"         |
+| `panel`                | active left tab: `tags` \| `incoming` \| `outgoing` \| `hierarchies`                                                                                          |
+| `share`                | incoming share id to highlight (cross-link target)                                                                                                            |
+| `hierarchy`            | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                          |
+| `hpath`                | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                               |
+| `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                                |
+| `view`                 | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                                     |
 
 ---
 
@@ -181,7 +184,8 @@ within a label (e.g. `SharedToMe.alice_AT_ex_DOT_com.Photos`). `SharedToMe` is t
 
 **`layout/`** — `AppShell` (chrome; top bar + routed content + `StatusBar`; also owns the single `UploadDialog` instance), `TopBar` (single unified
 bar:
-brand + nav + sidebar toggles + gallery search/filters + **Upload button** + theme + user; gallery-only controls keyed on `pathname === '/'`. The
+brand + nav + sidebar toggles + **Upload button** + theme + user (gallery sort/filters live in the grid header, not here); gallery-only controls keyed
+on `pathname === '/'`. The
 primary
 nav collapses into the user dropdown on mobile (`< md`); **Settings** lives in the user dropdown, not the nav. On mobile the **theme toggle** also
 moves into the user dropdown and the **right-panel (details) toggle is dropped** — a single tap opens the details drawer and multi-select uses the
@@ -196,15 +200,25 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop; sits on a **`.bg-checkerboard`** backdrop (see §9) and
 **fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
 (render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
-(loading placeholder only — faded out on load), `FilterControls` (**Sort** + **Filters** dropdowns; rendered inside `TopBar`.
-Sort offers Date taken / added / modified, File size, Name — default **Date taken** (`captured_at`); Filters folds in scope
-and a **capture-date range** using the shared `DateRangePicker` calendar — no tag chips here, those live in the centre `TagFilterBar`),
-`TrashToggle` (`components/photos/`, a three-state segmented control — **Photos** (hide trashed, default) / **All** (include trashed) / **Trash**
-(trashed only) — pinned to the right of the grid header, writing the `trash` URL param; the trash is a **filter over the main view**, not a
-separate page),
-`TagFilterBar` (`components/tags/`, a breadcrumb-style bar atop the flat grid showing the active include / `=`-exact / `⦸`-exclude tags as chips,
-each with a switch-include↔exact control + remove, plus Clear; shares the grid-header row with `TrashToggle` — the flat tag chips / the hierarchy
-breadcrumb on the left, the trash toggle on the right), `Lightbox` (full-screen viewer driven by the `view` param;
+(loading placeholder only — faded out on load).
+
+**Gallery toolbar (grid header).** All view controls live in one wrapping row at the top of the centre grid (no longer in the `TopBar`): the
+breadcrumb/tag-chips on the left (content-sized `flex-1`, wraps internally) and a control cluster on the right that **drops to the next line when
+there
+is no room** — a plain `flex-wrap`, no hardcoded breakpoint. The cluster: `SortMenu` (field Date taken/added/modified · File size · Name + direction;
+also surfaces an active proximity sort with a one-click clear), `ScopeToggle` (**Ownership** dropdown — All / Mine / **Received** (shared-to-me),
+`scope`), `DateFilter`
+(dropdown wrapping the shared `DateRangePicker`, `capturedAfter`/`capturedBefore`), `IssuesFilter` (feature 29 §8 — a dropdown where **GPS** and
+**capture date** are each an independent three-state **Any / Present / Missing** writing `gps`/`cdate`, plus an **Any issue** toggle for the
+`missing_any` OR; `present` isolates good anchors, `missing` surfaces problem pictures — the fix-tools entry point), and `TrashToggle` (a **Trash**
+dropdown — Photos (default) / All / Trashed, `trash`; the trash is a **filter over the main view**, not a separate page). All five triggers share one
+look (`Button` outline `sm`, `text-xs font-normal`): **muted/grayed at their default** and showing the *filter's name* (Ownership · Trash · …) rather
+than a value, then **coloured** (primary, or destructive for Trashed) and showing the active value once a non-default is picked. Proximity sorts are
+set from `SelectionPanel`'s overflow (`⋯`) menu **Find nearby in time / place** (`time_near`/`geo_near` + `near_*`, clearing tag/hierarchy **and**
+presence filters); under `geo_near` each `PhotoCard` shows a `distance_m` badge, under `time_near` a client-computed time-delta badge.
+`TagFilterBar` (`components/tags/`, the breadcrumb-style bar of active include / `=`-exact / `⦸`-exclude tag chips,
+each with a switch-include↔exact control + remove, plus Clear; occupies the toolbar's left, the hierarchy
+breadcrumb replacing it when browsing), `Lightbox` (full-screen viewer driven by the `view` param;
 ←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
 instead of closing**, only closing when no picture remains;

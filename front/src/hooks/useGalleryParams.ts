@@ -1,6 +1,6 @@
 import {useCallback, useMemo} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import type {PictureFilter, PictureFilters, SortField, SortOrder, TrashFilter} from '@/lib/types'
+import type {PictureFilter, PictureFilters, PresenceFilter, SortField, SortOrder, TrashFilter,} from '@/lib/types'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
@@ -21,6 +21,14 @@ export interface GalleryParams {
     order: SortOrder
     capturedAfter: string | null
     capturedBefore: string | null
+    /** Presence filters (feature 29 §4). */
+    gps: PresenceFilter
+    captureDate: PresenceFilter
+    missingAny: boolean
+    /** Proximity-sort references (feature 29 §6): used when `sort` is `time_near`/`geo_near`. */
+    nearTime: string | null
+    nearLat: number | null
+    nearLng: number | null
     panel: LeftPanelTab
     /** Incoming share to highlight in the left panel (transient cross-link). */
     share: string | null
@@ -44,6 +52,12 @@ export interface GalleryParamsPatch {
     order?: SortOrder
     capturedAfter?: string | null
     capturedBefore?: string | null
+    gps?: PresenceFilter
+    captureDate?: PresenceFilter
+    missingAny?: boolean
+    nearTime?: string | null
+    nearLat?: number | null
+    nearLng?: number | null
     panel?: LeftPanelTab
     share?: string | null
     hierarchy?: string | null
@@ -80,6 +94,12 @@ export function useGalleryParams() {
             order: (sp.get('order') as SortOrder) || DEFAULT_ORDER,
             capturedAfter: sp.get('after'),
             capturedBefore: sp.get('before'),
+            gps: (sp.get('gps') as PresenceFilter) || 'any',
+            captureDate: (sp.get('cdate') as PresenceFilter) || 'any',
+            missingAny: sp.get('issue') === '1',
+            nearTime: sp.get('nt'),
+            nearLat: sp.has('nlat') ? Number(sp.get('nlat')) : null,
+            nearLng: sp.has('nlng') ? Number(sp.get('nlng')) : null,
             panel: (sp.get('panel') as LeftPanelTab) || 'tags',
             share: sp.get('share'),
             hierarchy: sp.get('hierarchy'),
@@ -108,6 +128,12 @@ export function useGalleryParams() {
                     if ('order' in patch) setOrDelete('order', patch.order, patch.order === DEFAULT_ORDER)
                     if ('capturedAfter' in patch) setOrDelete('after', patch.capturedAfter, false)
                     if ('capturedBefore' in patch) setOrDelete('before', patch.capturedBefore, false)
+                    if ('gps' in patch) setOrDelete('gps', patch.gps, patch.gps === 'any')
+                    if ('captureDate' in patch) setOrDelete('cdate', patch.captureDate, patch.captureDate === 'any')
+                    if ('missingAny' in patch) setOrDelete('issue', patch.missingAny ? '1' : null, false)
+                    if ('nearTime' in patch) setOrDelete('nt', patch.nearTime, false)
+                    if ('nearLat' in patch) setOrDelete('nlat', patch.nearLat?.toString(), false)
+                    if ('nearLng' in patch) setOrDelete('nlng', patch.nearLng?.toString(), false)
                     if ('panel' in patch) setOrDelete('panel', patch.panel, patch.panel === 'tags')
                     if ('share' in patch) setOrDelete('share', patch.share, false)
                     if ('hierarchy' in patch) setOrDelete('hierarchy', patch.hierarchy, false)
@@ -134,6 +160,12 @@ export function useGalleryParams() {
                 order: DEFAULT_ORDER,
                 capturedAfter: null,
                 capturedBefore: null,
+                gps: 'any',
+                captureDate: 'any',
+                missingAny: false,
+                nearTime: null,
+                nearLat: null,
+                nearLng: null,
             },
             {replace: false},
         )
@@ -151,6 +183,12 @@ export function useGalleryParams() {
             order: params.order,
             capturedAfter: params.capturedAfter,
             capturedBefore: params.capturedBefore,
+            gps: params.gps,
+            captureDate: params.captureDate,
+            missingAny: params.missingAny,
+            nearTime: params.nearTime,
+            nearLat: params.nearLat,
+            nearLng: params.nearLng,
         }),
         [params],
     )
@@ -163,17 +201,27 @@ export function useGalleryParams() {
         params.scope !== 'all' ||
         params.trash !== 'exclude' ||
         !!params.capturedAfter ||
-        !!params.capturedBefore
+        !!params.capturedBefore ||
+        params.gps !== 'any' ||
+        params.captureDate !== 'any' ||
+        params.missingAny
 
     // The homogenized `PictureFilter` (feature 14 §3) describing the current view, for the
     // selection descriptor (`Ctrl+A` / "Select all").
     const selectionFilter: PictureFilter = useMemo(() => {
+        // Proximity sorts don't apply to a selection (§7); only presence filters carry over.
         const scope = {
             owned_only: params.scope === 'owned' || undefined,
             shared_with_me: params.scope === 'shared' || undefined,
             trash: params.trash !== 'exclude' ? params.trash : undefined,
             captured_after: params.capturedAfter ?? undefined,
             captured_before: params.capturedBefore ?? undefined,
+            ...(params.missingAny
+                ? {missing_any: true}
+                : {
+                    gps: params.gps !== 'any' ? params.gps : undefined,
+                    capture_date: params.captureDate !== 'any' ? params.captureDate : undefined,
+                }),
         }
         if (params.hierarchy) {
             return {kind: 'hierarchy', hierarchy_id: params.hierarchy, path: params.hpath, ...scope}

@@ -1,7 +1,9 @@
 mod common;
 
 use archypix_back::infra::settings::test_settings_with;
-use archypix_back::repository::picture::{PictureSortField, SortOrder, TrashFilter};
+use archypix_back::repository::picture::{
+    PictureSortField, PresenceFilter, SortOrder, TrashFilter,
+};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::hierarchy::{self, BrowseParams};
 use archypix_back::state::AppState;
@@ -49,6 +51,12 @@ fn browse_params() -> BrowseParams {
         shared_with_me: false,
         captured_after: None,
         captured_before: None,
+        gps: PresenceFilter::default(),
+        capture_date: PresenceFilter::default(),
+        missing_any: false,
+        near_time: None,
+        near_lat: None,
+        near_lng: None,
         thumbnail: None,
     }
 }
