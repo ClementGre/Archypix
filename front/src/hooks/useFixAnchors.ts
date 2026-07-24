@@ -26,14 +26,18 @@ export interface FixAnchors {
 /** Interpret a naive datetime string as UTC for the `captured_before/after` bounds (feature 29 §5). */
 const asUtc = (naive: string) => `${naive}Z`
 
-function toAnchor(p: PictureDetail): FixAnchor {
+// Null when the resolved detail has no real coordinates: a stale `has_gps` list flag (e.g. right after
+// a batch write invalidates queries) must not fabricate an anchor at (null, null) — that would crash
+// the map. Treat it as "no anchor on this side" instead.
+function toAnchor(p: PictureDetail): FixAnchor | null {
+    if (p.gps_lat == null || p.gps_lng == null) return null
     return {
         id: p.id,
         filename: p.filename,
         thumbnail_url: null,
         orientation: p.orientation,
-        lat: p.gps_lat as number,
-        lng: p.gps_lng as number,
+        lat: p.gps_lat,
+        lng: p.gps_lng,
         alt: p.gps_alt,
         time: p.captured_at,
     }
@@ -93,11 +97,13 @@ export function useFixAnchors(target: PictureDetail | null): FixAnchors {
 
     const gridThumb = (id: string | null) => gridItems.find((i) => i.id === id) ?? null
 
-    const before: FixAnchor | null = beforeDetail.data
-        ? {...toAnchor(beforeDetail.data), thumbnail_url: gridThumb(beforeId)?.thumbnail_url ?? beforeLookup.data?.items[0]?.thumbnail_url ?? null}
+    const beforeBase = beforeDetail.data ? toAnchor(beforeDetail.data) : null
+    const before: FixAnchor | null = beforeBase
+        ? {...beforeBase, thumbnail_url: gridThumb(beforeId)?.thumbnail_url ?? beforeLookup.data?.items[0]?.thumbnail_url ?? null}
         : null
-    const after: FixAnchor | null = afterDetail.data
-        ? {...toAnchor(afterDetail.data), thumbnail_url: gridThumb(afterId)?.thumbnail_url ?? afterLookup.data?.items[0]?.thumbnail_url ?? null}
+    const afterBase = afterDetail.data ? toAnchor(afterDetail.data) : null
+    const after: FixAnchor | null = afterBase
+        ? {...afterBase, thumbnail_url: gridThumb(afterId)?.thumbnail_url ?? afterLookup.data?.items[0]?.thumbnail_url ?? null}
         : null
 
     const anchors = [before, after].filter((a): a is FixAnchor => !!a)

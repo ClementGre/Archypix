@@ -100,7 +100,9 @@ export function MapView(props: MapViewProps) {
         const L = window.L
         if (!map || !L) return
         extraLayers.current.forEach((m) => m.remove())
-        extraLayers.current = (extraRef.current ?? []).map((e) =>
+        // Skip non-finite coords: `L.marker([null, …])` yields a marker with a null `_latlng` (Leaflet's
+        // toLatLng treats `null` as an object), which then throws on add and on every fitBounds/pan.
+        extraLayers.current = (extraRef.current ?? []).filter((e) => Number.isFinite(e.lat) && Number.isFinite(e.lng)).map((e) =>
             L.marker([e.lat, e.lng], {
                 icon: L.divIcon({className: '', html: HANDLE_HTML(e.color ?? '#64748b'), iconSize: [14, 14], iconAnchor: [7, 7]}),
                 interactive: false,
@@ -120,7 +122,7 @@ export function MapView(props: MapViewProps) {
         const pts: [number, number][] = []
         const p = latest.current.point
         if (p?.lat != null && p?.lng != null) pts.push([p.lat, p.lng])
-        for (const e of extraRef.current ?? []) pts.push([e.lat, e.lng])
+        for (const e of extraRef.current ?? []) if (Number.isFinite(e.lat) && Number.isFinite(e.lng)) pts.push([e.lat, e.lng])
         if (pts.length === 0) return
         if (pts.length === 1) {
             map.setView(pts[0], 13)
