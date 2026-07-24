@@ -94,10 +94,10 @@ export function useFixAnchors(target: PictureDetail | null): FixAnchors {
     const gridThumb = (id: string | null) => gridItems.find((i) => i.id === id) ?? null
 
     const before: FixAnchor | null = beforeDetail.data
-        ? {...toAnchor(beforeDetail.data), thumbnail_url: gridThumb(beforeId)?.thumbnail_url ?? beforeLookup.data?.items[0]?.thumbnail_url}
+        ? {...toAnchor(beforeDetail.data), thumbnail_url: gridThumb(beforeId)?.thumbnail_url ?? beforeLookup.data?.items[0]?.thumbnail_url ?? null}
         : null
     const after: FixAnchor | null = afterDetail.data
-        ? {...toAnchor(afterDetail.data), thumbnail_url: gridThumb(afterId)?.thumbnail_url ?? afterLookup.data?.items[0]?.thumbnail_url}
+        ? {...toAnchor(afterDetail.data), thumbnail_url: gridThumb(afterId)?.thumbnail_url ?? afterLookup.data?.items[0]?.thumbnail_url ?? null}
         : null
 
     const anchors = [before, after].filter((a): a is FixAnchor => !!a)

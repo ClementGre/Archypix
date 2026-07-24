@@ -5,6 +5,7 @@ import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
 import {Button} from '@/components/ui/button'
+import {useIsMobile} from '@/hooks/useMediaQuery'
 import {buildNaive, parseNaive} from '@/lib/fixDate'
 
 /** Format "YYYY-MM-DDTHH:MM:SS" for display; empty string when unset (callers add any placeholder). */
@@ -32,6 +33,7 @@ interface DateTimePickerPopoverProps {
 
 export function DateTimePickerPopover({value, onChange, children, disablePast, suggestions}: DateTimePickerPopoverProps) {
     const [open, setOpen] = useState(false)
+    const isMobile = useIsMobile()
 
     const parsed = value ? parseNaive(value) : null
     const selectedDate = parsed?.date
@@ -54,7 +56,10 @@ export function DateTimePickerPopover({value, onChange, children, disablePast, s
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>{children}</PopoverTrigger>
-            <PopoverContent className="max-h-[85vh] w-auto max-w-[min(92vw,18rem)] space-y-3 overflow-y-auto p-3" side="left" align="start"
+            {/* Mobile: drop below + right-aligned so Floating-UI can shift it back into view (see
+                GpsPickerPopover — a left/right side only flips, never shifts, on the horizontal axis). */}
+            <PopoverContent className="max-h-[85vh] w-auto max-w-[min(92vw,18rem)] space-y-3 overflow-y-auto p-3"
+                            side={isMobile ? 'bottom' : 'left'} align={isMobile ? 'end' : 'start'}
                             collisionPadding={8}>
                 {suggestions && suggestions.length > 0 && (
                     <div className="flex flex-wrap gap-1 border-b border-border pb-2">
