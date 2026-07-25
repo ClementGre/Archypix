@@ -9,9 +9,11 @@ export function AppShell() {
     const {open, initialFiles, closeDialog} = useUploadStore()
 
     return (
-        <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
+        // Below md: document scrolls (sticky header/footer) so mobile browser chrome can retract;
+        // md+: fixed viewport, content panes scroll internally instead (desktop has no chrome to hide).
+        <div className="flex min-h-dvh flex-col bg-background text-foreground md:h-dvh md:overflow-hidden">
             <TopBar/>
-            <main className="min-h-0 flex-1 overflow-hidden">
+            <main className="flex-1 md:min-h-0 md:overflow-hidden">
                 <Outlet/>
             </main>
             <StatusBar/>

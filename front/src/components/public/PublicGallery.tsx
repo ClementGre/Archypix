@@ -114,7 +114,7 @@ export function PublicGallery() {
 
     return (
         <>
-            <div className="h-full overflow-y-auto p-3" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
+            <div className="p-3 md:h-full md:overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
                 {/* Justified grid — same flex layout + PhotoCard as the authenticated gallery. */}
                 <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0 select-none">
                     {items.map((it) => (

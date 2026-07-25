@@ -16,7 +16,8 @@ export function PublicStatusBar() {
         .join(' · ')
 
     return (
-        <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-[11px] text-muted-foreground">
+        <footer
+            className="sticky bottom-0 z-10 flex h-7 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-[11px] text-muted-foreground">
             <span className="flex min-w-0 items-center gap-1.5" title={meta.name}>
                 <Images className="h-3 w-3 shrink-0"/>
                 <span className="truncate">

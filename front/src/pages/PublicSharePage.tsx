@@ -143,10 +143,10 @@ function UnlockedShare(props: {
     return (
         <PublicShareProvider value={ctx}>
             <PictureSourceProvider value={pictureSource}>
-                <div className="flex h-dvh flex-col bg-background text-foreground">
+                <div className="flex min-h-dvh flex-col bg-background text-foreground md:h-dvh">
                     <PublicTopBar/>
                     <div className="flex min-h-0 flex-1">
-                        <main className="min-w-0 flex-1 overflow-y-auto">
+                        <main className="min-w-0 flex-1 md:overflow-y-auto">
                             <PublicGallery/>
                         </main>
                         {/* Resizable, mobile-drawer details panel — the shared workspace SidePanel. */}

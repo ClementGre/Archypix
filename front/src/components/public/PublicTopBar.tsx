@@ -112,7 +112,7 @@ export function PublicTopBar() {
     }
 
     return (
-        <header className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-background px-2 py-1.5 sm:px-3">
+        <header className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-background px-2 py-1.5 sm:px-3">
             <Link to="/" aria-label="Archypix home" className="shrink-0">
                 <Logo/>
             </Link>

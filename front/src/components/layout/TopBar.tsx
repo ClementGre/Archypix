@@ -79,7 +79,7 @@ export function TopBar() {
     }
 
     return (
-        <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border bg-background px-2 sm:px-3">
+        <header className="sticky top-0 z-10 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-background px-2 sm:px-3">
             {isGallery && (
                 <Button
                     variant="ghost"

@@ -30,7 +30,8 @@ export function StatusBar() {
     const viewLabel = params.tag ? TagPath.toDisplay(params.tag) : 'All photos'
 
     return (
-        <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-[11px] text-muted-foreground">
+        <footer
+            className="sticky bottom-0 z-10 flex h-7 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-[11px] text-muted-foreground">
             {/* Storage usage (feature 22): segmented bar (originals/versions/trashed). Quota total only shown when set. */}
             <button
                 onClick={() => navigate('/settings')}
