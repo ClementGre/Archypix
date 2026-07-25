@@ -52,7 +52,7 @@ export function ResolverLogin() {
     }
 
     return (
-        <div className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="flex min-h-dvh items-center justify-center bg-background p-6">
             <Card className="w-full max-w-md">
                 <CardHeader className="space-y-1">
                     <CardTitle className="flex items-center gap-2 text-2xl">

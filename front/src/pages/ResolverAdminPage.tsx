@@ -75,7 +75,7 @@ export default function ResolverAdminPage() {
     }
 
     return (
-        <div className="h-full min-h-screen overflow-y-auto bg-background px-6 py-4">
+        <div className="h-full min-h-dvh overflow-y-auto bg-background px-6 py-4">
             <div className="mx-auto max-w-6xl space-y-4">
                 {/* Compact header */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
