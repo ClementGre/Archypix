@@ -55,6 +55,7 @@ never unannounces it downstream (coverage is by tag membership); a relayer alway
 **owner's** authoritative lifecycle, never its own local trash. Retention is finite (no
 infinite/archive option); the purge deadline is derived at sweep/announce time, so a retention change
 takes effect with no backfill.
+
 --- 
 
 ## 3. TaggingServices

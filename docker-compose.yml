@@ -1,0 +1,189 @@
+# Archypix — simplest self-hosted stack.
+#
+# One backend + one worker + one frontend, plus everything they need (Postgres, Redis, MinIO).
+# No resolver: a single backend answers its own `/archypix-resolver/info` and
+# `/archypix-resolver/resolve`, so this is all you need to run a fully working,
+# federation-capable instance.
+#
+# Three separate domains, all pointed at this host via DNS:
+#   GLOBAL_DOMAIN  the federated identity domain (@user:GLOBAL_DOMAIN) — only the
+#                  /archypix-resolver path is forwarded from here, straight to the backend.
+#   FRONT_DOMAIN   serves the web app. Skip the `front` service and use the hosted client at
+#                  https://archypix.com instead if you don't want to deploy your own — just make
+#                  sure CORS_ORIGINS allows it.
+#   BACK_DOMAIN    serves the backend API/WebDAV — everything except resolution.
+# S3_DOMAIN (MinIO) needs its own DNS record too: presigned URLs are handed straight to browsers.
+#
+# Object storage: MinIO is bundled below as the default, but any S3-compatible provider works
+# (AWS S3, Backblaze B2, Cloudflare R2, another MinIO...) — see the comment on the `minio`
+# service for how to swap it out.
+#
+# Requires an existing Traefik reverse proxy with an external `traefik` Docker network and a
+# resolver/entrypoint capable of TLS termination for your domain(s) — add your own
+# `traefik.http.routers.*.tls.certresolver` label if needed.
+#
+# Usage:
+#   cp .env.example .env   # fill in domains, passwords and secrets
+#   docker compose up -d
+#
+# For multiple backend instances sharing one public domain (via the Resolver), see
+# docker/docker-compose.prod.yml instead.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: archypix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: archypix
+      POSTGRES_USER: ${DB_USER:-archypix}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - archypix
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "${DB_USER:-archypix}", "-d", "archypix" ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+
+  redis:
+    image: redis:latest
+    container_name: archypix-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - archypix
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+
+  # Bundled S3-compatible storage — the default, zero-config option. To use an external
+  # S3-compatible provider instead (AWS S3, Backblaze B2, Cloudflare R2, another MinIO...):
+  #   1. Delete this service, the `minio_data` volume below, and the
+  #      `minio: condition: service_healthy` line under the backend's `depends_on`.
+  #   2. Point S3_ENDPOINT / S3_PUBLIC_ENDPOINT / S3_ACCESS_KEY / S3_SECRET_KEY (and S3_REGION,
+  #      overridden below) at your provider in `.env`.
+  #   3. If your provider requires globally-unique bucket names (most do), add
+  #      S3_BUCKET_STAGING/PICTURES/VERSIONS/SMALL/MEDIUM/LARGE to the backend's `environment:`
+  #      below — see doc/02_INFRASTRUCTURE_DESIGN.md for what each bucket is for.
+  minio:
+    image: minio/minio:latest
+    container_name: archypix-minio
+    restart: unless-stopped
+    command: server /data --address :9000 --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    networks:
+      - archypix
+      - traefik
+    labels:
+      traefik.enable: true
+      # Presigned URLs are handed straight to browsers, so MinIO must be reachable on its own domain.
+      traefik.http.routers.archypix-s3.rule: Host(`${S3_DOMAIN}`)
+      traefik.http.services.archypix-s3.loadbalancer.server.port: 9000
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+
+  backend:
+    image: ghcr.io/clementgre/archypix-back:${TAG:-main}
+    container_name: archypix-back
+    restart: unless-stopped
+    labels:
+      traefik.enable: true
+      # Main API/WebDAV domain — everything.
+      traefik.http.routers.archypix-back.rule: Host(`${BACK_DOMAIN}`)
+      traefik.http.routers.archypix-back.service: archypix-back
+      # The global/identity domain only forwards the resolution prefix to this same backend, so a
+      # standalone instance can answer /archypix-resolver/{info,resolve} without a Resolver service.
+      traefik.http.routers.archypix-back-global.rule: Host(`${GLOBAL_DOMAIN}`) && PathPrefix(`/archypix-resolver`)
+      traefik.http.routers.archypix-back-global.priority: 100
+      traefik.http.routers.archypix-back-global.service: archypix-back
+      traefik.http.services.archypix-back.loadbalancer.server.port: 80
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      BACK_DOMAIN: ${BACK_DOMAIN}
+      GLOBAL_DOMAIN: ${GLOBAL_DOMAIN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      USE_RESOLVER: "false"
+      JWT_SECRET: ${JWT_SECRET}
+      WORKER_JWT_SECRET: ${WORKER_JWT_SECRET}
+      DB_HOST: postgres
+      DB_USER: ${DB_USER:-archypix}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: archypix
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "0"
+      # Default to the bundled MinIO; override in .env to point at an external S3-compatible
+      # provider instead (see the comment on the `minio` service above).
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-https://${S3_DOMAIN}}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Remove this if you deleted the `minio` service above for external storage.
+      minio:
+        condition: service_healthy
+    networks:
+      - archypix
+      - traefik
+
+  worker:
+    image: ghcr.io/clementgre/archypix-worker:${TAG:-main}
+    container_name: archypix-worker
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      WORKER_ID: worker
+      BACK_URL: http://backend
+      BACK_DOMAIN: ${BACK_DOMAIN}
+      GLOBAL_DOMAIN: ${GLOBAL_DOMAIN}
+      WORKER_JWT_SECRET: ${WORKER_JWT_SECRET}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - archypix
+
+  front:
+    image: ghcr.io/clementgre/archypix-front:${TAG:-main}
+    container_name: archypix-front
+    restart: unless-stopped
+    labels:
+      traefik.enable: true
+      traefik.http.routers.archypix-front.rule: Host(`${FRONT_DOMAIN}`)
+      traefik.http.services.archypix-front.loadbalancer.server.port: 80
+    environment:
+      VITE_GLOBAL_DOMAIN: ${GLOBAL_DOMAIN}
+      VITE_USE_HTTPS: true
+    networks:
+      - archypix
+      - traefik
+
+networks:
+  archypix:
+    name: archypix
+  traefik:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

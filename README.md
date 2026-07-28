@@ -1,8 +1,32 @@
-# Archypix
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="logo/logo-light.svg">
+    <img alt="Archypix" src="logo/logo-light.svg" width="360">
+  </picture>
+</p>
 
-**Federated, self-hostable photo library** : tag-based organization, cross-instance sharing, and WebDAV-exposed tag hierarchies.
+<p align="center">
+  <strong>Federated, self-hostable photo library</strong> — tag-based organization, cross-instance sharing, and WebDAV-exposed tag hierarchies.
+</p>
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://github.com/ClementGre/Archypix/blob/main/LICENSE)
+<p align="center">
+  <a href="https://github.com/ClementGre/Archypix/blob/main/LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg"></a>
+  <a href="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml"><img alt="Build" src="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white">
+  <a href="https://github.com/ClementGre/Archypix/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/ClementGre/Archypix?style=flat"></a>
+</p>
+
+<p align="center">
+  <a href="#overview">Overview</a> •
+  <a href="#features">Features</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#self-hosting">Self-Hosting</a> •
+  <a href="#the-story-of-archypix">Story</a> •
+  <a href="#license">License</a>
+</p>
+
+---
 
 ## Overview
 
@@ -21,46 +45,63 @@ Multiple backend instances can share a single public domain through a lightweigh
 
 ### Tags
 
-Every picture carries any number of hierarchical tags, structured as slash-delimited paths such as `/Photos/Travel/Alps`. A picture tagged with a deep
-path automatically appears under all its parent tags too: `/Photos/Travel`, then `/Photos`. Tags can be assigned manually or generated automatically
-by rules you define. Deleted pictures are moved to a trash and kept for a configurable period before permanent removal.
+Hierarchical, slash-delimited paths (`/Photos/Travel/Alps`), assigned manually or by rules.
+
+- Tagging a deep path implicitly tags all its parents too.
+- Deleted pictures go to a trash with a configurable retention period.
 
 ### Automatic tagging
 
-You can define rules that tag your pictures automatically, without manual effort:
+Rules that tag pictures on their own, re-evaluated on every upload, edit, or received share.
 
-- **By date range**: group a holiday, a trip, or any period into a tag. Nested sub-periods are supported.
-- **By metadata**: EXIF fields, GPS location, filename patterns, and more.
-- **By shared content**: pictures you receive from other users can be automatically mapped into your own tag hierarchy.
-
-Rules run as an ordered pipeline, re-evaluated whenever something relevant changes: a new upload, a metadata edit, a received share. Your library
-stays organized on its own.
+- **By date**: calendar segmentation: holidays, trips, nested periods.
+- **By metadata**: EXIF, GPS, filename, via a predicate builder (AND/OR/NOT).
+- **By shared content**: map received pictures into your own tags.
 
 ### Hierarchies
 
-A Hierarchy is a named, configurable view of your library organized as a virtual folder tree based on your tags. You choose which tags appear as
-folders, which subtrees to collapse, and which to exclude entirely. Hierarchies and Tags are the primary ways to browse your pictures in Archypix.
+Configurable virtual folder trees built from your tags, syncable over **WebDAV**.
 
-Any hierarchy can also be exposed as a **WebDAV endpoint**, making your library accessible from any sync client:
-
-- Uploading a picture into a WebDAV folder automatically assigns the corresponding tag.
-- Moving a picture between folders updates its tags.
-- A configurable safe-delete mode protects against accidental bulk deletions from naive sync clients.
+- Choose which tags become folders; collapse or exclude subtrees.
+- Uploads, moves, and deletes through WebDAV write back to tags.
 
 ### Sharing
 
-Archypix is federated: every instance is a peer, and no central server is required to coordinate sharing.
+Federated: every instance is a peer, no central server required.
 
-- Share pictures under a tag with a user on another instance.
-- Shared pictures are never re-uploaded: recipients download them directly from your server.
-- Optionally, new pictures added to the shared tag are announced to recipients automatically.
-- Sharing is transitive: a recipient can re-share a collection that includes pictures owned by others.
-- Revoke a share at any time; the revocation propagates to all downstream recipients immediately.
+- Share a tag with a user that may be on another instance; files stay on your server.
+- New pictures auto-announce; sharing is transitive and revocable anytime.
+- Exif metadata can be overriden by recipient, or propagated to the original picture if permissions allows it.
+
+**Public share links** can be created: unauthenticated, revocable links to a tag. Full originals or view-only, with optional anonymous contribution.
+
+### A proper photo viewer
+
+Built to browse, not just list files: responsive grid, lightbox, mobile-tuned layout.
+
+- **Batch editing**: retag, edit EXIF, or trash a selection at once, with a dry-run preview.
+- **Photos fix tools**: guided GPS/date fixing, with interpolation and suggestions.
 
 ### Versioning and storage
 
-Files are stored in any S3-compatible object store (MinIO, AWS S3, Backblaze B2...). File downloads use short-lived presigned URLs generated by the
-storage backend, keeping large file traffic off the application server. Picture versioning is available and configurable per user.
+Any S3-compatible store (MinIO, AWS S3, Backblaze B2...), presigned URLs for downloads, per-user versioning and storage quotas.
+
+### Roadmap
+
+Not yet implemented, full detail in [doc/99_ROADMAP_MVP.md](doc/99_ROADMAP_MVP.md):
+
+- **Versioning UI** — browsing and restoring picture versions.
+- **ML workers** — style, people, and location-grouping inference.
+- **Onboarding & opinionated defaults** — a fresh instance auto-organizes out of the box.
+- **Bulk library import** — Google Takeout.
+- **External shared-album import** — one-time import from Google Photos / iCloud.
+- **PWA & mobile apps** — mobile-friendly PWA, then a native iOS uploader.
+- **Advanced WebDAV** — directory-level move/copy/delete, real locking.
+- **Visual picture editing** — crop, rotate, brightness/contrast, resize.
+- **EXIF edit history** — per-picture metadata revision log.
+- **Video transcoding & HLS playback** — adaptive streaming beyond today's direct playback.
+- **Backup & recovery discipline** — object replication, Postgres point-in-time recovery.
+- **Managed hosting** — a fully-managed `archypix.com` offering.
 
 ## Architecture
 
@@ -100,11 +141,60 @@ graph TB
     worker -->|" • Pools new jobs<br>• Submits job result "| backB
 ```
 
-| Component                                                                 | Role                                                                                                                          |
-|---------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | Resolution service. Maps `@username:domain` to the owning backend. Routes new user registrations to the least-loaded backend. |
-| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Axum HTTP server. Authoritative store for users, pictures, tags, and shares. Serves the REST API and WebDAV.                  |
-| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Async job pool for thumbnail generation, EXIF extraction, BlurHash, file hashing. ML inference planned.                       |
+| Component                                                                 | Role                                                                                                                                                                                     |
+|---------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | Resolution service. Maps `@username:domain` to the owning backend, routes new registrations to the least-loaded backend, and serves a fleet admin dashboard for multi-backend operators. |
+| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Axum HTTP server. Authoritative store for users, pictures, tags, and shares. Serves the REST API and WebDAV.                                                                             |
+| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Async job pool for thumbnail generation, EXIF extraction, BlurHash, file hashing. ML inference planned.                                                                                  |
+
+A single backend serves its own resolution endpoint, so the Resolver is only needed once you run more than one backend behind the same domain.
+
+## Self-Hosting
+
+Archypix is deployed with Docker Compose. Every instance needs Postgres, Redis, and an S3-compatible object store, plus a reverse proxy (Traefik in
+the example)
+for TLS and routing.
+
+### Single backend (recommended)
+
+The simplest setup, and the right starting point for almost everyone: [`docker-compose.yml`](docker-compose.yml) at the repo root bundles
+Postgres, Redis, MinIO, one backend, one worker, and the frontend into a single stack (no Resolver needed, a lone backend answers its own
+`/archypix-resolver/info` and `/archypix-resolver/resolve`).
+
+The example expects an existing Traefik reverse proxy reachable on an external `traefik` Docker network, and DNS records pointed at your host for
+three
+separate domains:
+
+- `GLOBAL_DOMAIN`: your federated identity domain (`@username:GLOBAL_DOMAIN`). Only the `/archypix-resolver` path is forwarded from it, straight
+  to the backend, so the rest of the domain is free for a landing page or anything else.
+- `FRONT_DOMAIN`: serves the web app.
+- `BACK_DOMAIN`: serves the backend API/WebDAV (everything except resolution). Can equal `GLOBAL_DOMAIN`, but a separate subdomain keeps your
+  identity domain free of infrastructure-looking URLs.
+
+Plus `S3_DOMAIN` for MinIO: presigned download/upload URLs are handed straight to the browser, so object storage needs to be publicly reachable
+too.
+
+```bash
+git clone https://github.com/ClementGre/Archypix.git
+cd Archypix
+cp .env.example .env   # fill in domains, passwords, and secrets
+docker compose up -d
+```
+
+Don't want to run your own frontend? Drop the `front` service from `docker-compose.yml` and use the hosted client at
+[archypix.com](https://archypix.com) instead — point it at your `BACK_DOMAIN`, and add `https://archypix.com` to `CORS_ORIGINS` so your backend
+accepts requests from it.
+
+See [`.env.example`](.env.example) for every variable, and [doc/02_INFRASTRUCTURE_DESIGN.md](doc/02_INFRASTRUCTURE_DESIGN.md) for what each
+component does.
+
+### Multiple backends behind one domain
+
+Once a single backend's resource limits actually matter, add a
+Resolver in front of several backends sharing one public domain (`@user:example.com` resolves to whichever backend owns that user).
+[`docker/docker-compose.prod.yml`](docker/docker-compose.prod.yml) is a worked example of this topology: a resolver, two backends, a shared
+worker, and a frontend, all behind Traefik, using external Postgres/Redis/Traefik Docker networks and per-backend MinIO buckets. Adapt its
+environment variables and Traefik labels to your own domains and secrets.
 
 ## The Story of Archypix
 
