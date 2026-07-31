@@ -13,6 +13,20 @@ fn init_magick() {
     });
 }
 
+fn read_image_without_orientation(src: &Path) -> Result<MagickWand> {
+    let mut wand = MagickWand::new();
+
+    // Prevent HEIC-family decoders from auto-rotating pixels so thumbnails and
+    // blurhash stay in stored-raster orientation. Other formats ignore this define.
+    wand.set_option("heic:preserve-orientation", "true")
+        .map_err(|e| WorkerError::Imaging(format!("set heic decode option: {e}")))?;
+
+    wand.read_image(src.to_str().unwrap())
+        .map_err(|e| WorkerError::Imaging(format!("read image: {e}")))?;
+
+    Ok(wand)
+}
+
 /// Named thumbnail variants and their target heights in pixels.
 pub const THUMBNAIL_VARIANTS: &[(&str, usize)] =
     &[("small", 150), ("medium", 500), ("large", 1000)];
@@ -29,9 +43,7 @@ pub const THUMBNAIL_SMALLER_VARIANT: &str = "small";
 pub fn image_dimensions(src: &Path) -> Result<(i32, i32)> {
     init_magick();
 
-    let wand = MagickWand::new();
-    wand.read_image(src.to_str().unwrap())
-        .map_err(|e| WorkerError::Imaging(format!("read image: {e}")))?;
+    let wand = read_image_without_orientation(src)?;
 
     let w = wand.get_image_width();
     let h = wand.get_image_height();
@@ -51,9 +63,7 @@ pub fn image_dimensions(src: &Path) -> Result<(i32, i32)> {
 pub fn generate_thumbnail(src: &Path, dest: &Path, target_height: usize) -> Result<()> {
     init_magick();
 
-    let mut wand = MagickWand::new();
-    wand.read_image(src.to_str().unwrap())
-        .map_err(|e| WorkerError::Imaging(format!("read image: {e}")))?;
+    let mut wand = read_image_without_orientation(src)?;
 
     let orig_w = wand.get_image_width();
     let orig_h = wand.get_image_height();
@@ -89,8 +99,7 @@ pub fn generate_thumbnail(src: &Path, dest: &Path, target_height: usize) -> Resu
 pub fn generate_blurhash(src: &Path) -> Result<String> {
     init_magick();
 
-    let wand = MagickWand::new();
-    wand.read_image(src.to_str().unwrap())
+    let wand = read_image_without_orientation(src)
         .map_err(|e| WorkerError::Imaging(format!("read image for blurhash: {e}")))?;
 
     let w = wand.get_image_width();
