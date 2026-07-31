@@ -206,6 +206,7 @@ dependencies = [
  "blurhash",
  "chrono",
  "dotenvy",
+ "exiftool",
  "futures-util",
  "jsonwebtoken",
  "magick_rust",
@@ -1578,6 +1579,21 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "exiftool"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8063e00d39c361c04099fa64dc9ad21514880181f299ea040e5cde0a8c36c0fa"
+dependencies = [
+ "chrono",
+ "log",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

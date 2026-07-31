@@ -1,10 +1,17 @@
 use crate::error::{Result, WorkerError};
 use archypix_common::job::{CameraExif, ExifField, ExtractedExif, FullExif};
 use chrono::NaiveDateTime;
+use exiftool::ExifTool;
 use num_rational::Ratio;
 use rexiv2::{GpsInfo, Metadata};
 use std::path::Path;
+use std::process::Command;
+use std::sync::OnceLock;
 use tracing::{debug, instrument};
+
+static EXIFTOOL: OnceLock<std::result::Result<ExifTool, String>> = OnceLock::new();
+
+const BMFF_EXIF_WRITE_MIMES: &[&str] = &["image/heic", "image/heif", "image/avif"];
 
 /// Load and extract EXIF data from an image file.
 ///
@@ -118,8 +125,169 @@ fn parse_exif_datetime(s: &str) -> Option<NaiveDateTime> {
 /// promoted columns (date, GPS, orientation) and the camera/lens fields (make, model, focal length,
 /// f-number, ISO, exposure time). Fields not named in either `set` or `clear` are left untouched.
 /// Must run inside `tokio::task::spawn_blocking`.
-#[instrument(skip(path, set, clear), fields(file = ?path.file_name(), clear_fields = clear.len()))]
-pub fn write_exif_overrides(path: &Path, set: &FullExif, clear: &[ExifField]) -> Result<()> {
+#[instrument(skip(path, set, clear), fields(file = ?path.file_name(), clear_fields = clear.len(), bmff_exiftool = use_exiftool_for_write(mime_type)))]
+pub fn write_exif_overrides(
+    path: &Path,
+    set: &FullExif,
+    clear: &[ExifField],
+    mime_type: Option<&str>,
+) -> Result<()> {
+    if use_exiftool_for_write(mime_type) {
+        return write_exif_overrides_with_exiftool(path, set, clear);
+    }
+    write_exif_overrides_with_rexiv2(path, set, clear)
+}
+
+/// Whether this MIME must use ExifTool for writes (BMFF containers).
+pub fn use_exiftool_for_write(mime_type: Option<&str>) -> bool {
+    let Some(mime_type) = mime_type else {
+        return false;
+    };
+    BMFF_EXIF_WRITE_MIMES.contains(&mime_type.to_ascii_lowercase().as_str())
+}
+
+/// Whether `exiftool` is available on PATH.
+pub fn exiftool_available() -> bool {
+    Command::new("exiftool")
+        .arg("-ver")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn exiftool() -> Result<&'static ExifTool> {
+    let loaded = EXIFTOOL.get_or_init(|| ExifTool::new().map_err(|e| e.to_string()));
+    match loaded {
+        Ok(tool) => Ok(tool),
+        Err(e) => Err(WorkerError::Exif(format!(
+            "failed to initialize exiftool stay-open process: {e}"
+        ))),
+    }
+}
+
+fn write_exif_overrides_with_exiftool(
+    path: &Path,
+    set: &FullExif,
+    clear: &[ExifField],
+) -> Result<()> {
+    let mut args: Vec<String> = vec!["-overwrite_original".to_string()];
+
+    // ── Set ────────────────────────────────────────────────────────────────────
+    if let Some(dt) = set.captured_at {
+        let s = dt.format("%Y:%m:%d %H:%M:%S").to_string();
+        args.push(format!("-DateTimeOriginal={s}"));
+        args.push(format!("-CreateDate={s}"));
+        args.push(format!("-ModifyDate={s}"));
+    }
+    if let Some(orientation) = set.orientation {
+        args.push(format!("-Orientation={orientation}"));
+    }
+    if let Some(lat) = set.gps_lat {
+        args.push(format!("-GPSLatitude={}", lat.abs()));
+        args.push(format!(
+            "-GPSLatitudeRef={}",
+            if lat >= 0.0 { "N" } else { "S" }
+        ));
+    }
+    if let Some(lng) = set.gps_lng {
+        args.push(format!("-GPSLongitude={}", lng.abs()));
+        args.push(format!(
+            "-GPSLongitudeRef={}",
+            if lng >= 0.0 { "E" } else { "W" }
+        ));
+    }
+    if let Some(alt) = set.gps_alt {
+        args.push(format!("-GPSAltitude={}", alt.abs()));
+        args.push(format!("-GPSAltitudeRef={}", if alt >= 0 { 0 } else { 1 }));
+    }
+    if let Some(ref brand) = set.camera.camera_brand {
+        args.push(format!("-Make={brand}"));
+    }
+    if let Some(ref model) = set.camera.camera_model {
+        args.push(format!("-Model={model}"));
+    }
+    if let Some(iso) = set.camera.iso_speed {
+        args.push(format!("-ISO={iso}"));
+    }
+    if let Some(focal) = set.camera.focal_length_mm {
+        args.push(format!("-FocalLengthIn35mmFormat={}", focal.round() as i32));
+    }
+    if let Some(fnum) = set.camera.f_number {
+        args.push(format!("-FNumber={fnum}"));
+    }
+    if set.camera.exposure_time_num.is_some() || set.camera.exposure_time_den.is_some() {
+        let num = set.camera.exposure_time_num.unwrap_or(0);
+        let den = set.camera.exposure_time_den.unwrap_or(1).max(1);
+        args.push(format!("-ExposureTime={num}/{den}"));
+    }
+
+    // ── Clear ──────────────────────────────────────────────────────────────────
+    let mut clear_gps = false;
+    let mut clear_exposure = false;
+    for field in clear {
+        match field {
+            ExifField::CapturedAt => {
+                args.push("-DateTimeOriginal=".to_string());
+                args.push("-CreateDate=".to_string());
+                args.push("-ModifyDate=".to_string());
+            }
+            ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt => {
+                clear_gps = true;
+            }
+            ExifField::Orientation => {
+                args.push("-Orientation=".to_string());
+            }
+            ExifField::CameraBrand => {
+                args.push("-Make=".to_string());
+            }
+            ExifField::CameraModel => {
+                args.push("-Model=".to_string());
+            }
+            ExifField::FocalLengthMm => {
+                args.push("-FocalLengthIn35mmFormat=".to_string());
+            }
+            ExifField::FNumber => {
+                args.push("-FNumber=".to_string());
+            }
+            ExifField::IsoSpeed => {
+                args.push("-ISO=".to_string());
+                args.push("-PhotographicSensitivity=".to_string());
+            }
+            ExifField::ExposureTimeNum | ExifField::ExposureTimeDen => {
+                clear_exposure = true;
+            }
+        }
+    }
+    if clear_gps {
+        args.push("-GPSLatitude=".to_string());
+        args.push("-GPSLatitudeRef=".to_string());
+        args.push("-GPSLongitude=".to_string());
+        args.push("-GPSLongitudeRef=".to_string());
+        args.push("-GPSAltitude=".to_string());
+        args.push("-GPSAltitudeRef=".to_string());
+    }
+    if clear_exposure {
+        args.push("-ExposureTime=".to_string());
+    }
+
+    args.push(path.display().to_string());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    exiftool()?
+        .execute_raw(&arg_refs)
+        .map_err(|e| WorkerError::Exif(format!("exiftool write failed: {e}")))?;
+
+    debug!(path = %path.display(), "EXIF overrides written with exiftool");
+    Ok(())
+}
+
+fn write_exif_overrides_with_rexiv2(
+    path: &Path,
+    set: &FullExif,
+    clear: &[ExifField],
+) -> Result<()> {
     let metadata = Metadata::new_from_path(path)
         .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF write: {e}")))?;
 
@@ -218,7 +386,7 @@ pub fn write_exif_overrides(path: &Path, set: &FullExif, clear: &[ExifField]) ->
         .save_to_file(path)
         .map_err(|e| WorkerError::Exif(format!("failed to save EXIF overrides: {e}")))?;
 
-    debug!(path = %path.display(), "EXIF overrides written");
+    debug!(path = %path.display(), "EXIF overrides written with rexiv2");
     Ok(())
 }
 

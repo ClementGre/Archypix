@@ -15,12 +15,13 @@ use uuid::Uuid;
 /// 1. Download the original file.
 /// 2. If `exif` is set: apply its `set`/`clear` delta into the file's embedded EXIF. A write failure
 ///    is permanent — the backend's MIME preflight prevents enqueuing doomed jobs, so a failure here
-///    is genuinely unrecoverable.
+///    is genuinely unrecoverable. BMFF images (HEIC/HEIF/AVIF) are written via ExifTool; other image
+///    formats keep using rexiv2.
 /// 3. Regenerate + upload thumbnails (and BlurHash) from the local edited file (visual edits only).
 /// 4. Compute file_size and file_hash from the (modified) file.
 /// 5. Upload the modified original to the `output` presigned URL — the last fallible step.
 #[tracing::instrument(
-    skip(client, config, presigned_read, presigned_writes, _mime_type),
+    skip(client, config, presigned_read, presigned_writes, mime_type),
     fields(job_id = %job_id, picture_id = %config.picture_id),
 )]
 pub async fn handle(
@@ -30,7 +31,7 @@ pub async fn handle(
     config: EditPictureConfig,
     presigned_read: Option<String>,
     presigned_writes: PresignedWrites,
-    _mime_type: Option<String>,
+    mime_type: Option<String>,
 ) -> Result<()> {
     let presigned_read = presigned_read.ok_or_else(|| WorkerError::MissingPresignedUrl {
         key: "original".to_string(),
@@ -61,10 +62,11 @@ pub async fn handle(
         let path = file_path.clone();
         let set = edit.set.clone();
         let clear = edit.clear.clone();
+        let mime_type = mime_type.clone();
         let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
-            exif_mod::write_exif_overrides(&path, &set, &clear)
+            exif_mod::write_exif_overrides(&path, &set, &clear, mime_type.as_deref())
         })
         .await
         .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??;

@@ -43,6 +43,14 @@ async fn main() -> anyhow::Result<()> {
              skipped (install ffmpeg or rebuild the worker image)"
         );
     }
+    if imaging::exif::exiftool_available() {
+        info!("exiftool:          available (BMFF EXIF writes enabled)");
+    } else {
+        warn!(
+            "exiftool not found on PATH — BMFF EXIF writes (HEIC/HEIF/AVIF) will fail until \
+             exiftool is installed"
+        );
+    }
 
     // One semaphore shared across all backend loops — total concurrency is bounded globally.
     let sem = Arc::new(Semaphore::new(config.max_concurrent_jobs));

@@ -39,6 +39,7 @@ RUN apt-get update && \
     apt-get install -y \
     "$MAGICKWAND_PKG" \
     libgexiv2-2 \
+    libimage-exiftool-perl \
     ffmpeg \
     ca-certificates \
     curl \
@@ -62,6 +63,7 @@ RUN apt-get update && apt-get install -y \
     libclang-dev \
     libmagickwand-dev \
     libgexiv2-dev \
+    libimage-exiftool-perl \
     ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*

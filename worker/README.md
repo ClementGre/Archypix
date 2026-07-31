@@ -8,21 +8,22 @@ For a full overview of the project, see the [root README](https://github.com/Cle
 
 ## Tech stack
 
-| Concern             | Crate / tool                                                                   |
-|---------------------|--------------------------------------------------------------------------------|
-| Async runtime       | [Tokio](https://tokio.rs/)                                                     |
-| HTTP client         | [reqwest](https://github.com/seanmonstar/reqwest)                              |
-| Image processing    | [magick_rust](https://github.com/nlfiedler/magick-rust) (ImageMagick bindings) |
-| EXIF extraction     | [rexiv2](https://gitlab.gnome.org/GNOME/gexiv2) (GExiv2 / Exiv2 bindings)      |
-| BlurHash generation | [blurhash](https://github.com/nicowillis/blurhash)                             |
-| File hashing        | [sha2](https://github.com/RustCrypto/hashes) (SHA-256)                         |
-| Auth                | [jsonwebtoken](https://github.com/Keats/jsonwebtoken)                          |
-| Structured logging  | [tracing](https://github.com/tokio-rs/tracing) + tracing-subscriber            |
-| Health check server | [Axum](https://github.com/tokio-rs/axum)                                       |
+| Concern             | Crate / tool                                                                                          |
+|---------------------|-------------------------------------------------------------------------------------------------------|
+| Async runtime       | [Tokio](https://tokio.rs/)                                                                            |
+| HTTP client         | [reqwest](https://github.com/seanmonstar/reqwest)                                                     |
+| Image processing    | [magick_rust](https://github.com/nlfiedler/magick-rust) (ImageMagick bindings)                        |
+| EXIF extraction     | [rexiv2](https://gitlab.gnome.org/GNOME/gexiv2) (GExiv2 / Exiv2 bindings)                             |
+| BMFF EXIF writes    | [exiftool](https://exiftool.org/) via [exiftool](https://crates.io/crates/exiftool) stay-open wrapper |
+| BlurHash generation | [blurhash](https://github.com/nicowillis/blurhash)                                                    |
+| File hashing        | [sha2](https://github.com/RustCrypto/hashes) (SHA-256)                                                |
+| Auth                | [jsonwebtoken](https://github.com/Keats/jsonwebtoken)                                                 |
+| Structured logging  | [tracing](https://github.com/tokio-rs/tracing) + tracing-subscriber                                   |
+| Health check server | [Axum](https://github.com/tokio-rs/axum)                                                              |
 
 ## System prerequisites
 
-The worker links against two native C libraries that must be installed before building:
+The worker relies on native imaging libraries plus ExifTool:
 
 ### ImageMagick (for thumbnail generation)
 
@@ -58,6 +59,19 @@ apt-get install libgexiv2-dev
 
 # Fedora / RHEL
 dnf install gexiv2-devel
+```
+
+### ExifTool (for BMFF EXIF writes: HEIC/HEIF/AVIF)
+
+```bash
+# macOS
+brew install exiftool
+
+# Debian / Ubuntu
+apt-get install libimage-exiftool-perl
+
+# Fedora / RHEL
+dnf install perl-Image-ExifTool
 ```
 
 ## Configuration
@@ -130,9 +144,10 @@ Width is derived from the original aspect ratio. The `THUMBNAIL_VARIANTS` consta
 
 Downloads the original picture, then:
 
-1. Applies EXIF overrides into the file's embedded metadata via rexiv2.
-   A write failure (unsupported format) is a **permanent error** — the job is immediately
-   marked failed without retry. MIME screening will be added server-side in a future milestone.
+1. Applies EXIF overrides into the file's embedded metadata.
+   Writes use rexiv2 for regular image formats and ExifTool (stay-open process) for BMFF
+   containers (`image/heic`, `image/heif`, `image/avif`).
+   A write failure is a **permanent error** — the job is immediately marked failed without retry.
 2. Computes `file_hash` (SHA-256) and `file_size` from the modified file.
 3. Uploads the modified file via the `output` presigned PUT URL.
 4. Regenerates thumbnails and BlurHash if the backend provided thumbnail presigned URLs
@@ -169,7 +184,8 @@ src/
                          claim_next_job / complete_job / fail_job(claim_token)
                          download_presigned (streaming) / upload_presigned
   imaging/
-    exif.rs            extract_exif() / write_exif_overrides() — rexiv2, blocking.
+    exif.rs            extract_exif() via rexiv2; write_exif_overrides() via rexiv2 or ExifTool
+                       (BMFF only), blocking.
     hash.rs            hash_file() — SHA-256 hex in 64 KiB chunks, blocking.
     resize.rs          generate_thumbnail() (ImageMagick/WebP), generate_blurhash();
                        THUMBNAIL_VARIANTS: single source of truth for sizes.

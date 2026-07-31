@@ -38,6 +38,7 @@
           gexiv2            # libgexiv2 — EXIF read/write via GExiv2/Exiv2
           exiv2             # required by gexiv2
           glib              # required by gexiv2 (GLib/GObject)
+          exiftool          # BMFF EXIF writes (HEIC/HEIF/AVIF) via stay-open process
           ffmpeg            # ffprobe/ffmpeg — video metadata + frame-grab thumbnails
 
           # Back / resolver TLS
@@ -66,6 +67,7 @@
             echo "  sqlx-cli:    $(sqlx --version 2>/dev/null || echo 'not found')"
             echo "  ImageMagick: $(magick --version | head -1)"
             echo "  GExiv2:      ${pkgs.gexiv2.version}"
+            echo "  exiftool:    $(exiftool -ver 2>/dev/null || echo 'not found')"
             echo "  ffmpeg:      $(ffmpeg -version 2>/dev/null | head -1 || echo 'not found')"
           '';
         };
