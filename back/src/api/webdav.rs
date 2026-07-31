@@ -10,6 +10,7 @@ use crate::services::vfs::{ReadTarget, Vfs, VfsEntry};
 use crate::services::webdav;
 use crate::state::AppState;
 use archypix_common::error::AppError;
+use archypix_common::mime::{resolve_upload_mime, response_content_type};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
@@ -141,7 +142,7 @@ async fn read(vfs: &Vfs<'_>, segments: &[String], with_body: bool) -> Result<Res
             .body(Body::empty())
             .unwrap()),
         ReadTarget::Bytes { data, mime } => {
-            let ct = mime.unwrap_or_else(|| "application/octet-stream".to_string());
+            let ct = response_content_type(mime.as_deref(), basename_for_segments(segments));
             let len = data.len();
             let body = if with_body {
                 Body::from(data)
@@ -167,10 +168,12 @@ async fn put(
     headers: &HeaderMap,
     req: Request<Body>,
 ) -> Result<Response, AppError> {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    let content_type = resolve_upload_mime(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        basename_for_segments(segments),
+    );
 
     // Source file creation date (feature 30 §10): Nextcloud/ownCloud clients send the file's
     // creation time as `X-OC-CTime` (unix seconds, UTC). Stored as a suggestion, never auto-applied
@@ -399,6 +402,10 @@ fn options_response() -> Response {
         .unwrap()
 }
 
+fn basename_for_segments(segments: &[String]) -> &str {
+    segments.last().map(String::as_str).unwrap_or("")
+}
+
 // ── Atomic-save staging (08_webdav_issues.md §1) ────────────────────────────────────
 
 /// Whether any path segment is an atomic-save scratch artifact — a temp directory or file a
@@ -451,10 +458,12 @@ async fn staging(
 ) -> Result<Response, AppError> {
     match method.as_str() {
         "PUT" => {
-            let content_type = headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
+            let content_type = resolve_upload_mime(
+                headers
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok()),
+                basename_for_segments(segments),
+            );
             let (tmp, hash, size) = stream_to_temp(
                 req.into_body(),
                 state.settings.get(keys::WEBDAV_MAX_UPLOAD_BYTES),
@@ -481,7 +490,7 @@ async fn staging(
                 .body(Body::empty())
                 .unwrap()),
             Some(ReadTarget::Bytes { data, mime }) => {
-                let ct = mime.unwrap_or_else(|| "application/octet-stream".to_string());
+                let ct = response_content_type(mime.as_deref(), basename_for_segments(segments));
                 let len = data.len();
                 let body = if method == Method::GET {
                     Body::from(data)
@@ -590,10 +599,12 @@ async fn ignored(
 ) -> Result<Response, AppError> {
     match method.as_str() {
         "PUT" => {
-            let content_type = headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
+            let content_type = resolve_upload_mime(
+                headers
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok()),
+                basename_for_segments(segments),
+            );
             // Sidecars are tiny; buffer with a small cap (oversized bodies are accepted but not stored).
             let bytes = axum::body::to_bytes(
                 req.into_body(),
@@ -607,7 +618,7 @@ async fn ignored(
         }
         "GET" | "HEAD" => match vfs.read_sidecar(segments).await? {
             Some((data, mime)) => {
-                let ct = mime.unwrap_or_else(|| "application/octet-stream".to_string());
+                let ct = response_content_type(mime.as_deref(), basename_for_segments(segments));
                 let len = data.len();
                 let body = if method == Method::GET {
                     Body::from(data)

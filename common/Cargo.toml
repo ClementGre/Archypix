@@ -30,6 +30,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 tempfile = "3.27.0"
+mime_guess = "2"
 
 # ── Optional, feature-gated (see [features]) ────────────────────────────────────
 jsonwebtoken = { version = "10", features = ["rust_crypto"], optional = true }

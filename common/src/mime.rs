@@ -2,6 +2,7 @@
 ///
 /// Workers check the picture's `mime_type` field before attempting EXIF extraction
 /// or thumbnail generation to avoid feeding unsupported formats to native libraries.
+pub const APPLICATION_OCTET_STREAM: &str = "application/octet-stream";
 
 /// MIME types that GExiv2 (rexiv2) can read and write EXIF metadata for.
 pub const MIME_TYPES_EXIF: &[&str] = &[
@@ -101,4 +102,71 @@ pub fn thumbnailable_mimes() -> impl Iterator<Item = &'static str> {
 /// concrete engine with [`supports_image_thumbnail`] / [`supports_video`].
 pub fn supports_thumbnail(mime_type: &str) -> bool {
     supports_image_thumbnail(mime_type) || supports_video(mime_type)
+}
+
+/// Normalize a MIME string to lower-case `type/subtype`, dropping parameters (e.g.
+/// `image/JPEG; charset=binary` -> `image/jpeg`).
+pub fn normalize_mime_type(value: &str) -> Option<String> {
+    let base = value.split(';').next()?.trim().to_ascii_lowercase();
+    if base.is_empty() {
+        return None;
+    }
+    Some(base)
+}
+
+/// Best-effort MIME inference from a file name/path extension.
+pub fn infer_mime_from_filename(filename: &str) -> Option<String> {
+    mime_guess::from_path(filename)
+        .first_raw()
+        .map(str::to_ascii_lowercase)
+}
+
+/// Resolve the effective MIME type to persist for an upload.
+///
+/// Prefer the normalized provided value unless it is `application/octet-stream`
+/// (generic/unknown). In that case, try extension-based inference and only fall
+/// back to the original normalized value when inference fails.
+pub fn resolve_upload_mime(content_type: Option<&str>, filename: &str) -> Option<String> {
+    let normalized = content_type.and_then(normalize_mime_type);
+    if let Some(mime) = &normalized
+        && mime != APPLICATION_OCTET_STREAM
+    {
+        return Some(mime.clone());
+    }
+    infer_mime_from_filename(filename).or(normalized)
+}
+
+/// Resolve the HTTP response Content-Type, defaulting to octet-stream only when
+/// no better signal is available.
+pub fn response_content_type(content_type: Option<&str>, filename: &str) -> String {
+    resolve_upload_mime(content_type, filename).unwrap_or_else(|| APPLICATION_OCTET_STREAM.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_upload_mime_keeps_specific_header() {
+        assert_eq!(
+            resolve_upload_mime(Some("IMAGE/JPEG; charset=binary"), "photo.png"),
+            Some("image/jpeg".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_upload_mime_uses_filename_when_header_is_octet_stream() {
+        assert_eq!(
+            resolve_upload_mime(Some("application/octet-stream"), "photo.jpg"),
+            Some("image/jpeg".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_upload_mime_falls_back_to_octet_stream_if_unknown_extension() {
+        assert_eq!(
+            resolve_upload_mime(Some("application/octet-stream"), "photo.unknownext"),
+            Some("application/octet-stream".to_string())
+        );
+    }
 }
