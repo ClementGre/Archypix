@@ -360,6 +360,10 @@ Before announcing, Bob's backend checks whether the picture's `owner` matches th
 pictures relayed through Bob from being re-announced back to Alice). Duplicate detection also prevents loops when Alice shares to both Bob and Carol
 and Bob shares transitively to Carol.
 
+A share whose **recipient is the sender** is rejected at creation, and an existing one is skipped by the pipeline: registering its own announcement
+would rewrite the rows that produced it and wake the same user's pipeline again, with no fixed point. Identity is resolved with
+`find_local_user_id` — equal global domains do not imply the same instance.
+
 A **physical copy** is a new, independent owned picture `(copier, new_id)` — never a reuse of the original id — with
 `copy_source_*` recording the genuine original's identity. Because a copy *launders the owner identity*, the owner-match check above cannot catch a
 copy

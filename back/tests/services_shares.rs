@@ -181,6 +181,48 @@ async fn create_outgoing_share_rejects_blank_name(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn create_outgoing_share_rejects_sharing_with_yourself(db: PgPool) {
+    // A self-share would re-register the owner's own rows back onto themselves, re-dirtying them
+    // and waking the pipeline that announced them — an endless announce loop.
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let settings = test_settings_with(&[]);
+    let (fed, cache) = common::make_federation(&settings);
+    let notify = RoutineHandle::<Uuid>::disconnected();
+
+    let result = shares::create_outgoing_share(
+        &db,
+        cache.as_ref(),
+        &fed,
+        &settings,
+        &notify,
+        alice_id,
+        "alice",
+        "vacation",
+        "Test share",
+        None,
+        "alice",
+        "test.com",
+        false,
+        false,
+        false,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::BadRequest(_))),
+        "sharing with yourself must be rejected"
+    );
+    assert!(
+        OutgoingShareRepository::list_by_owner(&db, alice_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "nothing may be persisted"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn create_outgoing_share_rejects_invalid_recipient_instance(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
     let settings = test_settings_with(&[]);

@@ -1484,9 +1484,10 @@ interface ShareResponse {
 **Side-effects:** The federation handshake and share announcement run synchronously. If federation delivery fails, the share creation is rolled back.
 
 **Errors:** `400` if `recipient_instance` is not a valid bare domain (schemes, ports, paths, IP
-literals, and local domains are rejected — this guards the outbound federation call), or if `name` is
-blank / exceeds 64 chars or `message` exceeds 1000 chars. `429` when the sender already holds the
-maximum number of `pending` outgoing shares.
+literals, and local domains are rejected — this guards the outbound federation call), if `name` is
+blank / exceeds 64 chars or `message` exceeds 1000 chars, or if the recipient resolves to the caller
+themselves (a share with yourself loops the announcement pipeline). `429` when the sender already
+holds the maximum number of `pending` outgoing shares.
 
 ---
 

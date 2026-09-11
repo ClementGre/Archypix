@@ -310,6 +310,15 @@ pub async fn create_outgoing_share(
     let recipient_local_id =
         find_local_user_id(cache, db, settings, recipient_username, recipient_instance).await?;
 
+    // Sharing with yourself re-registers your own rows onto themselves and wakes the pipeline that
+    // announced them — an endless announce loop (01 §6.6). Resolved identity, not domain equality:
+    // two instances can carry the same global domain.
+    if recipient_local_id == Some(owner_id) {
+        return Err(AppError::BadRequest(
+            "You cannot share with yourself".to_string(),
+        ));
+    }
+
     let mut tx = db
         .begin()
         .await

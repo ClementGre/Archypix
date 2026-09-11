@@ -14,6 +14,7 @@ use archypix_back::infra::routine::unannounce::UnannounceInput;
 use archypix_back::infra::settings::{keys, test_settings_with};
 use archypix_back::repository::pipeline::PipelineRepository;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
+use archypix_back::repository::share_announcement::ShareAnnouncementRepository;
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::shares;
 use sqlx::PgPool;
@@ -369,6 +370,77 @@ async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool)
         common::count_received_pictures(&db, bob).await,
         0,
         "loop prevention: Bob's own picture must not be announced back to Bob"
+    );
+}
+
+/// A self-share (recipient == owner) created before the creation-time guard existed must go inert
+/// instead of looping: registering its own announce would rewrite the very rows that produced it,
+/// re-dirty them and wake this same user's pipeline again.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn legacy_self_share_is_inert(db: PgPool) {
+    let (settings, _cache, queue, _notify) = deps(&db).await;
+    let alice = common::seed_user(&db, "alice", "p").await;
+    let domain = settings.get(keys::GLOBAL_DOMAIN);
+
+    // One owned and one received picture, both covered by the share's tag. The received one is the
+    // dangerous case: re-announcing it upserts onto this very row.
+    let owned = common::seed_picture_with_tag(&db, alice, "Travel").await;
+    let received = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain)
+         VALUES ($1, $2, $3, 'bob', $4)",
+        received,
+        alice,
+        Uuid::new_v4().to_string(),
+        domain,
+    )
+        .execute(&db)
+        .await
+        .unwrap();
+    TagRepository::batch_assign(&db, alice, &[received], &["Travel".to_string()])
+        .await
+        .unwrap();
+
+    // Build the share pair directly — `create_outgoing_share` now rejects this shape.
+    let share = OutgoingShareRepository::create(
+        &db, alice, "Travel", "Self", None, "alice", &domain, false, false, true, None,
+    )
+    .await
+    .unwrap();
+    OutgoingShareRepository::set_status(&db, share.id, ShareStatus::PendingFirstAnnouncement)
+        .await
+        .unwrap();
+    let incoming = IncomingShareRepository::create(
+        &db, alice, "alice", &domain, "Self", None, share.id, false, false, true, None, None,
+    )
+    .await
+    .unwrap();
+    IncomingShareRepository::set_status(&db, incoming.id, ShareStatus::Active)
+        .await
+        .unwrap();
+
+    run_pipeline_and_settle(&db, &queue, &settings, alice).await;
+
+    assert!(
+        ShareAnnouncementRepository::tracking_for_share(&db, share.id, None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a self-share must announce nothing"
+    );
+    assert_eq!(
+        common::count_received_pictures(&db, alice).await,
+        1,
+        "no picture may be re-registered onto the owner"
+    );
+    // The real regression: the pass must converge. A self-announce re-NULLs `last_pipeline_run_at`,
+    // and the same-backend delivery wakes this same user — that is the spin.
+    let dirty = PipelineRepository::find_dirty_for_user(&db, alice)
+        .await
+        .unwrap();
+    assert!(
+        dirty.is_empty(),
+        "pictures must stay clean after the pass (owned={owned}, received={received})"
     );
 }
 

@@ -123,6 +123,22 @@ async fn reconcile_share(
         CoverageScope::Dirty(ids) => Some(ids),
     };
 
+    // A share whose recipient is its own owner is inert: registering the announced pictures would
+    // rewrite the very rows that produced them and wake this pipeline again, looping forever.
+    // Creation rejects these; this keeps one created before that guard from spinning.
+    let recipient_local_id = find_local_user_id(
+        run.cache,
+        db,
+        run.settings,
+        &share.recipient_username,
+        &share.recipient_instance,
+    )
+    .await?;
+    if recipient_local_id == Some(share.owner_id) {
+        tracing::warn!(share_id = %share.id, "pipeline: skipping self-share (recipient is the owner)");
+        return Ok(());
+    }
+
     // ── Read current coverage and existing tracking ───────────────────────────
     let covered: HashSet<Uuid> = ShareAnnouncementRepository::coverage_for_share(
         db,
@@ -238,15 +254,7 @@ async fn reconcile_share(
     }
 
     // ── Deliver-then-record ───────────────────────────────────────────────────
-    let same_backend = find_local_user_id(
-        run.cache,
-        db,
-        run.settings,
-        &share.recipient_username,
-        &share.recipient_instance,
-    )
-    .await?
-    .is_some();
+    let same_backend = recipient_local_id.is_some();
     let mut ok = true;
 
     if !announce_items.is_empty() {

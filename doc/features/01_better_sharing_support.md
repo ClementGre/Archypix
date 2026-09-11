@@ -449,6 +449,9 @@ After loading pictures from `PictureRepository::list_by_tag_and_owner`, filter o
 
 **Sender side — in pipeline announcement step (§6.2 step 2):**
 The coverage query already excludes pictures where the picture's owner matches the share recipient.
+`reconcile_share` additionally skips a share whose recipient resolves to its own owner (a self-share
+predating the creation-time rejection) — its announcement would re-dirty the announced rows and wake
+the same pipeline forever.
 
 **Recipient side — in `receive_pictures_announcement`:**
 Before registering each picture, check:
