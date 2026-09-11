@@ -1,5 +1,5 @@
 import {useMemo, useState} from 'react'
-import {ArchiveRestore, Loader2, Plus, Trash2, X} from 'lucide-react'
+import {AlertTriangle, ArchiveRestore, Loader2, Plus, Trash2, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Badge} from '@/components/ui/badge'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
@@ -137,6 +137,7 @@ export function MultiSelectionPanel() {
     const total = agg?.count ?? 0
     const trashedCount = agg?.trashed_count ?? 0
     const inFlight = (agg?.exif_sync.pending ?? 0) + (agg?.exif_sync.pending_job_creation ?? 0)
+    const writeFailed = agg?.exif_sync.write_failed ?? 0
     const hasReceived = (agg?.received_count ?? 0) > 0
 
     const [pendingAdd, setPendingAdd] = useState<string | null>(null)
@@ -220,6 +221,14 @@ export function MultiSelectionPanel() {
                             <p className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
                                 <Loader2 className="h-3 w-3 animate-spin"/>
                                 {inFlight} EXIF {inFlight === 1 ? 'edit' : 'edits'} syncing to files…
+                            </p>
+                        )}
+                        {/* Feature 31: a permanent write failure needs a per-picture decision. */}
+                        {writeFailed > 0 && (
+                            <p className="flex items-center gap-1.5 pt-1 text-xs text-destructive">
+                                <AlertTriangle className="h-3 w-3"/>
+                                {writeFailed} EXIF {writeFailed === 1 ? 'edit' : 'edits'} could not be written to
+                                {writeFailed === 1 ? ' its file' : ' their files'}
                             </p>
                         )}
                     </div>

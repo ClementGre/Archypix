@@ -4,8 +4,8 @@ mod models;
 mod settings;
 
 use crate::state::AppState;
-use axum::routing::{delete, get, patch, post};
 use axum::Router;
+use axum::routing::{delete, get, patch, post};
 
 pub fn routes() -> Router<AppState> {
     Router::new()

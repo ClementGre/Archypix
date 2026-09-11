@@ -1,7 +1,7 @@
 use crate::infra::settings;
 use archypix_common::settings::Settings;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tracing::info;
 

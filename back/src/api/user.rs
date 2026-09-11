@@ -127,6 +127,10 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/pictures/exif", patch(jobs::batch_edit_exif))
         .route("/pictures/{id}/exif/resync", post(jobs::resync_exif))
         .route(
+            "/pictures/{id}/exif/revert",
+            post(jobs::revert_exif_to_file),
+        )
+        .route(
             "/tagging-services",
             get(tagging_services::list_services).post(tagging_services::create_service),
         )

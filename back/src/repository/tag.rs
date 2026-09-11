@@ -1,6 +1,6 @@
 use crate::domain::tag::{Tag, TagSource};
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 

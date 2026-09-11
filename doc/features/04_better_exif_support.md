@@ -315,7 +315,10 @@ This reuses the existing deliver-then-record machinery; no new federation verb.
    formats the worker extracts from (`supports_exif || supports_thumbnail`, unknown MIME
    included). A format the worker touches for neither never gets `thumbnails_generated_at`
    stamped, so gating on it would permanently block its (DB-only, `unsupported`) edit — those
-   are allowed straight through.
+   are allowed straight through. The set-based batch path applies the same rule (feature 31): a row
+   whose MIME the worker extracts from is skipped until `thumbnails_generated_at` lands, so the
+   extraction cannot overwrite the edit. `thumbnails_generated_at` is a proxy for "extraction done";
+   a dedicated flag would be clearer — noted in 99_ROADMAP_MVP.md.
 3. **`captured_at` change** moves a picture between segments — handled by the §3.1 pipeline
    wake; overlap warnings still apply.
 4. **Clearing a pipeline-relevant field** (e.g. GPS) drops dependent rule tags

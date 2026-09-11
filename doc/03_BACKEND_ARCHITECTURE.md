@@ -33,7 +33,8 @@ main.rs / state.rs
 domain/
   auth.rs           # TokenType, JwtClaims
   user.rs / user_settings.rs
-  picture.rs        # Picture (exif_data is CameraExif; Picture::full_exif() → FullExif), PictureVersion, UploadSession
+  picture.rs        # Picture (exif_data is CameraExif; Picture::full_exif() → FullExif; file_exif is
+                    #   the file's own snapshot, feature 31), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
   hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static/drop), validation,
                     #   per-node writeBackEnabled (feature 18 effective_enabled), TagPredicate
@@ -160,7 +161,7 @@ config changes. Dirty = `last_pipeline_run_at IS NULL OR last_pipeline_run_at < 
 tagging-relevant input re-NULLs `last_pipeline_run_at` in the same statement: manual-tag mutations
 (`TagRepository::batch_assign`/`batch_remove`/`promote_service_tags_to_manual`) and the EXIF/metadata
 writes (`update_from_worker` extraction, `write_exif_snapshot` / batch EXIF write-through,
-`set_filename`). Service callers only need to *trigger* the wake (the sweep is the backstop if a
+`set_filename`, revert-to-file). Service callers only need to *trigger* the wake (the sweep is the backstop if a
 trigger is dropped). This closes the gaps where a path mutated tags/EXIF but forgot to invalidate —
 notably WebDAV write-back (`vfs` add/remove ops route through `batch_assign`/`batch_remove`) and worker
 EXIF extraction landing after the first pipeline pass.
@@ -221,8 +222,9 @@ snapshot (owned: the row's columns; received: `remote_exif_data`, never the rela
 `exif_data`). On the recipient side, `create_received` writes `remote_exif_data` + lifecycle and
 preserves `local_exif_overrides`; `exif_data` (+ the promoted `captured_at`/`gps_*`/`orientation`
 columns) is re-materialised as `merge(remote_exif_data, local_exif_overrides)` (override wins
-per-field). A local override is DB-only (a `metadata` event, no `edit_picture` job). The purge sweep
-physically deletes owned pictures past their (derived) retention, unannouncing them. See
+per-field). A local override is DB-only (a `metadata` event, no `edit_picture` job). Feature 31 adds
+`file_exif`, the last EXIF snapshot read back from the S3 original: it makes the sync state explicit
+(`write_failed`) and gives the user a revert-to-file escape. The purge sweep physically deletes owned pictures past their (derived) retention, unannouncing them. See
 `doc/features/09_trash_and_exif_overrides.md`.
 
 **Recipient EXIF editing (10)** — a per-share `allow_exif_edit` grant (on `OutgoingShare`, propagated
@@ -281,7 +283,10 @@ a single set-based `UPDATE` that stamps `exif_sync_status = 'pending_job_creatio
 deferred-job drain (`infra::exif_drain`, the `ExifDrain` `Routine` — `()`-keyed, triggered + interval
 sweep) creates the reconcile jobs and flips them to `pending`. Received pictures take the
 set-based local-override merge (or a propose-to-owner edit in `suggest` mode). Convergence is tracked
-through the `exif_sync` histogram, not per-picture job ids. See `doc/features/14_better_batch_editing.md`.
+through the `exif_sync` histogram, not per-picture job ids. The reconcile target is **bound at
+claim-time** from the live row and persisted on the job (feature 31), so a job never carries a stale
+delta and a mid-flight edit re-enters the drain instead of being lost. See
+`doc/features/14_better_batch_editing.md` and `doc/features/31_robust_exif_sync.md`.
 
 **Physical copy & content dedup (11)** — `POST /pictures/{id}/copy` copies a received (or owned)
 picture's bytes into the caller's library as a new owned identity with root-resolved `copy_source_*`

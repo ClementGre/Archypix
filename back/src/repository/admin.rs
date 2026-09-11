@@ -1,6 +1,6 @@
 use crate::domain::job::{JobStatus, JobType};
 use crate::domain::share::ShareStatus;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -178,9 +178,9 @@ impl AdminRepository {
                                    + versions_bytes + versions_trashed_bytes), 0)::BIGINT
                    AS "bytes!" FROM user_storage"#
         )
-            .fetch_one(db)
-            .await
-            .map_err(map_sqlx_error)?;
+        .fetch_one(db)
+        .await
+        .map_err(map_sqlx_error)?;
         Ok((user_count, picture_count, storage_bytes))
     }
 

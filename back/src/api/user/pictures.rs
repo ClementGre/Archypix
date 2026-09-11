@@ -240,6 +240,7 @@ pub async fn details(
         "orientation": d.picture.orientation,
         "exif_data": d.picture.exif_data,
         "exif_sync_status": d.picture.exif_sync_status,
+        "file_exif": d.picture.file_exif,
         "owner_username": d.picture.owner_username,
         "owner_instance_domain": d.picture.owner_instance_domain,
         // Creator attribution (feature 26). `creator` is the resolved display (override → stored →

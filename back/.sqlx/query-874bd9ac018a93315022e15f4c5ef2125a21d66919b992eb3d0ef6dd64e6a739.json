@@ -14,7 +14,8 @@
                 "synced",
                 "pending",
                 "unsupported",
-                "pending_job_creation"
+                "pending_job_creation",
+                "write_failed"
               ]
             }
           }

@@ -166,6 +166,7 @@ export function MapView(props: MapViewProps) {
             const cur = latest.current.bbox!
             const halfLat = (cur.latMax - cur.latMin) / 2 || 0.05
             const halfLon = (cur.lonMax - cur.lonMin) / 2 || 0.08
+
             cb.current.onBbox?.(
                 round4({latMin: lat - halfLat, latMax: lat + halfLat, lonMin: lng - halfLon, lonMax: lng + halfLon}),
             )
@@ -398,11 +399,16 @@ export function MapView(props: MapViewProps) {
                     })
                 }
             }
-        } else if (mode === 'bbox' && bbox && rect.current && handles.current.length === 3) {
+        } else if (mode === 'bbox' && bbox && rect.current) {
             rect.current.setBounds(boundsOf(bbox))
-            handles.current[0].setLatLng([bbox.latMin, bbox.lonMin])
-            handles.current[1].setLatLng([bbox.latMax, bbox.lonMax])
-            handles.current[2].setLatLng([(bbox.latMin + bbox.latMax) / 2, (bbox.lonMin + bbox.lonMax) / 2])
+            if (interactive && handles.current.length === 3) {
+                handles.current[0].setLatLng([bbox.latMin, bbox.lonMin])
+                handles.current[1].setLatLng([bbox.latMax, bbox.lonMax])
+                handles.current[2].setLatLng([(bbox.latMin + bbox.latMax) / 2, (bbox.lonMin + bbox.lonMax) / 2])
+            }
+            if (!interactive) {
+                map.fitBounds(boundsOf(bbox), {padding: [20, 20], maxZoom: 13})
+            }
         } else if (mode === 'circle' && circle && circ.current && handles.current.length === 2) {
             circ.current.setLatLng([circle.lat, circle.lng])
             circ.current.setRadius(circle.km * 1000)

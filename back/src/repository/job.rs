@@ -1,8 +1,17 @@
 use crate::domain::job::{Job, JobConfig, JobStatus, JobType};
 use crate::infra::observability;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
+
+/// One job the watchdog took off a dead worker, with the status it landed in (`pending` when
+/// retries remain, `failed` when the budget is exhausted).
+pub struct StaleReset {
+    pub job_id: Uuid,
+    pub picture_id: Option<Uuid>,
+    pub job_type: JobType,
+    pub status: JobStatus,
+}
 
 pub struct JobRepository;
 
@@ -278,28 +287,28 @@ impl JobRepository {
         .map_err(map_sqlx_error)
     }
 
-    /// Replace the `config` JSONB of a still-`pending` job (the fold path). Only updates while the
-    /// job is `pending` so a job that started processing mid-fold is not silently mutated.
+    /// Replace a job's `config` JSONB. Used to persist the EXIF target bound at claim-time
+    /// (feature 31 §3.3), so the completion handler sees the state the file was brought to.
     #[tracing::instrument(skip(ex, config), fields(job_id = %job_id))]
-    pub async fn update_config_if_pending<'e, E>(
+    pub async fn update_config<'e, E>(
         ex: E,
         job_id: Uuid,
         config: &JobConfig,
-    ) -> Result<bool, AppError>
+    ) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
         let config_value = serde_json::to_value(config)
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-        let res = sqlx::query!(
-            "UPDATE jobs SET config = $2 WHERE id = $1 AND status = 'pending'",
+        sqlx::query!(
+            "UPDATE jobs SET config = $2 WHERE id = $1",
             job_id,
             config_value as serde_json::Value,
         )
         .execute(ex)
         .await
         .map_err(map_sqlx_error)?;
-        Ok(res.rows_affected() > 0)
+        Ok(())
     }
 
     #[tracing::instrument(skip(ex), fields(job_id = %id))]
@@ -366,8 +375,8 @@ impl JobRepository {
     /// when it re-claims the job — preventing the original (late) worker from
     /// completing the retried run.
     #[tracing::instrument(skip(db))]
-    pub async fn reset_stale(db: &PgPool, timeout_secs: i64) -> Result<u64, AppError> {
-        let result = sqlx::query!(
+    pub async fn reset_stale(db: &PgPool, timeout_secs: i64) -> Result<Vec<StaleReset>, AppError> {
+        let rows = sqlx::query!(
             r#"UPDATE jobs
                SET status        = CASE
                                        WHEN retry_count + 1 < max_retries THEN 'pending'::job_status
@@ -386,13 +395,25 @@ impl JobRepository {
                                        ELSE (now() AT TIME ZONE 'utc')
                                    END
                WHERE status     = 'processing'
-                 AND started_at < (now() AT TIME ZONE 'utc') - ($1 * INTERVAL '1 second')"#,
+                 AND started_at < (now() AT TIME ZONE 'utc') - ($1 * INTERVAL '1 second')
+               RETURNING id,
+                         picture_id,
+                         job_type AS "job_type: JobType",
+                         status   AS "status: JobStatus""#,
             timeout_secs as f64,
         )
-        .execute(db)
+        .fetch_all(db)
         .await
         .map_err(map_sqlx_error)?;
-        Ok(result.rows_affected())
+        Ok(rows
+            .into_iter()
+            .map(|r| StaleReset {
+                job_id: r.id,
+                picture_id: r.picture_id,
+                job_type: r.job_type,
+                status: r.status,
+            })
+            .collect())
     }
 
     /// Delete terminal jobs (`completed` / `failed`) whose `completed_at` is older than

@@ -138,6 +138,50 @@ pub fn write_exif_overrides(
     write_exif_overrides_with_rexiv2(path, set, clear)
 }
 
+/// The fields to delete so the file ends up matching `target` exactly.
+///
+/// GPS (lat/lng/alt) and exposure time (num/den) are **grouped** in both writers — clearing any
+/// member deletes the whole group — so they are only cleared when every member is absent from the
+/// target. Without this, a target with coordinates but no altitude would write the coordinates and
+/// then delete them again.
+pub fn target_clear_fields(target: &FullExif) -> Vec<ExifField> {
+    let mut clear = Vec::new();
+    if target.captured_at.is_none() {
+        clear.push(ExifField::CapturedAt);
+    }
+    if target.gps_lat.is_none() && target.gps_lng.is_none() && target.gps_alt.is_none() {
+        clear.push(ExifField::GpsLat);
+    }
+    if target.orientation.is_none() {
+        clear.push(ExifField::Orientation);
+    }
+    if target.camera.camera_brand.is_none() {
+        clear.push(ExifField::CameraBrand);
+    }
+    if target.camera.camera_model.is_none() {
+        clear.push(ExifField::CameraModel);
+    }
+    if target.camera.focal_length_mm.is_none() {
+        clear.push(ExifField::FocalLengthMm);
+    }
+    if target.camera.f_number.is_none() {
+        clear.push(ExifField::FNumber);
+    }
+    if target.camera.iso_speed.is_none() {
+        clear.push(ExifField::IsoSpeed);
+    }
+    if target.camera.exposure_time_num.is_none() && target.camera.exposure_time_den.is_none() {
+        clear.push(ExifField::ExposureTimeNum);
+    }
+    clear
+}
+
+/// Rewrite the file's editable EXIF to exactly match `target` (feature 31 §3.3): every `Some` field
+/// is written, every absent one deleted.
+pub fn write_exif_target(path: &Path, target: &FullExif, mime_type: Option<&str>) -> Result<()> {
+    write_exif_overrides(path, target, &target_clear_fields(target), mime_type)
+}
+
 /// Whether this MIME must use ExifTool for writes (BMFF containers).
 pub fn use_exiftool_for_write(mime_type: Option<&str>) -> bool {
     let Some(mime_type) = mime_type else {
@@ -201,6 +245,10 @@ fn write_exif_overrides_with_exiftool(
     if let Some(alt) = set.gps_alt {
         args.push(format!("-GPSAltitude={}", alt.abs()));
         args.push(format!("-GPSAltitudeRef={}", if alt >= 0 { 0 } else { 1 }));
+    } else if set.gps_lat.is_some() || set.gps_lng.is_some() {
+        // Coordinates without an altitude: drop any altitude the file still carries.
+        args.push("-GPSAltitude=".to_string());
+        args.push("-GPSAltitudeRef=".to_string());
     }
     if let Some(ref brand) = set.camera.camera_brand {
         args.push(format!("-Make={brand}"));
@@ -306,7 +354,8 @@ fn write_exif_overrides_with_rexiv2(
     if let Some(orientation) = set.orientation {
         let _ = metadata.set_tag_numeric("Exif.Image.Orientation", orientation as i32);
     }
-    // GPS: write when at least one coordinate is supplied.
+    // GPS: write when at least one coordinate is supplied. `set_gps_info` always writes an
+    // altitude, so drop it again when the target has none (the group cannot be cleared piecemeal).
     if set.gps_lat.is_some() || set.gps_lng.is_some() {
         let gps = GpsInfo {
             longitude: set.gps_lng.unwrap_or(0.0),
@@ -314,6 +363,10 @@ fn write_exif_overrides_with_rexiv2(
             altitude: set.gps_alt.unwrap_or(0) as f64,
         };
         let _ = metadata.set_gps_info(&gps);
+        if set.gps_alt.is_none() {
+            let _ = metadata.clear_tag("Exif.GPSInfo.GPSAltitude");
+            let _ = metadata.clear_tag("Exif.GPSInfo.GPSAltitudeRef");
+        }
     }
     if let Some(ref brand) = set.camera.camera_brand {
         let _ = metadata.set_tag_string("Exif.Image.Make", brand);
@@ -431,4 +484,83 @@ fn round1(f: f64) -> f64 {
 
 fn round2(f: f64) -> f64 {
     (f * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archypix_common::job::CameraExif;
+
+    fn gps_target(lat: Option<f64>, lng: Option<f64>, alt: Option<i32>) -> FullExif {
+        FullExif {
+            gps_lat: lat,
+            gps_lng: lng,
+            gps_alt: alt,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn coordinates_without_altitude_do_not_clear_gps() {
+        let clear = target_clear_fields(&gps_target(Some(48.85), Some(2.35), None));
+        assert!(
+            !clear
+                .iter()
+                .any(|f| matches!(f, ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt))
+        );
+    }
+
+    #[test]
+    fn fully_absent_gps_is_cleared() {
+        let clear = target_clear_fields(&gps_target(None, None, None));
+        assert!(clear.contains(&ExifField::GpsLat));
+    }
+
+    #[test]
+    fn partial_exposure_time_does_not_clear_the_pair() {
+        let target = FullExif {
+            camera: CameraExif {
+                exposure_time_num: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let clear = target_clear_fields(&target);
+        assert!(
+            !clear
+                .iter()
+                .any(|f| matches!(f, ExifField::ExposureTimeNum | ExifField::ExposureTimeDen))
+        );
+    }
+
+    #[test]
+    fn a_full_target_clears_nothing() {
+        let target = FullExif {
+            captured_at: Some(
+                chrono::NaiveDateTime::parse_from_str("2024:06:01 12:00:00", "%Y:%m:%d %H:%M:%S")
+                    .unwrap(),
+            ),
+            gps_lat: Some(48.85),
+            gps_lng: Some(2.35),
+            gps_alt: Some(35),
+            orientation: Some(1),
+            camera: CameraExif {
+                camera_brand: Some("Canon".into()),
+                camera_model: Some("EOS R5".into()),
+                focal_length_mm: Some(50.0),
+                f_number: Some(1.8),
+                iso_speed: Some(400),
+                exposure_time_num: Some(1),
+                exposure_time_den: Some(200),
+                ..Default::default()
+            },
+        };
+        assert!(target_clear_fields(&target).is_empty());
+    }
+
+    #[test]
+    fn an_empty_target_clears_every_group_once() {
+        // date, GPS, orientation, brand, model, focal, f-number, ISO, exposure.
+        assert_eq!(target_clear_fields(&FullExif::default()).len(), 9);
+    }
 }

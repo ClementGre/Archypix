@@ -35,12 +35,14 @@ impl FederationClient {
             self.cache.as_ref(),
             RedisKey::FederationToken(recipient_global_domain),
         )
-            .await
-            .ok()
-            .flatten()
+        .await
+        .ok()
+        .flatten()
         {
             let now = Utc::now().timestamp();
-            let margin = self.settings.get(keys::FEDERATION_TOKEN_REFRESH_MARGIN_SECS);
+            let margin = self
+                .settings
+                .get(keys::FEDERATION_TOKEN_REFRESH_MARGIN_SECS);
             if now < cached.expires_at - margin {
                 trace!("federation: token resolved from cache");
                 return Ok(Some(cached.token));
@@ -76,7 +78,10 @@ impl FederationClient {
         recipient_username: &str,
         recipient_global_domain: &str,
     ) -> Result<(), AppError> {
-        let lock_ttl = self.settings.get(keys::FEDERATION_GRANT_WAIT_MS).div_ceil(1000);
+        let lock_ttl = self
+            .settings
+            .get(keys::FEDERATION_GRANT_WAIT_MS)
+            .div_ceil(1000);
         let acquired = self
             .cache
             .set_str_nx_ex(
@@ -160,9 +165,9 @@ impl FederationClient {
                     cache.as_ref(),
                     RedisKey::FederationToken(domain),
                 )
-                    .await
-                    .ok()
-                    .flatten()
+                .await
+                .ok()
+                .flatten()
                 {
                     return Ok(cached.token);
                 }
@@ -230,7 +235,7 @@ impl FederationClient {
             },
             ttl,
         )
-            .await
+        .await
     }
 
     /// Issue a federation JWT for a requesting instance (used in the auth handshake).

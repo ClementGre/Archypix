@@ -47,14 +47,17 @@ async fn announce_share_rejects_wrong_recipient_instance(db: PgPool) {
         .oneshot(post_fed(
             MSG,
             &token,
-            &env("share_announce", json!({
-                "sender_username": "alice",   "sender_instance":    "a.test",
-                "recipient_username": "bob",  "recipient_instance": "wrong.com",
-                "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
-                "name": "Test share", "message": null,
-                "allow_share_back": false, "future": false,
-                "shareback_of": null
-            })),
+            &env(
+                "share_announce",
+                json!({
+                    "sender_username": "alice",   "sender_instance":    "a.test",
+                    "recipient_username": "bob",  "recipient_instance": "wrong.com",
+                    "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                    "name": "Test share", "message": null,
+                    "allow_share_back": false, "future": false,
+                    "shareback_of": null
+                }),
+            ),
         ))
         .await
         .unwrap();
@@ -75,14 +78,17 @@ async fn announce_share_rejects_sender_instance_mismatch(db: PgPool) {
         .oneshot(post_fed(
             MSG,
             &token,
-            &env("share_announce", json!({
-                "sender_username": "alice",  "sender_instance":    "a.test",
-                "recipient_username": "bob", "recipient_instance": "b.test",
-                "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
-                "name": "Test share", "message": null,
-                "allow_share_back": false, "future": false,
-                "shareback_of": null
-            })),
+            &env(
+                "share_announce",
+                json!({
+                    "sender_username": "alice",  "sender_instance":    "a.test",
+                    "recipient_username": "bob", "recipient_instance": "b.test",
+                    "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                    "name": "Test share", "message": null,
+                    "allow_share_back": false, "future": false,
+                    "shareback_of": null
+                }),
+            ),
         ))
         .await
         .unwrap();
@@ -101,14 +107,17 @@ async fn announce_share_rejects_unknown_recipient(db: PgPool) {
         .oneshot(post_fed(
             MSG,
             &token,
-            &env("share_announce", json!({
-                "sender_username": "alice",    "sender_instance":    "a.test",
-                "recipient_username": "nobody", "recipient_instance": "b.test",
-                "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
-                "name": "Test share", "message": null,
-                "allow_share_back": false, "future": false,
-                "shareback_of": null
-            })),
+            &env(
+                "share_announce",
+                json!({
+                    "sender_username": "alice",    "sender_instance":    "a.test",
+                    "recipient_username": "nobody", "recipient_instance": "b.test",
+                    "outgoing_share_id": Uuid::new_v4(), "tag_path": "vacation",
+                    "name": "Test share", "message": null,
+                    "allow_share_back": false, "future": false,
+                    "shareback_of": null
+                }),
+            ),
         ))
         .await
         .unwrap();
@@ -129,7 +138,10 @@ async fn revoke_share_not_found_for_unknown_id(db: PgPool) {
         .oneshot(post_fed(
             MSG,
             &token,
-            &env("share_revoke", json!({ "outgoing_share_id": Uuid::new_v4() })),
+            &env(
+                "share_revoke",
+                json!({ "outgoing_share_id": Uuid::new_v4() }),
+            ),
         ))
         .await
         .unwrap();
@@ -249,18 +261,21 @@ async fn announce_pictures_rejects_pending_share(db: PgPool) {
         .oneshot(post_fed(
             MSG,
             &token,
-            &env("pictures_announce", json!({
-                "outgoing_share_id": outgoing_id,
-                "tag_path": "vacation",
-                "sender_username": "alice", "sender_instance": "a.test",
-                "pictures": [{
-                    "picture_id": Uuid::new_v4().to_string(),
-                    "owner_username": "alice", "owner_instance_domain": "a.test",
-                    "picture_token": Uuid::new_v4(),
-                    "filename": null, "mime_type": null,
-                    "file_size": null, "width": null, "height": null, "captured_at": null
-                }]
-            })),
+            &env(
+                "pictures_announce",
+                json!({
+                    "outgoing_share_id": outgoing_id,
+                    "tag_path": "vacation",
+                    "sender_username": "alice", "sender_instance": "a.test",
+                    "pictures": [{
+                        "picture_id": Uuid::new_v4().to_string(),
+                        "owner_username": "alice", "owner_instance_domain": "a.test",
+                        "picture_token": Uuid::new_v4(),
+                        "filename": null, "mime_type": null,
+                        "file_size": null, "width": null, "height": null, "captured_at": null
+                    }]
+                }),
+            ),
         ))
         .await
         .unwrap();

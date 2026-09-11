@@ -23,16 +23,17 @@ jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → conten
                        A non-thumbnailable format is not an error: it still reports size/hash and
                        completes with thumbnails skipped, so every ingested picture gets an ETag/size
                        even without a thumbnail. A failed video frame-grab degrades the same way.
-jobs/edit_picture.rs — edit_picture: download → EXIF set/clear write → thumbnail regen (visual) →
-                       hash → upload original (last fallible step) → complete. The DB is updated
-                       synchronously at edit time (write-through); this job only reconciles the S3
-                       original's embedded EXIF to match. Uploading the original last preserves the
-                       file-untouched-on-failure invariant the backend's revert depends on.
+jobs/edit_picture.rs — edit_picture: download → EXIF target write → read back → thumbnail regen
+                       (visual) → hash → upload original (last fallible step) → complete. The DB is
+                       updated synchronously at edit time (write-through); this job reconciles the S3
+                       original's embedded EXIF to match and returns the read-back as the backend's
+                       `file_exif`. Uploading the original last keeps the file untouched on failure.
 jobs/ml.rs           — stub for ml_* jobs (log + complete with empty result)
 
-imaging/exif.rs      — extract_exif() / write_exif_overrides(set, clear) (rexiv2, blocking).
-                       Full editable-field coverage on write (date, GPS, orientation, make, model,
-                       focal length, f-number, ISO, exposure time) plus per-field clear (tag delete).
+imaging/exif.rs      — extract_exif() / write_exif_target() — rewrite the file's editable EXIF to a
+                       FullExif target: every Some field written, every absent one deleted
+                       (target_clear_fields; GPS and exposure clear only as whole groups). rexiv2 by
+                       default, ExifTool stay-open for BMFF writes (HEIC/HEIF/AVIF). Blocking.
 imaging/video.rs     — extract_video_metadata() / extract_frame() (ffprobe/ffmpeg, blocking).
                        Maps container tags onto the image ExtractedExif/FullExif shape: capture date,
                        GPS (ISO 6709), make/model, and the read-only tech fields (duration,
@@ -101,9 +102,12 @@ The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` 
 
 - **Versioning predicate** (evaluated at job claim, `api/worker/handlers.rs`): `None` → never; `OriginalCopy` → snapshot on first edit only;
   `FullVersioning` → first edit or any visual edit (exif-only edits never add a version).
-- **Convergence / revert**: on completion the backend flips to `synced` if the DB still matches the job's target, else enqueues a follow-up reconcile.
-  On permanent failure it reverts the DB row to the job's `previous` snapshot — safe because uploading the original is the last fallible step, so
-  failure never overwrote the file.
+- **Convergence / write_failed** (feature 31): the backend binds the target to the live DB state when the job is claimed and persists it on the job
+  row. On completion it records the worker's read-back in `file_exif` and compares the DB against *that target*: equal → `synced`; changed (an edit
+  landed mid-flight) → `pending_job_creation`, and the drain enqueues the follow-up. The read-back is never compared field-by-field — EXIF stores
+  rationals, so a GPS round-trip never returns the exact `f64` it was given.
+- **Failure**: permanent → `write_failed` (the DB edit is kept; the user retries or reverts to the file); `unsupported: true` in the fail body → the
+  terminal `unsupported` state. A watchdog-exhausted reconcile is marked `write_failed` by the watchdog, since no worker reports it.
 
 ## Shared types (`archypix-common`)
 
@@ -111,7 +115,7 @@ Library crate shared between `back/` and `worker/` so wire shapes never drift:
 
 | Module           | Key types                                                                                                                                                                                                                                        |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`set`/`clear`/`previous`, all `FullExif`), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
-| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`)                                            |
+| `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`target: FullExif`, bound at claim-time), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
+| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`, `permanent`, `unsupported`)                                            |
 | `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_IMAGE_THUMBNAIL`, `MIME_TYPES_VIDEO`, `supports_exif()`, `supports_image_thumbnail()` (image engine), `supports_video()`, `supports_thumbnail()` (image **or** video — "gets a thumbnail at all")                 |
 | `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                                                                     |

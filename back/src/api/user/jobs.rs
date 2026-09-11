@@ -7,8 +7,8 @@ use crate::services::jobs::{BatchExifMode, ExifBatchOutcome};
 use crate::services::selection::{self, PictureSelection};
 use crate::state::AppState;
 use archypix_common::error::AppError;
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -162,7 +162,7 @@ pub struct BatchExifEditBody {
     pub dry_run: bool,
 }
 
-/// `POST /api/authenticated/pictures/{id}/exif/resync` — re-enqueue a stuck `pending` picture.
+/// `POST /api/authenticated/pictures/{id}/exif/resync` — re-enqueue a stuck EXIF sync.
 #[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn resync_exif(
     auth: AuthUser,
@@ -177,4 +177,32 @@ pub async fn resync_exif(
     )
     .await?;
     Ok(Json(job))
+}
+
+/// `POST /api/authenticated/pictures/{id}/exif/revert` — reset DB EXIF to `file_exif`.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn revert_exif_to_file(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let picture = services::jobs::revert_picture_exif_to_file(
+        &state.db,
+        &state.routines.pipeline,
+        user_id,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "id": picture.id,
+        "exif_sync_status": picture.exif_sync_status,
+        "captured_at": picture.captured_at,
+        "gps_lat": picture.gps_lat,
+        "gps_lng": picture.gps_lng,
+        "gps_alt": picture.gps_alt,
+        "orientation": picture.orientation,
+        "exif_data": picture.exif_data,
+        "updated_at": picture.updated_at,
+    })))
 }

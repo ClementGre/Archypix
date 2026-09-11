@@ -113,14 +113,13 @@ pub struct GenThumbnailConfig {
 
 /// Config for `edit_picture` jobs.
 ///
-/// The write-through model makes the DB the source of truth: the backend applies the edit to the
-/// `pictures` row synchronously at request time and enqueues this job to reconcile the S3 original's
-/// embedded EXIF. The config therefore carries an explicit edit delta plus the revert baseline
-/// (`ExifEdit::previous`), so a permanent file-write failure can roll the DB back to the old state.
+/// The write-through model makes the DB the source of truth: the backend applies edits to
+/// `pictures` synchronously, then the worker reconciles the S3 original. The EXIF target is
+/// late-bound by the backend at claim-time so workers always write the latest DB state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditPictureConfig {
     pub picture_id: Uuid,
-    /// The EXIF edit delta + revert baseline. `None` for a pure visual job.
+    /// The EXIF target snapshot. `None` for a pure visual job.
     pub exif: Option<ExifEdit>,
     /// Visual pixel-level transformations to apply to the file.
     /// `None` means no visual edits; the original file is unchanged.
@@ -135,26 +134,15 @@ impl EditPictureConfig {
     }
 }
 
-/// An EXIF edit expressed as a `set`/`clear` delta plus the prior full state.
+/// EXIF write target for an `edit_picture` job.
 ///
-/// - `set`: only `Some` fields are written.
-/// - `clear`: fields to delete (column → NULL / JSONB key removed / file tag deleted).
-/// - `previous`: the full prior value of every editable field, used by the backend's value-gated
-///   revert (§4.3) and completion-time convergence (§5). The worker only reads `set`/`clear`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// **Late-bound (feature 31 §3.3):** the enqueuing side stores a placeholder; the backend rebinds
+/// `target` to the picture's current `full_exif()` at claim-time and persists it on the job row, so
+/// the worker always writes the latest DB state and the completion handler knows exactly which
+/// state the file was brought to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExifEdit {
-    pub set: FullExif,
-    #[serde(default)]
-    pub clear: Vec<ExifField>,
-    pub previous: FullExif,
-}
-
-impl ExifEdit {
-    /// The full snapshot the file/DB reaches once this edit's `set`/`clear` is applied to
-    /// `previous`. This is the file's content after a successful reconcile.
-    pub fn new_state(&self) -> FullExif {
-        self.previous.applied(&self.set, &self.clear)
-    }
+    pub target: FullExif,
 }
 
 /// One editable EXIF field — the enum form used by `ExifEdit::clear` and the diff machinery.
@@ -413,6 +401,33 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    /// The `file_exif` shape the 0013 migration backfills (promoted columns + flattened camera
+    /// keys) must deserialize into [`FullExif`] — the column is read as `Json<FullExif>`.
+    #[test]
+    fn backfilled_file_exif_deserializes() {
+        let raw = serde_json::json!({
+            "captured_at": "2024-01-10T08:36:52",
+            "gps_lat": 45.7750835,
+            "gps_lng": 4.875197899722223,
+            "gps_alt": 227,
+            "orientation": 1,
+            "camera_brand": "Samsung",
+            "camera_model": "SM-G973U1",
+            "focal_length_mm": 26.0,
+            "f_number": 2.4,
+            "iso_speed": 320,
+            "exposure_time_num": 1,
+            "exposure_time_den": 50,
+        });
+        let exif: FullExif = serde_json::from_value(raw).expect("backfilled shape");
+        assert_eq!(exif.gps_alt, Some(227));
+        assert_eq!(exif.camera.camera_model.as_deref(), Some("SM-G973U1"));
+        assert!(exif.captured_at.is_some());
+        // A row with no EXIF at all backfills to `{}`.
+        let empty: FullExif = serde_json::from_value(serde_json::json!({})).expect("empty shape");
+        assert_eq!(empty, FullExif::default());
+    }
+
     /// Serialize `value` to JSON, deserialize back, re-serialize, and assert the two JSON
     /// strings are identical. `JobConfig` and friends don't derive `PartialEq`, so comparing
     /// JSON is the most reliable equality check.
@@ -437,15 +452,9 @@ mod tests {
         let cfg = JobConfig::EditPicture(EditPictureConfig {
             picture_id: Uuid::new_v4(),
             exif: Some(ExifEdit {
-                set: FullExif {
+                target: FullExif {
                     gps_lat: Some(48.8566),
                     gps_lng: Some(2.3522),
-                    ..Default::default()
-                },
-                clear: vec![ExifField::GpsAlt, ExifField::Orientation],
-                previous: FullExif {
-                    gps_alt: Some(120),
-                    orientation: Some(1),
                     ..Default::default()
                 },
             }),

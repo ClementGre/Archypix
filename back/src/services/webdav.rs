@@ -6,7 +6,7 @@
 //! never a Redis key.
 
 use crate::infra::crypto;
-use crate::infra::redis::{cache_get_json, cache_set_json_ex, RedisKey};
+use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::settings::keys;
 use crate::repository::hierarchy::HierarchyRepository;
 use crate::repository::user::UserRepository;

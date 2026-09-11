@@ -1,6 +1,6 @@
 use crate::api::middleware::auth_worker::AuthWorker;
 use crate::api::worker::models::{ClaimJobResponse, CompleteJobRequest, FailJobRequest};
-use crate::domain::job::{EditPictureConfig, ExifEdit, JobConfig, JobStatus, JobType};
+use crate::domain::job::{ExifEdit, JobConfig, JobStatus, JobType};
 use crate::domain::picture::ExifSyncStatus;
 use crate::domain::user_settings::VersioningMode;
 use crate::infra::observability;
@@ -13,12 +13,12 @@ use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::user_settings::UserSettingsRepository;
 use crate::state::AppState;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::transfer::ClaimQuery;
 use archypix_common::transfer::PresignedWrites;
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use tracing::debug;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -78,9 +78,19 @@ pub async fn claim_next_job(
         .presign_get_worker(&state.settings.get(keys::S3_BUCKET_PICTURES), &original_key)
         .await?;
 
-    let config = job
+    let mut config = job
         .typed_config()
         .map_err(|e| AppError::InternalServerError(format!("failed to parse job config: {e}")))?;
+    // Late-binding EXIF target (feature 31 §3.3): the worker writes the picture's state as of the
+    // claim, and the persisted config tells `complete_job` which state the file was brought to.
+    if let JobConfig::EditPicture(edit) = &mut config {
+        if edit.exif.is_some() {
+            edit.exif = Some(ExifEdit {
+                target: picture.full_exif(),
+            });
+            JobRepository::update_config(&state.db, job.id, &config).await?;
+        }
+    }
 
     // For edit_picture jobs: snapshot the current file as a new version BEFORE issuing the
     // presigned write URL that would overwrite it. The versioning predicate (§9):
@@ -227,42 +237,40 @@ pub async fn complete_job(
         .await
         .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
 
-    // Update picture columns from worker output. Width/height come from the top-level fields
-    if let (Some(extracted), Some(pid)) = (&body.exif, picture_id) {
-        let e = &extracted.exif;
-        let camera_patch = serde_json::to_value(&e.camera).ok();
-        PictureRepository::update_from_worker(
-            &mut *tx,
-            pid,
-            body.width,
-            body.height,
-            e.captured_at,
-            e.gps_lat,
-            e.gps_lng,
-            e.gps_alt,
-            e.orientation,
-            body.blurhash.as_deref(),
-            camera_patch,
-            body.file_size,
-            body.file_hash.as_deref(),
-            body.content_hash.as_deref(),
-        )
-        .await?;
-    } else if let Some(pid) = picture_id {
-        // No EXIF (edit_picture or non-initial gen_thumbnail): still update
-        // thumbnails_generated_at, blurhash, file_size, file_hash, content_hash, and decoded dims.
-        PictureRepository::update_after_processing(
-            &mut *tx,
-            pid,
-            body.thumbnails_generated,
-            body.blurhash.as_deref(),
-            body.file_size,
-            body.file_hash.as_deref(),
-            body.content_hash.as_deref(),
-            body.width,
-            body.height,
-        )
-        .await?;
+    // Update picture columns from worker output.
+    if let Some(pid) = picture_id {
+        match (&job.job_type, &body.exif) {
+            // Extraction path (initial ingest / external overwrite): file state becomes authoritative.
+            (JobType::GenThumbnail, Some(extracted)) => {
+                PictureRepository::update_from_worker(
+                    &mut *tx,
+                    pid,
+                    &extracted.exif,
+                    body.width,
+                    body.height,
+                    body.blurhash.as_deref(),
+                    body.file_size,
+                    body.file_hash.as_deref(),
+                    body.content_hash.as_deref(),
+                )
+                .await?;
+            }
+            // Edit path: keep DB EXIF as-is; only processing metadata lands here.
+            _ => {
+                PictureRepository::update_after_processing(
+                    &mut *tx,
+                    pid,
+                    body.thumbnails_generated,
+                    body.blurhash.as_deref(),
+                    body.file_size,
+                    body.file_hash.as_deref(),
+                    body.content_hash.as_deref(),
+                    body.width,
+                    body.height,
+                )
+                .await?;
+            }
+        }
     }
 
     let result = serde_json::json!({
@@ -300,55 +308,38 @@ pub async fn complete_job(
         }
     }
 
-    // EXIF reconcile convergence (§5): the file now equals this job's `new` state. If the DB still
-    // equals `new`, the picture is in sync; otherwise a newer edit moved it on while we processed —
-    // enqueue a follow-up that brings the file from `new` to the current DB row. The just-completed
-    // job is now `completed`, so the in-flight unique index permits the new pending insert.
-    let mut requeue = false;
+    // State-based EXIF convergence: record what the worker read back from the file, then compare the
+    // DB against the target this job wrote — never against the read-back (feature 31 §3.3).
+    let mut needs_exif_drain = false;
     if let (Some(cfg), Some(pid)) = (&edit_cfg, picture_id) {
         if let Some(edit) = &cfg.exif {
+            if let Some(extracted) = &body.exif {
+                PictureRepository::set_file_exif(&mut *tx, pid, &extracted.exif).await?;
+            }
             let picture = PictureRepository::find_by_id(&mut *tx, pid)
                 .await?
                 .ok_or(AppError::NotFound)?;
-            let new_state = edit.new_state();
-            let current = picture.full_exif();
-            if current == new_state {
-                PictureRepository::set_exif_sync_status(&mut *tx, pid, ExifSyncStatus::Synced)
-                    .await?;
+            let (status, drain) = if picture.full_exif() == edit.target {
+                (ExifSyncStatus::Synced, false)
             } else {
-                let (set, clear) = new_state.diff_to(&current);
-                let follow_up = JobConfig::EditPicture(EditPictureConfig {
-                    picture_id: pid,
-                    exif: Some(ExifEdit {
-                        set,
-                        clear,
-                        previous: new_state,
-                    }),
-                    visual: None,
-                });
-                JobRepository::create(&mut *tx, picture.local_user_id, Some(pid), &follow_up, None)
-                    .await?;
-                requeue = true;
-            }
+                (ExifSyncStatus::PendingJobCreation, true)
+            };
+            PictureRepository::set_exif_sync_status(&mut *tx, pid, status).await?;
+            needs_exif_drain = drain;
         }
     }
 
     tx.commit().await.map_err(map_sqlx_error)?;
 
-    // A follow-up reconcile was enqueued — wake the worker fleet indirectly via the pipeline is not
-    // needed (workers poll), but waking the pipeline lets dependent rules re-evaluate promptly.
-    // Debounced: worker completions arrive one-per-picture and should collapse into one run.
-    if requeue {
-        if let Some(job) = &completed {
-            state.routines.pipeline.trigger_debounced(job.owner_id);
-            return Ok(StatusCode::NO_CONTENT);
-        }
-    }
-
     // Wake (post-commit) so the pipeline re-announces the freshly-hashed/thumbnailed picture.
     // Debounced for the same reason — a batch upload's thumbnails complete in a burst.
     if let Some(owner_id) = reannounce_owner {
         state.routines.pipeline.trigger_debounced(owner_id);
+    }
+    // An edit landed while this job ran: let the drain create the follow-up reconcile.
+    if needs_exif_drain {
+        state.routines.exif_drain.trigger(());
+        state.routines.pipeline.trigger_debounced(job.owner_id);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -385,35 +376,17 @@ pub async fn fail_job(
         ));
     };
 
-    // Revert on permanent failure (§4.3): the file was never overwritten (upload is the last
-    // fallible step), so roll the DB back to `previous` and re-sync at the old state — but only if
-    // the row still equals this job's `new` (else a newer edit owns the state).
+    // Permanent EXIF reconcile failure (feature 31 §3.3/§6): keep the DB edit and surface the
+    // divergence for an explicit user action. A file that cannot carry the metadata is terminal.
     if job.status == JobStatus::Failed && job.job_type == JobType::EditPicture {
         if let (Ok(JobConfig::EditPicture(cfg)), Some(pid)) = (job.typed_config(), job.picture_id) {
-            if let Some(edit) = cfg.exif {
-                let picture = PictureRepository::find_by_id(&state.db, pid)
-                    .await?
-                    .ok_or(AppError::NotFound)?;
-                if picture.full_exif() == edit.new_state() {
-                    PictureRepository::write_exif_snapshot(
-                        &state.db,
-                        pid,
-                        &edit.previous,
-                        ExifSyncStatus::Synced,
-                    )
-                    .await?;
-                    sqlx::query!(
-                        "UPDATE jobs SET error_message = $2 WHERE id = $1",
-                        job_id,
-                        format!("{} (DB reverted to previous EXIF)", body.error),
-                    )
-                    .execute(&state.db)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    // A revert is itself a metadata change — re-dirty + wake the pipeline.
-                    // Debounced: this is a worker-driven completion path.
-                    state.routines.pipeline.trigger_debounced(job.owner_id);
-                }
+            if cfg.exif.is_some() {
+                let status = if body.unsupported {
+                    ExifSyncStatus::Unsupported
+                } else {
+                    ExifSyncStatus::WriteFailed
+                };
+                PictureRepository::set_exif_sync_status(&state.db, pid, status).await?;
             }
         }
     }

@@ -4,6 +4,7 @@ use archypix_common::settings::Settings;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::{BehaviorVersion, Region};
+use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
@@ -11,7 +12,6 @@ use aws_sdk_s3::types::{
     BucketLifecycleConfiguration, ExpirationStatus, LifecycleExpiration, LifecycleRule,
     LifecycleRuleFilter,
 };
-use aws_sdk_s3::Client;
 use base64::Engine as _;
 use std::sync::Arc;
 use std::time::Duration;

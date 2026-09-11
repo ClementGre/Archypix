@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react'
 import {toast} from 'sonner'
-import {useEditExif, useOverrideExif} from '@/hooks/usePictureEdit'
+import {useEditExif, useOverrideExif, useRetryExifSync, useRevertExifToFile} from '@/hooks/usePictureEdit'
 import {apiErrorMessage} from '@/api/client'
 import type {ExifEditMode, ExifField, ExifOverrides, PictureDetail} from '@/lib/types'
 
@@ -121,6 +121,8 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     const owned = picture.owner_username == null
     const ownedEdit = useEditExif(picture.id)
     const receivedOverride = useOverrideExif(picture.id)
+    const retrySync = useRetryExifSync(picture.id)
+    const revertToFile = useRevertExifToFile(picture.id)
     const {mutation, syncing} = owned ? ownedEdit : receivedOverride
     const isSaving = mutation.isPending || syncing
 
@@ -234,5 +236,9 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
         rotate,
         save,
         removeOverride,
+        retrySync: () => retrySync.mutation.mutate(),
+        reverting: revertToFile.isPending,
+        revertToFile: () => revertToFile.mutate(),
+        retrying: retrySync.mutation.isPending || retrySync.syncing,
     }
 }

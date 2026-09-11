@@ -616,6 +616,7 @@ Full picture details including version history.
   owner_deleted_at: string | null;    // received only: the owner's soft-delete (grace-window badge)
   owner_purge_at: string | null;      // received only: the owner's announced purge deadline
   local_exif_overrides: object | null;// received only: the recipient's sticky per-field EXIF overrides
+  file_exif: object | null;           // owned only: last EXIF snapshot read back from the file (feature 31)
     versions: PictureVersion[];
 }
 
@@ -772,11 +773,38 @@ through the `exif_sync` histogram from `POST /pictures/aggregate`.
 
 #### `POST /api/authenticated/pictures/{id}/exif/resync`
 
-Re-enqueue a stuck EXIF sync (picture stuck in `exif_sync_status = "pending"` with no active job).
+Re-enqueue a stuck EXIF sync (picture stuck in `exif_sync_status = "pending"` or `"write_failed"` with no active job).
 
 **Path params:** `id: string`
 
 **Response `200`:** Full `Job` object (the newly enqueued job).
+
+---
+
+#### `POST /api/authenticated/pictures/{id}/exif/revert`
+
+Reset the picture's metadata in the database to match its physical file state (`file_exif`). Synchronous DB-only operation.
+
+**Path params:** `id: string` — must be an owned picture with a known `file_exif`.
+
+**Errors:** `409` when the picture has no `file_exif` snapshot yet, or while a reconcile job is in
+flight (it would write the pre-revert target back to the file).
+
+**Response `200`:**
+
+```ts
+{
+    id: string;
+    exif_sync_status: ExifSyncStatus;
+    captured_at: string | null;
+    gps_lat: number | null;
+    gps_lng: number | null;
+    gps_alt: number | null;
+    orientation: number | null;
+    exif_data: object;
+    updated_at: string;
+}
+```
 
 ---
 
@@ -2562,7 +2590,7 @@ All require a worker JWT (`WORKER_JWT_SECRET`, 300s TTL).
 |--------|----------------------------------|--------------------------------------------------------------------------|
 | `GET`  | `/api/worker/jobs/next`          | Claim next pending job; returns job + presigned S3 URLs + `claim_token`  |
 | `POST` | `/api/worker/jobs/{id}/complete` | Report success; backend applies picture updates atomically               |
-| `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true` |
+| `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true`. `unsupported=true` (feature 31 §6) marks the picture `unsupported` instead of `write_failed` |
 
 ### Resolver provisioning (`/api/resolver/*`) & heartbeat (feature 23 §3)
 
@@ -2654,7 +2682,8 @@ type ExifSyncStatus =
         | "synced"               // DB and file are in sync
         | "pending"              // edit_picture job is in flight reconciling the file
         | "unsupported"          // format cannot embed EXIF; DB is updated, file is not
-        | "pending_job_creation";// batch edit applied set-based; the drain will create the reconcile job (feature 14 §5)
+        | "pending_job_creation" // batch edit applied set-based; the drain will create the reconcile job (feature 14 §5)
+        | "write_failed";        // the file write failed permanently; DB and file diverge (feature 31)
 
 // Picture variants (thumbnail sizes)
 type PictureVariant = "original" | "small" | "medium" | "large";
@@ -2695,7 +2724,7 @@ items and avoid per-card round-trips.
 `POST /tags/rename`, `PATCH /tagging-services/{id}`, `POST /tagging-services`, `DELETE /tagging-services/{id}`. Tags converge in the background; the
 frontend does not need to poll.
 
-**EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`.
+**EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`. A completion can land on `pending_job_creation` (an edit arrived while the job ran — the drain enqueues the follow-up) or on `write_failed`, where the sync failed permanently: show the error and offer Retry (`/exif/resync`) or Revert to file (`/exif/revert`).
 Use exponential backoff (1s, 2s, 4s, …, stop ~30s).
 
 **Received pictures** — `owned = false` indicates a received picture; `owner_username`/`owner_instance` identify the true owner.

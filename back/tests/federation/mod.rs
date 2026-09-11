@@ -16,7 +16,7 @@ mod rejection;
 use archypix_back::infra::settings::test_settings_with;
 use archypix_common::settings::Settings;
 use axum::body::Body;
-use axum::http::{header, Request};
+use axum::http::{Request, header};
 use serde_json::Value;
 use std::sync::Arc;
 

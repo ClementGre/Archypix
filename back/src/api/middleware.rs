@@ -5,8 +5,8 @@ pub mod auth_user;
 pub mod auth_worker;
 
 use archypix_common::error::AppError;
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use axum::http::header::AUTHORIZATION;
 
 pub fn bearer_token(headers: &HeaderMap) -> Result<String, AppError> {
     let header = headers

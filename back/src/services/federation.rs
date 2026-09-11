@@ -17,7 +17,6 @@ use crate::services::users::find_local_user_id;
 use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
-use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
 

@@ -17,6 +17,11 @@ pub enum WorkerError {
     /// EXIF library error.
     #[error("EXIF error: {0}")]
     Exif(String),
+    /// The file cannot carry the requested metadata (container/codec limitation, corrupt EXIF
+    /// block). Reported to the backend as `unsupported` so the picture leaves the sync queue
+    /// instead of showing a retryable write failure (feature 31 §6).
+    #[error("Unsupported metadata format: {0}")]
+    UnsupportedFormat(String),
     /// A required presigned URL was absent from the job response.
     #[error("No presigned URL for '{key}'")]
     MissingPresignedUrl { key: String },
@@ -41,10 +46,16 @@ impl WorkerError {
             // Everything else is a permanent failure.
             Self::Imaging(_)
             | Self::Exif(_)
+            | Self::UnsupportedFormat(_)
             | Self::MissingPresignedUrl { .. }
             | Self::Jwt(_)
             | Self::Json(_) => false,
         }
+    }
+
+    /// Returns `true` when the failure means the file can never carry the metadata.
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self, Self::UnsupportedFormat(_))
     }
 }
 

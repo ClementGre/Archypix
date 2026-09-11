@@ -1,6 +1,11 @@
 // Shared domain types — wire shapes match API ref §10 and §6.3/6.6/6.8 exactly.
 
-export type ExifSyncStatus = 'synced' | 'pending' | 'pending_job_creation' | 'unsupported'
+export type ExifSyncStatus =
+    | 'synced'
+    | 'pending'
+    | 'pending_job_creation'
+    | 'unsupported'
+    | 'write_failed'
 
 export type PictureVariant = 'original' | 'small' | 'medium' | 'large'
 
@@ -103,6 +108,8 @@ export interface PictureDetail {
     orientation: number | null
     exif_data: Record<string, unknown>
     exif_sync_status: ExifSyncStatus
+    /** Last EXIF snapshot extracted from the physical file (owned rows only). */
+    file_exif: Record<string, unknown> | null
     owner_username: string | null
     owner_instance_domain: string | null
     /** Creator attribution (feature 26). Resolved display: override → stored → owner default. */

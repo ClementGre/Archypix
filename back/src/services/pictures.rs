@@ -22,7 +22,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing::{trace, warn};
 use uuid::Uuid;
 

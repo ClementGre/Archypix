@@ -172,6 +172,7 @@ fn exif_sync_histogram(hist: &[(ExifSyncStatus, i64)]) -> Value {
         "pending": lookup(ExifSyncStatus::Pending),
         "unsupported": lookup(ExifSyncStatus::Unsupported),
         "pending_job_creation": lookup(ExifSyncStatus::PendingJobCreation),
+        "write_failed": lookup(ExifSyncStatus::WriteFailed),
     })
 }
 

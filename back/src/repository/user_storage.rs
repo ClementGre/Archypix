@@ -2,7 +2,7 @@
 //! (`0007_storage_quotas`); this repository only reads them, seeds/clears the quota, and runs the
 //! drift-correcting reconcile recompute.
 
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 

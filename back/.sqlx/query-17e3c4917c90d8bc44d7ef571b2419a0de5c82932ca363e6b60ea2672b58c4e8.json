@@ -1,15 +1,15 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE jobs SET error_message = $2 WHERE id = $1",
+  "query": "UPDATE jobs SET config = $2 WHERE id = $1",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
         "Uuid",
-        "Text"
+        "Jsonb"
       ]
     },
     "nullable": []
   },
-  "hash": "08d2dfabf2de40099ee36dc7348b9b8d6cd78c716b9b66c34c7eecb18f47fedd"
+  "hash": "17e3c4917c90d8bc44d7ef571b2419a0de5c82932ca363e6b60ea2672b58c4e8"
 }

@@ -29,6 +29,7 @@ const SYNC_BADGE: Record<string, string> = {
     synced: 'synced',
     pending: 'pending',
     unsupported: 'n/a',
+    write_failed: 'write error',
 }
 
 /** A small reset (↺) affordance that appears for dirty rows on hover. */
@@ -245,7 +246,25 @@ export function ExifInlineEditor({
     picture: PictureDetail
     exif: ReturnType<typeof useExifDraft>
 }) {
-    const {draft, initialDraft, isDirty, isSaving, owned, allowExifEdit, overriddenKeys, set, setGps, reset, resetGps, save, removeOverride} = exif
+    const {
+        draft,
+        initialDraft,
+        isDirty,
+        isSaving,
+        owned,
+        allowExifEdit,
+        overriddenKeys,
+        set,
+        setGps,
+        reset,
+        resetGps,
+        save,
+        removeOverride,
+        retrySync,
+        retrying,
+        revertToFile,
+        reverting,
+    } = exif
     // Video/audio: ffprobe metadata, not photographic EXIF. Hide the camera-only rows (focal length,
     // aperture, ISO, exposure) and surface a read-only media-info block instead. Edits are DB-only
     // (the worker can't rewrite container metadata), reflected by the `unsupported` sync status.
@@ -265,12 +284,33 @@ export function ExifInlineEditor({
     const canEdit = true
 
     const syncLabel = SYNC_BADGE[picture.exif_sync_status] ?? picture.exif_sync_status
+    const writeFailed = owned && picture.exif_sync_status === 'write_failed'
+    const fileExif = (picture.file_exif ?? {}) as Record<string, unknown>
 
     const dirty = (k: keyof ExifDraft) => draft[k] !== initialDraft[k]
     const isOverridden = (...keys: Array<keyof ExifDraft>) => !owned && keys.some((k) => overriddenKeys.has(k))
     /** "overwritten" indicator for a received-picture field (clears the override on ✕). */
     const overrideBadge = (...keys: Array<keyof ExifDraft>) =>
         isOverridden(...keys) ? <OverwrittenBadge onRemove={() => removeOverride(...keys)}/> : undefined
+    // A field whose stored value no longer matches the file (feature 31 §8). Numbers are compared
+    // with a tolerance: EXIF keeps GPS and exposure as rationals, so a round-trip drifts slightly
+    // and an exact string compare would badge every coordinate as different.
+    const differsFromFile = (k: keyof ExifDraft) => {
+        const dbv = initialDraft[k]
+        const fv = fileExif[k]
+        const fvs = fv == null ? '' : String(fv)
+        if (dbv === fvs) return false
+        const a = Number(dbv)
+        const b = Number(fvs)
+        if (dbv !== '' && fvs !== '' && !isNaN(a) && !isNaN(b)) return Math.abs(a - b) > 1e-5
+        return true
+    }
+    const fileDiffBadge = (...keys: Array<keyof ExifDraft>) =>
+        writeFailed && keys.some(differsFromFile) ? (
+            <Badge variant="default" className="h-4 px-1 text-[9px] uppercase tracking-wide">diff</Badge>
+        ) : undefined
+    const fieldBadge = (...keys: Array<keyof ExifDraft>) =>
+        overrideBadge(...keys) ?? fileDiffBadge(...keys)
 
     const gpsDisplay =
         draft.gps_lat && draft.gps_lng
@@ -307,7 +347,7 @@ export function ExifInlineEditor({
             title="EXIF"
             defaultOpen={false}
             action={
-                <div className="flex items-center gap-1">
+                <div className="flex items-center justify-end gap-1 flex-wrap">
                     <Badge
                         variant="outline"
                         className={cn(
@@ -316,7 +356,11 @@ export function ExifInlineEditor({
                                 ? 'border-primary text-primary'
                                 : !owned && overriddenKeys.size > 0
                                     ? 'border-amber-500 text-amber-500'
-                                    : owned && picture.exif_sync_status === 'pending' && 'border-yellow-500 text-yellow-500',
+                                    : owned && picture.exif_sync_status === 'pending'
+                                        ? 'border-yellow-500 text-yellow-500'
+                                        : owned && picture.exif_sync_status === 'write_failed'
+                                            ? 'border-red-500 text-red-500'
+                                            : undefined,
                         )}
                     >
                         {isDirty
@@ -327,6 +371,29 @@ export function ExifInlineEditor({
                                     : 'local'
                                 : syncLabel}
                     </Badge>
+                    {writeFailed && !isDirty && (
+                        <>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={retrySync}
+                                disabled={retrying || reverting}
+                            >
+                                Retry
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={revertToFile}
+                                disabled={reverting || retrying}
+                                title="Revert the stored exif metadata to the one of the file"
+                            >
+                                Revert
+                            </Button>
+                        </>
+                    )}
                     {isDirty &&
                         (canPropose ? (
                             <DropdownMenu>
@@ -386,7 +453,7 @@ export function ExifInlineEditor({
                     <DirtyDot isDirty={dirty('captured_at')}/>
                     <div className="w-24 shrink-0"><FieldLabel>Captured at</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                        {overrideBadge('captured_at')}
+                        {fieldBadge('captured_at')}
                         {canEdit ? (
                             <DateTimePickerPopover
                                 value={draft.captured_at || null}
@@ -413,7 +480,7 @@ export function ExifInlineEditor({
                     <DirtyDot isDirty={gpsIsDirty}/>
                     <div className="w-24 shrink-0"><FieldLabel>GPS</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                        {overrideBadge('gps_lat', 'gps_lng', 'gps_alt')}
+                        {fieldBadge('gps_lat', 'gps_lng', 'gps_alt')}
                         {canEdit ? (
                             <GpsPickerPopover
                                 value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt}}
@@ -445,7 +512,7 @@ export function ExifInlineEditor({
                     onChange={(v) => set('camera_brand', v)}
                     placeholder="Canon"
                     canEdit={canEdit}
-                    badge={overrideBadge('camera_brand')}
+                    badge={fieldBadge('camera_brand')}
                 />
                 <EditableRow
                     label="Camera model"
@@ -455,7 +522,7 @@ export function ExifInlineEditor({
                     onChange={(v) => set('camera_model', v)}
                     placeholder="EOS R5"
                     canEdit={canEdit}
-                    badge={overrideBadge('camera_model')}
+                    badge={fieldBadge('camera_model')}
                 />
                 {/* Photographic-only fields — hidden for video/audio (no lens/exposure metadata). */}
                 {!isMedia && (
@@ -471,7 +538,7 @@ export function ExifInlineEditor({
                             placeholder="50"
                             suffix="mm"
                             canEdit={canEdit}
-                            badge={overrideBadge('focal_length_mm')}
+                            badge={fieldBadge('focal_length_mm')}
                         />
                         <EditableRow
                             label="Aperture"
@@ -484,7 +551,7 @@ export function ExifInlineEditor({
                             placeholder="1.8"
                             prefix="f/"
                             canEdit={canEdit}
-                            badge={overrideBadge('f_number')}
+                            badge={fieldBadge('f_number')}
                         />
                         <EditableRow
                             label="ISO"
@@ -497,7 +564,7 @@ export function ExifInlineEditor({
                             placeholder="400"
                             prefix="ISO "
                             canEdit={canEdit}
-                            badge={overrideBadge('iso_speed')}
+                            badge={fieldBadge('iso_speed')}
                         />
 
                         <ExposureRow
@@ -511,7 +578,7 @@ export function ExifInlineEditor({
                                 reset('exposure_time_den')
                             }}
                             canEdit={canEdit}
-                            badge={overrideBadge('exposure_time_num', 'exposure_time_den')}
+                            badge={fieldBadge('exposure_time_num', 'exposure_time_den')}
                         />
                     </>
                 )}

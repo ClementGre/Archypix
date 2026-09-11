@@ -155,14 +155,16 @@ impl BackendClient {
     ///
     /// `claim_token` must match what was issued at claim time.
     /// When `permanent` is `true` the backend marks the job permanently failed
-    /// regardless of remaining retries.
-    #[instrument(skip(self, claim_token, error), fields(job_id = %job_id, permanent))]
+    /// regardless of remaining retries; `unsupported` additionally tells it the file can never
+    /// carry the metadata (feature 31 §6).
+    #[instrument(skip(self, claim_token, error), fields(job_id = %job_id, permanent, unsupported))]
     pub async fn fail_job(
         &self,
         job_id: Uuid,
         claim_token: Uuid,
         error: &str,
         permanent: bool,
+        unsupported: bool,
     ) -> Result<()> {
         let token = self.get_or_refresh_token()?;
         let url = format!(
@@ -173,6 +175,7 @@ impl BackendClient {
             claim_token,
             error: error.to_string(),
             permanent,
+            unsupported,
         };
         let mut headers = reqwest::header::HeaderMap::new();
         observability::inject_into_headers(&mut headers);

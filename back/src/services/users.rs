@@ -5,7 +5,7 @@ use crate::infra::settings::keys;
 use crate::repository::auth::CredentialRepository;
 use crate::repository::user::UserRepository;
 use crate::repository::user_storage::UserStorageRepository;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -94,7 +94,7 @@ pub async fn create_user(
         is_admin,
         invited_by,
     )
-        .await?;
+    .await?;
     CredentialRepository::upsert_password(&mut *tx, user.id, &password_hash).await?;
     if let Some(quota) = initial_quota_bytes.filter(|q| *q > 0) {
         UserStorageRepository::set_quota(&mut *tx, user.id, Some(quota)).await?;

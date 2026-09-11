@@ -2,7 +2,7 @@ use crate::clients::federation::FederationClient;
 use crate::domain::job::{
     EditPictureConfig, ExifEdit, ExifField, FullExif, GenThumbnailConfig, Job, JobConfig,
 };
-use crate::domain::picture::ExifSyncStatus;
+use crate::domain::picture::{ExifSyncStatus, Picture};
 use crate::infra::redis::Cache;
 use crate::infra::routine::RoutineHandle;
 use crate::repository::job::JobRepository;
@@ -10,10 +10,12 @@ use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
 use crate::services::aggregate::DryRun;
 use archypix_common::error::{AppError, map_sqlx_error};
-use archypix_common::mime::{MIME_TYPES_EXIF, supports_exif, supports_thumbnail};
+use archypix_common::mime::{
+    MIME_TYPES_EXIF, MIME_TYPES_IMAGE_THUMBNAIL, MIME_TYPES_VIDEO, supports_exif,
+    supports_thumbnail,
+};
 use archypix_common::settings::Settings;
 use sqlx::{Executor, PgPool, Postgres};
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// Enqueue a thumbnail + EXIF extraction job for a picture.
@@ -190,8 +192,7 @@ pub async fn edit_pictures_exif(
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     for picture in &pictures {
-        let previous = picture.full_exif();
-        let new_state = previous.applied(&set, &clear);
+        let new_state = picture.full_exif().applied(&set, &clear);
 
         // MIME preflight: a format that cannot embed EXIF gets a DB-only edit, no job.
         let supported = picture
@@ -214,9 +215,7 @@ pub async fn edit_pictures_exif(
         }
 
         // §5 concurrency: at most one in-flight reconcile per picture.
-        if let Some(job_id) =
-            enqueue_or_fold_edit(&mut tx, user_id, picture.id, &set, &clear, &previous).await?
-        {
+        if let Some(job_id) = enqueue_if_absent_edit(&mut tx, user_id, picture.id).await? {
             outcome.jobs.push(job_id);
         }
     }
@@ -232,58 +231,34 @@ pub async fn edit_pictures_exif(
     Ok(outcome)
 }
 
-/// Apply the §5 in-flight rule for one picture, inside the edit transaction.
+/// The EXIF reconcile job config for a picture. `target` is a placeholder: the backend rebinds it
+/// to the live DB snapshot when a worker claims the job (feature 31 §3.3).
+fn exif_reconcile_config(picture_id: Uuid) -> JobConfig {
+    JobConfig::EditPicture(EditPictureConfig {
+        picture_id,
+        exif: Some(ExifEdit::default()),
+        visual: None,
+    })
+}
+
+/// Ensure there is at most one in-flight EXIF reconcile job for a picture.
 ///
-/// - No in-flight job → insert one (`previous` = the synced file baseline, plus the delta).
-/// - A `pending` (unclaimed) job → fold: recompute its delta against its own (unchanged) baseline so
-///   it now targets the cumulative latest DB state. Returns no new job id.
-/// - A `processing` job → do not enqueue; the completion handler re-enqueues. Returns no id.
-async fn enqueue_or_fold_edit(
+/// A pending job needs no folding: it picks up the latest DB snapshot at claim-time. A job already
+/// `processing` wrote an older snapshot, and its completion handler stamps `pending_job_creation`
+/// so the drain enqueues the follow-up.
+async fn enqueue_if_absent_edit(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     user_id: Uuid,
     picture_id: Uuid,
-    set: &FullExif,
-    clear: &[ExifField],
-    previous: &FullExif,
 ) -> Result<Option<Uuid>, AppError> {
-    let new_state = previous.applied(set, clear);
-
-    if let Some(existing) = JobRepository::find_inflight_edit(&mut **tx, picture_id).await? {
-        if existing.status == crate::domain::job::JobStatus::Pending {
-            // Fold: keep the job's synced baseline; retarget its delta to the cumulative state.
-            let baseline = match existing.typed_config() {
-                Ok(JobConfig::EditPicture(cfg)) => cfg.exif.map(|e| e.previous).unwrap_or_default(),
-                _ => previous.clone(),
-            };
-            let (fset, fclear) = baseline.diff_to(&new_state);
-            let folded = JobConfig::EditPicture(EditPictureConfig {
-                picture_id,
-                exif: Some(ExifEdit {
-                    set: fset,
-                    clear: fclear,
-                    previous: baseline,
-                }),
-                visual: None,
-            });
-            if JobRepository::update_config_if_pending(&mut **tx, existing.id, &folded).await? {
-                return Ok(None);
-            }
-            // The job started processing between the find and the update — fall through to the
-            // processing case (do not enqueue; completion re-enqueues).
-        }
-        // A `processing` job exists: DB edit already applied + status pending; do not enqueue.
+    if JobRepository::find_inflight_edit(&mut **tx, picture_id)
+        .await?
+        .is_some()
+    {
         return Ok(None);
     }
 
-    let config = JobConfig::EditPicture(EditPictureConfig {
-        picture_id,
-        exif: Some(ExifEdit {
-            set: set.clone(),
-            clear: clear.to_vec(),
-            previous: previous.clone(),
-        }),
-        visual: None,
-    });
+    let config = exif_reconcile_config(picture_id);
     let job = JobRepository::create(&mut **tx, user_id, Some(picture_id), &config, None).await?;
     Ok(Some(job.id))
 }
@@ -303,7 +278,10 @@ pub async fn resync_picture_exif(
     if picture.local_user_id != user_id || !picture.is_owned() {
         return Err(AppError::NotFound);
     }
-    if picture.exif_sync_status != ExifSyncStatus::Pending {
+    if !matches!(
+        picture.exif_sync_status,
+        ExifSyncStatus::Pending | ExifSyncStatus::WriteFailed
+    ) {
         return Err(AppError::BadRequest(
             "picture is not awaiting EXIF reconcile".into(),
         ));
@@ -316,23 +294,49 @@ pub async fn resync_picture_exif(
             "a reconcile job is already in flight for this picture".into(),
         ));
     }
-    // Re-enqueue a no-op delta: bring the file from its (unknown) state to the current DB row.
-    // `previous` = the current DB snapshot; the worker rewrites every editable field from `set`.
-    let snapshot = picture.full_exif();
-    let (set, clear) = FullExif::default().diff_to(&snapshot);
-    let config = JobConfig::EditPicture(EditPictureConfig {
-        picture_id,
-        exif: Some(ExifEdit {
-            set,
-            clear,
-            previous: FullExif::default(),
-        }),
-        visual: None,
-    });
+    let config = exif_reconcile_config(picture_id);
+    PictureRepository::set_exif_sync_status(db, picture_id, ExifSyncStatus::Pending).await?;
     let job = JobRepository::create(db, user_id, Some(picture_id), &config, None).await?;
     // Debounced: EXIF resync is a worker-driven reconcile path.
     waker.trigger_debounced(user_id);
     Ok(job)
+}
+
+/// Reset a picture's DB EXIF to its persisted physical-file snapshot (`file_exif`), the user's way
+/// out of a `write_failed` divergence (feature 31 §4). Returns the updated row.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+pub async fn revert_picture_exif_to_file(
+    db: &PgPool,
+    waker: &RoutineHandle<Uuid>,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<Picture, AppError> {
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id || !picture.is_owned() {
+        return Err(AppError::NotFound);
+    }
+    let Some(file_exif) = picture.file_exif.as_ref() else {
+        return Err(AppError::Conflict(
+            "picture has no physical EXIF snapshot yet".into(),
+        ));
+    };
+    // A reconcile in flight would write the pre-revert target back and re-diverge the row.
+    if JobRepository::find_inflight_edit(db, picture_id)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict(
+            "a reconcile job is already in flight for this picture".into(),
+        ));
+    }
+    PictureRepository::write_exif_snapshot(db, picture_id, &file_exif.0, ExifSyncStatus::Synced)
+        .await?;
+    waker.trigger_debounced(user_id);
+    PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)
 }
 
 /// Field-level validation of an EXIF edit. Expands a GPS clear to lat+lng+alt, then rejects a field
@@ -364,6 +368,19 @@ pub enum ExifBatchOutcome {
 /// The lower-cased MIME whitelist for formats that embed EXIF (feeds the set-based partition).
 fn supported_mimes() -> Vec<String> {
     MIME_TYPES_EXIF.iter().map(|m| m.to_lowercase()).collect()
+}
+
+/// The lower-cased MIMEs the worker extracts metadata from. A row with one of these is still
+/// extracting until `thumbnails_generated_at` lands, and must not be edited before then (04 §11.2)
+/// — the extraction would overwrite the edit. Mirrors the per-picture guard in
+/// [`edit_pictures_exif`].
+fn extracting_mimes() -> Vec<String> {
+    MIME_TYPES_EXIF
+        .iter()
+        .chain(MIME_TYPES_IMAGE_THUMBNAIL)
+        .chain(MIME_TYPES_VIDEO)
+        .map(|m| m.to_lowercase())
+        .collect()
 }
 
 /// Batch EXIF edit over a [`ResolvedSelection`] (feature 14 §5–§6). Owned pictures take the
@@ -403,6 +420,7 @@ pub async fn batch_edit_exif_selection(
         }
     }
     let mimes = supported_mimes();
+    let extracting = extracting_mimes();
 
     if dry_run {
         let affected = PictureRepository::count_selection(db, user_id, sel).await?;
@@ -435,6 +453,7 @@ pub async fn batch_edit_exif_selection(
         &null_clear,
         true,
         &mimes,
+        &extracting,
     )
     .await? as i64;
     let unsupported = PictureRepository::batch_apply_exif_owned_selection(
@@ -445,6 +464,7 @@ pub async fn batch_edit_exif_selection(
         &null_clear,
         false,
         &mimes,
+        &extracting,
     )
     .await? as i64;
     tx.commit().await.map_err(map_sqlx_error)?;
@@ -538,22 +558,7 @@ pub async fn create_deferred_exif_jobs(db: &PgPool, limit: i64) -> Result<usize,
     let pending = PictureRepository::find_pending_job_creation(db, limit).await?;
     let mut created = 0usize;
     for (picture_id, owner_id) in pending {
-        let Some(picture) = PictureRepository::find_by_id(db, picture_id).await? else {
-            continue;
-        };
-        // Bring the file from its (unknown) state to the current DB row: previous = empty, set =
-        // the full snapshot. Identical shape to a manual resync.
-        let snapshot = picture.full_exif();
-        let (set, clear) = FullExif::default().diff_to(&snapshot);
-        let config = JobConfig::EditPicture(EditPictureConfig {
-            picture_id,
-            exif: Some(ExifEdit {
-                set,
-                clear,
-                previous: FullExif::default(),
-            }),
-            visual: None,
-        });
+        let config = exif_reconcile_config(picture_id);
         let mut tx = db.begin().await.map_err(map_sqlx_error)?;
         JobRepository::create(&mut *tx, owner_id, Some(picture_id), &config, None).await?;
         PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Pending)

@@ -5,10 +5,10 @@
 //! Note: the *pipeline* announces/unannounces inline (see `infra::routine::pipeline::announcement`). The only
 //! path left here is the best-effort downstream unannounce emitted by `cleanup_incoming_share`.
 
-use crate::clients::federation::models::PicturesUnannouncementRequest;
 use crate::clients::federation::FederationClient;
-use crate::infra::routine::unannounce::UnannounceInput;
+use crate::clients::federation::models::PicturesUnannouncementRequest;
 use crate::infra::routine::RoutineHandle;
+use crate::infra::routine::unannounce::UnannounceInput;
 use crate::infra::settings::keys;
 use crate::repository::share::IncomingShareRepository;
 use crate::services::shares::registration::unregister_announced_pictures;

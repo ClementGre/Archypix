@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE jobs SET config = $2 WHERE id = $1 AND status = 'pending'",
+  "query": "UPDATE pictures SET file_exif = $2::jsonb WHERE id = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -11,5 +11,5 @@
     },
     "nullable": []
   },
-  "hash": "051d68ef5587ca7257ec4513859268d7bc053c962aa6657a4219b1ca0ca1da30"
+  "hash": "6c4c04d40db49838a92609b49c93aeea0cbb455f4e8a9ade0c787ea9b7d9c9ad"
 }

@@ -316,6 +316,20 @@ export async function getJob(id: string): Promise<Job> {
     return data
 }
 
+/** Re-enqueue EXIF reconciliation for a picture in `pending`/`write_failed`. */
+export async function resyncExif(id: string): Promise<Job> {
+    const {data} = await apiClient.post<Job>(`/api/authenticated/pictures/${id}/exif/resync`)
+    return data
+}
+
+/** Reset DB EXIF columns to the persisted physical-file snapshot (`file_exif`). */
+export async function revertExifToFile(id: string): Promise<Omit<EditPictureResponse, 'job_id'>> {
+    const {data} = await apiClient.post<Omit<EditPictureResponse, 'job_id'>>(
+        `/api/authenticated/pictures/${id}/exif/revert`,
+    )
+    return data
+}
+
 const PRESIGN_BATCH_SIZE = 100
 
 /**

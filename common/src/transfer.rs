@@ -186,4 +186,8 @@ pub struct FailJobRequest {
     /// transient errors like network failures or backend 5xx responses.
     #[serde(default)]
     pub permanent: bool,
+    /// The file itself cannot carry the requested metadata (feature 31 §6) — the backend marks the
+    /// picture `unsupported` instead of `write_failed`, since retrying can never help.
+    #[serde(default)]
+    pub unsupported: bool,
 }

@@ -111,9 +111,7 @@ impl FederationClient {
                 Some(theirs) if theirs < ours => {
                     "The recipient's instance is running an older, incompatible version of Archypix."
                 }
-                Some(_) => {
-                    "Your instance is out of date — update to share with this recipient."
-                }
+                Some(_) => "Your instance is out of date — update to share with this recipient.",
                 None => "Incompatible Archypix versions between the two instances.",
             };
             return Err(AppError::Custom(

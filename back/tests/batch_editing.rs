@@ -527,6 +527,23 @@ async fn batch_creator_owned_and_received(db: PgPool) {
     assert!(recv_pic.creator_override.is_none());
 }
 
+/// The lower-cased MIME whitelists the batch writer partitions on.
+fn exif_mimes() -> Vec<String> {
+    archypix_common::mime::MIME_TYPES_EXIF
+        .iter()
+        .map(|m| m.to_lowercase())
+        .collect()
+}
+
+fn extracting_mimes() -> Vec<String> {
+    archypix_common::mime::MIME_TYPES_EXIF
+        .iter()
+        .chain(archypix_common::mime::MIME_TYPES_IMAGE_THUMBNAIL)
+        .chain(archypix_common::mime::MIME_TYPES_VIDEO)
+        .map(|m| m.to_lowercase())
+        .collect()
+}
+
 // ── Deferred EXIF jobs ────────────────────────────────────────────────────────
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -551,10 +568,6 @@ async fn owned_batch_exif_defers_then_drain_creates_job(db: PgPool) {
         gps_lng: Some(2.0),
         ..Default::default()
     };
-    let mimes: Vec<String> = archypix_common::mime::MIME_TYPES_EXIF
-        .iter()
-        .map(|m| m.to_lowercase())
-        .collect();
     let n = PictureRepository::batch_apply_exif_owned_selection(
         &db,
         user,
@@ -562,7 +575,8 @@ async fn owned_batch_exif_defers_then_drain_creates_job(db: PgPool) {
         &set,
         &[],
         true,
-        &mimes,
+        &exif_mimes(),
+        &extracting_mimes(),
     )
     .await
     .unwrap();
@@ -615,11 +629,6 @@ async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
         orientation: Some(3),
         ..Default::default()
     };
-    let mimes: Vec<String> = archypix_common::mime::MIME_TYPES_EXIF
-        .iter()
-        .map(|m| m.to_lowercase())
-        .collect();
-
     let n = PictureRepository::batch_apply_exif_owned_selection(
         &db,
         user,
@@ -627,7 +636,8 @@ async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
         &set,
         &[],
         false,
-        &mimes,
+        &exif_mimes(),
+        &extracting_mimes(),
     )
     .await
     .unwrap();
@@ -861,4 +871,67 @@ async fn batch_exif_dry_run_partitions(db: PgPool) {
         }
         _ => panic!("expected dry-run"),
     }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn batch_exif_skips_pictures_still_extracting(db: PgPool) {
+    // 04 §11.2: an edit applied before the initial extraction lands would be overwritten by it.
+    // The single-picture path 409s; the set-based path must skip the row (feature 31).
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let extracting = seed_owned(
+        &db,
+        user,
+        "image/jpeg",
+        100,
+        None,
+        None,
+        None,
+        json!({}),
+        false,
+    )
+    .await;
+    let extracted = seed_owned(
+        &db,
+        user,
+        "image/jpeg",
+        100,
+        None,
+        None,
+        None,
+        json!({}),
+        true,
+    )
+    .await;
+    let sel = ResolvedSelection::explicit(vec![extracting, extracted]);
+    let set = FullExif {
+        orientation: Some(3),
+        ..Default::default()
+    };
+
+    let n = PictureRepository::batch_apply_exif_owned_selection(
+        &db,
+        user,
+        &sel,
+        &set,
+        &[],
+        true,
+        &exif_mimes(),
+        &extracting_mimes(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "only the extracted picture is edited");
+
+    let skipped = PictureRepository::find_by_id(&db, extracting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(skipped.orientation, None);
+    assert_eq!(skipped.exif_sync_status, ExifSyncStatus::Synced);
+    let edited = PictureRepository::find_by_id(&db, extracted)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(edited.orientation, Some(3));
+    assert_eq!(edited.exif_sync_status, ExifSyncStatus::PendingJobCreation);
 }

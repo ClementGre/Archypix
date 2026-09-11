@@ -7,7 +7,7 @@
 //! never touches but does respect.
 
 use crate::domain::picture::DeletedReason;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;

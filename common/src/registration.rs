@@ -103,7 +103,9 @@ impl Invite {
 
     /// Remaining uses (`None` = unlimited — both tracking and `Some(0)`).
     pub fn remaining(&self) -> Option<i64> {
-        self.max_uses.filter(|&m| m > 0).map(|m| (m - self.uses).max(0))
+        self.max_uses
+            .filter(|&m| m > 0)
+            .map(|m| (m - self.uses).max(0))
     }
 
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
@@ -239,9 +241,12 @@ mod tests {
     #[test]
     fn tracking_honoured_in_open_rejected_when_gated() {
         let tracking = invite(None, 5, None);
-        let r =
-            authorize_registration(RegistrationMode::Open, Some(&tracking), true, Utc::now()).unwrap();
-        assert!(r.is_some(), "tracking referral is honoured for provenance in open mode");
+        let r = authorize_registration(RegistrationMode::Open, Some(&tracking), true, Utc::now())
+            .unwrap();
+        assert!(
+            r.is_some(),
+            "tracking referral is honoured for provenance in open mode"
+        );
         let e = authorize_registration(RegistrationMode::Invite, Some(&tracking), true, Utc::now())
             .unwrap_err();
         assert_eq!(e, RegistrationError::InviteNotFound);

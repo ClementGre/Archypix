@@ -255,7 +255,7 @@ impl PictureRepository {
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                         file_hash, exif_sync_status as "exif_sync_status: _",
+                         file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
                          creator, creator_override, original_file_created_at"#,
@@ -321,7 +321,7 @@ impl PictureRepository {
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                         file_hash, exif_sync_status as "exif_sync_status: _",
+                         file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
                          creator, creator_override, original_file_created_at"#,
@@ -424,7 +424,7 @@ impl PictureRepository {
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                         file_hash, exif_sync_status as "exif_sync_status: _",
+                         file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
                          creator, creator_override, original_file_created_at"#,
@@ -678,7 +678,7 @@ impl PictureRepository {
                       p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
                       p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
                       p.thumbnails_generated_at, p.file_hash,
-                      p.exif_sync_status as "exif_sync_status: _",
+                      p.exif_sync_status as "exif_sync_status: _", p.file_exif as "file_exif: _",
                       p.content_hash, p.copy_source_owner_username,
                       p.copy_source_owner_instance, p.copy_source_picture_id,
                       p.creator, p.creator_override, p.original_file_created_at
@@ -717,7 +717,7 @@ impl PictureRepository {
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                      file_hash, exif_sync_status as "exif_sync_status: _",
+                      file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
                       creator, creator_override, original_file_created_at
@@ -745,7 +745,7 @@ impl PictureRepository {
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                      file_hash, exif_sync_status as "exif_sync_status: _",
+                      file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
                       creator, creator_override, original_file_created_at
@@ -782,7 +782,7 @@ impl PictureRepository {
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
                       blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                      file_hash, exif_sync_status as "exif_sync_status: _",
+                      file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
                       creator, creator_override, original_file_created_at
@@ -1061,7 +1061,8 @@ impl PictureRepository {
                           p.remote_exif_data, p.local_exif_overrides,
                           p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
                           p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
-                          p.thumbnails_generated_at, p.file_hash, p.exif_sync_status,
+                          p.thumbnails_generated_at, p.file_hash,
+                          p.exif_sync_status, p.file_exif,
                           p.content_hash, p.copy_source_owner_username,
                           p.copy_source_owner_instance, p.copy_source_picture_id,
                           p.creator, p.creator_override, p.original_file_created_at
@@ -1311,7 +1312,7 @@ impl PictureRepository {
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                         file_hash, exif_sync_status as "exif_sync_status: _",
+                         file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
                          creator, creator_override, original_file_created_at"#,
@@ -1328,21 +1329,20 @@ impl PictureRepository {
         .map_err(map_sqlx_error)
     }
 
-    /// Update a picture's worker-extracted data after initial thumbnail generation.
-    /// Only updates fields that the worker provides (COALESCE keeps existing values).
-    #[tracing::instrument(skip(ex, exif_data_patch), fields(picture_id = %id))]
+    /// Apply a worker-extracted EXIF snapshot as the authoritative physical-file state.
+    ///
+    /// Used by `gen_thumbnail` extraction (initial ingest and external overwrites, feature 31 §5):
+    /// the promoted columns and the camera keys of `exif_data` are set to the file's values,
+    /// `file_exif` records the same snapshot, and the row becomes `synced` — unless it is
+    /// `unsupported`, a terminal state extraction must not undo.
+    #[tracing::instrument(skip(ex, extracted), fields(picture_id = %id))]
     pub async fn update_from_worker<'e, E>(
         ex: E,
         id: Uuid,
+        extracted: &FullExif,
         width: Option<i32>,
         height: Option<i32>,
-        captured_at: Option<NaiveDateTime>,
-        gps_lat: Option<f64>,
-        gps_lng: Option<f64>,
-        gps_alt: Option<i32>,
-        orientation: Option<i16>,
         blurhash: Option<&str>,
-        exif_data_patch: Option<serde_json::Value>,
         file_size: Option<i64>,
         file_hash: Option<&str>,
         content_hash: Option<&str>,
@@ -1350,24 +1350,32 @@ impl PictureRepository {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        let file_exif_json = serde_json::to_value(extracted)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let camera_patch = serde_json::to_value(&extracted.camera)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        let camera_keys: Vec<String> = CAMERA_KEYS.iter().map(|s| s.to_string()).collect();
         sqlx::query_as!(
             Picture,
             r#"UPDATE pictures
                SET width       = COALESCE($2,  width),
                    height      = COALESCE($3,  height),
-                   captured_at = COALESCE($4,  captured_at),
-                   gps_lat     = COALESCE($5,  gps_lat),
-                   gps_lng     = COALESCE($6,  gps_lng),
-                   gps_alt     = COALESCE($7,  gps_alt),
-                   orientation = COALESCE($8,  orientation),
+                   captured_at = $4,
+                   gps_lat     = $5,
+                   gps_lng     = $6,
+                   gps_alt     = $7,
+                   orientation = $8,
                    blurhash    = COALESCE($9,  blurhash),
-                   exif_data   = CASE WHEN $10::jsonb IS NOT NULL
-                                      THEN exif_data || $10::jsonb
-                                      ELSE exif_data
-                                 END,
-                   file_size   = COALESCE($11, file_size),
-                   file_hash   = COALESCE($12, file_hash),
-                   content_hash = COALESCE($13, content_hash),
+                   exif_data   = (exif_data - $10::text[]) || $11::jsonb,
+                   file_size   = COALESCE($12, file_size),
+                   file_hash   = COALESCE($13, file_hash),
+                   content_hash = COALESCE($14, content_hash),
+                   file_exif   = $15::jsonb,
+                   exif_sync_status = CASE
+                                          WHEN exif_sync_status = 'unsupported'
+                                              THEN 'unsupported'::picture_exif_sync_status
+                                          ELSE 'synced'::picture_exif_sync_status
+                                      END,
                    thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc'),
                    last_pipeline_run_at = NULL
                WHERE id = $1
@@ -1380,23 +1388,25 @@ impl PictureRepository {
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
                          blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
-                         file_hash, exif_sync_status as "exif_sync_status: _",
+                         file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
                          creator, creator_override, original_file_created_at"#,
             id,
             width,
             height,
-            captured_at,
-            gps_lat,
-            gps_lng,
-            gps_alt,
-            orientation,
+            extracted.captured_at,
+            extracted.gps_lat,
+            extracted.gps_lng,
+            extracted.gps_alt,
+            extracted.orientation,
             blurhash,
-            exif_data_patch as Option<serde_json::Value>,
+            &camera_keys as &[String],
+            camera_patch,
             file_size,
             file_hash,
             content_hash,
+            file_exif_json,
         )
             .fetch_one(ex)
             .await
@@ -1527,6 +1537,26 @@ impl PictureRepository {
             "UPDATE pictures SET exif_sync_status = $2 WHERE id = $1",
             id,
             status as ExifSyncStatus,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    /// Update only the persisted physical-file EXIF snapshot (`file_exif`) after a successful
+    /// worker write, without mutating the authoritative DB EXIF columns.
+    #[tracing::instrument(skip(ex, file_exif), fields(picture_id = %id))]
+    pub async fn set_file_exif<'e, E>(ex: E, id: Uuid, file_exif: &FullExif) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let file_exif_json = serde_json::to_value(file_exif)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        sqlx::query!(
+            "UPDATE pictures SET file_exif = $2::jsonb WHERE id = $1",
+            id,
+            file_exif_json
         )
         .execute(ex)
         .await
@@ -2092,8 +2122,10 @@ impl PictureRepository {
     /// 14 §5). Touches only owned, already-extracted pictures. Stamps `exif_sync_status` =
     /// `pending_job_creation` when the format embeds EXIF (the drain creates the reconcile job) or
     /// `unsupported` otherwise. `supported` selects which MIME partition this call targets;
-    /// `supported_mimes` is the lower-cased whitelist. Returns rows changed.
-    #[tracing::instrument(skip(ex, sel, set, clear, supported_mimes), fields(user_id = %local_user_id, supported))]
+    /// `supported_mimes` is the lower-cased whitelist. `extracting_mimes` lists the formats the
+    /// worker extracts metadata from — such a row is skipped until `thumbnails_generated_at` lands,
+    /// so an in-flight extraction cannot overwrite the edit (04 §11.2). Returns rows changed.
+    #[tracing::instrument(skip(ex, sel, set, clear, supported_mimes, extracting_mimes), fields(user_id = %local_user_id, supported))]
     pub async fn batch_apply_exif_owned_selection<'e, E>(
         ex: E,
         local_user_id: Uuid,
@@ -2102,6 +2134,7 @@ impl PictureRepository {
         clear: &[crate::domain::job::ExifField],
         supported: bool,
         supported_mimes: &[String],
+        extracting_mimes: &[String],
     ) -> Result<u64, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -2119,7 +2152,7 @@ impl PictureRepository {
         }
         q.push(", updated_at = (now() AT TIME ZONE 'utc'), last_pipeline_run_at = NULL WHERE ");
         Self::push_selection_where(&mut q, local_user_id, sel);
-        q.push(" AND p.remote_picture_id IS NULL AND p.thumbnails_generated_at IS NOT NULL AND ");
+        q.push(" AND p.remote_picture_id IS NULL AND ");
         if supported {
             q.push("lower(p.mime_type) = ANY(")
                 .push_bind(supported_mimes.to_vec())
@@ -2129,6 +2162,10 @@ impl PictureRepository {
                 .push_bind(supported_mimes.to_vec())
                 .push("::text[])))");
         }
+        // Still-extracting rows are skipped (an unknown MIME counts as extracting).
+        q.push(" AND NOT ((p.mime_type IS NULL OR lower(p.mime_type) = ANY(")
+            .push_bind(extracting_mimes.to_vec())
+            .push("::text[])) AND p.thumbnails_generated_at IS NULL)");
         let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
         Ok(res.rows_affected())
     }
@@ -2227,6 +2264,7 @@ fn parse_exif_sync_status(label: &str) -> Option<ExifSyncStatus> {
         "pending" => Some(ExifSyncStatus::Pending),
         "unsupported" => Some(ExifSyncStatus::Unsupported),
         "pending_job_creation" => Some(ExifSyncStatus::PendingJobCreation),
+        "write_failed" => Some(ExifSyncStatus::WriteFailed),
         _ => None,
     }
 }

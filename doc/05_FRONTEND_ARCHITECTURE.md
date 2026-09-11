@@ -539,7 +539,9 @@ mobile) and shown only when its `ui` store toggle is on:
   with colour-coded per-source mini-tags), **Shared with you** (sender handle + shared subpath, not the raw `SharedToMe.*` path), **Shared by you**,
   **EXIF** (inline-editable — owned pictures write through to the file, received pictures get recipient-local overrides; the badge flips to **modified
   **
-  on unsaved changes, or **overridden** when a received picture has sticky overrides), **Versions**, and **Copies**
+  on unsaved changes, **write error** when the file sync failed permanently, or **overridden** when a received picture has sticky overrides; a
+  `write_failed` owned picture also gets **Retry** / **Revert** actions in the section header, and the fields that no longer match the file — compared
+  against `picture.file_exif` with a numeric tolerance — are badged **diff**, feature 31), **Versions**, and **Copies**
   (`CopiesSection`, feature 11 — lazily lists the picture's content-dedup group: each physical copy's state
   shown/in-trash/duplicate/rejected, owner, last-edit, a same-image-vs-EXIF-only-vs-different-content diff, and a
   "Keep this" control to choose the kept survivor). Clicking
@@ -609,7 +611,8 @@ mobile) and shown only when its `ui` store toggle is on:
   update immediately on refetch; the pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
   Navigating the **`TagTree`** (picking or expanding/collapsing a tag) also invalidates `['tags']` so the tree keeps up with background tag changes.
 - **EXIF editing:** owned pictures (`picture.owner_username == null`) edit through `useEditExif`, which POSTs the diff (`set`/`clear`) then polls
-  `getJob` (1/2/4/8/15 s) while `exif_sync_status === 'pending'`. **Received pictures** edit through `useOverrideExif` →
+  `getJob` (1/2/4/8/15 s) while `exif_sync_status === 'pending'`. A permanent failure (`'write_failed'`) stops the polling and shows the retry/revert
+  actions; `useRetryExifSync` re-enqueues the job and `useRevertExifToFile` resets the row to the file. **Received pictures** edit through `useOverrideExif` →
   `POST /pictures/{id}/exif/override`
   (DB-only, no job poll): `set` claims a sticky per-field override, `clear` (via `removeOverride`) drops it so the owner's value flows through again.
   Overridden fields are derived from `picture.local_exif_overrides` (a sparse `FullExif`, snake-case keys) and tagged with `OverwrittenBadge`. The

@@ -363,6 +363,7 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
 
     // GPS row value + map
     const gpsAgg = exif?.gps?.type === 'gps' ? (exif.gps as Extract<FieldAggregate, { type: 'gps' }>) : null
+    const gpsAltAgg = exif?.gps_alt?.type === 'numeric' ? (exif.gps_alt as Extract<FieldAggregate, { type: 'numeric' }>) : null
     const gpsDirty = gpsDraft !== undefined
     const gpsDisplay = gpsDirty
         ? gpsDraft!.lat && gpsDraft!.lng
@@ -372,6 +373,30 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
             ? `~ ${gpsAgg.centroid.lat.toFixed(3)}, ${gpsAgg.centroid.lng.toFixed(3)}`
             : '—'
     const gpsStats = gpsAgg ? `${total - gpsAgg.null_count}/${total} have GPS` : null
+    // Seed the picker with the selection's centroid (and mean altitude) rather than an empty form.
+    const numStr = (n: number | null | undefined) => (n == null ? '' : String(n))
+    const defaultGpsPickerLocation: GpsStr = {
+        lat: numStr(gpsAgg?.centroid?.lat),
+        lng: numStr(gpsAgg?.centroid?.lng),
+        alt: numStr(gpsAltAgg?.avg == null ? null : Math.round(gpsAltAgg.avg)),
+    }
+
+    const previewBbox = useMemo(() => {
+        if (gpsDraft) {
+            const lat = Number(gpsDraft.lat)
+            const lng = Number(gpsDraft.lng)
+            if (isNaN(lat) || isNaN(lng)) return null
+            return {latMin: lat, latMax: lat, lonMin: lng, lonMax: lng}
+        }
+        return gpsAgg?.bbox
+            ? {
+                latMin: gpsAgg.bbox.lat_min,
+                latMax: gpsAgg.bbox.lat_max,
+                lonMin: gpsAgg.bbox.lng_min,
+                lonMax: gpsAgg.bbox.lng_max,
+            }
+            : null
+    }, [gpsDraft, gpsAgg])
 
     const header = dirty ? (
         <div className="flex items-center gap-1">
@@ -453,25 +478,20 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
 
                     {/* GPS + read-only map */}
                     <Row label="GPS" dirty={gpsDirty} onReset={() => setGpsDraft(undefined)} stats={gpsStats}>
-                        <GpsPickerPopover value={gpsDraft ?? {lat: '', lng: '', alt: ''}} onChange={setGpsDraft}>
+                        <GpsPickerPopover value={gpsDraft ?? defaultGpsPickerLocation} onChange={setGpsDraft}>
                             <button
                                 className={cn('truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted', (gpsDisplay === '—' || gpsDisplay === 'cleared') && 'text-muted-foreground')}>
                                 {gpsDisplay}
                             </button>
                         </GpsPickerPopover>
                     </Row>
-                    {gpsAgg?.bbox && (
+                    {previewBbox && (
                         <div className="mt-1 overflow-hidden rounded-md border border-border">
                             <MapView
                                 mode="bbox"
                                 interactive={false}
                                 expandable={false}
-                                bbox={{
-                                    latMin: gpsAgg.bbox.lat_min,
-                                    latMax: gpsAgg.bbox.lat_max,
-                                    lonMin: gpsAgg.bbox.lng_min,
-                                    lonMax: gpsAgg.bbox.lng_max
-                                }}
+                                bbox={previewBbox}
                                 onBbox={() => {
                                 }}
                                 className="h-40 w-full"

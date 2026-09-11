@@ -26,13 +26,14 @@ CREATE TYPE public.picture_exif_sync_status AS ENUM (
     'synced',
     'pending',
     'unsupported',
-    'pending_job_creation'
+    'pending_job_creation',
+    'write_failed'
 );
 
 CREATE TYPE public.public_share_status AS ENUM (
     'active',
     'revoked'
-    );
+);
 
 CREATE TYPE public.safe_delete_mode AS ENUM (
     'singleBranch',
@@ -68,14 +69,9 @@ CREATE TYPE public.versioning_mode AS ENUM (
     'full_versioning'
 );
 
-CREATE FUNCTION public.get_pictures_under_tag(tag_prefix public.ltree)
-    RETURNS TABLE
-            (
-                picture_id uuid
-            )
+CREATE FUNCTION public.get_pictures_under_tag(tag_prefix public.ltree) RETURNS TABLE(picture_id uuid)
     LANGUAGE plpgsql STABLE
-AS
-$$
+    AS $$
 BEGIN
     RETURN QUERY
         SELECT DISTINCT t.picture_id
@@ -90,8 +86,7 @@ $$;
 
 CREATE FUNCTION public.picture_has_tag(picture_uuid uuid, target_tag public.ltree) RETURNS boolean
     LANGUAGE plpgsql STABLE
-AS
-$$
+    AS $$
 BEGIN
     RETURN EXISTS (SELECT 1
                    FROM tags
@@ -105,8 +100,7 @@ $$;
 
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
-AS
-$$
+    AS $$
 BEGIN
     NEW.updated_at = (now() at time zone 'utc');
     RETURN NEW;
@@ -115,8 +109,7 @@ $$;
 
 CREATE FUNCTION public.user_storage_pictures() RETURNS trigger
     LANGUAGE plpgsql
-AS
-$$
+    AS $$
 DECLARE
     d_orig_live  bigint := 0;
     d_orig_trash bigint := 0;
@@ -172,11 +165,12 @@ BEGIN
         INSERT INTO user_storage (user_id, originals_bytes, originals_trashed_bytes,
                                   versions_bytes, versions_trashed_bytes)
         VALUES (uid, d_orig_live, d_orig_trash, d_ver_live, d_ver_trash)
-        ON CONFLICT (user_id) DO UPDATE SET originals_bytes         = user_storage.originals_bytes + EXCLUDED.originals_bytes,
-                                            originals_trashed_bytes = user_storage.originals_trashed_bytes + EXCLUDED.originals_trashed_bytes,
-                                            versions_bytes          = user_storage.versions_bytes + EXCLUDED.versions_bytes,
-                                            versions_trashed_bytes  = user_storage.versions_trashed_bytes + EXCLUDED.versions_trashed_bytes,
-                                            updated_at              = (now() AT TIME ZONE 'utc');
+        ON CONFLICT (user_id) DO UPDATE SET
+            originals_bytes         = user_storage.originals_bytes + EXCLUDED.originals_bytes,
+            originals_trashed_bytes = user_storage.originals_trashed_bytes + EXCLUDED.originals_trashed_bytes,
+            versions_bytes          = user_storage.versions_bytes + EXCLUDED.versions_bytes,
+            versions_trashed_bytes  = user_storage.versions_trashed_bytes + EXCLUDED.versions_trashed_bytes,
+            updated_at              = (now() AT TIME ZONE 'utc');
     END IF;
 
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -185,8 +179,7 @@ $$;
 
 CREATE FUNCTION public.user_storage_versions() RETURNS trigger
     LANGUAGE plpgsql
-AS
-$$
+    AS $$
 DECLARE
     d_live    bigint := 0;
     d_trash   bigint := 0;
@@ -197,8 +190,7 @@ BEGIN
     IF (TG_OP = 'UPDATE' OR TG_OP = 'DELETE') THEN
         SELECT (deleted_at IS NOT NULL), (remote_picture_id IS NULL), local_user_id
         INTO p_deleted, p_owned, uid
-        FROM pictures
-        WHERE id = OLD.picture_id;
+        FROM pictures WHERE id = OLD.picture_id;
         IF p_owned IS TRUE THEN
             IF p_deleted THEN
                 d_trash := d_trash - COALESCE(OLD.file_size, 0);
@@ -211,8 +203,7 @@ BEGIN
     IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN
         SELECT (deleted_at IS NOT NULL), (remote_picture_id IS NULL), local_user_id
         INTO p_deleted, p_owned, uid
-        FROM pictures
-        WHERE id = NEW.picture_id;
+        FROM pictures WHERE id = NEW.picture_id;
         IF p_owned IS TRUE THEN
             IF p_deleted THEN
                 d_trash := d_trash + COALESCE(NEW.file_size, 0);
@@ -225,64 +216,55 @@ BEGIN
     IF (d_live <> 0 OR d_trash <> 0) AND uid IS NOT NULL THEN
         INSERT INTO user_storage (user_id, versions_bytes, versions_trashed_bytes)
         VALUES (uid, d_live, d_trash)
-        ON CONFLICT (user_id) DO UPDATE SET versions_bytes         = user_storage.versions_bytes + EXCLUDED.versions_bytes,
-                                            versions_trashed_bytes = user_storage.versions_trashed_bytes + EXCLUDED.versions_trashed_bytes,
-                                            updated_at             = (now() AT TIME ZONE 'utc');
+        ON CONFLICT (user_id) DO UPDATE SET
+            versions_bytes         = user_storage.versions_bytes + EXCLUDED.versions_bytes,
+            versions_trashed_bytes = user_storage.versions_trashed_bytes + EXCLUDED.versions_trashed_bytes,
+            updated_at             = (now() AT TIME ZONE 'utc');
     END IF;
 
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$;
 
-CREATE TABLE public.app_settings
-(
+CREATE TABLE public.app_settings (
     key text NOT NULL,
     value jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.hierarchies
-(
-    id                  uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id            uuid                                                                 NOT NULL,
-    name                character varying(255)                                               NOT NULL,
-    config              jsonb                       DEFAULT '{
-      "nodes": [],
-      "naming": "original",
-      "version": 1,
-      "writeBack": true,
-      "safeDeleteMode": "singleBranch"
-    }'::jsonb                                                                                NOT NULL,
-    enabled             boolean                     DEFAULT true                             NOT NULL,
-    webdav_token_enc    bytea,
-    webdav_use_redirect boolean                     DEFAULT true                             NOT NULL,
-    created_at          timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at          timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+CREATE TABLE public.hierarchies (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    owner_id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    config jsonb DEFAULT '{"nodes": [], "naming": "original", "version": 1, "writeBack": true, "safeDeleteMode": "singleBranch"}'::jsonb NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    webdav_token_enc bytea,
+    webdav_use_redirect boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.incoming_shares
-(
-    id                uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    recipient_id      uuid                                                                 NOT NULL,
-    sender_username   character varying(255)                                               NOT NULL,
-    sender_instance   character varying(255)                                               NOT NULL,
-    name              character varying(64)                                                NOT NULL,
-    message           text,
-    outgoing_share_id uuid                                                                 NOT NULL,
+CREATE TABLE public.incoming_shares (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    recipient_id uuid NOT NULL,
+    sender_username character varying(255) NOT NULL,
+    sender_instance character varying(255) NOT NULL,
+    name character varying(64) NOT NULL,
+    message text,
+    outgoing_share_id uuid NOT NULL,
     local_mapping_service_id uuid,
     status public.share_status DEFAULT 'pending'::public.share_status NOT NULL,
-    allow_share_back  boolean                     DEFAULT false                            NOT NULL,
-    future            boolean                     DEFAULT false                            NOT NULL,
-    allow_exif_edit   boolean                     DEFAULT false                            NOT NULL,
+    allow_share_back boolean DEFAULT false NOT NULL,
+    future boolean DEFAULT false NOT NULL,
+    allow_exif_edit boolean DEFAULT false NOT NULL,
     shared_tag_path public.ltree,
     last_announcement_received_at timestamp without time zone,
-    shareback_of      uuid,
-    created_at        timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at        timestamp without time zone
+    shareback_of uuid,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at timestamp without time zone
 );
 
-CREATE TABLE public.invites
-(
+CREATE TABLE public.invites (
     code character varying(255) NOT NULL,
     max_uses bigint,
     uses bigint DEFAULT 0 NOT NULL,
@@ -291,50 +273,47 @@ CREATE TABLE public.invites
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.jobs
-(
-    id           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id     uuid                                                                 NOT NULL,
+CREATE TABLE public.jobs (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    owner_id uuid NOT NULL,
     job_type public.job_type NOT NULL,
     status public.job_status DEFAULT 'pending'::public.job_status NOT NULL,
-    config       jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    result       jsonb                       DEFAULT '{}'::jsonb,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    result jsonb DEFAULT '{}'::jsonb,
     error_message text,
-    retry_count  integer                     DEFAULT 0                                NOT NULL,
-    max_retries  integer                     DEFAULT 3                                NOT NULL,
+    retry_count integer DEFAULT 0 NOT NULL,
+    max_retries integer DEFAULT 3 NOT NULL,
     idempotency_key character varying(255),
-    picture_id   uuid,
-    claimed_by   text,
+    picture_id uuid,
+    claimed_by text,
     claim_token uuid,
-    created_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    started_at   timestamp without time zone,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    started_at timestamp without time zone,
     completed_at timestamp without time zone,
     trace_context jsonb
 );
 
-CREATE TABLE public.outgoing_shares
-(
-    id                 uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    owner_id           uuid                                                                 NOT NULL,
+CREATE TABLE public.outgoing_shares (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    owner_id uuid NOT NULL,
     tag_path public.ltree NOT NULL,
-    name               character varying(64)                                                NOT NULL,
-    message            text,
-    recipient_username character varying(255)                                               NOT NULL,
-    recipient_instance character varying(255)                                               NOT NULL,
-    allow_share_back   boolean                     DEFAULT true                             NOT NULL,
-    future             boolean                     DEFAULT true                             NOT NULL,
-    allow_exif_edit    boolean                     DEFAULT false                            NOT NULL,
-    shareback_of       uuid,
+    name character varying(64) NOT NULL,
+    message text,
+    recipient_username character varying(255) NOT NULL,
+    recipient_instance character varying(255) NOT NULL,
+    allow_share_back boolean DEFAULT true NOT NULL,
+    future boolean DEFAULT true NOT NULL,
+    allow_exif_edit boolean DEFAULT false NOT NULL,
+    shareback_of uuid,
     status public.share_status DEFAULT 'pending'::public.share_status NOT NULL,
-    last_error_at      timestamp without time zone,
-    next_retry_at      timestamp without time zone,
-    created_at         timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at         timestamp without time zone,
+    last_error_at timestamp without time zone,
+    next_retry_at timestamp without time zone,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at timestamp without time zone,
     derived_from_public_share_id uuid
 );
 
-CREATE TABLE public.picture_versions
-(
+CREATE TABLE public.picture_versions (
     id uuid NOT NULL,
     picture_id uuid NOT NULL,
     version_number integer NOT NULL,
@@ -343,126 +322,119 @@ CREATE TABLE public.picture_versions
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.pictures
-(
-    id                       uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    local_user_id            uuid                                                                 NOT NULL,
+CREATE TABLE public.pictures (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    local_user_id uuid NOT NULL,
     remote_picture_id character varying(255),
-    owner_username           character varying(255),
+    owner_username character varying(255),
     owner_instance_domain character varying(255),
-    filename                 character varying(1024),
-    mime_type                character varying(100),
-    file_size                bigint,
-    width                    integer,
-    height                   integer,
-    exif_data                jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    metadata                 jsonb                       DEFAULT '{}'::jsonb                      NOT NULL,
-    deleted_at               timestamp without time zone,
-    captured_at              timestamp without time zone,
-    ingested_at              timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at               timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    blurhash                 text,
-    gps_lat                  double precision,
-    gps_lng                  double precision,
-    gps_alt                  integer,
-    orientation              smallint,
+    filename character varying(1024),
+    mime_type character varying(100),
+    file_size bigint,
+    width integer,
+    height integer,
+    exif_data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    deleted_at timestamp without time zone,
+    captured_at timestamp without time zone,
+    ingested_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    blurhash text,
+    gps_lat double precision,
+    gps_lng double precision,
+    gps_alt integer,
+    orientation smallint,
     thumbnails_generated_at timestamp without time zone,
-    file_hash                text,
+    file_hash text,
     last_pipeline_run_at timestamp without time zone,
     exif_sync_status public.picture_exif_sync_status DEFAULT 'synced'::public.picture_exif_sync_status NOT NULL,
-    owner_deleted_at         timestamp without time zone,
-    owner_purge_at           timestamp without time zone,
-    remote_exif_data         jsonb,
+    owner_deleted_at timestamp without time zone,
+    owner_purge_at timestamp without time zone,
+    remote_exif_data jsonb,
     local_exif_overrides jsonb,
     deleted_reason public.picture_deleted_reason,
-    content_hash             text,
+    content_hash text,
     copy_source_owner_username character varying(255),
     copy_source_owner_instance character varying(255),
     copy_source_picture_id character varying(255),
-    creator                  text,
-    creator_override         text,
-    remote_updated_at        timestamp without time zone,
-    original_file_created_at timestamp without time zone
+    creator text,
+    creator_override text,
+    remote_updated_at timestamp without time zone,
+    original_file_created_at timestamp without time zone,
+    file_exif jsonb
 );
 
-CREATE TABLE public.public_shares
-(
-    id                   uuid                        DEFAULT public.uuid_generate_v4()            NOT NULL,
-    owner_id             uuid                                                                     NOT NULL,
-    tag_path             public.ltree                                                             NOT NULL,
-    name                 character varying(64)                                                    NOT NULL,
-    message              text,
-    token                text                                                                     NOT NULL,
-    password_hash        text,
-    expires_at           timestamp without time zone,
-    allow_originals      boolean                     DEFAULT false                                NOT NULL,
-    allow_upload         boolean                     DEFAULT false                                NOT NULL,
-    allow_share_back     boolean                     DEFAULT false                                NOT NULL,
-    conv_allow_exif_edit boolean                     DEFAULT false                                NOT NULL,
-    conv_future          boolean                     DEFAULT true                                 NOT NULL,
-    status               public.public_share_status  DEFAULT 'active'::public.public_share_status NOT NULL,
-    created_at           timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text)     NOT NULL,
-    revoked_at           timestamp without time zone
+CREATE TABLE public.public_shares (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    owner_id uuid NOT NULL,
+    tag_path public.ltree NOT NULL,
+    name character varying(64) NOT NULL,
+    message text,
+    token text NOT NULL,
+    password_hash text,
+    expires_at timestamp without time zone,
+    allow_originals boolean DEFAULT false NOT NULL,
+    allow_upload boolean DEFAULT false NOT NULL,
+    allow_share_back boolean DEFAULT false NOT NULL,
+    conv_allow_exif_edit boolean DEFAULT false NOT NULL,
+    conv_future boolean DEFAULT true NOT NULL,
+    status public.public_share_status DEFAULT 'active'::public.public_share_status NOT NULL,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    revoked_at timestamp without time zone
 );
 
-CREATE TABLE public.refresh_tokens
-(
-    id         uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    user_id    uuid                                   NOT NULL,
-    token_hash text                                   NOT NULL,
+CREATE TABLE public.refresh_tokens (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    user_id uuid NOT NULL,
+    token_hash text NOT NULL,
     expires_at timestamp without time zone NOT NULL,
     revoked_at timestamp without time zone,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.share_announcements
-(
-    outgoing_share_id uuid                           NOT NULL,
-    picture_id        uuid                           NOT NULL,
-    picture_token     uuid DEFAULT gen_random_uuid() NOT NULL,
+CREATE TABLE public.share_announcements (
+    outgoing_share_id uuid NOT NULL,
+    picture_id uuid NOT NULL,
+    picture_token uuid DEFAULT gen_random_uuid() NOT NULL,
     announced_updated_at timestamp without time zone
 );
 
-CREATE TABLE public.tagging_services
-(
-    id         uuid                   DEFAULT public.uuid_generate_v4() NOT NULL,
-    owner_id   uuid                                                     NOT NULL,
+CREATE TABLE public.tagging_services (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    owner_id uuid NOT NULL,
     service_type public.service_type NOT NULL,
     requires public.ltree[] DEFAULT '{}'::public.ltree[] NOT NULL,
     excludes public.ltree[] DEFAULT '{}'::public.ltree[] NOT NULL,
-    enabled    boolean                DEFAULT true                      NOT NULL,
-    "position" integer                DEFAULT 0                         NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    "position" integer DEFAULT 0 NOT NULL,
     last_invalidated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     last_error_at timestamp without time zone,
     last_error_msg text,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    name       character varying(255) DEFAULT ''::character varying     NOT NULL,
-    config     jsonb                  DEFAULT '{}'::jsonb               NOT NULL
+    name character varying(255) DEFAULT ''::character varying NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL
 );
 
-CREATE TABLE public.tags
-(
-    id         uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    picture_id uuid                                   NOT NULL,
+CREATE TABLE public.tags (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    picture_id uuid NOT NULL,
     tag_path public.ltree NOT NULL,
     source public.tag_source DEFAULT 'manual'::public.tag_source NOT NULL,
-    source_id  uuid,
+    source_id uuid,
     picture_token uuid,
     assigned_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.user_credentials
-(
+CREATE TABLE public.user_credentials (
     user_id uuid NOT NULL,
     password_hash text NOT NULL,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.user_settings
-(
+CREATE TABLE public.user_settings (
     user_id uuid NOT NULL,
     versioning_mode public.versioning_mode DEFAULT 'none'::public.versioning_mode NOT NULL,
     trash_retention_days integer DEFAULT 30 NOT NULL,
@@ -470,27 +442,25 @@ CREATE TABLE public.user_settings
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.user_storage
-(
-    user_id                 uuid                                                                 NOT NULL,
-    originals_bytes         bigint                      DEFAULT 0                                NOT NULL,
-    originals_trashed_bytes bigint                      DEFAULT 0                                NOT NULL,
-    versions_bytes          bigint                      DEFAULT 0                                NOT NULL,
-    versions_trashed_bytes  bigint                      DEFAULT 0                                NOT NULL,
-    updated_at              timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+CREATE TABLE public.user_storage (
+    user_id uuid NOT NULL,
+    originals_bytes bigint DEFAULT 0 NOT NULL,
+    originals_trashed_bytes bigint DEFAULT 0 NOT NULL,
+    versions_bytes bigint DEFAULT 0 NOT NULL,
+    versions_trashed_bytes bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
-CREATE TABLE public.users
-(
-    id           uuid                        DEFAULT public.uuid_generate_v4()        NOT NULL,
-    username     character varying(255)                                               NOT NULL,
-    email        character varying(255)                                               NOT NULL,
-    display_name character varying(255)                                               NOT NULL,
-    is_admin     boolean                     DEFAULT false                            NOT NULL,
-    created_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at   timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+CREATE TABLE public.users (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    username character varying(255) NOT NULL,
+    email character varying(255) NOT NULL,
+    display_name character varying(255) NOT NULL,
+    is_admin boolean DEFAULT false NOT NULL,
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     storage_quota_bytes bigint,
-    invited_by   character varying(255)
+    invited_by character varying(255)
 );
 
 ALTER TABLE ONLY public.app_settings
@@ -661,11 +631,9 @@ CREATE INDEX idx_users_email ON public.users USING btree (email);
 
 CREATE INDEX idx_users_username ON public.users USING btree (username);
 
-CREATE UNIQUE INDEX uq_edit_picture_inflight ON public.jobs USING btree (picture_id) WHERE ((job_type = 'edit_picture'::public.job_type) AND
-                                                                                            (status = ANY (ARRAY ['pending'::public.job_status, 'processing'::public.job_status])));
+CREATE UNIQUE INDEX uq_edit_picture_inflight ON public.jobs USING btree (picture_id) WHERE ((job_type = 'edit_picture'::public.job_type) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
 
-CREATE UNIQUE INDEX uq_outgoing_share ON public.outgoing_shares USING btree (owner_id, tag_path, recipient_username, recipient_instance) WHERE (
-    status <> ALL (ARRAY ['revoked'::public.share_status, 'tombstoned'::public.share_status]));
+CREATE UNIQUE INDEX uq_outgoing_share ON public.outgoing_shares USING btree (owner_id, tag_path, recipient_username, recipient_instance) WHERE (status <> ALL (ARRAY['revoked'::public.share_status, 'tombstoned'::public.share_status]));
 
 CREATE UNIQUE INDEX uq_picture_tag_manual ON public.tags USING btree (picture_id, tag_path) WHERE (source = 'manual'::public.tag_source);
 
@@ -673,114 +641,74 @@ CREATE UNIQUE INDEX uq_picture_tag_source ON public.tags USING btree (picture_id
 
 CREATE UNIQUE INDEX uq_received_picture ON public.pictures USING btree (local_user_id, remote_picture_id) WHERE (remote_picture_id IS NOT NULL);
 
-CREATE TRIGGER trg_user_storage_pictures_del
-    BEFORE DELETE
-    ON public.pictures
-    FOR EACH ROW
-EXECUTE FUNCTION public.user_storage_pictures();
+CREATE TRIGGER trg_user_storage_pictures_del BEFORE DELETE ON public.pictures FOR EACH ROW EXECUTE FUNCTION public.user_storage_pictures();
 
-CREATE TRIGGER trg_user_storage_pictures_iu
-    AFTER INSERT OR UPDATE OF file_size, deleted_at, remote_picture_id
-    ON public.pictures
-    FOR EACH ROW
-EXECUTE FUNCTION public.user_storage_pictures();
+CREATE TRIGGER trg_user_storage_pictures_iu AFTER INSERT OR UPDATE OF file_size, deleted_at, remote_picture_id ON public.pictures FOR EACH ROW EXECUTE FUNCTION public.user_storage_pictures();
 
-CREATE TRIGGER trg_user_storage_versions
-    AFTER INSERT OR DELETE OR UPDATE OF file_size
-    ON public.picture_versions
-    FOR EACH ROW
-EXECUTE FUNCTION public.user_storage_versions();
+CREATE TRIGGER trg_user_storage_versions AFTER INSERT OR DELETE OR UPDATE OF file_size ON public.picture_versions FOR EACH ROW EXECUTE FUNCTION public.user_storage_versions();
 
-CREATE TRIGGER update_hierarchies_updated_at
-    BEFORE UPDATE
-    ON public.hierarchies
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_hierarchies_updated_at BEFORE UPDATE ON public.hierarchies FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_pictures_updated_at
-    BEFORE UPDATE
-    ON public.pictures
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_pictures_updated_at BEFORE UPDATE ON public.pictures FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_refresh_tokens_updated_at
-    BEFORE UPDATE
-    ON public.refresh_tokens
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_refresh_tokens_updated_at BEFORE UPDATE ON public.refresh_tokens FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_tagging_services_updated_at
-    BEFORE UPDATE
-    ON public.tagging_services
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_tagging_services_updated_at BEFORE UPDATE ON public.tagging_services FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_user_credentials_updated_at
-    BEFORE UPDATE
-    ON public.user_credentials
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_user_credentials_updated_at BEFORE UPDATE ON public.user_credentials FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_user_settings_updated_at
-    BEFORE UPDATE
-    ON public.user_settings
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON public.user_settings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE
-    ON public.users
-    FOR EACH ROW
-EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 ALTER TABLE ONLY public.incoming_shares
-    ADD CONSTRAINT fk_incoming_shares_mapping FOREIGN KEY (local_mapping_service_id) REFERENCES public.tagging_services (id) ON DELETE SET NULL;
+    ADD CONSTRAINT fk_incoming_shares_mapping FOREIGN KEY (local_mapping_service_id) REFERENCES public.tagging_services(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.hierarchies
-    ADD CONSTRAINT hierarchies_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT hierarchies_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.incoming_shares
-    ADD CONSTRAINT incoming_shares_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT incoming_shares_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.jobs
-    ADD CONSTRAINT jobs_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT jobs_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.jobs
-    ADD CONSTRAINT jobs_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures (id) ON DELETE CASCADE;
+    ADD CONSTRAINT jobs_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.outgoing_shares
-    ADD CONSTRAINT outgoing_shares_derived_from_public_share_id_fkey FOREIGN KEY (derived_from_public_share_id) REFERENCES public.public_shares (id) ON DELETE SET NULL;
+    ADD CONSTRAINT outgoing_shares_derived_from_public_share_id_fkey FOREIGN KEY (derived_from_public_share_id) REFERENCES public.public_shares(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.outgoing_shares
-    ADD CONSTRAINT outgoing_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT outgoing_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.picture_versions
-    ADD CONSTRAINT picture_versions_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures (id) ON DELETE CASCADE;
+    ADD CONSTRAINT picture_versions_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.pictures
-    ADD CONSTRAINT pictures_local_user_id_fkey FOREIGN KEY (local_user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT pictures_local_user_id_fkey FOREIGN KEY (local_user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.public_shares
-    ADD CONSTRAINT public_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT public_shares_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.refresh_tokens
-    ADD CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.share_announcements
-    ADD CONSTRAINT share_announcements_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares (id) ON DELETE CASCADE;
+    ADD CONSTRAINT share_announcements_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.tagging_services
-    ADD CONSTRAINT tagging_services_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT tagging_services_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.tags
-    ADD CONSTRAINT tags_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures (id) ON DELETE CASCADE;
+    ADD CONSTRAINT tags_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.pictures(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.user_credentials
-    ADD CONSTRAINT user_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT user_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.user_settings
-    ADD CONSTRAINT user_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT user_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.user_storage
-    ADD CONSTRAINT user_storage_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE;
+    ADD CONSTRAINT user_storage_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 

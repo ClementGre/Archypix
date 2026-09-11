@@ -4,7 +4,7 @@
 //! path: a cached mirror of the committed billed total plus the in-flight reservation counter.
 //! Enforcement math on any byte-adding write is `committed + reserved + incoming ≤ quota`.
 
-use crate::infra::redis::{storage_reservation_prefix, Cache, RedisKey};
+use crate::infra::redis::{Cache, RedisKey, storage_reservation_prefix};
 use crate::infra::settings::keys;
 use crate::repository::user_storage::{UserStorage, UserStorageRepository};
 use archypix_common::error::AppError;

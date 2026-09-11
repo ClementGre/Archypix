@@ -26,7 +26,6 @@ use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// Remove tags, delete unreachable received pictures, set the share to `final_status` (which makes
@@ -185,7 +184,7 @@ pub async fn reject_incoming_share(
         &incoming.sender_username,
         &incoming.sender_instance,
     )
-        .await?;
+    .await?;
 
     match incoming.status {
         ShareStatus::Tombstoned => return Ok(()),
@@ -195,19 +194,20 @@ pub async fn reject_incoming_share(
             // one transaction, delivered inside it, committed last (deliver-then-commit, §6.1). A
             // failure before COMMIT leaves the share re-rejectable.
             let mut tx = db.begin().await.map_err(map_sqlx_error)?;
-            IncomingShareRepository::set_status(&mut *tx, share_id, ShareStatus::Tombstoned).await?;
+            IncomingShareRepository::set_status(&mut *tx, share_id, ShareStatus::Tombstoned)
+                .await?;
             if sender_local.is_some() {
                 OutgoingShareRepository::set_status(
                     &mut *tx,
                     incoming.outgoing_share_id,
                     ShareStatus::Tombstoned,
                 )
-                    .await?;
+                .await?;
                 ShareAnnouncementRepository::delete_all_for_share(
                     &mut *tx,
                     incoming.outgoing_share_id,
                 )
-                    .await?;
+                .await?;
             } else {
                 federation
                     .send(

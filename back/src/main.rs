@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::sync::watch::Receiver;
 use tokio::task::JoinHandle;
 use tower_http::trace::{DefaultOnRequest, HttpMakeClassifier, TraceLayer};
-use tracing::{info, Span};
+use tracing::{Span, info};
 
 /// `TraceLayer` `on_response` hook: records the status and marks 5xx as an OTel error.
 /// See `doc/features/12_observability_tracing.md` §3.2.
@@ -161,8 +161,8 @@ async fn main() -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     // Server stopped accepting connections (SIGINT/SIGTERM). Tell the routines to stop and drain any
     // in-flight runs before exiting.
@@ -280,11 +280,7 @@ fn start_routines(
 
     // Tag-rename cascade (trigger-only) — wakes the pipeline to re-tag + re-announce.
     let (tag_rename_handle, tag_rename_status, tag_rename_join) = routine::spawn_with_status(
-        TagRenameRoutine::new(
-            db.clone(),
-            pipeline_handle.clone(),
-            settings.clone(),
-        ),
+        TagRenameRoutine::new(db.clone(), pipeline_handle.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
     );

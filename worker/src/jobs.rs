@@ -128,9 +128,10 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
 
         if let Err(ref e) = result {
             let permanent = !e.is_retriable();
-            error!(job_id = %job_id, permanent, error = ?e, "job failed");
+            let unsupported = e.is_unsupported();
+            error!(job_id = %job_id, permanent, unsupported, error = ?e, "job failed");
             if let Err(report_err) = client
-                .fail_job(job_id, claim_token, &e.to_string(), permanent)
+                .fail_job(job_id, claim_token, &e.to_string(), permanent, unsupported)
                 .await
             {
                 error!(

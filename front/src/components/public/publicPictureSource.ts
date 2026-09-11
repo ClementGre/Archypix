@@ -23,6 +23,7 @@ function toDetail(id: string, d: PublicPictureDetail): PictureDetail {
         orientation: d.orientation,
         exif_data: (d.exif_data as Record<string, unknown>) ?? {},
         exif_sync_status: 'synced',
+        file_exif: null,
         owner_username: null,
         owner_instance_domain: null,
         creator: d.creator,

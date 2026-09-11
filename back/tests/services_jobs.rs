@@ -248,3 +248,137 @@ async fn set_and_clear_conflict_is_rejected(db: PgPool) {
         "a field in both set and clear must be rejected"
     );
 }
+
+// ── Feature 31: revert to the physical file state ─────────────────────────────
+
+/// Record a physical-file EXIF snapshot for `picture_id` (what a worker read back from S3).
+async fn set_file_exif(db: &PgPool, picture_id: Uuid, snapshot: serde_json::Value) {
+    sqlx::query!(
+        "UPDATE pictures SET file_exif = $2 WHERE id = $1",
+        picture_id,
+        snapshot,
+    )
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn revert_to_file_restores_the_snapshot_and_syncs(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    set_file_exif(
+        &db,
+        pic_id,
+        serde_json::json!({"gps_lat": 10.0, "gps_lng": 20.0, "camera_brand": "Canon"}),
+    )
+    .await;
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    // The DB has moved on (a failed write left it diverged from the file).
+    let (set, clear) = gps_edit();
+    jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+        .await
+        .unwrap();
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::WriteFailed)
+        .await
+        .unwrap();
+    // …and no job is in flight any more (the failed one is terminal).
+    sqlx::query!(
+        "UPDATE jobs SET status = 'failed' WHERE picture_id = $1",
+        pic_id
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let reverted = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id)
+        .await
+        .unwrap();
+
+    assert_eq!(reverted.exif_sync_status, ExifSyncStatus::Synced);
+    assert_eq!(reverted.gps_lat, Some(10.0));
+    assert_eq!(reverted.gps_lng, Some(20.0));
+    assert_eq!(
+        reverted.exif_data.0.camera_brand.as_deref(),
+        Some("Canon"),
+        "camera keys come back from the snapshot too"
+    );
+    // The reverted row keeps its file snapshot and is re-dirtied for the pipeline.
+    assert!(reverted.file_exif.is_some());
+    let last_run: Option<chrono::NaiveDateTime> = sqlx::query_scalar!(
+        "SELECT last_pipeline_run_at FROM pictures WHERE id = $1",
+        pic_id
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(last_run.is_none(), "revert must reset last_pipeline_run_at");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn revert_without_a_file_snapshot_conflicts(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let result = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id).await;
+    assert!(matches!(result, Err(AppError::Conflict(_))));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn revert_while_a_reconcile_is_in_flight_conflicts(db: PgPool) {
+    // The in-flight job would write its pre-revert target back to the file and re-diverge the row.
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    set_file_exif(&db, pic_id, serde_json::json!({"gps_lat": 10.0})).await;
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let (set, clear) = gps_edit();
+    jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+        .await
+        .unwrap();
+
+    let result = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id).await;
+    assert!(matches!(result, Err(AppError::Conflict(_))));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn revert_rejects_a_foreign_picture(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let bob_id = common::seed_user(&db, "bob", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    set_file_exif(&db, pic_id, serde_json::json!({"gps_lat": 10.0})).await;
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let result = jobs::revert_picture_exif_to_file(&db, &waker, bob_id, pic_id).await;
+    assert!(matches!(result, Err(AppError::NotFound)));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn resync_is_allowed_from_write_failed(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::WriteFailed)
+        .await
+        .unwrap();
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let job = jobs::resync_picture_exif(&db, &waker, alice_id, pic_id)
+        .await
+        .unwrap();
+    assert_eq!(job.picture_id, Some(pic_id));
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        picture.exif_sync_status,
+        ExifSyncStatus::Pending,
+        "retry puts the picture back in the sync queue"
+    );
+}

@@ -13,10 +13,11 @@ use uuid::Uuid;
 /// failure implies the S3 original was never overwritten (the backend's revert model relies on this
 /// file-untouched-on-failure invariant):
 /// 1. Download the original file.
-/// 2. If `exif` is set: apply its `set`/`clear` delta into the file's embedded EXIF. A write failure
-///    is permanent — the backend's MIME preflight prevents enqueuing doomed jobs, so a failure here
-///    is genuinely unrecoverable. BMFF images (HEIC/HEIF/AVIF) are written via ExifTool; other image
-///    formats keep using rexiv2.
+/// 2. If `exif` is set: rewrite the file's embedded EXIF to match the target snapshot, then read it
+///    back so the backend can record the physical state (`file_exif`). A write failure is permanent
+///    and reported as `unsupported` — the backend's MIME preflight prevents enqueuing doomed jobs,
+///    so a failure here means this particular file cannot carry the metadata. BMFF images
+///    (HEIC/HEIF/AVIF) are written via ExifTool; other image formats keep using rexiv2.
 /// 3. Regenerate + upload thumbnails (and BlurHash) from the local edited file (visual edits only).
 /// 4. Compute file_size and file_hash from the (modified) file.
 /// 5. Upload the modified original to the `output` presigned URL — the last fallible step.
@@ -60,16 +61,16 @@ pub async fn handle(
     // ── Apply the EXIF edit (set/clear) into the file ─────────────────────────
     if let Some(ref edit) = config.exif {
         let path = file_path.clone();
-        let set = edit.set.clone();
-        let clear = edit.clear.clone();
+        let target = edit.target.clone();
         let mime_type = mime_type.clone();
         let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
-            exif_mod::write_exif_overrides(&path, &set, &clear, mime_type.as_deref())
+            exif_mod::write_exif_target(&path, &target, mime_type.as_deref())
         })
         .await
-        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??;
+        .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
+        .map_err(|e| WorkerError::UnsupportedFormat(e.to_string()))?;
     }
 
     // ── Visual transforms ────────────────────────────────────────────────────
@@ -106,6 +107,23 @@ pub async fn handle(
     .await
     .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
 
+    // Read back the physical file EXIF after the write so the backend can record `file_exif`.
+    let extracted = if config.exif.is_some() {
+        let path = file_path.clone();
+        let span = tracing::Span::current();
+        Some(
+            tokio::task::spawn_blocking(move || {
+                let _guard = span.enter();
+                exif_mod::extract_exif(&path)
+            })
+            .await
+            .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
+            .map_err(|e| WorkerError::UnsupportedFormat(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+
     // ── Upload modified original (last fallible step) ────────────────────────
     info!(job_id = %job_id, "edit_picture: uploading modified original");
     client.upload_presigned(&output_url, &file_path).await?;
@@ -115,7 +133,7 @@ pub async fn handle(
             job_id,
             CompleteJobRequest {
                 claim_token,
-                exif: None,
+                exif: extracted,
                 blurhash: thumb.blurhash,
                 thumbnails_generated: thumb.generated,
                 file_size,

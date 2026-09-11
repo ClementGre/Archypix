@@ -52,6 +52,8 @@ pub struct Picture {
     pub file_hash: Option<String>,
     /// Convergence of the S3 original's embedded EXIF versus this row (the source of truth).
     pub exif_sync_status: ExifSyncStatus,
+    /// Last EXIF state observed from the physical file on S3 (owned rows only).
+    pub file_exif: Option<Json<FullExif>>,
     /// Hash stable across EXIF edits, changes on a visual re-encode. `None` for a format the worker cannot strip (dedup then groups by `file_hash`).
     pub content_hash: Option<String>,
     /// Provenance of a physical copy (feature 11 §3) — the **original owner identity** the copy was
@@ -94,6 +96,7 @@ pub enum ExifSyncStatus {
     Pending,
     Unsupported,
     PendingJobCreation,
+    WriteFailed,
 }
 
 impl Picture {
@@ -371,6 +374,7 @@ mod tests {
             thumbnails_generated_at: None,
             file_hash: None,
             exif_sync_status: ExifSyncStatus::Synced,
+            file_exif: None,
             content_hash: None,
             copy_source_owner_username: None,
             copy_source_owner_instance: None,

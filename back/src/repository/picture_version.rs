@@ -1,5 +1,5 @@
 use crate::domain::picture::PictureVersion;
-use archypix_common::error::{map_sqlx_error, AppError};
+use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 

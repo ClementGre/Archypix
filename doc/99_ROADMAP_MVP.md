@@ -21,6 +21,13 @@
   pictures (only *new additions* are withheld); tombstone (rejection) deletes the outgoing tracking rows like revoke.
 - [x] **EXIF editing** — write-through single + batch edit with convergence guarantees and MIME preflight. See
   `doc/features/04_better_exif_support.md`.
+- [x] **Robust EXIF sync (feature 31)** — state-based sync: a `file_exif` snapshot of the S3 original, a
+  target bound at claim-time, `write_failed` + manual Retry/Revert-to-file. See `doc/features/31_robust_exif_sync.md`.
+  - [ ] Extraction-done flag — both edit paths gate on `thumbnails_generated_at` as a proxy for "the initial
+    extraction has landed" (04 §11.2). A dedicated column would be clearer and would stop coupling EXIF edits
+    to thumbnailing.
+  - [ ] A reconcile already claimed when an external (WebDAV) overwrite lands still writes its older target
+    onto the new file (31 §5). Self-corrects on the next extraction.
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.

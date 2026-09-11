@@ -3,7 +3,8 @@
 //! - [`JobWatchdogRoutine`] periodically resets jobs stuck in `processing` (a worker that crashed,
 //!   was OOM-killed, or lost connectivity after claiming a job). Without recovery those jobs would
 //!   stay in `processing` forever. It calls [`JobRepository::reset_stale`], which resets eligible
-//!   jobs to `pending` (or to `failed` if their retry budget is exhausted).
+//!   jobs to `pending` (or to `failed` if their retry budget is exhausted — an EXIF reconcile that
+//!   dies there flips its picture to `write_failed`, since no worker will report the failure).
 //! - [`JobCleanupRoutine`] prunes terminal (`completed` / `failed`) job rows older than a retention
 //!   window so the `jobs` table does not grow without bound (every upload creates a `gen_thumbnail`
 //!   job; EXIF/visual edits add more).
@@ -11,9 +12,12 @@
 //! Both are `()`-keyed sweep-only routines (`infra::routine`): no manual trigger, the default sweep
 //! runs `run(())` on each interval tick.
 
+use crate::domain::job::{JobStatus, JobType};
+use crate::domain::picture::ExifSyncStatus;
 use crate::infra::routine::Routine;
 use crate::infra::settings::keys;
 use crate::repository::job::JobRepository;
+use crate::repository::picture::PictureRepository;
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -51,9 +55,20 @@ impl Routine for JobWatchdogRoutine {
 
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
         let timeout_secs = self.settings.get(keys::JOB_PROCESSING_TIMEOUT_SECS);
-        let n = JobRepository::reset_stale(&self.db, timeout_secs).await?;
-        if n > 0 {
-            info!(reset = n, "job watchdog: reset stale jobs");
+        let reset = JobRepository::reset_stale(&self.db, timeout_secs).await?;
+        // An EXIF reconcile whose retry budget ran out never reaches `fail_job`, so mark its
+        // picture here — otherwise it would sit in `pending` with no job (feature 31 §3.3).
+        for job in reset
+            .iter()
+            .filter(|j| j.status == JobStatus::Failed && j.job_type == JobType::EditPicture)
+        {
+            if let Some(pid) = job.picture_id {
+                PictureRepository::set_exif_sync_status(&self.db, pid, ExifSyncStatus::WriteFailed)
+                    .await?;
+            }
+        }
+        if !reset.is_empty() {
+            info!(reset = reset.len(), "job watchdog: reset stale jobs");
         }
         Ok(())
     }

@@ -3,10 +3,10 @@ use archypix_common::error::AppError;
 use archypix_common::settings::Settings;
 use async_trait::async_trait;
 use bb8_redis::{
-    bb8, redis::{cmd, AsyncCommands},
-    RedisConnectionManager,
+    RedisConnectionManager, bb8,
+    redis::{AsyncCommands, cmd},
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
@@ -81,7 +81,9 @@ impl<'a> RedisKey<'a> {
             Self::FederationAuthNonce(domain) => format!("federation:authnonce:{domain}"),
             Self::FederationRefreshLock(domain) => format!("federation:refreshlock:{domain}"),
             Self::RateLimit(bucket) => format!("ratelimit:{bucket}"),
-            Self::RateLimitEvent(category, minute) => format!("ratelimit:event:{category}:{minute}"),
+            Self::RateLimitEvent(category, minute) => {
+                format!("ratelimit:event:{category}:{minute}")
+            }
             Self::FederationBackend(u, d) => format!("federation:backend:{u}@{d}"),
             Self::FederationBackendStale(u, d) => format!("federation:backendstale:{u}@{d}"),
             Self::UserByUsername(username) => format!("user:username:{username}"),

@@ -1,7 +1,17 @@
 import {useState} from 'react'
 import {useMutation, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
-import {copyPicture, editPicture, editReceivedExif, getJob, restorePicture, setCreator, trashPicture} from '@/api/pictures'
+import {
+    copyPicture,
+    editPicture,
+    editReceivedExif,
+    getJob,
+    resyncExif,
+    restorePicture,
+    revertExifToFile,
+    setCreator,
+    trashPicture,
+} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
 import {invalidatePictures, invalidatePicturesAndTags, invalidateStorageDebounced, invalidateTags, removePicturesFromLists,} from '@/lib/invalidation'
 import {queryKeys} from '@/lib/constants'
@@ -54,6 +64,42 @@ export function useEditExif(pictureId: string) {
     })
 
     return {mutation, syncing}
+}
+
+export function useRetryExifSync(pictureId: string) {
+    const queryClient = useQueryClient()
+    const [syncing, setSyncing] = useState(false)
+    const mutation = useMutation({
+        mutationFn: () => resyncExif(pictureId),
+        onSuccess: async (job) => {
+            setSyncing(true)
+            try {
+                await pollUntilDone(job.id)
+                invalidatePictures(queryClient)
+            } catch (err) {
+                toast.error('EXIF file sync failed', {description: apiErrorMessage(err)})
+            } finally {
+                setSyncing(false)
+            }
+        },
+        onError: (error: unknown) => {
+            toast.error('Could not retry EXIF sync', {description: apiErrorMessage(error)})
+        },
+    })
+    return {mutation, syncing}
+}
+
+export function useRevertExifToFile(pictureId: string) {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: () => revertExifToFile(pictureId),
+        onSuccess: () => {
+            invalidatePicturesAndTags(queryClient)
+        },
+        onError: (error: unknown) => {
+            toast.error('Could not revert EXIF', {description: apiErrorMessage(error)})
+        },
+    })
 }
 
 /** Body of a received-picture EXIF edit: a `set`/`empty`/`clear` delta plus the edit mode. */
