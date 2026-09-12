@@ -2153,14 +2153,20 @@ impl PictureRepository {
         q.push(", updated_at = (now() AT TIME ZONE 'utc'), last_pipeline_run_at = NULL WHERE ");
         Self::push_selection_where(&mut q, local_user_id, sel);
         q.push(" AND p.remote_picture_id IS NULL AND ");
+        // `unsupported` is terminal (feature 31 §6): a worker already proved the file cannot carry
+        // EXIF, so such a row takes the DB-only branch whatever its MIME says.
         if supported {
             q.push("lower(p.mime_type) = ANY(")
                 .push_bind(supported_mimes.to_vec())
-                .push("::text[])");
+                .push(
+                    "::text[]) AND p.exif_sync_status <> 'unsupported'::picture_exif_sync_status",
+                );
         } else {
             q.push("(p.mime_type IS NULL OR NOT (lower(p.mime_type) = ANY(")
                 .push_bind(supported_mimes.to_vec())
-                .push("::text[])))");
+                .push(
+                    "::text[])) OR p.exif_sync_status = 'unsupported'::picture_exif_sync_status)",
+                );
         }
         // Still-extracting rows are skipped (an unknown MIME counts as extracting).
         q.push(" AND NOT ((p.mime_type IS NULL OR lower(p.mime_type) = ANY(")

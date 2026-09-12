@@ -616,6 +616,7 @@ Full picture details including version history.
   owner_deleted_at: string | null;    // received only: the owner's soft-delete (grace-window badge)
   owner_purge_at: string | null;      // received only: the owner's announced purge deadline
   local_exif_overrides: object | null;// received only: the recipient's sticky per-field EXIF overrides
+  exif_origin: object | null;         // received only: owner-authoritative EXIF the overrides sit on — what dropping one restores
   file_exif: object | null;           // owned only: last EXIF snapshot read back from the file (feature 31)
     versions: PictureVersion[];
 }

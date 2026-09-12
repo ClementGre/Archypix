@@ -185,6 +185,45 @@ async fn edit_unsupported_format_is_db_only_no_job(db: PgPool) {
     assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
 }
 
+/// A worker verdict of `unsupported` is terminal (feature 31 §6): re-editing such a picture must
+/// not flip it back to `pending` and enqueue a job that can only fail the same way.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn edit_of_worker_marked_unsupported_enqueues_no_job(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    // A jpeg: the MIME preflight alone would call this supported.
+    sqlx::query!(
+        "UPDATE pictures
+         SET mime_type = 'image/jpeg',
+             thumbnails_generated_at = (now() AT TIME ZONE 'utc'),
+             exif_sync_status = 'unsupported'::picture_exif_sync_status
+         WHERE id = $1",
+        pic_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let (set, clear) = gps_edit();
+    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+        .await
+        .unwrap();
+
+    assert!(
+        outcome.jobs.is_empty(),
+        "terminal state must not re-enqueue"
+    );
+    assert_eq!(outcome.unsupported, vec![pic_id]);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
+}
+
 /// A format the worker touches for neither EXIF nor thumbnails never gets `thumbnails_generated_at`
 /// stamped, so the still-processing gate must not block its DB-only edit (regression: previously
 /// permanently rejected with 409).

@@ -9,6 +9,10 @@ pub enum WorkerError {
     Io(#[from] std::io::Error),
     #[error("Backend error: status={status}, body={body}")]
     BackendError { status: u16, body: String },
+    /// An external tool the job depends on is missing or could not be spawned. A worker-environment
+    /// fault, not a file fault — retried so the picture stays `pending` (feature 31 §6).
+    #[error("External tool unavailable: {0}")]
+    ToolUnavailable(String),
 
     // ── Permanent — do not retry ──────────────────────────────────────────────
     /// Image processing failure (corrupt file, codec error, etc.).
@@ -43,6 +47,7 @@ impl WorkerError {
             Self::Http(_) => true,
             Self::Io(_) => true,
             Self::BackendError { status, .. } => *status >= 500 || *status == 429,
+            Self::ToolUnavailable(_) => true,
             // Everything else is a permanent failure.
             Self::Imaging(_)
             | Self::Exif(_)
@@ -60,3 +65,26 @@ impl WorkerError {
 }
 
 pub type Result<T> = std::result::Result<T, WorkerError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_classification_matches_feature_31_section_6() {
+        // Only an unopenable file is a terminal format verdict.
+        let unsupported = WorkerError::UnsupportedFormat("cannot open".into());
+        assert!(!unsupported.is_retriable());
+        assert!(unsupported.is_unsupported());
+
+        // A write that failed on an openable file: permanent, but the user may retry it.
+        let write_failed = WorkerError::Exif("failed to save EXIF overrides".into());
+        assert!(!write_failed.is_retriable());
+        assert!(!write_failed.is_unsupported());
+
+        // A missing external tool is a worker-environment fault, not a file verdict.
+        let tool = WorkerError::ToolUnavailable("exiftool missing".into());
+        assert!(tool.is_retriable());
+        assert!(!tool.is_unsupported());
+    }
+}

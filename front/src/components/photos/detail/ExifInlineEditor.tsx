@@ -1,4 +1,4 @@
-import {type ReactNode, useRef, useState} from 'react'
+import {useRef, useState} from 'react'
 import {ChevronDown, Loader2, RotateCcw, Save, Send, UserRound} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
@@ -8,9 +8,9 @@ import {FieldLabel} from './FieldLabel'
 import {DateTimePickerPopover, formatNaive} from './DateTimePickerPopover'
 import {dateSuggestions} from '@/lib/dateSuggestions'
 import {GpsPickerPopover} from './GpsPickerPopover'
-import {OverwrittenBadge} from './OverwrittenBadge'
+import {type FieldState, FieldStateHint} from './FieldStateHint'
 import {cn, formatDuration, isAudioMime, isVideoMime} from '@/lib/utils'
-import type {PictureDetail} from '@/lib/types'
+import type {ExifField, PictureDetail} from '@/lib/types'
 import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
 
 /** A read-only metadata row (label + value), matching the editable rows' layout. */
@@ -75,7 +75,7 @@ function EditableRow({
                          prefix,
                          suffix,
                          canEdit,
-                         badge,
+                         state,
                      }: {
     label: string
     value: string
@@ -90,8 +90,8 @@ function EditableRow({
     prefix?: string
     suffix?: string
     canEdit: boolean
-    /** Optional indicator rendered before the value (e.g. an "overwritten" badge). */
-    badge?: ReactNode
+    /** Override / file-diff annotation: tints the value and explains it in a hover popup. */
+    state?: FieldState
 }) {
     const [editing, setEditing] = useState(false)
     const [inputVal, setInputVal] = useState(value)
@@ -127,7 +127,6 @@ function EditableRow({
             <DirtyDot isDirty={isDirty}/>
             <div className="w-24 shrink-0"><FieldLabel>{label}</FieldLabel></div>
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                {!editing && badge}
                 {editing ? (
                     <div className="flex w-full items-center rounded border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
                         {prefix && <span className="pl-1.5 text-xs text-muted-foreground">{prefix}</span>}
@@ -147,17 +146,20 @@ function EditableRow({
                         {suffix && <span className="pr-1.5 text-xs text-muted-foreground">{suffix}</span>}
                     </div>
                 ) : (
-                    <button
-                        onClick={startEdit}
-                        disabled={!canEdit}
-                        className={cn(
-                            'min-w-0 truncate rounded px-1 text-right text-xs',
-                            !value && 'text-muted-foreground',
-                            canEdit && 'cursor-pointer transition-colors hover:bg-muted',
-                        )}
-                    >
-                        {display}
-                    </button>
+                    <FieldStateHint state={state}>
+                        <button
+                            onClick={startEdit}
+                            disabled={!canEdit}
+                            className={cn(
+                                'min-w-0 truncate rounded px-1 text-right text-xs',
+                                !value && 'text-muted-foreground',
+                                canEdit && 'cursor-pointer transition-colors',
+                                canEdit && !state && 'hover:bg-muted',
+                            )}
+                        >
+                            {display}
+                        </button>
+                    </FieldStateHint>
                 )}
             </div>
             <ResetSlot isDirty={isDirty} onReset={onReset}/>
@@ -174,7 +176,7 @@ function ExposureRow({
                          onChangeDen,
                          onReset,
                          canEdit,
-                         badge,
+                         state,
                      }: {
     num: string
     den: string
@@ -183,7 +185,7 @@ function ExposureRow({
     onChangeDen: (v: string) => void
     onReset: () => void
     canEdit: boolean
-    badge?: ReactNode
+    state?: FieldState
 }) {
     const [editing, setEditing] = useState(false)
     const display = num && den ? `${num}/${den} s` : '—'
@@ -197,7 +199,6 @@ function ExposureRow({
             <DirtyDot isDirty={isDirty}/>
             <div className="w-24 shrink-0"><FieldLabel>Exposure</FieldLabel></div>
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                {!editing && badge}
                 {editing ? (
                     <div className="flex items-center gap-1" onBlur={handleBlur}>
                         <input
@@ -221,17 +222,20 @@ function ExposureRow({
                         <span className="text-xs text-muted-foreground">s</span>
                     </div>
                 ) : (
-                    <button
-                        onClick={() => canEdit && setEditing(true)}
-                        disabled={!canEdit}
-                        className={cn(
-                            'truncate rounded px-1 text-right text-xs',
-                            display === '—' && 'text-muted-foreground',
-                            canEdit && 'cursor-pointer transition-colors hover:bg-muted',
-                        )}
-                    >
-                        {display}
-                    </button>
+                    <FieldStateHint state={state}>
+                        <button
+                            onClick={() => canEdit && setEditing(true)}
+                            disabled={!canEdit}
+                            className={cn(
+                                'truncate rounded px-1 text-right text-xs',
+                                display === '—' && 'text-muted-foreground',
+                                canEdit && 'cursor-pointer transition-colors',
+                                canEdit && !state && 'hover:bg-muted',
+                            )}
+                        >
+                            {display}
+                        </button>
+                    </FieldStateHint>
                 )}
             </div>
             <ResetSlot isDirty={isDirty} onReset={onReset}/>
@@ -254,6 +258,10 @@ export function ExifInlineEditor({
         owned,
         allowExifEdit,
         overriddenKeys,
+        originDraft,
+        fileDraft,
+        hasFileSnapshot,
+        revertFieldsToFile,
         set,
         setGps,
         reset,
@@ -289,9 +297,6 @@ export function ExifInlineEditor({
 
     const dirty = (k: keyof ExifDraft) => draft[k] !== initialDraft[k]
     const isOverridden = (...keys: Array<keyof ExifDraft>) => !owned && keys.some((k) => overriddenKeys.has(k))
-    /** "overwritten" indicator for a received-picture field (clears the override on ✕). */
-    const overrideBadge = (...keys: Array<keyof ExifDraft>) =>
-        isOverridden(...keys) ? <OverwrittenBadge onRemove={() => removeOverride(...keys)}/> : undefined
     // A field whose stored value no longer matches the file (feature 31 §8). Numbers are compared
     // with a tolerance: EXIF keeps GPS and exposure as rationals, so a round-trip drifts slightly
     // and an exact string compare would badge every coordinate as different.
@@ -305,18 +310,35 @@ export function ExifInlineEditor({
         if (dbv !== '' && fvs !== '' && !isNaN(a) && !isNaN(b)) return Math.abs(a - b) > 1e-5
         return true
     }
-    const fileDiffBadge = (...keys: Array<keyof ExifDraft>) =>
-        writeFailed && keys.some(differsFromFile) ? (
-            <Badge variant="default" className="h-4 px-1 text-[9px] uppercase tracking-wide">diff</Badge>
-        ) : undefined
-    const fieldBadge = (...keys: Array<keyof ExifDraft>) =>
-        overrideBadge(...keys) ?? fileDiffBadge(...keys)
+    /**
+     * The annotation a row carries, if any: a recipient's local override, or (owned, `write_failed`)
+     * a value that never reached the file. Rendered as a tint + hover popup rather than an inline
+     * badge — these rows are narrow and a badge pushed the value out of the panel.
+     */
+    const fieldState = (...keys: Array<keyof ExifDraft>): FieldState | undefined => {
+        if (isOverridden(...keys)) {
+            return {
+                tone: 'override',
+                reference: keys.map((k) => originDraft[k]).filter(Boolean).join(', '),
+                onRevert: () => removeOverride(...(keys as ExifField[])),
+            }
+        }
+        if (writeFailed && keys.some(differsFromFile)) {
+            return {
+                tone: 'diff',
+                reference: keys.map((k) => fileDraft[k]).filter(Boolean).join(', '),
+                onRevert: () => revertFieldsToFile(...(keys as ExifField[])),
+            }
+        }
+        return undefined
+    }
 
     const gpsDisplay =
         draft.gps_lat && draft.gps_lng
             ? `${parseFloat(draft.gps_lat).toFixed(4)}, ${parseFloat(draft.gps_lng).toFixed(4)}${draft.gps_alt ? ` · ${draft.gps_alt} m` : ''}`
             : '—'
     const gpsIsDirty = dirty('gps_lat') || dirty('gps_lng') || dirty('gps_alt')
+    const gpsState = fieldState('gps_lat', 'gps_lng', 'gps_alt')
     const expIsDirty = dirty('exposure_time_num') || dirty('exposure_time_den')
 
     // Raw exif_data fields not surfaced as dedicated rows (read-only).
@@ -382,13 +404,18 @@ export function ExifInlineEditor({
                             >
                                 Retry
                             </Button>
+                            {/* No snapshot ⇒ nothing to revert to: the endpoint can only 409. */}
                             <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-6 px-2 text-[10px]"
                                 onClick={revertToFile}
-                                disabled={reverting || retrying}
-                                title="Revert the stored exif metadata to the one of the file"
+                                disabled={reverting || retrying || !hasFileSnapshot}
+                                title={
+                                    hasFileSnapshot
+                                        ? 'Revert the stored exif metadata to the one of the file'
+                                        : 'No EXIF has been read from this file yet — nothing to revert to'
+                                }
                             >
                                 Revert
                             </Button>
@@ -453,20 +480,21 @@ export function ExifInlineEditor({
                     <DirtyDot isDirty={dirty('captured_at')}/>
                     <div className="w-24 shrink-0"><FieldLabel>Captured at</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                        {fieldBadge('captured_at')}
                         {canEdit ? (
-                            <DateTimePickerPopover
-                                value={draft.captured_at || null}
-                                onChange={(v) => set('captured_at', v ?? '')}
-                                // When the capture date is empty, offer "From filename / file date /
-                                // upload" prefills (feature 30 §6) so pictures get fixed inline.
-                                suggestions={draft.captured_at ? undefined : dateSuggestions(picture)}
-                            >
-                                <button
-                                    className={cn('truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted', !draft.captured_at && 'text-muted-foreground')}>
-                                    {formatNaive(draft.captured_at || null) || 'Set date'}
-                                </button>
-                            </DateTimePickerPopover>
+                            <FieldStateHint state={fieldState('captured_at')}>
+                                <DateTimePickerPopover
+                                    value={draft.captured_at || null}
+                                    onChange={(v) => set('captured_at', v ?? '')}
+                                    // When the capture date is empty, offer "From filename / file date /
+                                    // upload" prefills (feature 30 §6) so pictures get fixed inline.
+                                    suggestions={draft.captured_at ? undefined : dateSuggestions(picture)}
+                                >
+                                    <button
+                                        className={cn('truncate rounded px-1 text-right text-xs transition-colors', !fieldState('captured_at') && 'hover:bg-muted', !draft.captured_at && 'text-muted-foreground')}>
+                                        {formatNaive(draft.captured_at || null) || 'Set date'}
+                                    </button>
+                                </DateTimePickerPopover>
+                            </FieldStateHint>
                         ) : (
                             <span
                                 className="truncate text-right text-xs text-muted-foreground">{formatNaive(draft.captured_at || null) || 'Not set'}</span>
@@ -480,21 +508,23 @@ export function ExifInlineEditor({
                     <DirtyDot isDirty={gpsIsDirty}/>
                     <div className="w-24 shrink-0"><FieldLabel>GPS</FieldLabel></div>
                     <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                        {fieldBadge('gps_lat', 'gps_lng', 'gps_alt')}
                         {canEdit ? (
-                            <GpsPickerPopover
-                                value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt}}
-                                onChange={({lat, lng, alt}) => setGps(lat, lng, alt)}
-                            >
-                                <button
-                                    className={cn(
-                                        'truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted',
-                                        gpsDisplay === '—' && 'text-muted-foreground',
-                                    )}
+                            <FieldStateHint state={gpsState}>
+                                <GpsPickerPopover
+                                    value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt}}
+                                    onChange={({lat, lng, alt}) => setGps(lat, lng, alt)}
                                 >
-                                    {gpsDisplay}
-                                </button>
-                            </GpsPickerPopover>
+                                    <button
+                                        className={cn(
+                                            'truncate rounded px-1 text-right text-xs transition-colors',
+                                            !gpsState && 'hover:bg-muted',
+                                            gpsDisplay === '—' && 'text-muted-foreground',
+                                        )}
+                                    >
+                                        {gpsDisplay}
+                                    </button>
+                                </GpsPickerPopover>
+                            </FieldStateHint>
                         ) : (
                             <span className={cn('truncate text-right text-xs', gpsDisplay === '—' && 'text-muted-foreground')}>
                                 {gpsDisplay}
@@ -512,7 +542,7 @@ export function ExifInlineEditor({
                     onChange={(v) => set('camera_brand', v)}
                     placeholder="Canon"
                     canEdit={canEdit}
-                    badge={fieldBadge('camera_brand')}
+                    state={fieldState('camera_brand')}
                 />
                 <EditableRow
                     label="Camera model"
@@ -522,7 +552,7 @@ export function ExifInlineEditor({
                     onChange={(v) => set('camera_model', v)}
                     placeholder="EOS R5"
                     canEdit={canEdit}
-                    badge={fieldBadge('camera_model')}
+                    state={fieldState('camera_model')}
                 />
                 {/* Photographic-only fields — hidden for video/audio (no lens/exposure metadata). */}
                 {!isMedia && (
@@ -538,7 +568,7 @@ export function ExifInlineEditor({
                             placeholder="50"
                             suffix="mm"
                             canEdit={canEdit}
-                            badge={fieldBadge('focal_length_mm')}
+                            state={fieldState('focal_length_mm')}
                         />
                         <EditableRow
                             label="Aperture"
@@ -551,7 +581,7 @@ export function ExifInlineEditor({
                             placeholder="1.8"
                             prefix="f/"
                             canEdit={canEdit}
-                            badge={fieldBadge('f_number')}
+                            state={fieldState('f_number')}
                         />
                         <EditableRow
                             label="ISO"
@@ -564,7 +594,7 @@ export function ExifInlineEditor({
                             placeholder="400"
                             prefix="ISO "
                             canEdit={canEdit}
-                            badge={fieldBadge('iso_speed')}
+                            state={fieldState('iso_speed')}
                         />
 
                         <ExposureRow
@@ -578,7 +608,7 @@ export function ExifInlineEditor({
                                 reset('exposure_time_den')
                             }}
                             canEdit={canEdit}
-                            badge={fieldBadge('exposure_time_num', 'exposure_time_den')}
+                            state={fieldState('exposure_time_num', 'exposure_time_den')}
                         />
                     </>
                 )}

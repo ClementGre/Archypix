@@ -539,9 +539,18 @@ mobile) and shown only when its `ui` store toggle is on:
   with colour-coded per-source mini-tags), **Shared with you** (sender handle + shared subpath, not the raw `SharedToMe.*` path), **Shared by you**,
   **EXIF** (inline-editable — owned pictures write through to the file, received pictures get recipient-local overrides; the badge flips to **modified
   **
-  on unsaved changes, **write error** when the file sync failed permanently, or **overridden** when a received picture has sticky overrides; a
-  `write_failed` owned picture also gets **Retry** / **Revert** actions in the section header, and the fields that no longer match the file — compared
-  against `picture.file_exif` with a numeric tolerance — are badged **diff**, feature 31), **Versions**, and **Copies**
+  on unsaved changes, **write error** when the file sync failed permanently, or **overridden** when a received picture has sticky overrides. Per-field
+  annotations are a **background tint + hover popup** (`FieldStateHint`), not inline badges — the rows are narrow and a badge pushed the value out of
+  the panel: amber for a recipient override (popup shows the owner's value from `exif_origin`), red for an owned field whose stored value never
+  reached the file (popup shows `file_exif`'s value; owned `write_failed` only). Each popup carries the matching revert, and **both reverts are
+  draft-only** — the field flips to the reference value and counts as dirty, persisted by Save (an override removal travels as `clear`, a file revert
+  as an ordinary `set`); typing in the field again cancels a queued override removal. The mismatch against `file_exif` is compared with a numeric
+  tolerance (EXIF stores GPS and exposure as
+  rationals, so a round-trip drifts and an exact compare would flag every coordinate). The header keeps its whole-picture **Retry** / **Revert** —
+  only
+  `POST /exif/revert` can clear `write_failed` without a successful file write, which per-field reverts cannot do; it is **disabled when `file_exif`
+  is null** (no snapshot ⇒ the endpoint can only 409). With no snapshot every stored field reads as "never reached the file", and a per-field revert
+  clears it rather than being a no-op (feature 31), **Versions**, and **Copies**
   (`CopiesSection`, feature 11 — lazily lists the picture's content-dedup group: each physical copy's state
   shown/in-trash/duplicate/rejected, owner, last-edit, a same-image-vs-EXIF-only-vs-different-content diff, and a
   "Keep this" control to choose the kept survivor). Clicking

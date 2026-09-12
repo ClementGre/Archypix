@@ -4,8 +4,9 @@ import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 /**
  * Marks a received-picture EXIF field that the recipient has locally overridden. The override is
  * DB-only: it never touches the owner's file, so downloading the original (and WebDAV, which serves
- * the owner's file directly) still yields the owner's embedded value. The optional ✕ drops the
- * override so the owner's value flows through again.
+ * the owner's file directly) still yields the owner's embedded value. The optional ✕ *queues*
+ * dropping the override — the field shows the owner's value right away, but nothing is persisted
+ * until Save, like any other edit in the panel.
  */
 export function OverwrittenBadge({onRemove}: { onRemove?: () => void }) {
     return (
@@ -20,7 +21,7 @@ export function OverwrittenBadge({onRemove}: { onRemove?: () => void }) {
                                 e.stopPropagation()
                                 onRemove()
                             }}
-                            aria-label="Remove override"
+                            aria-label="Remove override (applied on save)"
                             className="ml-0.5 hover:text-amber-300"
                         >
                             <X className="h-2.5 w-2.5"/>

@@ -254,8 +254,11 @@ pub async fn details(
         "deleted_at": d.picture.deleted_at,
         "owner_deleted_at": d.picture.owner_deleted_at,
         "owner_purge_at": d.picture.owner_purge_at,
-        // Recipient EXIF overrides (received pictures only).
+        // Recipient EXIF overrides (received pictures only). `exif_origin` is the owner-authoritative
+        // snapshot the overrides sit on top of — what dropping an override restores (cf.
+        // `creator_origin`), so the client can preview a removal before saving it.
         "local_exif_overrides": d.picture.local_exif_overrides,
+        "exif_origin": d.picture.remote_exif_data,
         // Physical-copy provenance & content-dedup grouping key (feature 11).
         "content_hash": d.picture.content_hash,
         "copy_source_owner_username": d.picture.copy_source_owner_username,

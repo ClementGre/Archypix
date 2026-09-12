@@ -38,10 +38,45 @@ function buildInitial(picture: PictureDetail): ExifDraft {
     }
 }
 
+const EMPTY_DRAFT: ExifDraft = {
+    captured_at: '', gps_lat: '', gps_lng: '', gps_alt: '', orientation: '', camera_brand: '',
+    camera_model: '', focal_length_mm: '', f_number: '', iso_speed: '', exposure_time_num: '',
+    exposure_time_den: '',
+}
+
+/**
+ * A sparse EXIF snapshot (`exif_origin` — the owner-authoritative values a recipient's overrides sit
+ * on top of; or `file_exif` — what the physical file holds) read as draft strings. This is what the
+ * matching per-field revert restores. `missing` is used when the picture carries no such snapshot —
+ * empty for `file_exif` (a file with no EXIF at all reverts the field to nothing), the effective
+ * draft for `exif_origin` (defensive: an override always has an origin behind it).
+ */
+function buildSnapshotDraft(snapshot: Record<string, unknown> | null, missing: ExifDraft): ExifDraft {
+    if (!snapshot) return missing
+    const str = (key: keyof ExifDraft) => (snapshot[key] != null ? String(snapshot[key]) : '')
+    return {
+        captured_at: str('captured_at'),
+        gps_lat: str('gps_lat'),
+        gps_lng: str('gps_lng'),
+        gps_alt: str('gps_alt'),
+        orientation: str('orientation'),
+        camera_brand: str('camera_brand'),
+        camera_model: str('camera_model'),
+        focal_length_mm: str('focal_length_mm'),
+        f_number: str('f_number'),
+        iso_speed: str('iso_speed'),
+        exposure_time_num: str('exposure_time_num'),
+        exposure_time_den: str('exposure_time_den'),
+    }
+}
+
 function buildPayload(
     draft: ExifDraft,
     initial: ExifDraft,
     owned: boolean,
+    // Fields queued for override removal: the draft shows the owner's value for them, which must not
+    // be diffed back into `set` — they travel as `clear`, and the backend rejects a field in both.
+    skip: Set<string>,
 ): { set?: Partial<ExifOverrides>; empty?: ExifField[]; clear?: ExifField[] } | null {
     const set: Partial<ExifOverrides> = {}
     // Emptying a field: an owned picture nulls its own column (`clear`); a received picture claims
@@ -50,7 +85,7 @@ function buildPayload(
     const emptied: ExifField[] = []
 
     function diffText(key: ExifField, cur: string, ini: string) {
-        if (cur === ini) return
+        if (skip.has(key) || cur === ini) return
         if (cur === '') {
             if (ini !== '') emptied.push(key)
         } else {
@@ -59,7 +94,7 @@ function buildPayload(
     }
 
     function diffNum(key: ExifField, cur: string, ini: string, toNum: (s: string) => number = Number) {
-        if (cur === ini) return
+        if (skip.has(key) || cur === ini) return
         if (cur === '') {
             if (ini !== '') emptied.push(key)
         } else {
@@ -107,6 +142,9 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     )
 
     const [draft, setDraft] = useState<ExifDraft>(initialDraft)
+    // Received only: overrides the user has dropped in the UI but not saved yet. The draft already
+    // shows the owner's value for these; Save turns them into a `clear` (see buildPayload's caller).
+    const [pendingOverrideRemovals, setPendingOverrideRemovals] = useState<Set<string>>(new Set())
 
     // Adopt server state whenever the picture signature changes (e.g. after a save).
     const sig = `${picture.id}:${picture.updated_at}`
@@ -114,6 +152,7 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     if (sig !== lastSig.current) {
         lastSig.current = sig
         setDraft(initialDraft)
+        setPendingOverrideRemovals(new Set())
     }
 
     // Owned pictures edit their own EXIF (write-through + file reconcile); received pictures
@@ -128,10 +167,28 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
 
     // For a received picture, the keys the recipient has claimed as sticky overrides
     // (sparse FullExif: promoted fields + flattened camera fields, snake-case keys).
-    const overriddenKeys = useMemo(
-        () => new Set(Object.keys(picture.local_exif_overrides ?? {})),
-        [picture.local_exif_overrides],
+    // Pending removals are excluded: the badge disappears as soon as the user clicks its ✕, so the
+    // field reads as "will no longer be overridden" while the edit is still unsaved.
+    const overriddenKeys = useMemo(() => {
+        const keys = Object.keys(picture.local_exif_overrides ?? {})
+        return new Set(keys.filter((k) => !pendingOverrideRemovals.has(k)))
+    }, [picture.local_exif_overrides, pendingOverrideRemovals])
+
+    // The owner's value per field, as draft strings — what dropping an override restores.
+    const originDraft = useMemo(
+        () => buildSnapshotDraft(picture.exif_origin, initialDraft),
+        [picture.exif_origin, initialDraft],
     )
+
+    // What the physical file holds (owned rows, feature 31) — the per-field revert target when a
+    // write failed permanently.
+    const fileDraft = useMemo(
+        () => buildSnapshotDraft(picture.file_exif, EMPTY_DRAFT),
+        [picture.file_exif],
+    )
+    // No snapshot at all: the file holds nothing, so there is nothing to revert *to* server-side —
+    // `POST /exif/revert` 409s. Per-field reverts still work (they clear the field).
+    const hasFileSnapshot = picture.file_exif != null
 
     // Attach the received-picture edit mode (owned edits ignore it). Rotation and the per-field
     // reset always stay a private local override; only an explicit Save can propose to the owner.
@@ -149,7 +206,7 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
             ),
         [draft, initialDraft],
     )
-    const isDirty = dirtyKeys.length > 0
+    const isDirty = dirtyKeys.length > 0 || pendingOverrideRemovals.size > 0
 
     // Auto-commit orientation after a debounce whenever a rotate click changes it. The ref gates
     // out non-rotate orientation changes (initial seed / re-seed after a save).
@@ -169,19 +226,34 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [draft.orientation])
 
+    // Typing in a field the user just dropped the override on re-claims it, so the queued removal
+    // is dropped; `reset` likewise restores the saved (overridden) value.
+    function cancelPendingRemoval(...keys: Array<keyof ExifDraft>) {
+        setPendingOverrideRemovals((prev) => {
+            if (!keys.some((k) => prev.has(k))) return prev
+            const next = new Set(prev)
+            keys.forEach((k) => next.delete(k))
+            return next
+        })
+    }
+
     function set<K extends keyof ExifDraft>(key: K, value: ExifDraft[K]) {
+        cancelPendingRemoval(key)
         setDraft((prev) => ({...prev, [key]: value}))
     }
 
     function setGps(lat: string, lng: string, alt: string) {
+        cancelPendingRemoval('gps_lat', 'gps_lng', 'gps_alt')
         setDraft((prev) => ({...prev, gps_lat: lat, gps_lng: lng, gps_alt: alt}))
     }
 
     function reset(key: keyof ExifDraft) {
+        cancelPendingRemoval(key)
         setDraft((prev) => ({...prev, [key]: initialDraft[key]}))
     }
 
     function resetGps() {
+        cancelPendingRemoval('gps_lat', 'gps_lng', 'gps_alt')
         setDraft((prev) => ({
             ...prev,
             gps_lat: initialDraft.gps_lat,
@@ -203,26 +275,56 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     // Save the pending edit. For received pictures `mode` chooses between a private local override
     // (default) and a proposal to the owner ('propose', only valid when the share authorises it).
     function save(mode: ExifEditMode = 'local') {
-        const payload = buildPayload(draft, initialDraft, owned)
-        if (!payload) return
-        mutation.mutate(withMode(payload, mode), {
+        const payload = buildPayload(draft, initialDraft, owned, pendingOverrideRemovals)
+        // Queued override removals ride along as `clear` — distinct from an emptied field, which a
+        // received picture sends as `empty` (a sticky claim of emptiness).
+        const dropped = [...pendingOverrideRemovals] as ExifField[]
+        if (!payload && dropped.length === 0) return
+        const body = {...(payload ?? {})}
+        if (dropped.length > 0) body.clear = [...(body.clear ?? []), ...dropped]
+        mutation.mutate(withMode(body, mode), {
             onError: (e) => toast.error('Could not save EXIF', {description: apiErrorMessage(e)}),
         })
     }
 
-    // Received-picture only: drop one or more overrides so the owner's value flows through again.
-    // The picture refetches and the draft re-seeds from the new effective value.
+    // Received-picture only: queue dropping one or more overrides so the owner's value flows through
+    // again. Local until Save — the draft immediately shows the owner's value (`exif_origin`) and the
+    // field reads as modified, like any other unsaved edit.
     function removeOverride(...fields: ExifField[]) {
         if (owned || fields.length === 0) return
-        mutation.mutate(
-            withMode({clear: fields}),
-            {onError: (e) => toast.error('Could not remove override', {description: apiErrorMessage(e)})},
-        )
+        const keys = fields as Array<keyof ExifDraft>
+        setDraft((prev) => {
+            const next = {...prev}
+            keys.forEach((k) => {
+                next[k] = originDraft[k]
+            })
+            return next
+        })
+        setPendingOverrideRemovals((prev) => new Set([...prev, ...fields]))
+    }
+
+    // Owned-picture only: pull one or more fields back to what the file holds. Draft-only, like
+    // `removeOverride` — Save writes it through as an ordinary edit. Distinct from `revertToFile`,
+    // which resets the whole row server-side and clears `write_failed` without touching the file.
+    function revertFieldsToFile(...fields: ExifField[]) {
+        if (!owned || fields.length === 0) return
+        const keys = fields as Array<keyof ExifDraft>
+        setDraft((prev) => {
+            const next = {...prev}
+            keys.forEach((k) => {
+                next[k] = fileDraft[k]
+            })
+            return next
+        })
     }
 
     return {
         draft,
         initialDraft,
+        originDraft,
+        fileDraft,
+        hasFileSnapshot,
+        revertFieldsToFile,
         dirtyKeys,
         isDirty,
         isSaving,

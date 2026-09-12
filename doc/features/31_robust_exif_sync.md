@@ -108,7 +108,11 @@ A `write_failed` picture offers:
 2. **Edit** — a new edit enqueues a job as usual.
 3. **Revert to file** — `POST /pictures/{id}/exif/revert` rewrites the row's EXIF columns from
    `file_exif` and marks it `synced`. Refused (409) with no snapshot, or while a job is in flight —
-   that job would write its pre-revert target back and re-diverge the row.
+   that job would write its pre-revert target back and re-diverge the row. The panel disables the
+   action outright when `file_exif` is null, since it could only 409.
+4. **Revert one field** — draft-only, in the field's popup: the field takes its `file_exif` value (nothing, when the picture has no snapshot) and Save
+   writes it through as an ordinary edit. This
+   cannot clear `write_failed` on its own — only a successful write or (3) does.
 
 ## 5. External Overwrites (WebDAV)
 
@@ -123,10 +127,16 @@ onto the new file. Rare, and self-correcting on the next extraction.
 ## 6. Refined Unsupported Handling
 
 - **MIME preflight** still gates job creation for formats that cannot embed EXIF.
-- **Worker-detected** — a write or read-back that fails on the file itself is reported as
-  `WorkerError::UnsupportedFormat`, which sets `unsupported: true` in the fail body.
+- **Worker-detected** — only a file the metadata library cannot *open at all* yields
+  `WorkerError::UnsupportedFormat`, which sets `unsupported: true` in the fail body. A write that
+  fails on a file that opened fine is `WorkerError::Exif` → `write_failed`; a read-back failure
+  after a successful write is downgraded to `write_failed` for the same reason.
+- **Tool unavailable** — a missing or unspawnable `exiftool` is a worker-environment fault, not a
+  file verdict: `WorkerError::ToolUnavailable` is *retriable*, so the picture stays `pending` and
+  only reaches `write_failed` via the watchdog once the retry budget is spent.
 - **Terminal state** — the backend sets `unsupported` rather than `write_failed`; retrying can never
-  help. Revert-to-file still works.
+  help. Revert-to-file still works, and a later edit on such a row stays DB-only (no job is
+  enqueued) — `unsupported` is never flipped back to `pending` by the edit path.
 
 ## 7. Batch Edit & Drain Robustness
 
@@ -143,6 +153,8 @@ never lost.
 - [x] Claim-time target binding, persisted on the job row.
 - [x] Completion convergence against the bound target; mid-flight edits return to the drain.
 - [x] `fail_job` → `write_failed` / `unsupported`; watchdog marks retry-exhausted reconciles.
+- [x] Narrow `unsupported` to open failures; retriable `ToolUnavailable`; edit path skips job
+  creation for `unsupported` rows.
 - [x] Batch path skips still-extracting rows (04 §11.2 parity).
 - [x] `POST /api/authenticated/pictures/{id}/exif/revert`.
 - [x] Worker: `write_exif_target` with grouped clears + read-back.

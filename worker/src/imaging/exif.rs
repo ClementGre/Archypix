@@ -18,8 +18,9 @@ const BMFF_EXIF_WRITE_MIMES: &[&str] = &["image/heic", "image/heif", "image/avif
 /// Must be called inside `tokio::task::spawn_blocking` since rexiv2 is synchronous.
 #[instrument(skip(path), fields(file = ?path.file_name()))]
 pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
-    let metadata = Metadata::new_from_path(path)
-        .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF: {e}")))?;
+    let metadata = Metadata::new_from_path(path).map_err(|e| {
+        WorkerError::UnsupportedFormat(format!("failed to open file for EXIF: {e}"))
+    })?;
 
     let captured_at = extract_first_tag(
         &metadata,
@@ -202,10 +203,12 @@ pub fn exiftool_available() -> bool {
 }
 
 fn exiftool() -> Result<&'static ExifTool> {
+    static FORCED: OnceLock<std::result::Result<ExifTool, String>> = OnceLock::new();
     let loaded = EXIFTOOL.get_or_init(|| ExifTool::new().map_err(|e| e.to_string()));
     match loaded {
         Ok(tool) => Ok(tool),
-        Err(e) => Err(WorkerError::Exif(format!(
+        // Worker-environment fault (binary missing, spawn refused): retriable, not a file verdict.
+        Err(e) => Err(WorkerError::ToolUnavailable(format!(
             "failed to initialize exiftool stay-open process: {e}"
         ))),
     }
@@ -336,8 +339,9 @@ fn write_exif_overrides_with_rexiv2(
     set: &FullExif,
     clear: &[ExifField],
 ) -> Result<()> {
-    let metadata = Metadata::new_from_path(path)
-        .map_err(|e| WorkerError::Exif(format!("failed to open file for EXIF write: {e}")))?;
+    let metadata = Metadata::new_from_path(path).map_err(|e| {
+        WorkerError::UnsupportedFormat(format!("failed to open file for EXIF write: {e}"))
+    })?;
 
     // ── Set ────────────────────────────────────────────────────────────────────
     if let Some(dt) = set.captured_at {

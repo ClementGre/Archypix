@@ -651,6 +651,75 @@ async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn worker_marked_unsupported_stays_terminal_on_re_edit(db: PgPool) {
+    // A jpeg the worker rejected: the MIME whitelist would say "supported", but `unsupported` is
+    // terminal (feature 31 §6) — the edit must land DB-only, with no new reconcile job.
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_owned(
+        &db,
+        user,
+        "image/jpeg",
+        100,
+        None,
+        None,
+        None,
+        json!({}),
+        true,
+    )
+    .await;
+    PictureRepository::set_exif_sync_status(&db, pic, ExifSyncStatus::Unsupported)
+        .await
+        .unwrap();
+
+    let sel = ResolvedSelection::explicit(vec![pic]);
+    let set = FullExif {
+        orientation: Some(3),
+        ..Default::default()
+    };
+    // The "supported" pass must skip the row entirely.
+    let n = PictureRepository::batch_apply_exif_owned_selection(
+        &db,
+        user,
+        &sel,
+        &set,
+        &[],
+        true,
+        &exif_mimes(),
+        &extracting_mimes(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "terminal unsupported row is not re-queued");
+
+    // The DB-only pass picks it up instead.
+    let n = PictureRepository::batch_apply_exif_owned_selection(
+        &db,
+        user,
+        &sel,
+        &set,
+        &[],
+        false,
+        &exif_mimes(),
+        &extracting_mimes(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the edit still lands in the DB");
+
+    let pic_row = PictureRepository::find_by_id(&db, pic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(pic_row.orientation, Some(3));
+    assert_eq!(
+        jobs::create_deferred_exif_jobs(&db, 10).await.unwrap(),
+        0,
+        "nothing for the drain to enqueue"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn received_local_override_materialises(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
     // Remote owner asserts gps_lat 10.0; recipient overrides to 20.0.

@@ -194,12 +194,15 @@ pub async fn edit_pictures_exif(
     for picture in &pictures {
         let new_state = picture.full_exif().applied(&set, &clear);
 
-        // MIME preflight: a format that cannot embed EXIF gets a DB-only edit, no job.
+        // MIME preflight: a format that cannot embed EXIF gets a DB-only edit, no job. `unsupported`
+        // is terminal (feature 31 §6) — a worker already proved this file cannot carry EXIF, so a
+        // re-edit must not flip it back to `pending` and re-enqueue a doomed job.
         let supported = picture
             .mime_type
             .as_deref()
             .map(supports_exif)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && picture.exif_sync_status != ExifSyncStatus::Unsupported;
         let status = if supported {
             ExifSyncStatus::Pending
         } else {

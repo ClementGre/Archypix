@@ -23,6 +23,8 @@
   `doc/features/04_better_exif_support.md`.
 - [x] **Robust EXIF sync (feature 31)** — state-based sync: a `file_exif` snapshot of the S3 original, a
   target bound at claim-time, `write_failed` + manual Retry/Revert-to-file. See `doc/features/31_robust_exif_sync.md`.
+  Failure classification narrowed: `unsupported` only for an unopenable file, retriable `ToolUnavailable`
+  for a missing exiftool, and `unsupported` is terminal against re-edits.
   - [ ] Extraction-done flag — both edit paths gate on `thumbnails_generated_at` as a proxy for "the initial
     extraction has landed" (04 §11.2). A dedicated column would be clearer and would stop coupling EXIF edits
     to thumbnailing.

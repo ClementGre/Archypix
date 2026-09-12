@@ -34,6 +34,7 @@ function toDetail(id: string, d: PublicPictureDetail): PictureDetail {
         owner_deleted_at: null,
         owner_purge_at: null,
         local_exif_overrides: null,
+        exif_origin: null,
         content_hash: null,
         copy_source_owner_username: null,
         copy_source_owner_instance: null,
