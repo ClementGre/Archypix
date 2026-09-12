@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET file_hash = 'h0' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c4cee9962a9c4b34c3fcc892cae2e5cfb095a16d030cf2d45b47970706a2bcb8"
+}

@@ -1438,7 +1438,9 @@ pub fn project_files(
                 name,
                 is_dir: false,
                 size: p.file_size.unwrap_or(0).max(0) as u64,
-                modified: p.updated_at,
+                // Bytes-only mtime (feature 32) — `updated_at` moves on every re-tag, which makes
+                // mtime-comparing sync clients re-download the whole library.
+                modified: p.file_modified_at,
                 etag: p.file_hash.clone(),
                 mime_type: p.mime_type.clone(),
                 picture_id: Some(p.id),

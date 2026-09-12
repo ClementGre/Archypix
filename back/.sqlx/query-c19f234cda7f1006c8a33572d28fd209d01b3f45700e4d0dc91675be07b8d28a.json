@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,\n                      p.owner_instance_domain, p.filename, p.mime_type, p.file_size,\n                      p.width, p.height, p.exif_data as \"exif_data: _\", p.metadata as \"metadata: _\",\n                      p.deleted_at, p.deleted_reason as \"deleted_reason: _\",\n                      p.owner_deleted_at, p.owner_purge_at,\n                      p.remote_exif_data as \"remote_exif_data: _\",\n                      p.local_exif_overrides as \"local_exif_overrides: _\",\n                      p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,\n                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.thumbnails_generated_at, p.file_hash,\n                      p.exif_sync_status as \"exif_sync_status: _\", p.file_exif as \"file_exif: _\",\n                      p.content_hash, p.copy_source_owner_username,\n                      p.copy_source_owner_instance, p.copy_source_picture_id,\n                      p.creator, p.creator_override, p.original_file_created_at\n               FROM pictures p\n               JOIN tags t ON t.picture_id = p.id\n               WHERE p.local_user_id = $1\n                 AND p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NULL\n                 AND t.tag_path <@ $2::text::ltree",
+  "query": "SELECT DISTINCT p.id, p.local_user_id, p.remote_picture_id, p.owner_username,\n                      p.owner_instance_domain, p.filename, p.mime_type, p.file_size,\n                      p.width, p.height, p.exif_data as \"exif_data: _\", p.metadata as \"metadata: _\",\n                      p.deleted_at, p.deleted_reason as \"deleted_reason: _\",\n                      p.owner_deleted_at, p.owner_purge_at,\n                      p.remote_exif_data as \"remote_exif_data: _\",\n                      p.local_exif_overrides as \"local_exif_overrides: _\",\n                      p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,\n                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,\n                      p.thumbnails_generated_at, p.file_hash,\n                      p.exif_sync_status as \"exif_sync_status: _\", p.file_exif as \"file_exif: _\",\n                      p.content_hash, p.copy_source_owner_username,\n                      p.copy_source_owner_instance, p.copy_source_picture_id,\n                      p.creator, p.creator_override, p.original_file_created_at, p.file_modified_at\n               FROM pictures p\n               JOIN tags t ON t.picture_id = p.id\n               WHERE p.local_user_id = $1\n                 AND p.remote_picture_id IS NULL\n                 AND p.deleted_at IS NULL\n                 AND t.tag_path <@ $2::text::ltree",
   "describe": {
     "columns": [
       {
@@ -444,6 +444,17 @@
             "name": "original_file_created_at"
           }
         }
+      },
+      {
+        "ordinal": 38,
+        "name": "file_modified_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "file_modified_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -490,8 +501,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "110c096d245c44538a3603128299c22df5d3c0ba0f8661eb2cd3132385b6e827"
+  "hash": "c19f234cda7f1006c8a33572d28fd209d01b3f45700e4d0dc91675be07b8d28a"
 }

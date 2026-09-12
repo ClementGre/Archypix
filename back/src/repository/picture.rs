@@ -258,7 +258,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override, original_file_created_at"#,
+                         creator, creator_override, original_file_created_at, file_modified_at"#,
             id,
             local_user_id,
             filename,
@@ -324,7 +324,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override, original_file_created_at"#,
+                         creator, creator_override, original_file_created_at, file_modified_at"#,
             id,
             local_user_id,
             filename,
@@ -427,7 +427,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override, original_file_created_at"#,
+                         creator, creator_override, original_file_created_at, file_modified_at"#,
             recipient_id,
             remote_picture_id,
             owner_username,
@@ -681,7 +681,7 @@ impl PictureRepository {
                       p.exif_sync_status as "exif_sync_status: _", p.file_exif as "file_exif: _",
                       p.content_hash, p.copy_source_owner_username,
                       p.copy_source_owner_instance, p.copy_source_picture_id,
-                      p.creator, p.creator_override, p.original_file_created_at
+                      p.creator, p.creator_override, p.original_file_created_at, p.file_modified_at
                FROM pictures p
                JOIN tags t ON t.picture_id = p.id
                WHERE p.local_user_id = $1
@@ -720,7 +720,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override, original_file_created_at
+                      creator, creator_override, original_file_created_at, file_modified_at
                FROM pictures WHERE id = ANY($1::uuid[])"#,
             ids as &[Uuid],
         )
@@ -748,7 +748,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override, original_file_created_at
+                      creator, creator_override, original_file_created_at, file_modified_at
                FROM pictures WHERE id = $1"#,
             id
         )
@@ -785,7 +785,7 @@ impl PictureRepository {
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
-                      creator, creator_override, original_file_created_at
+                      creator, creator_override, original_file_created_at, file_modified_at
                FROM pictures
                WHERE local_user_id = $1 AND file_hash = $2
                  AND remote_picture_id IS NULL
@@ -1065,7 +1065,7 @@ impl PictureRepository {
                           p.exif_sync_status, p.file_exif,
                           p.content_hash, p.copy_source_owner_username,
                           p.copy_source_owner_instance, p.copy_source_picture_id,
-                          p.creator, p.creator_override, p.original_file_created_at
+                          p.creator, p.creator_override, p.original_file_created_at, p.file_modified_at
                    FROM pictures p WHERE p.local_user_id = "#,
             );
             q.push_bind(local_user_id);
@@ -1315,7 +1315,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override, original_file_created_at"#,
+                         creator, creator_override, original_file_created_at, file_modified_at"#,
             id,
             mime_type,
             file_size,
@@ -1391,7 +1391,7 @@ impl PictureRepository {
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
-                         creator, creator_override, original_file_created_at"#,
+                         creator, creator_override, original_file_created_at, file_modified_at"#,
             id,
             width,
             height,

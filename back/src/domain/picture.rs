@@ -73,6 +73,9 @@ pub struct Picture {
     /// Source file **creation** time captured at ingest (feature 30 §10) from the `X-OC-CTime` WebDAV
     /// header (browser uploads can't provide one). Suggestion-only — never auto-applied to `captured_at`.
     pub original_file_created_at: Option<NaiveDateTime>,
+    /// Last change of the **stored bytes** — the WebDAV `getlastmodified` (feature 32). Stamped by a
+    /// DB trigger on `file_hash` transitions, so tagging never moves it.
+    pub file_modified_at: NaiveDateTime,
 }
 
 /// Why a picture was soft-deleted (set with `deleted_at`). Feature 09 only produces `Manual`; the
@@ -382,6 +385,7 @@ mod tests {
             creator: None,
             creator_override: None,
             original_file_created_at: None,
+            file_modified_at: now,
         }
     }
 

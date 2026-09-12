@@ -98,6 +98,16 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION public.update_file_modified_at_column() RETURNS trigger
+    LANGUAGE plpgsql
+AS
+$$
+BEGIN
+    NEW.file_modified_at = (now() at time zone 'utc');
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -361,7 +371,8 @@ CREATE TABLE public.pictures (
     creator_override text,
     remote_updated_at timestamp without time zone,
     original_file_created_at timestamp without time zone,
-    file_exif jsonb
+    file_exif        jsonb,
+    file_modified_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
 CREATE TABLE public.public_shares (
@@ -648,6 +659,13 @@ CREATE TRIGGER trg_user_storage_pictures_iu AFTER INSERT OR UPDATE OF file_size,
 CREATE TRIGGER trg_user_storage_versions AFTER INSERT OR DELETE OR UPDATE OF file_size ON public.picture_versions FOR EACH ROW EXECUTE FUNCTION public.user_storage_versions();
 
 CREATE TRIGGER update_hierarchies_updated_at BEFORE UPDATE ON public.hierarchies FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_pictures_file_modified_at
+    BEFORE UPDATE
+    ON public.pictures
+    FOR EACH ROW
+    WHEN ((new.file_hash IS DISTINCT FROM old.file_hash))
+EXECUTE FUNCTION public.update_file_modified_at_column();
 
 CREATE TRIGGER update_pictures_updated_at BEFORE UPDATE ON public.pictures FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 

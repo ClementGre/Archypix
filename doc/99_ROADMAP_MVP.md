@@ -33,6 +33,9 @@
   `doc/features/05_hierarchies.md`.
 - [x] **WebDAV** — per-hierarchy endpoint, proxy reads, tag write-back, hash-dedupe, versioning, atomic-save staging. See `doc/features/06_webdav.md`,
   `doc/features/08_webdav_issues.md`.
+- [x] **WebDAV last-modified (feature 32)** — `getlastmodified` now reports `pictures.file_modified_at`, stamped by a DB trigger on `file_hash`
+  transitions, so it moves with the bytes (and the ETag) and never on a re-tag. Tagging used to bump `updated_at` and make mtime-comparing sync
+  clients re-download the library. See `doc/features/32_webdav_file_modified_at.md`.
 - [x] **Hierarchy improvements** — `drop` inbox nodes, per-node write-back tri-state, writable `matchUntagged`, mirror `maxDepth`/foreign excludes.
   See `doc/features/18_hierarchy_improvements.md`.
 - [x] **Better workers** — multi-backend support, global semaphore, burst-friendly polling.
@@ -157,6 +160,14 @@
 - [ ] **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots in MinIO.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDav** — directory-level DELETE/MOVE/COPY, conditional/range requests, real LOCK/UNLOCK.
+  - [ ] **Directory CTag** — a per-collection change token (`PROPFIND` on the collection) so a sync
+    client can skip re-listing an unchanged directory. An *honest* CTag has to be **derived**:
+    `max(pictures.updated_at)` + `count(*)` over the directory's resolved `TagPredicate`, hashed
+    together with the node id + tag path. That is still a DB query, so it only saves the read
+    resolution + XML serialisation, not the lookup. It must key off **`updated_at`, not
+    `file_modified_at`** (feature 32): a re-tag genuinely changes a directory's contents even though
+    it changes no bytes. Directory entries currently report `Utc::now()` as their mtime, which is
+    safe in the conservative direction (a client never wrongly skips a listing).
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in `edit_picture` worker.
 - [ ] **Rate limiting & validators** — more rate limiting, real structured framework allowing to list the rate limiters in the admin dashboard with
   the window size + limit within window.

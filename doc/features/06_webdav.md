@@ -355,6 +355,11 @@ it, but it never becomes a picture. The ignore-list is a small constant in the W
 - **PROPFIND performance:** a large directory needs batched metadata (size, mtime, hash) —
   served from `list_pictures` and the cached expansion (§13).
 - **Trashed pictures** are excluded from all listings (`deleted_at IS NULL`), as elsewhere.
+- **Last-modified (feature 32):** `getlastmodified` reports `pictures.file_modified_at`, stamped by
+  a DB trigger on `file_hash` transitions — it moves with the stored bytes (and so with the ETag)
+  and never on a re-tag. Reporting `updated_at` made mtime-comparing sync clients (rclone, Finder)
+  re-download every re-tagged picture. Directory entries still report `now()`; see the CTag item in
+  99_ROADMAP_MVP.
 
 ## 13. Caching
 

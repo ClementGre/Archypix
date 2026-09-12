@@ -183,3 +183,12 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   5 GPS fix flow (L60) · 6 Capture-date fix flow (L88) · 7 Two-step selection (L112) ·
   8 Bulk apply (L134) · 9 Received pictures (L146) · 10 Source-file-date schema (L158) ·
   11 Write paths (L172) · 12 Edge cases (L188) · 13 Doc updates (L212) · 14 Work breakdown (L222).
+- **31_robust_exif_sync.md** — state-based EXIF sync (`file_exif` snapshot, claim-time target,
+  `write_failed`): 1 Overview & goals (L3) · 2 Structural changes / schema + domain (L22) · 3 The
+  state-based workflow (L47) · 4 User actions on failure (L103) · 5 External overwrites / WebDAV (L113) · 6 Unsupported handling (L123) · 7 Batch
+  edit & drain (L131) · 8 Implementation status (L138).
+- **32_webdav_file_modified_at.md** — `pictures.file_modified_at`, the bytes-only WebDAV
+  last-modified (tagging no longer triggers sync-client re-downloads): 1 Overview & goals (L3) ·
+  2 Decisions (L21) · 3 Why an old mtime on a new path is fine (L52) · 4 Schema changes (L72) ·
+  5 What moves it, and what does not (L100) · 6 Code changes (L118) · 7 Testing (L128) ·
+  8 Implementation status (L144).

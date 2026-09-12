@@ -608,3 +608,81 @@ async fn extraction_overwrites_pending_edits_and_records_the_file(db: PgPool) {
         "file_exif tracks the newly extracted state"
     );
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: PgPool) {
+    // Feature 32: an EXIF write-through rewrites the file, so the WebDAV last-modified must move
+    // with the ETag. A completion reporting the *same* hash (retry, no-op re-write) must not.
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let (pic_id, job_id) = seed_exif_edit(&db, alice_id).await;
+    sqlx::query!("UPDATE pictures SET file_hash = 'h0' WHERE id = $1", pic_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    let mtime = |db: PgPool| async move {
+        PictureRepository::find_by_id(&db, pic_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .file_modified_at
+    };
+    let before = mtime(db.clone()).await;
+
+    let complete = |job: Uuid, claim: Uuid, hash: &str| {
+        let body = serde_json::json!({
+            "claim_token": claim,
+            "thumbnails_generated": false,
+            "file_hash": hash,
+            "exif": {"gps_lat": 48.8566, "gps_lng": 2.3522},
+        });
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let resp = app
+                .oneshot(post_json(
+                    &format!("/api/worker/jobs/{job}/complete"),
+                    &token,
+                    &body,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        }
+    };
+
+    let (claim_token, _) = claim_edit(&app, &token).await;
+    complete(job_id, claim_token, "h1").await;
+    let after_write = mtime(db.clone()).await;
+    assert!(
+        after_write > before,
+        "the worker rewrote the file (new hash) — the last-modified must move"
+    );
+
+    // A second reconcile whose read-back reports the same bytes leaves it alone.
+    let waker = RoutineHandle::<Uuid>::disconnected();
+    let outcome = archypix_back::services::jobs::edit_pictures_exif(
+        &db,
+        &waker,
+        alice_id,
+        &[pic_id],
+        FullExif {
+            orientation: Some(6),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    let (claim_token, _) = claim_edit(&app, &token).await;
+    complete(outcome.jobs[0], claim_token, "h1").await;
+    assert_eq!(
+        mtime(db.clone()).await,
+        after_write,
+        "an unchanged hash must not move the last-modified"
+    );
+}

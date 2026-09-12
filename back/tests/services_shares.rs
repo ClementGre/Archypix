@@ -914,3 +914,88 @@ async fn cleanup_incoming_share_deletes_unreachable_pictures_only(db: PgPool) {
         "picture still reachable via share2 must not be deleted"
     );
 }
+
+/// Feature 32 — a received picture's WebDAV last-modified follows the **owner's bytes**, not the
+/// owner's `updated_at`. An owner-side re-tag re-announces with a newer `owner_updated_at` and the
+/// same `file_hash`: the guard's version advances, `file_modified_at` must not.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn reannounce_moves_last_modified_only_when_the_owner_bytes_change(db: PgPool) {
+    use archypix_back::domain::tag::TagPath;
+    use archypix_back::services::shares::register_received_pictures;
+    use chrono::NaiveDateTime;
+    use uuid::Uuid;
+
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let bob_id = common::seed_user(&db, "bob", "pass").await;
+    let share = alice_shares_with_bob(&db, alice_id, "vacation").await;
+    let incoming = IncomingShareRepository::find_by_outgoing_share(&db, share.id, "test.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let shared_tag = TagPath::shared_to_me("alice", "test.com", &TagPath::from_ltree("vacation"));
+
+    let t = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap();
+    let mut pic = AnnouncedPicture {
+        picture_id: Uuid::new_v4().to_string(),
+        owner_username: "alice".to_string(),
+        owner_instance_domain: "test.com".to_string(),
+        picture_token: Uuid::new_v4(),
+        filename: Some("a.jpg".to_string()),
+        mime_type: Some("image/jpeg".to_string()),
+        file_size: Some(10),
+        file_hash: Some("h0".to_string()),
+        content_hash: None,
+        thumbnails_generated_at: None,
+        width: None,
+        height: None,
+        blurhash: None,
+        exif: Default::default(),
+        creator: "@alice:test.com".to_string(),
+        owner_deleted_at: None,
+        owner_purge_at: None,
+        owner_updated_at: Some(t("2026-01-01 10:00:00")),
+    };
+    let state = |db: PgPool| async move {
+        sqlx::query_as::<_, (NaiveDateTime, Option<NaiveDateTime>)>(
+            "SELECT file_modified_at, remote_updated_at FROM pictures
+             WHERE local_user_id = $1 AND remote_picture_id IS NOT NULL",
+        )
+        .bind(bob_id)
+        .fetch_one(&db)
+        .await
+        .unwrap()
+    };
+
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+    let (mtime_first, _) = state(db.clone()).await;
+
+    // Owner re-tags → re-announce with a newer version but identical bytes.
+    pic.owner_updated_at = Some(t("2026-01-02 10:00:00"));
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+    let (mtime_after_retag, version) = state(db.clone()).await;
+    assert_eq!(
+        version,
+        Some(t("2026-01-02 10:00:00")),
+        "the stale-announce guard's version did advance"
+    );
+    assert_eq!(
+        mtime_after_retag, mtime_first,
+        "an owner-side re-tag must not move the recipient's last-modified"
+    );
+
+    // Owner overwrites the file → new hash.
+    pic.owner_updated_at = Some(t("2026-01-03 10:00:00"));
+    pic.file_hash = Some("h1".to_string());
+    register_received_pictures(&db, bob_id, incoming.id, &shared_tag, &[pic.clone()])
+        .await
+        .unwrap();
+    let (mtime_after_overwrite, _) = state(db.clone()).await;
+    assert!(
+        mtime_after_overwrite > mtime_first,
+        "new owner bytes must move the recipient's last-modified"
+    );
+}

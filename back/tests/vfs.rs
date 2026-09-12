@@ -11,6 +11,7 @@ use archypix_back::infra::s3;
 use archypix_back::infra::settings::keys;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::picture_version::PictureVersionRepository;
+use archypix_back::repository::pipeline::PipelineRepository;
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::repository::user_settings::UserSettingsRepository;
 use archypix_back::services::hierarchy;
@@ -1543,4 +1544,175 @@ async fn backup_reference_move_then_delete_is_a_no_op(db: PgPool) {
             .is_none()
     );
     assert_eq!(count_pictures(&state, user).await, 1);
+}
+
+// ── Last-modified (feature 32) ──────────────────────────────────────────────────
+
+/// The `modified` of the file named `name` in directory `dir`.
+async fn mtime_of(vfs: &Vfs<'_>, dir: &[&str], name: &str) -> chrono::NaiveDateTime {
+    vfs.list_dir(&seg(dir))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name == name)
+        .unwrap_or_else(|| panic!("{name} listed in /{}", dir.join("/")))
+        .modified
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn tagging_does_not_move_webdav_last_modified(db: PgPool) {
+    // The regression feature 32 exists for: `updated_at` moves on *any* row write — the pipeline's
+    // `last_pipeline_run_at = NULL` included — so re-tagging made every mtime-comparing sync client
+    // re-download the picture.
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(
+        &state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"bytes",
+        "Photos.Travel",
+    )
+    .await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let before = mtime_of(&vfs, &["Photos", "Travel"], "a.jpg").await;
+    let updated_before = PictureRepository::find_by_id(&state.db, pic)
+        .await
+        .unwrap()
+        .unwrap()
+        .updated_at;
+
+    // Re-tag into a new directory, plus the pipeline invalidation that actually writes the row.
+    TagRepository::batch_assign(
+        &state.db,
+        user,
+        &[pic],
+        &["Photos.Travel.Italy".to_string()],
+    )
+    .await
+    .unwrap();
+    PipelineRepository::invalidate(&state.db, &[pic])
+        .await
+        .unwrap();
+
+    let row = PictureRepository::find_by_id(&state.db, pic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.updated_at > updated_before,
+        "sanity: the re-tag did move updated_at (what WebDAV used to report)"
+    );
+    assert_eq!(row.file_modified_at, before, "no bytes changed");
+    // The deeper tag refiles the picture into `Italy`; it keeps its old mtime there (§3). A sync
+    // client fetches a path it does not hold regardless of how old the file claims to be.
+    // (Reload: a new mirror directory resolves from the live tags at load time.)
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    assert_eq!(
+        mtime_of(&vfs, &["Photos", "Travel", "Italy"], "a.jpg").await,
+        before,
+        "a re-tag must not move the WebDAV last-modified"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn overwrite_put_moves_last_modified_and_identical_reput_does_not(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"v1", "Photos.Travel").await;
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None)
+        .await
+        .unwrap();
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+
+    let before = mtime_of(&vfs, &["Photos", "Travel"], "a.jpg").await;
+
+    // Different bytes: mtime and ETag move together.
+    let etag_before = vfs
+        .stat(&seg(&["Photos", "Travel", "a.jpg"]))
+        .await
+        .unwrap()
+        .etag;
+    put(
+        &vfs,
+        &["Photos", "Travel", "a.jpg"],
+        b"v2-different",
+        Some("image/jpeg"),
+    )
+    .await
+    .unwrap();
+    let after_overwrite = mtime_of(&vfs, &["Photos", "Travel"], "a.jpg").await;
+    assert!(
+        after_overwrite > before,
+        "an overwrite with different bytes must move the last-modified"
+    );
+    assert_ne!(
+        vfs.stat(&seg(&["Photos", "Travel", "a.jpg"]))
+            .await
+            .unwrap()
+            .etag,
+        etag_before,
+        "mtime and ETag change together"
+    );
+
+    // Identical bytes (a dumb sync client re-PUT): neither moves.
+    put(
+        &vfs,
+        &["Photos", "Travel", "a.jpg"],
+        b"v2-different",
+        Some("image/jpeg"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        mtime_of(&vfs, &["Photos", "Travel"], "a.jpg").await,
+        after_overwrite,
+        "an identical re-PUT must not move the last-modified"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn rename_and_trash_do_not_move_last_modified(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(
+        &state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"bytes",
+        "Photos.Travel",
+    )
+    .await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    let before = mtime_of(&vfs, &["Photos", "Travel"], "a.jpg").await;
+
+    vfs.move_(
+        &seg(&["Photos", "Travel", "a.jpg"]),
+        &seg(&["Photos", "Travel", "b.jpg"]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        mtime_of(&vfs, &["Photos", "Travel"], "b.jpg").await,
+        before,
+        "a MOVE rewrites the filename, not the bytes"
+    );
+
+    PictureRepository::set_deleted(&state.db, user, pic, true)
+        .await
+        .unwrap();
+    PictureRepository::set_deleted(&state.db, user, pic, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        mtime_of(&vfs, &["Photos", "Travel"], "b.jpg").await,
+        before,
+        "trash + restore moves no bytes"
+    );
 }
