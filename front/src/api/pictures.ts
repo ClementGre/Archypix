@@ -322,6 +322,12 @@ export async function resyncExif(id: string): Promise<Job> {
     return data
 }
 
+/** Re-read a picture's EXIF from the file. Refused while the row holds unsynced DB edits. */
+export async function reextractExif(id: string): Promise<Job> {
+    const {data} = await apiClient.post<Job>(`/api/authenticated/pictures/${id}/exif/reextract`)
+    return data
+}
+
 /** Reset DB EXIF columns to the persisted physical-file snapshot (`file_exif`). */
 export async function revertExifToFile(id: string): Promise<Omit<EditPictureResponse, 'job_id'>> {
     const {data} = await apiClient.post<Omit<EditPictureResponse, 'job_id'>>(

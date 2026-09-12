@@ -17,8 +17,9 @@ backend.rs           — BackendClient (one per backend): two separate HTTP clie
                        download_presigned (streaming) / upload_presigned
 
 jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
-jobs/thumbnail.rs    — gen_thumbnail: download → file_size + hash → content_hash → metadata →
-                       thumbnails → complete. Branches on MIME: image (GExiv2 EXIF + ImageMagick
+jobs/thumbnail.rs    — gen_thumbnail: download → metadata → file_size + hash → content_hash →
+                       thumbnails → complete. Metadata runs first so a retriable read failure costs
+                       one download and nothing else (feature 33 §6.1). Branches on MIME: image (GExiv2 EXIF + ImageMagick
                        thumbnail), video (ffprobe metadata + ffmpeg frame-grab thumbnail), or neither.
                        A non-thumbnailable format is not an error: it still reports size/hash and
                        completes with thumbnails skipped, so every ingested picture gets an ETag/size
@@ -30,10 +31,16 @@ jobs/edit_picture.rs — edit_picture: download → EXIF target write → read b
                        `file_exif`. Uploading the original last keeps the file untouched on failure.
 jobs/ml.rs           — stub for ml_* jobs (log + complete with empty result)
 
-imaging/exif.rs      — extract_exif() / write_exif_target() — rewrite the file's editable EXIF to a
-                       FullExif target: every Some field written, every absent one deleted
-                       (target_clear_fields; GPS and exposure clear only as whole groups). rexiv2 by
-                       default, ExifTool stay-open for BMFF writes (HEIC/HEIF/AVIF). Blocking.
+imaging/exif.rs      — read_metadata() / write_exif_target(). Reads dispatch by MIME and fall back
+                       on a format verdict (feature 33 §3): BMFF goes straight to exiftool_read,
+                       everything else tries rexiv2_read and retries with ExifTool only when rexiv2
+                       cannot open the file — an IO or tool fault propagates as-is, so a transient
+                       outage never becomes a file verdict. Both engines map onto the same FullExif;
+                       a differential test pins the four normalization points (§3.3). Writes rewrite
+                       the file's editable EXIF to a FullExif target: every Some field written, every
+                       absent one deleted (target_clear_fields; GPS and exposure clear only as whole
+                       groups). rexiv2 by default, ExifTool stay-open for BMFF (HEIC/HEIF/AVIF).
+                       Blocking.
 imaging/video.rs     — extract_video_metadata() / extract_frame() (ffprobe/ffmpeg, blocking).
                        Maps container tags onto the image ExtractedExif/FullExif shape: capture date,
                        GPS (ISO 6709), make/model, and the read-only tech fields (duration,
@@ -94,7 +101,37 @@ loop backs off to `poll_interval_ms` to avoid hammering the backend.
 Some errors are transient and can be retried, others are permanent and should be marked `failed` permanently. `is_retriable()` on `WorkerError`
 classifies them. On back, the watchdog (`infra/job_watchdog.rs`) runs every `JOB_WATCHDOG_INTERVAL_SECS` (default 60 s) and resets jobs stuck in
 `processing` for longer than `JOB_PROCESSING_TIMEOUT_SECS` (default 600 s) by incrementing `retry_count` and returning them to `pending` (or `failed`
-if retries exhausted). It also clears `claim_token` on reset.
+if retries exhausted). It also clears `claim_token` on reset. An exhausted job never reaches `fail_job`, so the watchdog marks its picture itself:
+a reconcile becomes `write_failed`, an extraction (`gen_thumbnail` with `is_initial`) becomes `extract_failed`.
+
+A **permanent** failure does reach `fail_job`, and an extraction job that dies there must still settle
+its picture — otherwise it stays `extracting` with no job left to move it and every edit on it is
+refused. The worker therefore publishes its extraction outcome as soon as it has one and sends it on
+the fail body too, so a file that extracted fine and then failed to thumbnail keeps its EXIF
+(`synced`, without stamping `thumbnails_generated_at` — the thumbnails are what failed). See
+feature 33 §6.5.
+
+The classification is load-bearing for the read direction (feature 33 §7), so environment faults are
+kept distinct from file verdicts: a missing/unspawnable `ffprobe` or `exiftool` is `ToolUnavailable`
+(retriable), an unreadable or empty file is `Io` (retriable), and only a readable file no engine can
+parse is `UnsupportedFormat`. Folding any of these together is what silently strips EXIF during a
+transient outage.
+
+## EXIF extraction outcome
+
+A `gen_thumbnail` completion carries `CompleteJobRequest.exif: ExifExtraction` (feature 33 §5) rather
+than an `Option`, which was overloaded three ways:
+
+| Variant           | Meaning                                         | Backend result     |
+|-------------------|-------------------------------------------------|--------------------|
+| `Extracted(…)`    | the read succeeded (also the edit read-back)    | `synced` + `file_exif` |
+| `NotAttempted`    | non-initial `gen_thumbnail`                      | status untouched   |
+| `UnsupportedMime` | the format carries no readable metadata          | `unsupported_mime` |
+| `Failed`          | dispatch **and** fallback ran; neither opened it | `unsupported_file` |
+
+Retriable failures have no variant: they fail the job instead of completing it, and the retry budget
+plus the watchdog own the row from there. In practice ExifTool refuses very little — it reports "no
+metadata" far more often than an error — so `Failed` is rare.
 
 ## EXIF edit write-through
 
@@ -107,7 +144,10 @@ The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` 
   landed mid-flight) → `pending_job_creation`, and the drain enqueues the follow-up. The read-back is never compared field-by-field — EXIF stores
   rationals, so a GPS round-trip never returns the exact `f64` it was given.
 - **Failure**: permanent → `write_failed` (the DB edit is kept; the user retries or reverts to the file); `unsupported: true` in the fail body → the
-  terminal `unsupported` state. A watchdog-exhausted reconcile is marked `write_failed` by the watchdog, since no worker reports it.
+  terminal `unsupported_file` state (neither engine could open the file). A watchdog-exhausted reconcile is marked `write_failed` by the watchdog,
+  since no worker reports it.
+- **Extraction race** (feature 33 §6.4): the completion skips both its status and its `file_exif`
+  write when the row has moved to `extracting` — a re-extraction landed mid-flight and owns them.
 
 ## Shared types (`archypix-common`)
 
@@ -116,6 +156,6 @@ Library crate shared between `back/` and `worker/` so wire shapes never drift:
 | Module           | Key types                                                                                                                                                                                                                                        |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`target: FullExif`, bound at claim-time), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
-| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `file_size`, `file_hash`, decoded `width`/`height`), `FailJobRequest` (+ `claim_token`, `permanent`, `unsupported`)                                            |
+| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `exif: ExifExtraction`, `file_size`, `file_hash`, decoded `width`/`height`), `ExifExtraction`, `FailJobRequest` (+ `claim_token`, `permanent`, `unsupported`)                                            |
 | `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_IMAGE_THUMBNAIL`, `MIME_TYPES_VIDEO`, `supports_exif()`, `supports_image_thumbnail()` (image engine), `supports_video()`, `supports_thumbnail()` (image **or** video — "gets a thumbnail at all")                 |
 | `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                                                                     |

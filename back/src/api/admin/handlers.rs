@@ -344,6 +344,43 @@ pub async fn regenerate_thumbnails(
     Ok(Json(serde_json::json!({ "enqueued": enqueued })))
 }
 
+// ── EXIF recheck sweep (feature 33 §8) ────────────────────────────────────────
+
+/// Request body for `POST /api/admin/pictures/recheck-exif`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct RecheckExifRequest {
+    /// Which stale-verdict worklist to drain. `mime` (default) after an allowlist bump, `file`
+    /// after an engine upgrade, `failed` after a tool outage.
+    #[serde(default)]
+    pub scope: services::jobs::RecheckScope,
+    /// Optional narrowing of the `mime` scope to the MIME types that just became supported.
+    #[serde(default)]
+    pub mime_types: Vec<String>,
+}
+
+/// Hands the work to the recheck routine: a matching sweep can be the whole library, so the bounded
+/// batch per tick is what keeps an allowlist bump from being an incident.
+#[tracing::instrument(skip(_auth, state, body), fields(user = %_auth.claims.sub))]
+pub async fn recheck_exif(
+    _auth: AuthAdmin,
+    State(state): State<AppState>,
+    Json(body): Json<RecheckExifRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mime_types = body
+        .mime_types
+        .iter()
+        .filter_map(|m| archypix_common::mime::normalize_mime_type(m))
+        .collect();
+    state
+        .routines
+        .exif_recheck
+        .trigger(crate::infra::routine::exif_recheck::ExifRecheckInput {
+            scope: body.scope,
+            mime_types,
+        });
+    Ok(Json(serde_json::json!({ "started": true })))
+}
+
 // ── Job list ──────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(skip(_auth, state, query), fields(user = %_auth.claims.sub))]

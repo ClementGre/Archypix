@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures\n             (id, local_user_id, mime_type, file_size, file_hash, captured_at,\n              gps_lat, gps_lng, exif_data, thumbnails_generated_at, exif_sync_status)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,\n                   CASE WHEN $10 THEN (now() at time zone 'utc') ELSE NULL END, $11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Int8",
+        "Text",
+        "Timestamp",
+        "Float8",
+        "Float8",
+        "Jsonb",
+        "Bool",
+        {
+          "Custom": {
+            "name": "picture_exif_sync_status",
+            "kind": {
+              "Enum": [
+                "synced",
+                "pending",
+                "unsupported_mime",
+                "pending_job_creation",
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65b08cb7b4fe3ce0b5b8495f413cd4d40cdd1539912bde293e8693a743d18c4b"
+}

@@ -341,6 +341,7 @@ pub fn test_app_state_with_storage(
     let routines = Routines {
         pipeline,
         exif_drain: RoutineHandle::disconnected(),
+        exif_recheck: RoutineHandle::disconnected(),
         tag_rename: RoutineHandle::disconnected(),
         unannounce,
     };
@@ -397,7 +398,7 @@ pub async fn seed_user(db: &PgPool, username: &str, password: &str) -> Uuid {
 pub async fn seed_picture(db: &PgPool, user_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id) VALUES ($1, $2)",
+        "INSERT INTO pictures (id, local_user_id, exif_sync_status) VALUES ($1, $2, 'synced')",
         id,
         user_id,
     )

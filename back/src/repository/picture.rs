@@ -221,6 +221,14 @@ pub struct DistinctAgg {
     pub null_count: i64,
 }
 
+/// The two partitions a set-based EXIF edit produces: rows whose file sync was queued, and rows
+/// carrying a terminal verdict that stay DB-only.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BatchExifCounts {
+    pub edited: i64,
+    pub unsupported: i64,
+}
+
 pub struct PictureRepository;
 
 impl PictureRepository {
@@ -237,6 +245,7 @@ impl PictureRepository {
         exif_data: Option<serde_json::Value>,
         captured_at: Option<NaiveDateTime>,
         original_file_created_at: Option<NaiveDateTime>,
+        exif_sync_status: ExifSyncStatus,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -244,8 +253,8 @@ impl PictureRepository {
         let exif_json = exif_data.unwrap_or_else(|| serde_json::json!({}));
         sqlx::query_as!(
             Picture,
-            r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at, original_file_created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10)
+            r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at, original_file_created_at, exif_sync_status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -269,6 +278,7 @@ impl PictureRepository {
             serde_json::Value::from(exif_json) as serde_json::Value,
             captured_at,
             original_file_created_at,
+            exif_sync_status as ExifSyncStatus,
         )
             .fetch_one(ex)
             .await
@@ -301,6 +311,8 @@ impl PictureRepository {
         copy_source_owner_instance: Option<&str>,
         copy_source_picture_id: Option<&str>,
         creator: Option<&str>,
+        exif_sync_status: ExifSyncStatus,
+        file_exif: Option<serde_json::Value>,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -310,8 +322,8 @@ impl PictureRepository {
             r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height,
                                      exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, orientation,
                                      copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id,
-                                     creator)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                                     creator, exif_sync_status, file_exif)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -342,6 +354,8 @@ impl PictureRepository {
             copy_source_owner_instance,
             copy_source_picture_id,
             creator,
+            exif_sync_status as ExifSyncStatus,
+            file_exif,
         )
             .fetch_one(ex)
             .await
@@ -391,9 +405,12 @@ impl PictureRepository {
                    (local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                     filename, mime_type, file_size, width, height, metadata,
                     blurhash, file_hash, content_hash, thumbnails_generated_at,
-                    remote_exif_data, owner_deleted_at, owner_purge_at, creator, remote_updated_at)
+                    remote_exif_data, owner_deleted_at, owner_purge_at, creator, remote_updated_at,
+                    exif_sync_status)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,
-                       $10, $11, $16, $12, $13, $14, $15, $17, $18)
+                       $10, $11, $16, $12, $13, $14, $15, $17, $18,
+                       -- Inert for a received row: no local original, never reaches the write path.
+                       'synced'::picture_exif_sync_status)
                ON CONFLICT (local_user_id, remote_picture_id)
                WHERE remote_picture_id IS NOT NULL
                DO UPDATE SET
@@ -1346,6 +1363,7 @@ impl PictureRepository {
         file_size: Option<i64>,
         file_hash: Option<&str>,
         content_hash: Option<&str>,
+        set_thumbnails: bool,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -1371,12 +1389,12 @@ impl PictureRepository {
                    file_hash   = COALESCE($13, file_hash),
                    content_hash = COALESCE($14, content_hash),
                    file_exif   = $15::jsonb,
-                   exif_sync_status = CASE
-                                          WHEN exif_sync_status = 'unsupported'
-                                              THEN 'unsupported'::picture_exif_sync_status
-                                          ELSE 'synced'::picture_exif_sync_status
-                                      END,
-                   thumbnails_generated_at = COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc'),
+                   -- A successful extraction is direct evidence against any stale verdict (§6.3).
+                   exif_sync_status = 'synced'::picture_exif_sync_status,
+                   thumbnails_generated_at = CASE WHEN $16
+                                                  THEN COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')
+                                                  ELSE thumbnails_generated_at
+                                             END,
                    last_pipeline_run_at = NULL
                WHERE id = $1
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
@@ -1407,6 +1425,7 @@ impl PictureRepository {
             file_hash,
             content_hash,
             file_exif_json,
+            set_thumbnails,
         )
             .fetch_one(ex)
             .await
@@ -1542,6 +1561,76 @@ impl PictureRepository {
         .await
         .map_err(map_sqlx_error)?;
         Ok(())
+    }
+
+    /// Set `exif_sync_status` on a batch of pictures, optionally only where it currently equals
+    /// `from` (a compare-and-set, so a state that already moved on is not stomped). Returns rows
+    /// changed.
+    #[tracing::instrument(skip(ex, ids), fields(count = ids.len()))]
+    pub async fn set_exif_sync_status_bulk<'e, E>(
+        ex: E,
+        ids: &[Uuid],
+        from: Option<ExifSyncStatus>,
+        to: ExifSyncStatus,
+    ) -> Result<u64, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query!(
+            "UPDATE pictures SET exif_sync_status = $2
+              WHERE id = ANY($1) AND ($3::picture_exif_sync_status IS NULL
+                                      OR exif_sync_status = $3)",
+            ids,
+            to as ExifSyncStatus,
+            from as Option<ExifSyncStatus>,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected())
+    }
+
+    /// Up to `limit` owned pictures whose `exif_sync_status` is one of `statuses` and that have no
+    /// `gen_thumbnail` job in flight, optionally narrowed to `mime_types` (lower-cased). Returns
+    /// `(picture_id, owner_id)` — the worklist shape the sweeps and drains share.
+    #[tracing::instrument(skip(ex, statuses, mime_types))]
+    pub async fn find_by_exif_sync_status(
+        ex: &PgPool,
+        statuses: &[ExifSyncStatus],
+        mime_types: Option<&[String]>,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, Uuid)>, AppError> {
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let labels: Vec<String> = statuses.iter().map(|s| s.as_str().to_string()).collect();
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT p.id, p.local_user_id FROM pictures p \
+             WHERE p.remote_picture_id IS NULL AND p.deleted_at IS NULL \
+               AND p.exif_sync_status::text = ANY(",
+        );
+        q.push_bind(labels).push("::text[])");
+        if let Some(mimes) = mime_types {
+            q.push(" AND lower(p.mime_type) = ANY(")
+                .push_bind(mimes.to_vec())
+                .push("::text[])");
+        }
+        q.push(
+            " AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.picture_id = p.id \
+                                AND j.job_type = 'gen_thumbnail' \
+                                AND j.status IN ('pending', 'processing')) \
+             ORDER BY p.ingested_at LIMIT ",
+        );
+        q.push_bind(limit);
+        let rows = q
+            .build_query_as::<(Uuid, Uuid)>()
+            .fetch_all(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows)
     }
 
     /// Update only the persisted physical-file EXIF snapshot (`file_exif`) after a successful
@@ -1762,22 +1851,19 @@ impl PictureRepository {
 
     /// Count owned pictures in the selection whose format cannot embed EXIF (the dry-run
     /// `unsupported` partition). `supported_mimes` is the lower-cased whitelist.
-    #[tracing::instrument(skip(db, sel, supported_mimes), fields(user_id = %local_user_id))]
+    #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
     pub async fn count_owned_unsupported_selection(
         db: &PgPool,
         local_user_id: Uuid,
         sel: &ResolvedSelection,
-        supported_mimes: &[String],
     ) -> Result<i64, AppError> {
         if sel.is_empty() {
             return Ok(0);
         }
         let mut q = sqlx::QueryBuilder::<Postgres>::new(
             "SELECT COUNT(*) FROM pictures p WHERE p.remote_picture_id IS NULL \
-             AND (p.mime_type IS NULL OR NOT (lower(p.mime_type) = ANY(",
+             AND p.exif_sync_status IN ('unsupported_mime', 'unsupported_file') AND ",
         );
-        q.push_bind(supported_mimes.to_vec())
-            .push("::text[]))) AND ");
         Self::push_selection_where(&mut q, local_user_id, sel);
         q.build_query_scalar()
             .fetch_one(db)
@@ -2119,61 +2205,51 @@ impl PictureRepository {
     }
 
     /// Apply a `set`/`clear` EXIF delta to the **owned** pictures in a selection set-based (feature
-    /// 14 §5). Touches only owned, already-extracted pictures. Stamps `exif_sync_status` =
-    /// `pending_job_creation` when the format embeds EXIF (the drain creates the reconcile job) or
-    /// `unsupported` otherwise. `supported` selects which MIME partition this call targets;
-    /// `supported_mimes` is the lower-cased whitelist. `extracting_mimes` lists the formats the
-    /// worker extracts metadata from — such a row is skipped until `thumbnails_generated_at` lands,
-    /// so an in-flight extraction cannot overwrite the edit (04 §11.2). Returns rows changed.
-    #[tracing::instrument(skip(ex, sel, set, clear, supported_mimes, extracting_mimes), fields(user_id = %local_user_id, supported))]
+    /// 14 §5). One statement: rows carrying a terminal verdict take the DB-only branch and keep it,
+    /// every other row is stamped `pending_job_creation` for the drain. `extracting` rows are
+    /// skipped — an in-flight extraction would overwrite the edit (04 §11.2). The partition is the
+    /// stored status, never a MIME list (feature 33 §10).
+    #[tracing::instrument(skip(ex, sel, set, clear), fields(user_id = %local_user_id))]
     pub async fn batch_apply_exif_owned_selection<'e, E>(
         ex: E,
         local_user_id: Uuid,
         sel: &ResolvedSelection,
         set: &FullExif,
         clear: &[crate::domain::job::ExifField],
-        supported: bool,
-        supported_mimes: &[String],
-        extracting_mimes: &[String],
-    ) -> Result<u64, AppError>
+    ) -> Result<BatchExifCounts, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
         if sel.is_empty() {
-            return Ok(0);
+            return Ok(BatchExifCounts::default());
         }
         let mut q = sqlx::QueryBuilder::<Postgres>::new("UPDATE pictures AS p SET ");
         push_exif_column_assignments(&mut q, set, clear);
-        q.push("exif_sync_status = ");
-        if supported {
-            q.push("'pending_job_creation'::picture_exif_sync_status");
-        } else {
-            q.push("'unsupported'::picture_exif_sync_status");
-        }
+        q.push(
+            "exif_sync_status = CASE \
+               WHEN p.exif_sync_status IN ('unsupported_mime', 'unsupported_file') \
+                 THEN p.exif_sync_status \
+               ELSE 'pending_job_creation'::picture_exif_sync_status END",
+        );
         q.push(", updated_at = (now() AT TIME ZONE 'utc'), last_pipeline_run_at = NULL WHERE ");
         Self::push_selection_where(&mut q, local_user_id, sel);
-        q.push(" AND p.remote_picture_id IS NULL AND ");
-        // `unsupported` is terminal (feature 31 §6): a worker already proved the file cannot carry
-        // EXIF, so such a row takes the DB-only branch whatever its MIME says.
-        if supported {
-            q.push("lower(p.mime_type) = ANY(")
-                .push_bind(supported_mimes.to_vec())
-                .push(
-                    "::text[]) AND p.exif_sync_status <> 'unsupported'::picture_exif_sync_status",
-                );
-        } else {
-            q.push("(p.mime_type IS NULL OR NOT (lower(p.mime_type) = ANY(")
-                .push_bind(supported_mimes.to_vec())
-                .push(
-                    "::text[])) OR p.exif_sync_status = 'unsupported'::picture_exif_sync_status)",
-                );
-        }
-        // Still-extracting rows are skipped (an unknown MIME counts as extracting).
-        q.push(" AND NOT ((p.mime_type IS NULL OR lower(p.mime_type) = ANY(")
-            .push_bind(extracting_mimes.to_vec())
-            .push("::text[])) AND p.thumbnails_generated_at IS NULL)");
-        let res = q.build().execute(ex).await.map_err(map_sqlx_error)?;
-        Ok(res.rows_affected())
+        q.push(
+            " AND p.remote_picture_id IS NULL AND p.exif_sync_status <> 'extracting' \
+             RETURNING p.exif_sync_status::text",
+        );
+        let rows: Vec<String> = q
+            .build_query_scalar()
+            .fetch_all(ex)
+            .await
+            .map_err(map_sqlx_error)?;
+        let unsupported = rows
+            .iter()
+            .filter(|s| s.starts_with("unsupported_"))
+            .count() as i64;
+        Ok(BatchExifCounts {
+            edited: rows.len() as i64 - unsupported,
+            unsupported,
+        })
     }
 
     /// Apply a recipient-local EXIF override delta to the **received** pictures in a selection,
@@ -2268,7 +2344,10 @@ fn parse_exif_sync_status(label: &str) -> Option<ExifSyncStatus> {
     match label {
         "synced" => Some(ExifSyncStatus::Synced),
         "pending" => Some(ExifSyncStatus::Pending),
-        "unsupported" => Some(ExifSyncStatus::Unsupported),
+        "extracting" => Some(ExifSyncStatus::Extracting),
+        "extract_failed" => Some(ExifSyncStatus::ExtractFailed),
+        "unsupported_mime" => Some(ExifSyncStatus::UnsupportedMime),
+        "unsupported_file" => Some(ExifSyncStatus::UnsupportedFile),
         "pending_job_creation" => Some(ExifSyncStatus::PendingJobCreation),
         "write_failed" => Some(ExifSyncStatus::WriteFailed),
         _ => None,

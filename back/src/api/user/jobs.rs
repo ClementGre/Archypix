@@ -179,6 +179,23 @@ pub async fn resync_exif(
     Ok(Json(job))
 }
 
+/// `POST /api/authenticated/pictures/{id}/exif/reextract` — re-read the file's EXIF into the row.
+#[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
+pub async fn reextract_exif(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(picture_id): Path<Uuid>,
+) -> Result<Json<Job>, AppError> {
+    let job = services::jobs::reextract_picture_exif(
+        &state.db,
+        &state.routines.pipeline,
+        auth.user_id()?,
+        picture_id,
+    )
+    .await?;
+    Ok(Json(job))
+}
+
 /// `POST /api/authenticated/pictures/{id}/exif/revert` — reset DB EXIF to `file_exif`.
 #[tracing::instrument(skip(auth, state), fields(user_id = %auth.claims.uid.unwrap_or_default(), picture_id = %picture_id))]
 pub async fn revert_exif_to_file(

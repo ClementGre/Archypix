@@ -10,7 +10,7 @@ import {dateSuggestions} from '@/lib/dateSuggestions'
 import {GpsPickerPopover} from './GpsPickerPopover'
 import {type FieldState, FieldStateHint} from './FieldStateHint'
 import {cn, formatDuration, isAudioMime, isVideoMime} from '@/lib/utils'
-import type {ExifField, PictureDetail} from '@/lib/types'
+import type {ExifField, ExifSyncStatus, PictureDetail} from '@/lib/types'
 import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
 
 /** A read-only metadata row (label + value), matching the editable rows' layout. */
@@ -25,10 +25,16 @@ export function ReadOnlyRow({label, value}: { label: string; value: string }) {
     )
 }
 
-const SYNC_BADGE: Record<string, string> = {
+/** Feature 33 §11 — one label per state, so no raw enum ever reaches a user. */
+const SYNC_BADGE: Record<ExifSyncStatus, string> = {
     synced: 'synced',
     pending: 'pending',
-    unsupported: 'n/a',
+    // An internal worklist marker: the drain owes this row a job, which reads as "pending".
+    pending_job_creation: 'pending',
+    extracting: 'reading metadata',
+    extract_failed: 'metadata unread',
+    unsupported_mime: 'n/a',
+    unsupported_file: 'unreadable',
     write_failed: 'write error',
 }
 
@@ -272,10 +278,12 @@ export function ExifInlineEditor({
         retrying,
         revertToFile,
         reverting,
+        reextract,
+        reextracting,
     } = exif
     // Video/audio: ffprobe metadata, not photographic EXIF. Hide the camera-only rows (focal length,
     // aperture, ISO, exposure) and surface a read-only media-info block instead. Edits are DB-only
-    // (the worker can't rewrite container metadata), reflected by the `unsupported` sync status.
+    // (the worker can't rewrite container metadata): the first edit stamps `unsupported_mime`.
     const isMedia = isVideoMime(picture.mime_type) || isAudioMime(picture.mime_type)
     const ex = (picture.exif_data ?? {}) as Record<string, unknown>
     const num = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null)
@@ -291,8 +299,11 @@ export function ExifInlineEditor({
     // recipient-local override.
     const canEdit = true
 
-    const syncLabel = SYNC_BADGE[picture.exif_sync_status] ?? picture.exif_sync_status
+    const syncLabel = SYNC_BADGE[picture.exif_sync_status]
     const writeFailed = owned && picture.exif_sync_status === 'write_failed'
+    // "We never read this file" (feature 33 §4.2): edits are allowed and repair the row, and a
+    // re-extract can settle it. Unlike `unsupported_file`, offering a retry here is not a lie.
+    const extractFailed = owned && picture.exif_sync_status === 'extract_failed'
     const fileExif = (picture.file_exif ?? {}) as Record<string, unknown>
 
     const dirty = (k: keyof ExifDraft) => draft[k] !== initialDraft[k]
@@ -378,11 +389,15 @@ export function ExifInlineEditor({
                                 ? 'border-primary text-primary'
                                 : !owned && overriddenKeys.size > 0
                                     ? 'border-amber-500 text-amber-500'
-                                    : owned && picture.exif_sync_status === 'pending'
+                                    : owned && (picture.exif_sync_status === 'pending'
+                                        || picture.exif_sync_status === 'pending_job_creation'
+                                        || picture.exif_sync_status === 'extracting')
                                         ? 'border-yellow-500 text-yellow-500'
                                         : owned && picture.exif_sync_status === 'write_failed'
                                             ? 'border-red-500 text-red-500'
-                                            : undefined,
+                                            : extractFailed
+                                                ? 'border-amber-500 text-amber-500'
+                                                : undefined,
                         )}
                     >
                         {isDirty
@@ -393,6 +408,18 @@ export function ExifInlineEditor({
                                     : 'local'
                                 : syncLabel}
                     </Badge>
+                    {extractFailed && !isDirty && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[10px]"
+                            onClick={reextract}
+                            disabled={reextracting}
+                            title="Read this file's metadata again"
+                        >
+                            Re-extract
+                        </Button>
+                    )}
                     {writeFailed && !isDirty && (
                         <>
                             <Button

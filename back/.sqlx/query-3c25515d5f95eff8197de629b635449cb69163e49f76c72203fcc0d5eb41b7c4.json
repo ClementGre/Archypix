@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures (id, local_user_id, file_size, exif_sync_status) VALUES ($1, $2, $3, 'synced')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c25515d5f95eff8197de629b635449cb69163e49f76c72203fcc0d5eb41b7c4"
+}

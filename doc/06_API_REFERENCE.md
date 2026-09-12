@@ -728,7 +728,9 @@ type ExifField = "captured_at" | "gps_lat" | "gps_lng" | "gps_alt" | "orientatio
 }
 ```
 
-When `exif_sync_status = "unsupported"`, the format cannot embed EXIF (e.g. PNG). The DB is still updated but no job is enqueued.
+When `exif_sync_status` is `"unsupported_mime"` (the format cannot embed EXIF) or `"unsupported_file"`
+(no engine could open it), the DB is still updated but no job is enqueued. A `409` means the picture
+is `"extracting"` — its metadata is still being read, and an edit would be overwritten by it.
 
 ---
 
@@ -777,6 +779,22 @@ through the `exif_sync` histogram from `POST /pictures/aggregate`.
 Re-enqueue a stuck EXIF sync (picture stuck in `exif_sync_status = "pending"` or `"write_failed"` with no active job).
 
 **Path params:** `id: string`
+
+**Response `200`:** Full `Job` object (the newly enqueued job).
+
+---
+
+#### `POST /api/authenticated/pictures/{id}/exif/reextract`
+
+Re-read the picture's EXIF **from the file** into the row (feature 33 §8) — the opposite direction to
+`/exif/resync`, which pushes the row into the file. Enqueues a `gen_thumbnail` job with
+`is_initial = true` and sets `exif_sync_status = "extracting"`.
+
+**Path params:** `id: string` — must be an owned picture.
+
+**Errors:** `409` when the row is `pending`, `pending_job_creation` or `write_failed` (extraction
+makes the file authoritative and would silently discard the unsynced DB edit — sync or revert it
+first), or when a `gen_thumbnail` job is already in flight for the picture.
 
 **Response `200`:** Full `Job` object (the newly enqueued job).
 
@@ -2371,12 +2389,41 @@ across the library.
   30 minutes (failed/never-run jobs). Non-thumbnailable formats are skipped so they aren't
   re-enqueued forever.
 - `scope: "all"` — every owned picture (e.g. to recompute `content_hash` library-wide).
-- `reextract_exif: true` also re-extracts EXIF from the file (`is_initial`); the default recomputes
-  thumbnails/hashes/`content_hash` only, leaving stored EXIF untouched.
+- `reextract_exif: true` also re-extracts EXIF from the file (`is_initial`) and stamps the touched
+  rows `extracting`, so an edit cannot race the in-flight extraction (feature 33 §8); the default
+  recomputes thumbnails/hashes/`content_hash` only, leaving stored EXIF and status untouched.
 
 Pictures with an in-flight `gen_thumbnail` job are skipped. Received pictures are never included.
 
 **Response `200`:** `{ enqueued: number }`
+
+---
+
+### `POST /api/admin/pictures/recheck-exif`
+
+Re-extract EXIF for pictures whose stored verdict may be stale (feature 33 §8) — after an allowlist
+bump, an engine upgrade or a tool outage. The work is handed to the `exif_recheck` routine, which
+drains the scope in bounded batches (`exif_recheck_batch`), so a library-wide match cannot enqueue a
+million jobs at once. Returns as soon as the sweep is triggered.
+
+**Request:**
+
+```ts
+{
+  scope?: "mime" | "file" | "failed";  // default "mime"
+  mime_types?: string[];               // optional narrowing of `mime` to the MIMEs that just became supported
+}
+```
+
+- `scope: "mime"` — rows in `unsupported_mime`; the normal case after an allowlist bump.
+- `scope: "file"` — rows in `unsupported_file`, after a read-engine upgrade. Rare and mostly futile.
+- `scope: "failed"` — rows in `extract_failed`, after a tool outage.
+
+Rows holding unsynced DB edits (`pending`, `pending_job_creation`, `write_failed`) are never in
+scope, and rows with a `gen_thumbnail` job already in flight are skipped. Each swept row is stamped
+`extracting`.
+
+**Response `200`:** `{ started: true }`
 
 ---
 
@@ -2592,7 +2639,7 @@ All require a worker JWT (`WORKER_JWT_SECRET`, 300s TTL).
 |--------|----------------------------------|--------------------------------------------------------------------------|
 | `GET`  | `/api/worker/jobs/next`          | Claim next pending job; returns job + presigned S3 URLs + `claim_token`  |
 | `POST` | `/api/worker/jobs/{id}/complete` | Report success; backend applies picture updates atomically               |
-| `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true`. `unsupported=true` (feature 31 §6) marks the picture `unsupported` instead of `write_failed` |
+| `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true`. `unsupported=true` (feature 31 §6) marks the picture `unsupported_file` instead of `write_failed`. `exif` carries the read-direction outcome (same shape as on `/complete`), so a permanently failed `is_initial` `gen_thumbnail` still settles the picture instead of stranding it in `extracting` (feature 33 §6.5) |
 
 ### Resolver provisioning (`/api/resolver/*`) & heartbeat (feature 23 §3)
 
@@ -2679,13 +2726,20 @@ type VersioningMode =
     | "original_copy"    // snapshot the original once (on first edit)
     | "full_versioning"; // snapshot before every visual edit
 
-// EXIF sync status
+// EXIF sync status. Every value is set by an observation, never by a schema default (feature 33 §4);
+// the column has no DEFAULT and each insert path states its own.
 type ExifSyncStatus =
-        | "synced"               // DB and file are in sync
+        | "synced"               // no outstanding sync work
         | "pending"              // edit_picture job is in flight reconciling the file
-        | "unsupported"          // format cannot embed EXIF; DB is updated, file is not
         | "pending_job_creation" // batch edit applied set-based; the drain will create the reconcile job (feature 14 §5)
+        | "extracting"           // the file has not been read yet — the only state that refuses edits (409)
+        | "extract_failed"       // the extraction never returned an answer; edits are allowed and repair the row
+        | "unsupported_mime"     // format cannot receive EXIF writes; DB is updated, file is not
+        | "unsupported_file"     // both read engines ran and neither could open the file
         | "write_failed";        // the file write failed permanently; DB and file diverge (feature 31)
+
+// `pending_job_creation` is an internal worklist marker and renders as "pending"; received rows
+// carry no meaningful value (they never reach the write path) and render no sync badge at all.
 
 // Picture variants (thumbnail sizes)
 type PictureVariant = "original" | "small" | "medium" | "large";
@@ -2726,7 +2780,7 @@ items and avoid per-card round-trips.
 `POST /tags/rename`, `PATCH /tagging-services/{id}`, `POST /tagging-services`, `DELETE /tagging-services/{id}`. Tags converge in the background; the
 frontend does not need to poll.
 
-**EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`. A completion can land on `pending_job_creation` (an edit arrived while the job ran — the drain enqueues the follow-up) or on `write_failed`, where the sync failed permanently: show the error and offer Retry (`/exif/resync`) or Revert to file (`/exif/revert`).
+**EXIF sync polling** — after `POST /pictures/{id}/edit`, if `exif_sync_status = "pending"`, poll `GET /jobs/{job_id}` until `completed` or `failed`. A completion can land on `pending_job_creation` (an edit arrived while the job ran — the drain enqueues the follow-up) or on `write_failed`, where the sync failed permanently: show the error and offer Retry (`/exif/resync`) or Revert to file (`/exif/revert`). A row in `extract_failed` offers Re-extract (`/exif/reextract`) instead — nothing ever read the file, so the fix is a read, not a write.
 Use exponential backoff (1s, 2s, 4s, …, stop ~30s).
 
 **Received pictures** — `owned = false` indicates a received picture; `owner_username`/`owner_instance` identify the true owner.

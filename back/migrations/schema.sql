@@ -25,9 +25,12 @@ CREATE TYPE public.picture_deleted_reason AS ENUM (
 CREATE TYPE public.picture_exif_sync_status AS ENUM (
     'synced',
     'pending',
-    'unsupported',
+    'unsupported_mime',
     'pending_job_creation',
-    'write_failed'
+    'write_failed',
+    'unsupported_file',
+    'extracting',
+    'extract_failed'
 );
 
 CREATE TYPE public.public_share_status AS ENUM (
@@ -100,8 +103,7 @@ $$;
 
 CREATE FUNCTION public.update_file_modified_at_column() RETURNS trigger
     LANGUAGE plpgsql
-AS
-$$
+    AS $$
 BEGIN
     NEW.file_modified_at = (now() at time zone 'utc');
     RETURN NEW;
@@ -357,7 +359,7 @@ CREATE TABLE public.pictures (
     thumbnails_generated_at timestamp without time zone,
     file_hash text,
     last_pipeline_run_at timestamp without time zone,
-    exif_sync_status public.picture_exif_sync_status DEFAULT 'synced'::public.picture_exif_sync_status NOT NULL,
+    exif_sync_status public.picture_exif_sync_status NOT NULL,
     owner_deleted_at timestamp without time zone,
     owner_purge_at timestamp without time zone,
     remote_exif_data jsonb,
@@ -371,7 +373,7 @@ CREATE TABLE public.pictures (
     creator_override text,
     remote_updated_at timestamp without time zone,
     original_file_created_at timestamp without time zone,
-    file_exif        jsonb,
+    file_exif jsonb,
     file_modified_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
 );
 
@@ -660,12 +662,7 @@ CREATE TRIGGER trg_user_storage_versions AFTER INSERT OR DELETE OR UPDATE OF fil
 
 CREATE TRIGGER update_hierarchies_updated_at BEFORE UPDATE ON public.hierarchies FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE TRIGGER update_pictures_file_modified_at
-    BEFORE UPDATE
-    ON public.pictures
-    FOR EACH ROW
-    WHEN ((new.file_hash IS DISTINCT FROM old.file_hash))
-EXECUTE FUNCTION public.update_file_modified_at_column();
+CREATE TRIGGER update_pictures_file_modified_at BEFORE UPDATE ON public.pictures FOR EACH ROW WHEN ((new.file_hash IS DISTINCT FROM old.file_hash)) EXECUTE FUNCTION public.update_file_modified_at_column();
 
 CREATE TRIGGER update_pictures_updated_at BEFORE UPDATE ON public.pictures FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 

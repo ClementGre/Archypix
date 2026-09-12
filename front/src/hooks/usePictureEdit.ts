@@ -6,6 +6,7 @@ import {
     editPicture,
     editReceivedExif,
     getJob,
+    reextractExif,
     resyncExif,
     restorePicture,
     revertExifToFile,
@@ -87,6 +88,33 @@ export function useRetryExifSync(pictureId: string) {
         },
     })
     return {mutation, syncing}
+}
+
+/**
+ * Re-read the file's EXIF into the row (feature 33 §8). Unlike {@link useRetryExifSync} this pushes
+ * the *file* into the DB, so it 409s on a row whose edits have not reached the file yet.
+ */
+export function useReextractExif(pictureId: string) {
+    const queryClient = useQueryClient()
+    const [extracting, setExtracting] = useState(false)
+    const mutation = useMutation({
+        mutationFn: () => reextractExif(pictureId),
+        onSuccess: async (job) => {
+            setExtracting(true)
+            try {
+                await pollUntilDone(job.id)
+                invalidatePictures(queryClient)
+            } catch (err) {
+                toast.error('EXIF re-extraction failed', {description: apiErrorMessage(err)})
+            } finally {
+                setExtracting(false)
+            }
+        },
+        onError: (error: unknown) => {
+            toast.error('Could not re-extract EXIF', {description: apiErrorMessage(error)})
+        },
+    })
+    return {mutation, extracting}
 }
 
 export function useRevertExifToFile(pictureId: string) {

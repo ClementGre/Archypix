@@ -53,10 +53,12 @@ ImageMagick and ffmpeg stay.
 
 ExifTool is a **Perl process spawned per file**, vs. `rexiv2`'s in-process C call. Two implications:
 
-1. **Per-file latency** — Perl startup is ~tens-to-hundreds of ms; today image extraction is
-   in-process and fast, and every upload hits it. Mitigation: ExifTool's **`-stay_open True`** batch
-   mode (one long-lived ExifTool process fed files over a pipe) removes nearly all startup cost, at
-   the price of managing a persistent subprocess in the worker.
+1. ~~**Per-file latency**~~ — **resolved**: the worker already runs one `-stay_open` child (feature 31
+   for BMFF writes, feature 33 for reads), so Perl startup is paid once. A different cost replaced it:
+   that child sits behind a `Mutex`, so making ExifTool the *only* engine turns metadata reads into a
+   global serialization point across `max_concurrent_jobs`, with head-of-line blocking when one large
+   file is parsed under the lock (33 §3.4). The prerequisite is now a **pool of N stay-open
+   processes**, not a latency benchmark.
 2. **Runtime weight** — adds a Perl interpreter to the worker image (tens of MB). Minor.
 
 Video container write-back also inherits the costs noted in `04`/`09`: a metadata edit means a full
@@ -85,7 +87,11 @@ write-back would likely stay **opt-in**, not the automatic per-edit behaviour im
 
 ## 6. Recommendation
 
-Attractive consolidation — it deletes code + native deps and unlocks video write-back — but the one
-thing to weigh is extraction throughput (per-file Perl spawn vs in-process library). Worth doing if
-per-upload latency is acceptable or the `-stay_open` plumbing is built; otherwise the in-process
-`rexiv2` read path remains nicer for images. **No action until that call is made.**
+Attractive consolidation — it deletes code + native deps and unlocks video write-back — but what to
+weigh is no longer per-file latency (§4.1): it is the single stay-open child's mutex, which needs a
+process pool before ExifTool can be the primary engine. A second cost surfaced with feature 33: every
+`file_exif` snapshot in the library was produced by rexiv2, so switching primaries re-reads each
+picture with different value shapes on its next extraction and lights diff badges library-wide —
+going ExifTool-only requires a re-extract-everything backfill. Step 2 is already done: feature 33
+landed `exiftool_read` in the shape this sketch proposed, so what remains is a switch, not a rewrite.
+**No action until that call is made.**

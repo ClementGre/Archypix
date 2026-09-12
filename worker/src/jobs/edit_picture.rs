@@ -2,7 +2,7 @@ use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
 use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
 use archypix_common::job::EditPictureConfig;
-use archypix_common::transfer::{CompleteJobRequest, PresignedWrites};
+use archypix_common::transfer::{CompleteJobRequest, ExifExtraction, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -109,11 +109,12 @@ pub async fn handle(
     // Read back the physical file EXIF after the write so the backend can record `file_exif`.
     let extracted = if config.exif.is_some() {
         let path = file_path.clone();
+        let mime = mime_type.clone();
         let span = tracing::Span::current();
-        Some(
+        ExifExtraction::Extracted(
             tokio::task::spawn_blocking(move || {
                 let _guard = span.enter();
-                exif_mod::extract_exif(&path)
+                exif_mod::read_metadata(&path, mime.as_deref())
             })
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?
@@ -127,7 +128,7 @@ pub async fn handle(
             })?,
         )
     } else {
-        None
+        ExifExtraction::NotAttempted
     };
 
     // ── Upload modified original (last fallible step) ────────────────────────

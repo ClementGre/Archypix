@@ -43,12 +43,19 @@ async fn seed_owned(
     thumbnails_done: bool,
 ) -> Uuid {
     let id = Uuid::new_v4();
+    // Mirror the ingest model (feature 33 §4.1): a format carrying no readable metadata is stamped
+    // `unsupported_mime` at insert; everything else is `extracting` until its extraction lands.
+    let status = match (thumbnails_done, jobs::ingest_exif_status(Some(mime))) {
+        (_, ExifSyncStatus::UnsupportedMime) => ExifSyncStatus::UnsupportedMime,
+        (true, _) => ExifSyncStatus::Synced,
+        (false, s) => s,
+    };
     sqlx::query!(
         r#"INSERT INTO pictures
              (id, local_user_id, mime_type, file_size, file_hash, captured_at,
-              gps_lat, gps_lng, exif_data, thumbnails_generated_at)
+              gps_lat, gps_lng, exif_data, thumbnails_generated_at, exif_sync_status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                   CASE WHEN $10 THEN (now() at time zone 'utc') ELSE NULL END)"#,
+                   CASE WHEN $10 THEN (now() at time zone 'utc') ELSE NULL END, $11)"#,
         id,
         user,
         mime,
@@ -59,6 +66,7 @@ async fn seed_owned(
         gps.map(|g| g.1),
         exif,
         thumbnails_done,
+        status as ExifSyncStatus,
     )
     .execute(db)
     .await
@@ -77,8 +85,8 @@ async fn seed_received(
     sqlx::query!(
         r#"INSERT INTO pictures
              (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
-              mime_type, file_size, remote_exif_data)
-           VALUES ($1, $2, $3, $4, 'remote.test', 'image/jpeg', 100, $5)"#,
+              mime_type, file_size, remote_exif_data, exif_sync_status)
+           VALUES ($1, $2, $3, $4, 'remote.test', 'image/jpeg', 100, $5, 'synced')"#,
         id,
         recipient,
         Uuid::new_v4().to_string(),
@@ -527,23 +535,6 @@ async fn batch_creator_owned_and_received(db: PgPool) {
     assert!(recv_pic.creator_override.is_none());
 }
 
-/// The lower-cased MIME whitelists the batch writer partitions on.
-fn exif_mimes() -> Vec<String> {
-    archypix_common::mime::MIME_TYPES_EXIF
-        .iter()
-        .map(|m| m.to_lowercase())
-        .collect()
-}
-
-fn extracting_mimes() -> Vec<String> {
-    archypix_common::mime::MIME_TYPES_EXIF
-        .iter()
-        .chain(archypix_common::mime::MIME_TYPES_IMAGE_THUMBNAIL)
-        .chain(archypix_common::mime::MIME_TYPES_VIDEO)
-        .map(|m| m.to_lowercase())
-        .collect()
-}
-
 // ── Deferred EXIF jobs ────────────────────────────────────────────────────────
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -568,19 +559,10 @@ async fn owned_batch_exif_defers_then_drain_creates_job(db: PgPool) {
         gps_lng: Some(2.0),
         ..Default::default()
     };
-    let n = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &set,
-        &[],
-        true,
-        &exif_mimes(),
-        &extracting_mimes(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(n, 1);
+    let counts = PictureRepository::batch_apply_exif_owned_selection(&db, user, &sel, &set, &[])
+        .await
+        .unwrap();
+    assert_eq!((counts.edited, counts.unsupported), (1, 0));
 
     let pic_row = PictureRepository::find_by_id(&db, pic)
         .await
@@ -609,6 +591,8 @@ async fn owned_batch_exif_defers_then_drain_creates_job(db: PgPool) {
     assert_eq!(jobs::create_deferred_exif_jobs(&db, 10).await.unwrap(), 0);
 }
 
+/// Feature 33 §10: the batch partitions on the stored verdict, which ingest stamped from the MIME
+/// (a GIF carries no EXIF) — the same split the old MIME whitelist produced, now without the list.
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
@@ -624,36 +608,32 @@ async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
         true,
     )
     .await;
+    assert_eq!(
+        jobs::ingest_exif_status(Some("image/gif")),
+        ExifSyncStatus::UnsupportedMime,
+        "ingest stamps the MIME verdict, so the batch never needs the allowlist",
+    );
     let sel = ResolvedSelection::explicit(vec![pic]);
     let set = FullExif {
         orientation: Some(3),
         ..Default::default()
     };
-    let n = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &set,
-        &[],
-        false,
-        &exif_mimes(),
-        &extracting_mimes(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(n, 1, "gif is not in the EXIF whitelist");
+    let counts = PictureRepository::batch_apply_exif_owned_selection(&db, user, &sel, &set, &[])
+        .await
+        .unwrap();
+    assert_eq!((counts.edited, counts.unsupported), (0, 1));
     let pic_row = PictureRepository::find_by_id(&db, pic)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::UnsupportedMime);
     assert_eq!(pic_row.orientation, Some(3));
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_marked_unsupported_stays_terminal_on_re_edit(db: PgPool) {
-    // A jpeg the worker rejected: the MIME whitelist would say "supported", but `unsupported` is
-    // terminal (feature 31 §6) — the edit must land DB-only, with no new reconcile job.
+    // A jpeg the worker could not open: the MIME says "supported", but `unsupported_file` is
+    // terminal (31 §6 / 33 §4.4) — the edit must land DB-only, with no new reconcile job.
     let user = common::seed_user(&db, "alice", "pass").await;
     let pic = seed_owned(
         &db,
@@ -667,7 +647,7 @@ async fn worker_marked_unsupported_stays_terminal_on_re_edit(db: PgPool) {
         true,
     )
     .await;
-    PictureRepository::set_exif_sync_status(&db, pic, ExifSyncStatus::Unsupported)
+    PictureRepository::set_exif_sync_status(&db, pic, ExifSyncStatus::UnsupportedFile)
         .await
         .unwrap();
 
@@ -676,41 +656,20 @@ async fn worker_marked_unsupported_stays_terminal_on_re_edit(db: PgPool) {
         orientation: Some(3),
         ..Default::default()
     };
-    // The "supported" pass must skip the row entirely.
-    let n = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &set,
-        &[],
-        true,
-        &exif_mimes(),
-        &extracting_mimes(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(n, 0, "terminal unsupported row is not re-queued");
-
-    // The DB-only pass picks it up instead.
-    let n = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &set,
-        &[],
-        false,
-        &exif_mimes(),
-        &extracting_mimes(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(n, 1, "the edit still lands in the DB");
+    let counts = PictureRepository::batch_apply_exif_owned_selection(&db, user, &sel, &set, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        (counts.edited, counts.unsupported),
+        (0, 1),
+        "the edit lands in the DB but is never re-queued"
+    );
 
     let pic_row = PictureRepository::find_by_id(&db, pic)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::UnsupportedFile);
     assert_eq!(pic_row.orientation, Some(3));
     assert_eq!(
         jobs::create_deferred_exif_jobs(&db, 10).await.unwrap(),
@@ -977,26 +936,17 @@ async fn batch_exif_skips_pictures_still_extracting(db: PgPool) {
         ..Default::default()
     };
 
-    let n = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &set,
-        &[],
-        true,
-        &exif_mimes(),
-        &extracting_mimes(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(n, 1, "only the extracted picture is edited");
+    let counts = PictureRepository::batch_apply_exif_owned_selection(&db, user, &sel, &set, &[])
+        .await
+        .unwrap();
+    assert_eq!(counts.edited, 1, "only the extracted picture is edited");
 
     let skipped = PictureRepository::find_by_id(&db, extracting)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(skipped.orientation, None);
-    assert_eq!(skipped.exif_sync_status, ExifSyncStatus::Synced);
+    assert_eq!(skipped.exif_sync_status, ExifSyncStatus::Extracting);
     let edited = PictureRepository::find_by_id(&db, extracted)
         .await
         .unwrap()

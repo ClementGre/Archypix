@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures (id, local_user_id, captured_at, mime_type, exif_data, exif_sync_status)\n           VALUES ($1, $2, '2024-07-15 10:00:00', 'image/jpeg',\n                   '{\"camera_brand\": \"FUJIFILM\", \"iso_speed\": 400,\n                     \"exposure_time_num\": 1, \"exposure_time_den\": 2}'::jsonb, 'synced')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eea9b2e90b018bb5decb6e87e2222dce3546c6fe19e09061b8bd7ebb9b3fb745"
+}

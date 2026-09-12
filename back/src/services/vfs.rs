@@ -484,6 +484,13 @@ impl<'a> Vfs<'a> {
                     Some(hash),
                 )
                 .await?;
+                // The new bytes are the source of truth until the extraction reads them (33 §6.2).
+                PictureRepository::set_exif_sync_status(
+                    &self.state.db,
+                    pid,
+                    crate::domain::picture::ExifSyncStatus::Extracting,
+                )
+                .await?;
                 self.state.routines.pipeline.trigger_debounced(self.user_id);
                 return Ok(false);
             }
@@ -565,6 +572,7 @@ impl<'a> Vfs<'a> {
             None,
             None,
             original_file_created_at,
+            crate::services::jobs::ingest_exif_status(content_type),
         )
         .await?;
         // Persist the inline hash so the ETag is correct and a quick re-upload dedupes (§8).

@@ -45,6 +45,7 @@ pub fn routes() -> Router<AppState> {
             "/pictures/regenerate-thumbnails",
             post(handlers::regenerate_thumbnails),
         )
+        .route("/pictures/recheck-exif", post(handlers::recheck_exif))
         // ── Share management ──────────────────────────────────────────────────
         .route("/shares/errored", get(handlers::list_errored_shares))
         .route(

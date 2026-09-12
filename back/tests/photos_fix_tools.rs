@@ -30,7 +30,8 @@ async fn seed_named(
 ) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO pictures (id, local_user_id, filename, captured_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO pictures (id, local_user_id, filename, captured_at, exif_sync_status)
+         VALUES ($1, $2, $3, $4, 'synced')",
     )
     .bind(id)
     .bind(user)
@@ -82,6 +83,7 @@ async fn original_file_created_at_round_trips(db: PgPool) {
         None,
         Some(dt(2019, 5, 5)), // captured_at
         Some(dt(2018, 1, 2)), // original_file_created_at (source file date)
+        archypix_back::domain::picture::ExifSyncStatus::Extracting,
     )
     .await
     .unwrap();

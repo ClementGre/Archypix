@@ -11,6 +11,9 @@ pub struct StaleReset {
     pub picture_id: Option<Uuid>,
     pub job_type: JobType,
     pub status: JobStatus,
+    /// The job's raw config, so a caller can tell *what* the reset job was doing without a second
+    /// query (e.g. whether a `gen_thumbnail` was an extraction).
+    pub config: serde_json::Value,
 }
 
 pub struct JobRepository;
@@ -254,6 +257,26 @@ impl JobRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// Whether a `gen_thumbnail` job is in flight (`pending` / `processing`) for a picture. The
+    /// guard the re-extraction paths use in place of an idempotency key (feature 33 §8).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
+    pub async fn has_inflight_thumbnail<'e, E>(ex: E, picture_id: Uuid) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let found = sqlx::query_scalar!(
+            "SELECT 1 FROM jobs
+              WHERE picture_id = $1 AND job_type = 'gen_thumbnail'
+                AND status IN ('pending', 'processing')
+              LIMIT 1",
+            picture_id,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(found.is_some())
+    }
+
     /// Find the in-flight (`pending` / `processing`) `edit_picture` job for a picture, if any.
     /// At most one can exist (enforced by `uq_edit_picture_inflight`). Drives the §5 concurrency
     /// rule: fold into a `pending` job, or defer enqueue past a `processing` one.
@@ -399,7 +422,8 @@ impl JobRepository {
                RETURNING id,
                          picture_id,
                          job_type AS "job_type: JobType",
-                         status   AS "status: JobStatus""#,
+                         status   AS "status: JobStatus",
+                         config   AS "config: serde_json::Value""#,
             timeout_secs as f64,
         )
         .fetch_all(db)
@@ -412,6 +436,7 @@ impl JobRepository {
                 picture_id: r.picture_id,
                 job_type: r.job_type,
                 status: r.status,
+                config: r.config,
             })
             .collect())
     }

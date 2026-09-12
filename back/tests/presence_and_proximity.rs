@@ -30,8 +30,8 @@ async fn seed(
         None => (None, None),
     };
     sqlx::query(
-        "INSERT INTO pictures (id, local_user_id, captured_at, gps_lat, gps_lng)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO pictures (id, local_user_id, captured_at, gps_lat, gps_lng, exif_sync_status)
+         VALUES ($1, $2, $3, $4, $5, 'synced')",
     )
     .bind(id)
     .bind(user)

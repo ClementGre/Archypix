@@ -345,8 +345,8 @@ async fn loop_prevention_does_not_reannounce_recipient_owned_picture(db: PgPool)
     // Insert a received picture on Alice owned by bob@global, tagged Travel.
     let pic = Uuid::new_v4();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain)
-         VALUES ($1, $2, $3, 'bob', $4)",
+        "INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain, exif_sync_status)
+         VALUES ($1, $2, $3, 'bob', $4, 'synced')",
         pic,
         alice,
         Uuid::new_v4().to_string(),
@@ -387,8 +387,8 @@ async fn legacy_self_share_is_inert(db: PgPool) {
     let owned = common::seed_picture_with_tag(&db, alice, "Travel").await;
     let received = Uuid::new_v4();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain)
-         VALUES ($1, $2, $3, 'bob', $4)",
+        "INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain, exif_sync_status)
+         VALUES ($1, $2, $3, 'bob', $4, 'synced')",
         received,
         alice,
         Uuid::new_v4().to_string(),

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 1 FROM jobs\n              WHERE picture_id = $1 AND job_type = 'gen_thumbnail'\n                AND status IN ('pending', 'processing')\n              LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ce1bdb326de6f101dab6fb336b07709378952cd93486d89f07c525b2fe77e9a6"
+}

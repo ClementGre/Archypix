@@ -23,7 +23,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 async fn seed_sized_picture(db: &PgPool, user_id: Uuid, size: i64) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, file_size) VALUES ($1, $2, $3)",
+        "INSERT INTO pictures (id, local_user_id, file_size, exif_sync_status) VALUES ($1, $2, $3, 'synced')",
         id,
         user_id,
         size,
@@ -95,8 +95,8 @@ async fn triggers_track_originals_versions_and_trash(db: PgPool) {
 async fn received_pictures_are_never_billed(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pw").await;
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, file_size, remote_picture_id, owner_username, owner_instance_domain)
-         VALUES ($1,$2,$3,'remote-1','bob','other.test')",
+        "INSERT INTO pictures (id, local_user_id, file_size, remote_picture_id, owner_username, owner_instance_domain, exif_sync_status)
+         VALUES ($1,$2,$3,'remote-1','bob','other.test','synced')",
         Uuid::new_v4(),
         user,
         5_000_000i64,

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pictures\n             (id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n              mime_type, file_size, remote_exif_data, exif_sync_status)\n           VALUES ($1, $2, $3, $4, 'remote.test', 'image/jpeg', 100, $5, 'synced')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2cbf2407f71e12484621fc1a2f75296e7f663be55520b8d616a20d38f20d55b3"
+}

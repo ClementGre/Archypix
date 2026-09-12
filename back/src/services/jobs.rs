@@ -10,10 +10,7 @@ use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
 use crate::services::aggregate::DryRun;
 use archypix_common::error::{AppError, map_sqlx_error};
-use archypix_common::mime::{
-    MIME_TYPES_EXIF, MIME_TYPES_IMAGE_THUMBNAIL, MIME_TYPES_VIDEO, supports_exif,
-    supports_thumbnail,
-};
+use archypix_common::mime::{supports_exif, supports_video};
 use archypix_common::settings::Settings;
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
@@ -52,6 +49,28 @@ where
     .await
 }
 
+/// The status a freshly ingested row starts in (feature 33 §4.1). An extraction job follows, except
+/// for a format that carries no readable metadata at all — pre-stamping those avoids a pointless
+/// edit-refusal window. An unknown MIME is `Extracting`: the worker attempts the read anyway and
+/// resolves it to a real verdict.
+pub fn ingest_exif_status(mime_type: Option<&str>) -> ExifSyncStatus {
+    match mime_type {
+        Some(m) if !supports_exif(m) && !supports_video(m) => ExifSyncStatus::UnsupportedMime,
+        _ => ExifSyncStatus::Extracting,
+    }
+}
+
+/// The status a physical copy inherits (feature 33 §4.1): the source's verdict about the identical
+/// bytes, except that a source nothing ever read successfully has no verdict to lend — the copy
+/// takes `extract_failed`, which keeps edits allowed and lets a re-extract settle it.
+pub fn copy_exif_status(source: ExifSyncStatus) -> ExifSyncStatus {
+    if source.never_read() {
+        ExifSyncStatus::ExtractFailed
+    } else {
+        source
+    }
+}
+
 /// Admin: (re)enqueue `gen_thumbnail` jobs for owned pictures (feature 11 helper).
 ///
 /// `only_missing` restricts to pictures with a thumbnailable MIME, no thumbnail, and older than
@@ -74,6 +93,7 @@ pub async fn regenerate_thumbnails(
         PictureRepository::find_for_thumbnail_regen(db, only_missing, &thumbnailable, limit)
             .await?;
     let mut enqueued = 0usize;
+    let mut reextracted: Vec<Uuid> = Vec::new();
     for (picture_id, owner_id) in targets {
         // No idempotency key (the initial-upload key may already exist); the in-flight guard in the
         // query prevents duplicate concurrent jobs.
@@ -86,7 +106,18 @@ pub async fn regenerate_thumbnails(
             .is_ok()
         {
             enqueued += 1;
+            reextracted.push(picture_id);
         }
+    }
+    // A re-extraction is authoritative, so the rows must refuse edits until it lands (§8, §12 E).
+    if reextract_exif {
+        PictureRepository::set_exif_sync_status_bulk(
+            db,
+            &reextracted,
+            None,
+            ExifSyncStatus::Extracting,
+        )
+        .await?;
     }
     Ok(enqueued)
 }
@@ -162,17 +193,9 @@ pub async fn edit_pictures_exif(
                 "Cannot edit picture {id}: received via federation"
             )));
         }
-        // §11.2: reject edits until the initial extraction has landed, so it can't race/overwrite the
-        // edit. `thumbnails_generated_at` is stamped whenever the worker extracts EXIF or a thumbnail,
-        // so it only ever lands for formats the worker touches — a format that supports neither is
-        // never stamped, and its edit is a DB-only `unsupported` write with no extraction to race.
-        // An unknown MIME is treated as still-extracting (the worker attempts EXIF extraction anyway).
-        let extracts = picture
-            .mime_type
-            .as_deref()
-            .map(|m| supports_exif(m) || supports_thumbnail(m))
-            .unwrap_or(true);
-        if extracts && picture.thumbnails_generated_at.is_none() {
+        // 04 §11.2: reject edits until the extraction has landed, so it can't race/overwrite the
+        // edit. `extracting` is the only state that refuses them (feature 33 §4.1).
+        if picture.exif_sync_status == ExifSyncStatus::Extracting {
             return Err(AppError::Conflict(format!(
                 "Picture {id} is still processing; try again once extraction completes"
             )));
@@ -194,19 +217,25 @@ pub async fn edit_pictures_exif(
     for picture in &pictures {
         let new_state = picture.full_exif().applied(&set, &clear);
 
-        // MIME preflight: a format that cannot embed EXIF gets a DB-only edit, no job. `unsupported`
-        // is terminal (feature 31 §6) — a worker already proved this file cannot carry EXIF, so a
-        // re-edit must not flip it back to `pending` and re-enqueue a doomed job.
-        let supported = picture
+        // The one derivation feature 33 §10 keeps: re-checking `supports_exif` on the already-loaded
+        // row is free, and closes the window between an allowlist change and the recheck sweep. This
+        // is where a video first becomes `unsupported_mime` (§4.3). Both terminal verdicts suppress
+        // job creation, and a file verdict is never relabelled as a MIME one.
+        //
+        // An unknown MIME is treated as writable, matching `ingest_exif_status` and the worker's
+        // read: absence of a MIME is a gap in our metadata, not evidence about the file, and
+        // `unsupported_mime` is terminal — stamping it from missing information would suppress
+        // every future job on a guess. Attempt the write and let the worker return a real verdict.
+        let writable = picture
             .mime_type
             .as_deref()
             .map(supports_exif)
-            .unwrap_or(false)
-            && picture.exif_sync_status != ExifSyncStatus::Unsupported;
-        let status = if supported {
-            ExifSyncStatus::Pending
-        } else {
-            ExifSyncStatus::Unsupported
+            .unwrap_or(true);
+        let supported = writable && !picture.exif_sync_status.suppresses_jobs();
+        let status = match picture.exif_sync_status {
+            _ if supported => ExifSyncStatus::Pending,
+            ExifSyncStatus::UnsupportedFile => ExifSyncStatus::UnsupportedFile,
+            _ => ExifSyncStatus::UnsupportedMime,
         };
 
         PictureRepository::write_exif_snapshot(&mut *tx, picture.id, &new_state, status).await?;
@@ -305,6 +334,115 @@ pub async fn resync_picture_exif(
     Ok(job)
 }
 
+/// Re-read a picture's EXIF from the file (feature 33 §8). Distinct from [`resync_picture_exif`],
+/// which pushes the DB the other way: extraction makes the **file** authoritative (31 §5), so it is
+/// refused while the row holds an unsynced DB edit that would be silently discarded.
+///
+/// Carries no idempotency key — `gen_thumbnail_initial:{picture_id}` is permanent and globally
+/// unique, so reusing it would 409 every re-extraction until job cleanup prunes the original row.
+/// An in-flight `gen_thumbnail` guard takes its place.
+#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+pub async fn reextract_picture_exif(
+    db: &PgPool,
+    waker: &RoutineHandle<Uuid>,
+    user_id: Uuid,
+    picture_id: Uuid,
+) -> Result<Job, AppError> {
+    let picture = PictureRepository::find_by_id(db, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if picture.local_user_id != user_id || !picture.is_owned() {
+        return Err(AppError::NotFound);
+    }
+    if matches!(
+        picture.exif_sync_status,
+        ExifSyncStatus::Pending | ExifSyncStatus::PendingJobCreation | ExifSyncStatus::WriteFailed
+    ) {
+        return Err(AppError::Conflict(
+            "picture has EXIF edits that have not reached the file; sync or revert them first"
+                .into(),
+        ));
+    }
+    if JobRepository::has_inflight_thumbnail(db, picture_id).await? {
+        return Err(AppError::Conflict(
+            "an extraction job is already in flight for this picture".into(),
+        ));
+    }
+
+    let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+    let config = JobConfig::GenThumbnail(GenThumbnailConfig {
+        picture_id,
+        is_initial: true,
+    });
+    let job = JobRepository::create(&mut *tx, user_id, Some(picture_id), &config, None).await?;
+    PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Extracting)
+        .await?;
+    tx.commit().await.map_err(map_sqlx_error)?;
+    waker.trigger_debounced(user_id);
+    Ok(job)
+}
+
+/// Which worklist an admin EXIF recheck sweep drains (feature 33 §8).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecheckScope {
+    /// Rows the MIME preflight rejected — the normal case after an allowlist bump.
+    #[default]
+    Mime,
+    /// Rows no engine could open, after an engine upgrade. Rare and mostly futile.
+    File,
+    /// Rows whose extraction never returned, after a tool outage.
+    Failed,
+}
+
+impl RecheckScope {
+    fn status(self) -> ExifSyncStatus {
+        match self {
+            Self::Mime => ExifSyncStatus::UnsupportedMime,
+            Self::File => ExifSyncStatus::UnsupportedFile,
+            Self::Failed => ExifSyncStatus::ExtractFailed,
+        }
+    }
+}
+
+/// One bounded tick of the admin EXIF recheck sweep (feature 33 §8): enqueue a re-extraction for up
+/// to `limit` rows in `scope`, stamping each `extracting`. Returns the number enqueued; a short
+/// count means the worklist is drained.
+///
+/// The sweep-scoped idempotency key is idempotent within one sweep and never against the previous
+/// one. Rows holding unsynced DB edits are never in scope, so no edit can be discarded.
+#[tracing::instrument(skip(db, mime_types))]
+pub async fn recheck_exif_batch(
+    db: &PgPool,
+    scope: RecheckScope,
+    mime_types: Option<&[String]>,
+    sweep_id: Uuid,
+    limit: i64,
+) -> Result<usize, AppError> {
+    let targets =
+        PictureRepository::find_by_exif_sync_status(db, &[scope.status()], mime_types, limit)
+            .await?;
+    let mut enqueued = Vec::new();
+    for (picture_id, owner_id) in targets {
+        let config = JobConfig::GenThumbnail(GenThumbnailConfig {
+            picture_id,
+            is_initial: true,
+        });
+        let key = format!("gen_thumbnail_reextract:{picture_id}:{sweep_id}");
+        if JobRepository::create(db, owner_id, Some(picture_id), &config, Some(&key))
+            .await
+            .is_ok()
+        {
+            enqueued.push(picture_id);
+        }
+    }
+    PictureRepository::set_exif_sync_status_bulk(db, &enqueued, None, ExifSyncStatus::Extracting)
+        .await?;
+    Ok(enqueued.len())
+}
+
 /// Reset a picture's DB EXIF to its persisted physical-file snapshot (`file_exif`), the user's way
 /// out of a `write_failed` divergence (feature 31 §4). Returns the updated row.
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
@@ -368,24 +506,6 @@ pub enum ExifBatchOutcome {
     },
 }
 
-/// The lower-cased MIME whitelist for formats that embed EXIF (feeds the set-based partition).
-fn supported_mimes() -> Vec<String> {
-    MIME_TYPES_EXIF.iter().map(|m| m.to_lowercase()).collect()
-}
-
-/// The lower-cased MIMEs the worker extracts metadata from. A row with one of these is still
-/// extracting until `thumbnails_generated_at` lands, and must not be edited before then (04 §11.2)
-/// — the extraction would overwrite the edit. Mirrors the per-picture guard in
-/// [`edit_pictures_exif`].
-fn extracting_mimes() -> Vec<String> {
-    MIME_TYPES_EXIF
-        .iter()
-        .chain(MIME_TYPES_IMAGE_THUMBNAIL)
-        .chain(MIME_TYPES_VIDEO)
-        .map(|m| m.to_lowercase())
-        .collect()
-}
-
 /// Batch EXIF edit over a [`ResolvedSelection`] (feature 14 §5–§6). Owned pictures take the
 /// **deferred-job** write-through (a single set-based UPDATE that stamps `pending_job_creation`; the
 /// drain creates the reconcile jobs). Received pictures take the recipient-local override merge (also
@@ -422,14 +542,11 @@ pub async fn batch_edit_exif_selection(
             null_clear.push(f);
         }
     }
-    let mimes = supported_mimes();
-    let extracting = extracting_mimes();
-
     if dry_run {
         let affected = PictureRepository::count_selection(db, user_id, sel).await?;
         let owned_total = PictureRepository::count_owned_selection(db, user_id, sel).await?;
         let owned_unsupported =
-            PictureRepository::count_owned_unsupported_selection(db, user_id, sel, &mimes).await?;
+            PictureRepository::count_owned_unsupported_selection(db, user_id, sel).await?;
         let received_total = affected - owned_total;
         let suggested = if mode == BatchExifMode::Suggest {
             PictureRepository::count_selection_received_suggestable(db, user_id, sel).await?
@@ -446,30 +563,17 @@ pub async fn batch_edit_exif_selection(
         }));
     }
 
-    // ── Owned: deferred write-through, set-based (supported + unsupported partitions) ──
+    // ── Owned: deferred write-through, set-based (one statement, status partition) ──
     let mut tx = db.begin().await.map_err(map_sqlx_error)?;
-    let edited = PictureRepository::batch_apply_exif_owned_selection(
+    let counts = PictureRepository::batch_apply_exif_owned_selection(
         &mut *tx,
         user_id,
         sel,
         &set,
         &null_clear,
-        true,
-        &mimes,
-        &extracting,
     )
-    .await? as i64;
-    let unsupported = PictureRepository::batch_apply_exif_owned_selection(
-        &mut *tx,
-        user_id,
-        sel,
-        &set,
-        &null_clear,
-        false,
-        &mimes,
-        &extracting,
-    )
-    .await? as i64;
+    .await?;
+    let (edited, unsupported) = (counts.edited, counts.unsupported);
     tx.commit().await.map_err(map_sqlx_error)?;
     if edited > 0 {
         // New `pending_job_creation` rows → wake the drain to create their reconcile jobs.

@@ -12,11 +12,11 @@
 //! Both are `()`-keyed sweep-only routines (`infra::routine`): no manual trigger, the default sweep
 //! runs `run(())` on each interval tick.
 
-use crate::domain::job::{JobStatus, JobType};
+use crate::domain::job::{JobConfig, JobStatus, JobType};
 use crate::domain::picture::ExifSyncStatus;
 use crate::infra::routine::Routine;
 use crate::infra::settings::keys;
-use crate::repository::job::JobRepository;
+use crate::repository::job::{JobRepository, StaleReset};
 use crate::repository::picture::PictureRepository;
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
@@ -56,15 +56,31 @@ impl Routine for JobWatchdogRoutine {
     async fn run(&self, _input: ()) -> anyhow::Result<()> {
         let timeout_secs = self.settings.get(keys::JOB_PROCESSING_TIMEOUT_SECS);
         let reset = JobRepository::reset_stale(&self.db, timeout_secs).await?;
-        // An EXIF reconcile whose retry budget ran out never reaches `fail_job`, so mark its
-        // picture here — otherwise it would sit in `pending` with no job (feature 31 §3.3).
-        for job in reset
-            .iter()
-            .filter(|j| j.status == JobStatus::Failed && j.job_type == JobType::EditPicture)
-        {
-            if let Some(pid) = job.picture_id {
-                PictureRepository::set_exif_sync_status(&self.db, pid, ExifSyncStatus::WriteFailed)
+        // A job whose retry budget ran out never reaches `fail_job`, so mark its picture here —
+        // otherwise it would sit in a transient state with no job. A reconcile is `write_failed`
+        // (31 §3.3); an extraction is `extract_failed` (33 §4.2), guarded so a re-extraction that
+        // succeeded meanwhile is not stomped.
+        for job in reset.iter().filter(|j| j.status == JobStatus::Failed) {
+            let Some(pid) = job.picture_id else { continue };
+            match job.job_type {
+                JobType::EditPicture => {
+                    PictureRepository::set_exif_sync_status(
+                        &self.db,
+                        pid,
+                        ExifSyncStatus::WriteFailed,
+                    )
                     .await?;
+                }
+                JobType::GenThumbnail if is_extraction(job) => {
+                    PictureRepository::set_exif_sync_status_bulk(
+                        &self.db,
+                        &[pid],
+                        Some(ExifSyncStatus::Extracting),
+                        ExifSyncStatus::ExtractFailed,
+                    )
+                    .await?;
+                }
+                _ => {}
             }
         }
         if !reset.is_empty() {
@@ -72,6 +88,15 @@ impl Routine for JobWatchdogRoutine {
         }
         Ok(())
     }
+}
+
+/// Whether a `gen_thumbnail` job was asked to (re-)extract EXIF — a `reextract_exif = false`
+/// thumbnail regeneration reports nothing about the read direction.
+fn is_extraction(job: &StaleReset) -> bool {
+    matches!(
+        serde_json::from_value::<JobConfig>(job.config.clone()),
+        Ok(JobConfig::GenThumbnail(cfg)) if cfg.is_initial
+    )
 }
 
 /// Periodically deletes terminal job rows older than `retention_secs`.

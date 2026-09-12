@@ -104,10 +104,15 @@ async fn enqueue_edit_rejects_picture_not_owned_by_user(db: PgPool) {
     );
 }
 
+/// Feature 33 §4.1: `extracting` is the only state that refuses edits.
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn enqueue_edit_rejects_still_processing_picture(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
-    let pic_id = common::seed_picture(&db, alice_id).await; // no thumbnails_generated_at
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::Extracting)
+        .await
+        .unwrap();
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
@@ -181,8 +186,52 @@ async fn edit_unsupported_format_is_db_only_no_job(db: PgPool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::UnsupportedMime);
     assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
+}
+
+/// An unknown MIME is attempted, not pre-judged: it is a gap in our metadata, not evidence about
+/// the file. The edit path must agree with `ingest_exif_status` and the worker's read, all three of
+/// which treat `None` as "try it" — stamping the terminal `unsupported_mime` from missing
+/// information would suppress every future job on a guess (feature 33 §10).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn edit_of_unknown_mime_is_attempted_not_pre_judged(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    sqlx::query!(
+        "UPDATE pictures
+         SET mime_type = NULL, thumbnails_generated_at = (now() AT TIME ZONE 'utc'),
+             exif_sync_status = 'synced'
+         WHERE id = $1",
+        pic_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        archypix_back::services::jobs::ingest_exif_status(None),
+        ExifSyncStatus::Extracting,
+        "ingest attempts an unknown MIME",
+    );
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let (set, clear) = gps_edit();
+    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome.jobs.len(),
+        1,
+        "the write is attempted so the worker can return a real verdict"
+    );
+    assert!(outcome.unsupported.is_empty());
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Pending);
 }
 
 /// A worker verdict of `unsupported` is terminal (feature 31 §6): re-editing such a picture must
@@ -196,7 +245,7 @@ async fn edit_of_worker_marked_unsupported_enqueues_no_job(db: PgPool) {
         "UPDATE pictures
          SET mime_type = 'image/jpeg',
              thumbnails_generated_at = (now() AT TIME ZONE 'utc'),
-             exif_sync_status = 'unsupported'::picture_exif_sync_status
+             exif_sync_status = 'unsupported_mime'::picture_exif_sync_status
          WHERE id = $1",
         pic_id,
     )
@@ -220,7 +269,7 @@ async fn edit_of_worker_marked_unsupported_enqueues_no_job(db: PgPool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::UnsupportedMime);
     assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
 }
 
@@ -256,7 +305,7 @@ async fn edit_unsupported_format_without_thumbnails_is_allowed(db: PgPool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::UnsupportedMime);
     assert_eq!(picture.gps_lat, Some(45.0), "DB still updated");
 }
 
@@ -420,4 +469,61 @@ async fn resync_is_allowed_from_write_failed(db: PgPool) {
         ExifSyncStatus::Pending,
         "retry puts the picture back in the sync queue"
     );
+}
+
+// ── Feature 33 §8: re-extraction ─────────────────────────────────────────────
+
+/// Re-extraction makes the **file** authoritative (31 §5), so a row holding an unsynced DB edit is
+/// refused rather than silently losing it.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn reextract_refuses_rows_with_unsynced_edits(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    for status in [
+        ExifSyncStatus::Pending,
+        ExifSyncStatus::PendingJobCreation,
+        ExifSyncStatus::WriteFailed,
+    ] {
+        let pic_id = common::seed_picture(&db, alice_id).await;
+        make_editable(&db, pic_id).await;
+        PictureRepository::set_exif_sync_status(&db, pic_id, status)
+            .await
+            .unwrap();
+        let result = jobs::reextract_picture_exif(&db, &waker, alice_id, pic_id).await;
+        assert!(
+            matches!(result, Err(AppError::Conflict(_))),
+            "{status:?} must be refused"
+        );
+    }
+}
+
+/// `extract_failed` is exactly the state a re-extract exists to settle.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn reextract_is_allowed_from_extract_failed(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::ExtractFailed)
+        .await
+        .unwrap();
+    let waker = RoutineHandle::<Uuid>::disconnected();
+
+    let job = jobs::reextract_picture_exif(&db, &waker, alice_id, pic_id)
+        .await
+        .unwrap();
+    assert_eq!(job.picture_id, Some(pic_id));
+    assert!(
+        job.idempotency_key.is_none(),
+        "the permanent initial-extraction key would 409 every re-extraction (§8)"
+    );
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Extracting);
+
+    // The in-flight guard takes the key's place: a second call conflicts.
+    let again = jobs::reextract_picture_exif(&db, &waker, alice_id, pic_id).await;
+    assert!(matches!(again, Err(AppError::Conflict(_))));
 }

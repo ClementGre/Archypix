@@ -591,6 +591,7 @@ pub async fn complete_upload(
         meta.exif_data.clone(),
         meta.captured_at,
         meta.original_file_created_at,
+        crate::services::jobs::ingest_exif_status(meta.mime_type.as_deref()),
     )
     .await?;
 
@@ -873,6 +874,12 @@ async fn copy_source_into_library(
         cs_instance.as_deref(),
         cs_pic.as_deref(),
         copy_creator.as_deref(),
+        // Identical bytes: the source's verdict and its file snapshot carry over unread (33 §4.1).
+        crate::services::jobs::copy_exif_status(source.exif_sync_status),
+        source
+            .file_exif
+            .as_ref()
+            .and_then(|f| serde_json::to_value(&f.0).ok()),
     )
     .await?;
     // `is_initial = false`: keep the seeded effective EXIF (don't re-extract the owner's embedded

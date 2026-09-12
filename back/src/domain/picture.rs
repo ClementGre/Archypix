@@ -90,16 +90,52 @@ pub enum DeletedReason {
     ContentDedupe,
 }
 
-/// Convergence state of a picture's embedded-file EXIF versus the DB row.
+/// Convergence state of a picture's embedded-file EXIF versus the DB row (feature 33 §4). Every
+/// value is set by an observation, never by a default or a lookup table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "picture_exif_sync_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ExifSyncStatus {
-    Synced,
+    /// Read: the file has not been read yet. The only state that refuses edits.
+    Extracting,
+    /// Read: the extraction never returned an answer (retries exhausted). Edits are allowed and
+    /// repair the row — the write job's read-back populates `file_exif`.
+    ExtractFailed,
+    /// Write: the format cannot receive EXIF writes; edits stay DB-only.
+    UnsupportedMime,
+    /// Read: both engines ran and neither could open the file. Never retried against these bytes.
+    UnsupportedFile,
     Pending,
-    Unsupported,
     PendingJobCreation,
     WriteFailed,
+    Synced,
+}
+
+impl ExifSyncStatus {
+    /// The two terminal verdicts that suppress job creation (§4.7).
+    pub fn suppresses_jobs(self) -> bool {
+        matches!(self, Self::UnsupportedMime | Self::UnsupportedFile)
+    }
+
+    /// Whether no successful read of these bytes has happened yet (§4.1 — what a physical copy
+    /// cannot inherit).
+    pub fn never_read(self) -> bool {
+        matches!(self, Self::Extracting | Self::ExtractFailed)
+    }
+
+    /// The `picture_exif_sync_status` label, as stored.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Extracting => "extracting",
+            Self::ExtractFailed => "extract_failed",
+            Self::UnsupportedMime => "unsupported_mime",
+            Self::UnsupportedFile => "unsupported_file",
+            Self::Pending => "pending",
+            Self::PendingJobCreation => "pending_job_creation",
+            Self::WriteFailed => "write_failed",
+            Self::Synced => "synced",
+        }
+    }
 }
 
 impl Picture {

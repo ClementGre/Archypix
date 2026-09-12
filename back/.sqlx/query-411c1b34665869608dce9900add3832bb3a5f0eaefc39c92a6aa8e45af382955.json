@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs\n         SET status = 'processing', retry_count = max_retries - 1,\n             started_at = (now() AT TIME ZONE 'utc') - INTERVAL '1 day'\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "411c1b34665869608dce9900add3832bb3a5f0eaefc39c92a6aa8e45af382955"
+}

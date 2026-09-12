@@ -6,6 +6,7 @@
 //! See `doc/features/17_unified_routine_framework.md` and `doc/features/23_*`.
 
 pub mod exif_drain;
+pub mod exif_recheck;
 pub mod job_watchdog;
 pub mod pipeline;
 pub mod purge_sweep;

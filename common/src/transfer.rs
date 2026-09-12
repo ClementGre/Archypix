@@ -136,16 +136,42 @@ impl PresignedWrites {
 
 // ── Complete / fail ───────────────────────────────────────────────────────────
 
+/// The read direction's verdict on a job's file (feature 33 §5). Retriable failures have no
+/// variant: they fail the job instead of completing it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExifExtraction {
+    /// Both a successful ingest extraction and the edit path's post-write read-back.
+    Extracted(ExtractedExif),
+    /// No extraction was asked of this job (a non-initial `gen_thumbnail`) — status untouched.
+    #[default]
+    NotAttempted,
+    /// The MIME can carry no EXIF this worker writes — terminal `unsupported_mime`.
+    UnsupportedMime,
+    /// Dispatch **and** fallback ran and neither engine could open the file — terminal
+    /// `unsupported_file`.
+    Failed,
+}
+
+impl ExifExtraction {
+    /// The extracted metadata, when the read succeeded.
+    pub fn extracted(&self) -> Option<&ExtractedExif> {
+        match self {
+            Self::Extracted(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 /// Request body for `POST /api/worker/jobs/{id}/complete`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CompleteJobRequest {
     /// Must match the `claim_token` issued when this job was claimed.
     /// The backend rejects completions from stale/wrong workers.
     pub claim_token: Uuid,
-    /// EXIF data extracted from the image.
-    /// Required for `gen_thumbnail` with `is_initial = true`; optional otherwise.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exif: Option<ExtractedExif>,
+    /// What the read path made of this file (feature 33 §5). Absent ⇒ `NotAttempted`.
+    #[serde(default)]
+    pub exif: ExifExtraction,
     /// BlurHash string computed from the original or processed image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blurhash: Option<String>,
@@ -190,4 +216,10 @@ pub struct FailJobRequest {
     /// picture `unsupported` instead of `write_failed`, since retrying can never help.
     #[serde(default)]
     pub unsupported: bool,
+    /// What the read direction observed before the job died (feature 33 §6.5). A `gen_thumbnail`
+    /// that extracted fine and then failed to thumbnail still knows the file's EXIF, and a
+    /// permanent failure that never got that far still has to say so — otherwise the picture is
+    /// stranded in `extracting` with no job to rescue it.
+    #[serde(default)]
+    pub exif: ExifExtraction,
 }

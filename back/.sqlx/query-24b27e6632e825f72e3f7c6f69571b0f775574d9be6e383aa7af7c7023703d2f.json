@@ -343,9 +343,12 @@
               "Enum": [
                 "synced",
                 "pending",
-                "unsupported",
+                "unsupported_mime",
                 "pending_job_creation",
-                "write_failed"
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
               ]
             }
           }

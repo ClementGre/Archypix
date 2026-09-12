@@ -539,7 +539,7 @@ mod tests {
 
 /// EXIF metadata extracted from a picture and returned in the job completion body.
 /// The backend merges this into the `pictures` row.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ExtractedExif {
     pub width: Option<i32>,
     pub height: Option<i32>,

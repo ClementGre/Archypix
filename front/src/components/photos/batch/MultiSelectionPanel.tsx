@@ -130,6 +130,7 @@ export function MultiSelectionPanel() {
         refetchInterval: (q) => {
             const d = q.state.data
             const busy = (d?.exif_sync.pending ?? 0) + (d?.exif_sync.pending_job_creation ?? 0)
+                + (d?.exif_sync.extracting ?? 0)
             return busy > 0 ? 4000 : false
         },
     })
@@ -138,6 +139,9 @@ export function MultiSelectionPanel() {
     const trashedCount = agg?.trashed_count ?? 0
     const inFlight = (agg?.exif_sync.pending ?? 0) + (agg?.exif_sync.pending_job_creation ?? 0)
     const writeFailed = agg?.exif_sync.write_failed ?? 0
+    // Feature 33 §11: the old single `unsupported` bucket splits, and `extracting` is now visible.
+    const extracting = agg?.exif_sync.extracting ?? 0
+    const unread = (agg?.exif_sync.extract_failed ?? 0) + (agg?.exif_sync.unsupported_file ?? 0)
     const hasReceived = (agg?.received_count ?? 0) > 0
 
     const [pendingAdd, setPendingAdd] = useState<string | null>(null)
@@ -221,6 +225,19 @@ export function MultiSelectionPanel() {
                             <p className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
                                 <Loader2 className="h-3 w-3 animate-spin"/>
                                 {inFlight} EXIF {inFlight === 1 ? 'edit' : 'edits'} syncing to files…
+                            </p>
+                        )}
+                        {extracting > 0 && (
+                            <p className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin"/>
+                                {extracting} still having {extracting === 1 ? 'its' : 'their'} metadata
+                                read — {extracting === 1 ? 'it cannot' : 'they cannot'} be edited yet
+                            </p>
+                        )}
+                        {unread > 0 && (
+                            <p className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
+                                <AlertTriangle className="h-3 w-3"/>
+                                {unread} {unread === 1 ? 'file whose' : 'files whose'} metadata could not be read
                             </p>
                         )}
                         {/* Feature 31: a permanent write failure needs a per-picture decision. */}

@@ -480,8 +480,11 @@ bounds distinct keys in flight (per-key is always serial). The periodic/startup 
 the inputs needing a run (default: `trigger(Default)`, right for `()`-keyed routines; the pipeline
 overrides it to enumerate dirty/dedup-needing users).
 
-`AppState.routines: Routines` holds the trigger handles (`pipeline`, `exif_drain`, `tag_rename`,
-`unannounce`); the sweep-only routines (job watchdog/cleanup, purge sweep) expose no handle.
+`AppState.routines: Routines` holds the trigger handles (`pipeline`, `exif_drain`, `exif_recheck`,
+`tag_rename`, `unannounce`); the sweep-only routines (job watchdog/cleanup, purge sweep) expose no
+handle. `exif_recheck` (feature 33 §8) is trigger-only: the admin recheck endpoint hands it a scope
+and it drains that stale-verdict worklist in bounded batches, so an allowlist bump cannot enqueue a
+million jobs at once.
 `routine::spawn` spawns each runtime onto the Tokio runtime and returns its handle plus a
 `JoinHandle`; `main` collects the handles into `Routines` and keeps the join handles. On SIGINT/SIGTERM
 `main` drives `axum`'s `with_graceful_shutdown`, then flips the shared `shutdown` watch and awaits each

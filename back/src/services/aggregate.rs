@@ -170,7 +170,10 @@ fn exif_sync_histogram(hist: &[(ExifSyncStatus, i64)]) -> Value {
     json!({
         "synced": lookup(ExifSyncStatus::Synced),
         "pending": lookup(ExifSyncStatus::Pending),
-        "unsupported": lookup(ExifSyncStatus::Unsupported),
+        "extracting": lookup(ExifSyncStatus::Extracting),
+        "extract_failed": lookup(ExifSyncStatus::ExtractFailed),
+        "unsupported_mime": lookup(ExifSyncStatus::UnsupportedMime),
+        "unsupported_file": lookup(ExifSyncStatus::UnsupportedFile),
         "pending_job_creation": lookup(ExifSyncStatus::PendingJobCreation),
         "write_failed": lookup(ExifSyncStatus::WriteFailed),
     })

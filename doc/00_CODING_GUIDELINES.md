@@ -187,6 +187,13 @@ Jump targets — `L<n>` is the heading's line. Line numbers drift on edit; treat
   `write_failed`): 1 Overview & goals (L3) · 2 Structural changes / schema + domain (L22) · 3 The
   state-based workflow (L47) · 4 User actions on failure (L103) · 5 External overwrites / WebDAV (L113) · 6 Unsupported handling (L123) · 7 Batch
   edit & drain (L131) · 8 Implementation status (L138).
+- **33_exif_read_path_and_engine_fallback.md** — EXIF **read** path: ExifTool dispatch+fallback,
+  observed sync states (`extracting`, `extract_failed`, `unsupported_mime`/`unsupported_file`):
+  1 Overview (L3) · 2 Decisions (L30) · 3 Engine layer (L52) · 4 State machine (L100) ·
+  5 Worker contract (L160) · 6 Flows (L176) · 7 Classification fixes (L200) · 8 Re-extract & sweep
+  (L212) · 9 Schema & migration (L232) · 10 What this deletes (L258) · 11 API & frontend (L274) ·
+  12 Edge cases (L288) · 13 Testing · 14 Doc updates · 15 Work breakdown ·
+  16 **Implementation status + deviations**. Implemented.
 - **32_webdav_file_modified_at.md** — `pictures.file_modified_at`, the bytes-only WebDAV
   last-modified (tagging no longer triggers sync-client re-downloads): 1 Overview & goals (L3) ·
   2 Decisions (L21) · 3 Why an old mtime on a new path is fine (L52) · 4 Schema changes (L72) ·

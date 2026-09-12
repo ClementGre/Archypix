@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET exif_sync_status = $2\n              WHERE id = ANY($1) AND ($3::picture_exif_sync_status IS NULL\n                                      OR exif_sync_status = $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        {
+          "Custom": {
+            "name": "picture_exif_sync_status",
+            "kind": {
+              "Enum": [
+                "synced",
+                "pending",
+                "unsupported_mime",
+                "pending_job_creation",
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
+              ]
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "picture_exif_sync_status",
+            "kind": {
+              "Enum": [
+                "synced",
+                "pending",
+                "unsupported_mime",
+                "pending_job_creation",
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aacbcb8cb5f165925c2106f766f1e72eb6ba3162a731a55259d81afddd7c8614"
+}

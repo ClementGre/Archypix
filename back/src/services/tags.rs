@@ -319,8 +319,8 @@ mod rename_tests {
     async fn seed_picture(db: &PgPool, user_id: Uuid, manual_tag: &str) -> Uuid {
         let id = Uuid::new_v4();
         sqlx::query!(
-            "INSERT INTO pictures (id, local_user_id, last_pipeline_run_at)
-             VALUES ($1, $2, now() AT TIME ZONE 'utc')",
+            "INSERT INTO pictures (id, local_user_id, last_pipeline_run_at, exif_sync_status)
+             VALUES ($1, $2, now() AT TIME ZONE 'utc', 'synced')",
             id,
             user_id,
         )

@@ -1,9 +1,10 @@
 use crate::error::{Result, WorkerError};
 use archypix_common::job::{CameraExif, ExifField, ExtractedExif, FullExif};
 use chrono::NaiveDateTime;
-use exiftool::ExifTool;
+use exiftool::{ExifTool, ExifToolError};
 use num_rational::Ratio;
 use rexiv2::{GpsInfo, Metadata};
+use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -13,14 +14,40 @@ static EXIFTOOL: OnceLock<std::result::Result<ExifTool, String>> = OnceLock::new
 
 const BMFF_EXIF_WRITE_MIMES: &[&str] = &["image/heic", "image/heif", "image/avif"];
 
-/// Load and extract EXIF data from an image file.
+/// Read a file's metadata through the engine this MIME dispatches to (feature 33 §3.1).
+///
+/// BMFF containers go straight to ExifTool (the engine that also writes them); every other format
+/// tries rexiv2 and falls back to ExifTool for a second opinion **only** on a format verdict — an
+/// IO or tool fault is propagated as-is, since turning it into a file verdict is the bug this
+/// dispatch exists to remove.
+///
+/// Must be called inside `tokio::task::spawn_blocking`: both engines are synchronous.
+#[instrument(skip(path), fields(file = ?path.file_name(), exiftool = use_exiftool_for_read(mime_type)))]
+pub fn read_metadata(path: &Path, mime_type: Option<&str>) -> Result<ExtractedExif> {
+    if use_exiftool_for_read(mime_type) {
+        return exiftool_read(path);
+    }
+    match rexiv2_read(path) {
+        Err(WorkerError::UnsupportedFormat(e)) => {
+            debug!(error = %e, "rexiv2 could not open the file; retrying with exiftool");
+            exiftool_read(path)
+        }
+        other => other,
+    }
+}
+
+/// Whether this MIME reads through ExifTool. Same predicate as [`use_exiftool_for_write`], so a
+/// format class is read and written by the same engine.
+pub fn use_exiftool_for_read(mime_type: Option<&str>) -> bool {
+    use_exiftool_for_write(mime_type)
+}
+
+/// Load and extract EXIF data from an image file with rexiv2 (GExiv2).
 ///
 /// Must be called inside `tokio::task::spawn_blocking` since rexiv2 is synchronous.
 #[instrument(skip(path), fields(file = ?path.file_name()))]
-pub fn extract_exif(path: &Path) -> Result<ExtractedExif> {
-    let metadata = Metadata::new_from_path(path).map_err(|e| {
-        WorkerError::UnsupportedFormat(format!("failed to open file for EXIF: {e}"))
-    })?;
+pub fn rexiv2_read(path: &Path) -> Result<ExtractedExif> {
+    let metadata = Metadata::new_from_path(path).map_err(|e| classify_open_failure(path, &e))?;
 
     let captured_at = extract_first_tag(
         &metadata,
@@ -120,6 +147,200 @@ fn parse_exif_datetime(s: &str) -> Option<NaiveDateTime> {
         .ok()
 }
 
+/// Classify a metadata-library open failure (feature 33 §7): unreadable or empty bytes are an IO
+/// fault (retriable), a readable file the library cannot parse is a format verdict.
+fn classify_open_failure(path: &Path, e: &dyn std::fmt::Display) -> WorkerError {
+    match std::fs::metadata(path) {
+        Err(io) => WorkerError::Io(io),
+        Ok(m) if m.len() == 0 => WorkerError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "file is empty",
+        )),
+        Ok(_) => match std::fs::File::open(path) {
+            Err(io) => WorkerError::Io(io),
+            Ok(_) => WorkerError::UnsupportedFormat(format!("failed to open file for EXIF: {e}")),
+        },
+    }
+}
+
+// ── ExifTool reader (feature 33 §3.2) ────────────────────────────────────────
+
+/// One `exiftool -json` request covering every field the rexiv2 reader maps. `-a` keeps
+/// same-named tags from different IFDs (the capture-date chain), `-g1` groups them so each lookup
+/// names the exact IFD rexiv2 reads, and a trailing `#` forces the numeric value for the fields
+/// whose print form would be a description (`-n` per §3.3). `ExposureTime` deliberately keeps its
+/// print form, which is the stored fraction.
+const EXIFTOOL_READ_ARGS: &[&str] = &[
+    "-a",
+    "-g1",
+    "-Make",
+    "-Model",
+    "-ISO#",
+    "-XMP-exifEX:PhotographicSensitivity#",
+    "-FocalLengthIn35mmFormat#",
+    "-FNumber#",
+    "-ExposureTime",
+    "-Orientation#",
+    "-GPSLatitude#",
+    "-GPSLatitudeRef#",
+    "-GPSLongitude#",
+    "-GPSLongitudeRef#",
+    "-GPSAltitude#",
+    "-GPSAltitudeRef#",
+    "-DateTimeOriginal",
+    "-CreateDate",
+    "-ModifyDate",
+    "-ImageWidth",
+    "-ImageHeight",
+];
+
+/// Read a file's metadata with ExifTool, mapped onto the same [`ExtractedExif`] shape the rexiv2
+/// reader produces (feature 33 §3.2–3.3).
+#[instrument(skip(path), fields(file = ?path.file_name()))]
+pub fn exiftool_read(path: &Path) -> Result<ExtractedExif> {
+    let json = exiftool()?
+        .json(path, EXIFTOOL_READ_ARGS)
+        .map_err(|e| classify_exiftool_error(path, e))?;
+    let extracted = map_exiftool_json(&json);
+    debug!(
+        captured_at = ?extracted.exif.captured_at,
+        has_gps = extracted.exif.gps_lat.is_some(),
+        "EXIF extraction complete (exiftool)"
+    );
+    Ok(extracted)
+}
+
+/// A failed ExifTool call is a worker-environment fault (retriable) or a file verdict, never both
+/// — see feature 33 §3.1.
+fn classify_exiftool_error(path: &Path, e: ExifToolError) -> WorkerError {
+    match e {
+        ExifToolError::ExifToolNotFound(_)
+        | ExifToolError::ProcessTerminated
+        | ExifToolError::StderrDisconnected
+        | ExifToolError::MutexPoison(_) => {
+            WorkerError::ToolUnavailable(format!("exiftool read failed: {e}"))
+        }
+        ExifToolError::Io(io) => WorkerError::Io(io),
+        other => classify_open_failure(path, &format_args!("exiftool read failed: {other}")),
+    }
+}
+
+/// Map one `-a -g1` ExifTool JSON object onto the rexiv2 reader's output shape.
+fn map_exiftool_json(json: &Value) -> ExtractedExif {
+    // The same 5-tag priority chain `rexiv2_read` walks, in exiv2 → ExifTool naming.
+    let captured_at = [
+        ("ExifIFD", "DateTimeOriginal"),
+        ("ExifIFD", "CreateDate"),
+        ("IFD0", "ModifyDate"),
+        ("IFD0", "DateTimeOriginal"),
+        ("IFD0", "CreateDate"),
+    ]
+    .iter()
+    .find_map(|(group, tag)| tag_string(json, group, tag))
+    .as_deref()
+    .and_then(parse_exif_datetime);
+
+    let sign = |v: f64, reference: Option<String>, negative: &str| {
+        let below = reference
+            .as_deref()
+            .is_some_and(|r| r.trim().eq_ignore_ascii_case(negative));
+        if below { -v.abs() } else { v.abs() }
+    };
+    let gps_lat = tag_f64(json, "GPS", "GPSLatitude")
+        .map(|v| sign(v, tag_string(json, "GPS", "GPSLatitudeRef"), "S"));
+    let gps_lng = tag_f64(json, "GPS", "GPSLongitude")
+        .map(|v| sign(v, tag_string(json, "GPS", "GPSLongitudeRef"), "W"));
+    // Presence-gated like rexiv2's `has_tag` check, and signed by the ref (1 = below sea level).
+    let gps_alt = tag_f64(json, "GPS", "GPSAltitude").map(|alt| {
+        let below = tag_f64(json, "GPS", "GPSAltitudeRef").is_some_and(|r| r == 1.0);
+        let alt = if below { -alt.abs() } else { alt };
+        alt as i32
+    });
+
+    let orientation = match tag_f64(json, "IFD0", "Orientation") {
+        Some(n) if (1.0..=8.0).contains(&n) => Some(n as i16),
+        _ => None,
+    };
+
+    let camera = CameraExif {
+        camera_brand: tag_string(json, "IFD0", "Make").filter(|s| !s.is_empty()),
+        camera_model: tag_string(json, "IFD0", "Model").filter(|s| !s.is_empty()),
+        focal_length_mm: tag_f64(json, "ExifIFD", "FocalLengthIn35mmFormat").map(round2),
+        f_number: tag_f64(json, "ExifIFD", "FNumber").map(round1),
+        iso_speed: tag_f64(json, "ExifIFD", "ISO")
+            .or_else(|| tag_f64(json, "XMP-exifEX", "PhotographicSensitivity"))
+            .map(|v| v as i32)
+            .filter(|&v| v != 0),
+        ..Default::default()
+    };
+    let (exposure_time_num, exposure_time_den) = tag_string(json, "ExifIFD", "ExposureTime")
+        .as_deref()
+        .and_then(parse_exposure_time)
+        .map_or((None, None), |(n, d)| (Some(n), Some(d)));
+
+    ExtractedExif {
+        width: tag_f64(json, "File", "ImageWidth").map(|v| v as i32),
+        height: tag_f64(json, "File", "ImageHeight").map(|v| v as i32),
+        exif: FullExif {
+            captured_at,
+            gps_lat,
+            gps_lng,
+            gps_alt,
+            orientation,
+            camera: CameraExif {
+                exposure_time_num,
+                exposure_time_den,
+                ..camera
+            },
+        },
+    }
+}
+
+/// ExifTool's print form for `ExposureTime` is the stored fraction (`"1/125"`) below ~1/4 s and a
+/// one-decimal number above it. Both are parsed exactly; a float is never rationalized (§3.3).
+fn parse_exposure_time(s: &str) -> Option<(i32, i32)> {
+    let s = s.trim();
+    if let Some((num, den)) = s.split_once('/') {
+        let num: i32 = num.trim().parse().ok()?;
+        let den: i32 = den.trim().parse().ok()?;
+        return (den != 0).then(|| reduce(num, den));
+    }
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    let den = 10i32.checked_pow(frac.len() as u32)?;
+    let num: i32 = format!("{int}{frac}").parse().ok()?;
+    Some(reduce(num, den))
+}
+
+fn reduce(num: i32, den: i32) -> (i32, i32) {
+    let (mut a, mut b) = (num.unsigned_abs(), den.unsigned_abs());
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    let g = a.max(1) as i32;
+    (num / g, den / g)
+}
+
+/// The value of `tag` inside family-1 group `group` of an `-g1` ExifTool JSON object.
+fn tag_in<'a>(json: &'a Value, group: &str, tag: &str) -> Option<&'a Value> {
+    json.get(group)?.get(tag)
+}
+
+fn tag_string(json: &Value, group: &str, tag: &str) -> Option<String> {
+    match tag_in(json, group, tag)? {
+        Value::String(s) => Some(s.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn tag_f64(json: &Value, group: &str, tag: &str) -> Option<f64> {
+    match tag_in(json, group, tag)? {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 /// Apply an EXIF edit (`set` writes, `clear` deletes) into the file at `path` (in-place via rexiv2).
 ///
 /// Every editable field is covered so the file converges to the DB row (the source of truth): the
@@ -203,7 +424,6 @@ pub fn exiftool_available() -> bool {
 }
 
 fn exiftool() -> Result<&'static ExifTool> {
-    static FORCED: OnceLock<std::result::Result<ExifTool, String>> = OnceLock::new();
     let loaded = EXIFTOOL.get_or_init(|| ExifTool::new().map_err(|e| e.to_string()));
     match loaded {
         Ok(tool) => Ok(tool),
@@ -339,9 +559,7 @@ fn write_exif_overrides_with_rexiv2(
     set: &FullExif,
     clear: &[ExifField],
 ) -> Result<()> {
-    let metadata = Metadata::new_from_path(path).map_err(|e| {
-        WorkerError::UnsupportedFormat(format!("failed to open file for EXIF write: {e}"))
-    })?;
+    let metadata = Metadata::new_from_path(path).map_err(|e| classify_open_failure(path, &e))?;
 
     // ── Set ────────────────────────────────────────────────────────────────────
     if let Some(dt) = set.captured_at {
@@ -566,5 +784,201 @@ mod tests {
     fn an_empty_target_clears_every_group_once() {
         // date, GPS, orientation, brand, model, focal, f-number, ISO, exposure.
         assert_eq!(target_clear_fields(&FullExif::default()).len(), 9);
+    }
+
+    // ── Engine dispatch, fallback and classification (feature 33 §3) ──────────
+
+    #[test]
+    fn bmff_mimes_read_through_exiftool() {
+        assert!(use_exiftool_for_read(Some("image/HEIC")));
+        assert!(use_exiftool_for_read(Some("image/avif")));
+        assert!(!use_exiftool_for_read(Some("image/jpeg")));
+        assert!(!use_exiftool_for_read(None));
+    }
+
+    #[test]
+    fn an_exiftool_outage_during_fallback_stays_retriable() {
+        let path = Path::new("/nonexistent/x.jpg");
+        for e in [
+            ExifToolError::ProcessTerminated,
+            ExifToolError::StderrDisconnected,
+            ExifToolError::MutexPoison("poisoned".into()),
+        ] {
+            let mapped = classify_exiftool_error(path, e);
+            assert!(mapped.is_retriable(), "{mapped} must not be a file verdict");
+            assert!(!mapped.is_unsupported());
+        }
+    }
+
+    #[test]
+    fn exposure_time_print_forms_parse_exactly() {
+        assert_eq!(parse_exposure_time("1/125"), Some((1, 125)));
+        assert_eq!(parse_exposure_time("0.5"), Some((1, 2)));
+        assert_eq!(parse_exposure_time("2"), Some((2, 1)));
+        assert_eq!(parse_exposure_time("30"), Some((30, 1)));
+        assert_eq!(parse_exposure_time("1/0"), None);
+        assert_eq!(parse_exposure_time("undef"), None);
+    }
+
+    // ── Differential parity across a corpus (feature 33 §3.3, §13) ───────────
+
+    /// Smallest valid JPEG the fixtures stamp EXIF onto (8x8 grey, no metadata).
+    const TINY_JPEG: &[u8] = b"\
+    \xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\
+    \x00\x28\x1c\x1e\x23\x1e\x19\x28\x23\x21\x23\x2d\x2b\x28\x30\x3c\x64\x41\x3c\x37\x37\x3c\x7b\x58\
+    \x5d\x49\x64\x91\x80\x99\x96\x8f\x80\x8c\x8a\xa0\xb4\xe6\xc3\xa0\xaa\xda\xad\x8a\x8c\xc8\xff\xcb\
+    \xda\xee\xf5\xff\xff\xff\x9b\xc1\xff\xff\xff\xfa\xff\xe6\xfd\xff\xf8\xff\xc0\x00\x0b\x08\x00\x08\
+    \x00\x08\x01\x01\x11\x00\xff\xc4\x00\x14\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+    \x00\x00\x00\x00\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+    \x00\x00\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x3f\xff\xd9";
+
+    /// Write `TINY_JPEG` into `dir` and stamp `tags` onto it with exiftool.
+    fn fixture(dir: &Path, name: &str, tags: &[&str]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, TINY_JPEG).unwrap();
+        let mut args = vec!["-overwrite_original"];
+        args.extend_from_slice(tags);
+        let display = path.display().to_string();
+        args.push(&display);
+        exiftool().unwrap().execute_raw(&args).unwrap();
+        path
+    }
+
+    /// Both engines must map the same file onto the same `FullExif` — §3.3's normalization points
+    /// are invisible until they produce permanent, unclearable diff badges. GPS degrees are
+    /// compared with the same tolerance the diff badges use (31 §8): the engines reassemble them
+    /// from the stored deg/min/sec rationals, so the last ULPs differ.
+    fn assert_engines_agree(path: &Path) {
+        let a = rexiv2_read(path).expect("rexiv2 read").exif;
+        let b = exiftool_read(path).expect("exiftool read").exif;
+        let close = |x: Option<f64>, y: Option<f64>| match (x, y) {
+            (Some(x), Some(y)) => (x - y).abs() <= 1e-5,
+            (x, y) => x == y,
+        };
+        let file = path.display();
+        assert!(close(a.gps_lat, b.gps_lat), "gps_lat differs on {file}");
+        assert!(close(a.gps_lng, b.gps_lng), "gps_lng differs on {file}");
+        let strip = |e: FullExif| FullExif {
+            gps_lat: None,
+            gps_lng: None,
+            ..e
+        };
+        assert_eq!(strip(a), strip(b), "engines disagree on {file}");
+    }
+
+    #[test]
+    fn engines_agree_across_the_corpus() {
+        if !exiftool_available() {
+            eprintln!("exiftool not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let corpus: &[(&str, &[&str])] = &[
+            ("bare.jpg", &[]),
+            (
+                // Rational exposure, above-sea-level GPS, the full camera block.
+                "full.jpg",
+                &[
+                    "-DateTimeOriginal=2024:06:01 12:00:00",
+                    "-CreateDate=2024:06:01 12:00:00",
+                    "-ModifyDate=2024:06:01 12:00:01",
+                    "-Orientation#=6",
+                    "-GPSLatitude=48.858222",
+                    "-GPSLatitudeRef=N",
+                    "-GPSLongitude=2.2945",
+                    "-GPSLongitudeRef=E",
+                    "-GPSAltitude=35",
+                    "-GPSAltitudeRef#=0",
+                    "-Make=Canon",
+                    "-Model=EOS R5",
+                    "-ISO=400",
+                    "-FocalLengthIn35mmFormat=50",
+                    "-FNumber=1.8",
+                    "-ExposureTime=1/125",
+                ],
+            ),
+            (
+                // Southern/western hemisphere and below sea level: both signs are applied.
+                "below_sea_level.jpg",
+                &[
+                    "-GPSLatitude=33.8688",
+                    "-GPSLatitudeRef=S",
+                    "-GPSLongitude=151.2093",
+                    "-GPSLongitudeRef=W",
+                    "-GPSAltitude=12",
+                    "-GPSAltitudeRef#=1",
+                    "-ExposureTime=1/4000",
+                ],
+            ),
+            (
+                // Coordinates with no altitude at all: the presence gate must hold on both sides.
+                "no_altitude.jpg",
+                &[
+                    "-GPSLatitude=10.5",
+                    "-GPSLatitudeRef=N",
+                    "-GPSLongitude=20.25",
+                    "-GPSLongitudeRef=E",
+                    "-Orientation#=1",
+                ],
+            ),
+            (
+                // The capture-date chain falls through to `Exif.Image.DateTime` (IFD0:ModifyDate).
+                "modify_date_only.jpg",
+                &["-ModifyDate=2019:03:04 05:06:07", "-Orientation#=9"],
+            ),
+        ];
+        for (name, tags) in corpus {
+            assert_engines_agree(&fixture(dir.path(), name, tags));
+        }
+    }
+
+    #[test]
+    fn a_file_rexiv2_cannot_open_falls_back_to_exiftool() {
+        if !exiftool_available() {
+            eprintln!("exiftool not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        std::fs::write(&path, b"not an image at all\n").unwrap();
+
+        assert!(matches!(
+            rexiv2_read(&path),
+            Err(WorkerError::UnsupportedFormat(_))
+        ));
+        // The fallback opens it and finds no metadata — a verdict, not a failure.
+        let read = read_metadata(&path, Some("text/plain")).expect("fallback read");
+        assert_eq!(read.exif, FullExif::default());
+    }
+
+    /// ExifTool refuses very little (it reports "no metadata" far more often than an error), so the
+    /// `Failed` outcome hangs entirely on this branch: a readable file the process rejected.
+    #[test]
+    fn a_file_exiftool_rejects_is_a_terminal_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("junk.unknownext");
+        std::fs::write(&path, [0x37u8; 512]).unwrap();
+
+        let err = classify_exiftool_error(
+            &path,
+            ExifToolError::ExifToolProcess {
+                message: "Error: Unknown file type".into(),
+                std_err: "Error: Unknown file type".into(),
+                command_args: String::new(),
+            },
+        );
+        assert!(err.is_unsupported(), "{err} must be a terminal verdict");
+        assert!(!err.is_retriable());
+    }
+
+    #[test]
+    fn an_empty_download_is_an_io_fault_not_a_format_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("truncated.jpg");
+        std::fs::write(&path, b"").unwrap();
+
+        let err = read_metadata(&path, None).expect_err("an empty file cannot be read");
+        assert!(err.is_retriable(), "{err} must be retriable");
+        assert!(!err.is_unsupported());
     }
 }

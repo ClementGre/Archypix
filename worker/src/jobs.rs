@@ -6,7 +6,7 @@ use crate::backend::BackendClient;
 use crate::config::Config;
 use crate::observability;
 use archypix_common::job::JobConfig;
-use archypix_common::transfer::ClaimJobResponse;
+use archypix_common::transfer::{ClaimJobResponse, ExifExtraction};
 use opentelemetry::trace::TraceContextExt;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -96,6 +96,8 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     }
 
     async move {
+        // What the read direction observed, even if the job dies later (feature 33 §6.5).
+        let mut extraction = ExifExtraction::NotAttempted;
         let result = match job.config {
             JobConfig::GenThumbnail(config) => {
                 thumbnail::handle(
@@ -106,6 +108,7 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
                     presigned_read,
                     presigned_writes,
                     mime_type,
+                    &mut extraction,
                 )
                 .await
             }
@@ -131,7 +134,14 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
             let unsupported = e.is_unsupported();
             error!(job_id = %job_id, permanent, unsupported, error = ?e, "job failed");
             if let Err(report_err) = client
-                .fail_job(job_id, claim_token, &e.to_string(), permanent, unsupported)
+                .fail_job(
+                    job_id,
+                    claim_token,
+                    &e.to_string(),
+                    permanent,
+                    unsupported,
+                    extraction,
+                )
                 .await
             {
                 error!(

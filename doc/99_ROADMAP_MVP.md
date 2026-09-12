@@ -25,11 +25,31 @@
   target bound at claim-time, `write_failed` + manual Retry/Revert-to-file. See `doc/features/31_robust_exif_sync.md`.
   Failure classification narrowed: `unsupported` only for an unopenable file, retriable `ToolUnavailable`
   for a missing exiftool, and `unsupported` is terminal against re-edits.
-  - [ ] Extraction-done flag — both edit paths gate on `thumbnails_generated_at` as a proxy for "the initial
-    extraction has landed" (04 §11.2). A dedicated column would be clearer and would stop coupling EXIF edits
-    to thumbnailing.
+  - [x] Extraction-done flag — closed by feature 33 §4.1: the observed `extracting` state replaces the
+    `thumbnails_generated_at` proxy in both edit paths.
   - [ ] A reconcile already claimed when an external (WebDAV) overwrite lands still writes its older target
-    onto the new file (31 §5). Self-corrects on the next extraction.
+    onto the new file (31 §5). Narrowed by 33 §6.4 (the completion no longer clobbers the fresh
+    `file_exif` or the `extracting` status); the file still briefly carries the pre-overwrite target.
+- [x] **EXIF read path & engine fallback (feature 33)** — ExifTool read dispatch (BMFF) + fallback
+  when rexiv2 returns a format verdict, with a differential parity test across both engines; the read
+  direction gets observed states (`extracting`, `extract_failed`, `unsupported_mime` /
+  `unsupported_file`) so `synced` stops asserting a match against a file we never read. The status
+  column lost its DEFAULT — each insert path states its own. Deleted the `thumbnails_generated_at`
+  extraction proxy and the MIME allowlists threaded into set-based SQL. Adds
+  `POST /pictures/{id}/exif/reextract` and the admin `POST /pictures/recheck-exif` sweep.
+  See `doc/features/33_exif_read_path_and_engine_fallback.md`.
+  - [ ] A **batch** EXIF edit over a video now partitions on the stored status (33 §10), which still
+    reads `synced` — so it enqueues a doomed write job and the failure lands as `unsupported_file`
+    ("unreadable") rather than the correct `unsupported_mime` ("n/a"). The per-picture edit path,
+    which keeps the `supports_exif` derivation, labels it correctly. Fix: let the batch stamp the
+    MIME verdict too, or stamp videos at first ingest.
+  - [ ] A physical copy inherits a `pending` / `pending_job_creation` source status (33 §4.1) without
+    an accompanying reconcile job, so the copy can sit in `pending` until the user resyncs it.
+  - [ ] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passes
+    `-Orientation=<n>`, which ExifTool rejects with "not in PrintConv" — it needs `-Orientation#=<n>`.
+    Pre-existing (feature 31); surfaced while building the 33 parity fixtures.
+  - [ ] Job idempotency keys are not idempotent (no `ON CONFLICT`, never liveness-scoped, two
+    overlapping unique constraints). Feature 33 routes around it; see its §12.2.
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.

@@ -3,6 +3,7 @@ use crate::clients::resolver::ResolverClient;
 use crate::infra::crypto::JwtService;
 use crate::infra::redis::Cache;
 use crate::infra::routine::RoutineHandle;
+use crate::infra::routine::exif_recheck::ExifRecheckInput;
 use crate::infra::routine::tag_rename::TagRenameInput;
 use crate::infra::routine::unannounce::UnannounceInput;
 use crate::infra::s3::Storage;
@@ -23,6 +24,8 @@ pub struct Routines {
     /// Deferred-EXIF-job drain (feature 14 §5). Trigger after a batch EXIF edit stamps new
     /// `pending_job_creation` rows.
     pub exif_drain: RoutineHandle<()>,
+    /// Admin EXIF recheck sweep (feature 33 §8). Trigger after an allowlist bump or a tool outage.
+    pub exif_recheck: RoutineHandle<ExifRecheckInput>,
     /// Tag-rename cascade (edge case §7).
     pub tag_rename: RoutineHandle<TagRenameInput>,
     /// Best-effort downstream unannounce (revocation cascade).

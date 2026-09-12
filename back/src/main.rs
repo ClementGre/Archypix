@@ -5,6 +5,7 @@ use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::redis::Cache;
 use archypix_back::infra::routine;
 use archypix_back::infra::routine::exif_drain::ExifDrainRoutine;
+use archypix_back::infra::routine::exif_recheck::ExifRecheckRoutine;
 use archypix_back::infra::routine::job_watchdog::{JobCleanupRoutine, JobWatchdogRoutine};
 use archypix_back::infra::routine::pipeline::PipelineRoutine;
 use archypix_back::infra::routine::purge_sweep::PurgeSweepRoutine;
@@ -278,6 +279,19 @@ fn start_routines(
         trigger: Arc::new(exif_drain_handle.clone()),
     });
 
+    // Admin EXIF recheck sweep (trigger-only, feature 33 §8).
+    let (exif_recheck_handle, exif_recheck_status, exif_recheck_join) = routine::spawn_with_status(
+        ExifRecheckRoutine::new(db.clone(), settings.clone()),
+        RoutineStatus::default(),
+        shutdown_rx.clone(),
+    );
+    routine_joins.push(exif_recheck_join);
+    routine_entries.push(RoutineEntry {
+        name: "exif_recheck",
+        status: exif_recheck_status,
+        trigger: Arc::new(exif_recheck_handle.clone()),
+    });
+
     // Tag-rename cascade (trigger-only) — wakes the pipeline to re-tag + re-announce.
     let (tag_rename_handle, tag_rename_status, tag_rename_join) = routine::spawn_with_status(
         TagRenameRoutine::new(db.clone(), pipeline_handle.clone(), settings.clone()),
@@ -380,6 +394,7 @@ fn start_routines(
     let routines = Routines {
         pipeline: pipeline_handle,
         exif_drain: exif_drain_handle,
+        exif_recheck: exif_recheck_handle,
         tag_rename: tag_rename_handle,
         unannounce: unannounce_handle,
     };

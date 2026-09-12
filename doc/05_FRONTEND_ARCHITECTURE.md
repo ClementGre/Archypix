@@ -546,7 +546,11 @@ mobile) and shown only when its `ui` store toggle is on:
   draft-only** — the field flips to the reference value and counts as dirty, persisted by Save (an override removal travels as `clear`, a file revert
   as an ordinary `set`); typing in the field again cancels a queued override removal. The mismatch against `file_exif` is compared with a numeric
   tolerance (EXIF stores GPS and exposure as
-  rationals, so a round-trip drifts and an exact compare would flag every coordinate). The header keeps its whole-picture **Retry** / **Revert** —
+  rationals, so a round-trip drifts and an exact compare would flag every coordinate). The sync badge has one label per state (feature 33 §11: `extracting` → "reading metadata",
+  `extract_failed` → "metadata unread", `unsupported_mime` → "n/a", `unsupported_file` → "unreadable",
+  `pending_job_creation` → "pending") — never a raw enum; a row in `extract_failed` also offers
+  **Re-extract** (`POST /exif/reextract`), which reads the file into the row rather than writing the
+  row into the file. The header keeps its whole-picture **Retry** / **Revert** —
   only
   `POST /exif/revert` can clear `write_failed` without a successful file write, which per-field reverts cannot do; it is **disabled when `file_exif`
   is null** (no snapshot ⇒ the endpoint can only 409). With no snapshot every stored field reads as "never reached the file", and a per-field revert

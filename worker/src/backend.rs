@@ -3,7 +3,9 @@ use crate::config::{BackendConfig, Config};
 use crate::error::{Result, WorkerError};
 use crate::observability;
 use archypix_common::job::JobType;
-use archypix_common::transfer::{ClaimJobResponse, ClaimQuery, CompleteJobRequest, FailJobRequest};
+use archypix_common::transfer::{
+    ClaimJobResponse, ClaimQuery, CompleteJobRequest, ExifExtraction, FailJobRequest,
+};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::sync::{Arc, Mutex};
@@ -165,6 +167,7 @@ impl BackendClient {
         error: &str,
         permanent: bool,
         unsupported: bool,
+        exif: ExifExtraction,
     ) -> Result<()> {
         let token = self.get_or_refresh_token()?;
         let url = format!(
@@ -176,6 +179,7 @@ impl BackendClient {
             error: error.to_string(),
             permanent,
             unsupported,
+            exif,
         };
         let mut headers = reqwest::header::HeaderMap::new();
         observability::inject_into_headers(&mut headers);

@@ -37,6 +37,7 @@ re-extraction. `ADD VALUE` is never *used* in the same migration, so it is trans
 ### 2.2 Domain model (`back/src/domain/picture.rs`)
 
 ```rust
+// Feature 33 §4 adds Extracting / ExtractFailed / UnsupportedFile and renames Unsupported.
 pub enum ExifSyncStatus { Synced, Pending, Unsupported, PendingJobCreation, WriteFailed }
 
 pub struct Picture {
@@ -48,9 +49,11 @@ pub struct Picture {
 
 ### 3.1 Ingestion & extraction
 
-A `gen_thumbnail` job with `is_initial` returns the extracted EXIF. `update_from_worker` writes it to
-the promoted columns **and** `exif_data`'s camera keys **and** `file_exif`, and sets `synced` — unless
-the row is `unsupported`, a terminal state extraction must not undo.
+A `gen_thumbnail` job with `is_initial` returns an extraction **outcome** (feature 33 §5). On success
+`update_from_worker` writes it to the promoted columns **and** `exif_data`'s camera keys **and**
+`file_exif`, and sets `synced`. The row sits in `extracting` until then — an observed state, not a
+schema default — and the terminal-verdict `CASE` is gone: extraction only runs on new bytes, so a
+success is evidence against a stale verdict (33 §6.3).
 
 ### 3.2 Editing (single or batch)
 
@@ -59,8 +62,9 @@ the row is `unsupported`, a terminal state extraction must not undo.
 3. Status becomes `pending` (single) or `pending_job_creation` (batch; the drain creates the job).
 4. The work outstanding is the difference between `full_exif()` and `file_exif`.
 
-An edit is refused (409) while the initial extraction is still running, since the extraction would
-overwrite it — the set-based batch path applies the same rule by skipping those rows (04 §11.2).
+An edit is refused (409) while the extraction is still running, since the extraction would overwrite
+it — the set-based batch path applies the same rule by skipping those rows (04 §11.2). Both now gate
+on the `extracting` status rather than the `thumbnails_generated_at` proxy (feature 33 §4.1).
 
 ### 3.3 Reconcile job lifecycle
 
@@ -122,21 +126,31 @@ sets `synced`: an external overwrite is a new source of truth and resets Archypi
 not yet reached the file.
 
 *Known gap:* a reconcile already claimed when the overwrite lands will still write its (older) target
-onto the new file. Rare, and self-correcting on the next extraction.
+onto the new file. Rare, and self-correcting on the next extraction. Feature 33 §6.4 narrows it: that
+job's completion no longer overwrites the fresh `file_exif` or the `extracting` status with its
+read-back of the pre-overwrite bytes.
 
 ## 6. Refined Unsupported Handling
 
-- **MIME preflight** still gates job creation for formats that cannot embed EXIF.
+Feature 33 §4.3–4.4 splits the single `unsupported` value in two, because the two facts have different
+meanings and different re-check triggers: `unsupported_mime` (the format cannot receive EXIF writes —
+"n/a") and `unsupported_file` (both engines ran and neither could open the file — "unreadable").
+
+- **MIME preflight** moves to **insert** (33 §4.1): a format that is neither EXIF- nor video-readable
+  is stamped `unsupported_mime` at ingest. Video ingests readable, reaches `synced`, and becomes
+  `unsupported_mime` only when an edit first tries to write it.
 - **Worker-detected** — only a file the metadata library cannot *open at all* yields
-  `WorkerError::UnsupportedFormat`, which sets `unsupported: true` in the fail body. A write that
-  fails on a file that opened fine is `WorkerError::Exif` → `write_failed`; a read-back failure
-  after a successful write is downgraded to `write_failed` for the same reason.
+  `WorkerError::UnsupportedFormat`, which sets `unsupported: true` in the fail body →
+  `unsupported_file`. A write that fails on a file that opened fine is `WorkerError::Exif` →
+  `write_failed`; a read-back failure after a successful write is downgraded to `write_failed` for
+  the same reason.
 - **Tool unavailable** — a missing or unspawnable `exiftool` is a worker-environment fault, not a
   file verdict: `WorkerError::ToolUnavailable` is *retriable*, so the picture stays `pending` and
   only reaches `write_failed` via the watchdog once the retry budget is spent.
-- **Terminal state** — the backend sets `unsupported` rather than `write_failed`; retrying can never
-  help. Revert-to-file still works, and a later edit on such a row stays DB-only (no job is
-  enqueued) — `unsupported` is never flipped back to `pending` by the edit path.
+- **Terminal states** — the backend sets one of the two `unsupported_*` values rather than
+  `write_failed`; retrying can never help. Revert-to-file still works, and a later edit on such a row
+  stays DB-only (no job is enqueued). They are left only by new bytes or the admin recheck
+  sweep (33 §8).
 
 ## 7. Batch Edit & Drain Robustness
 
@@ -160,6 +174,8 @@ never lost.
 - [x] Worker: `write_exif_target` with grouped clears + read-back.
 - [x] Frontend: `write error` badge, Retry / Revert actions, per-field `diff` badges (numeric
       tolerance), `write_failed` count in the batch panel.
+- [x] Extraction-done flag: the observed `extracting` state replaces the `thumbnails_generated_at`
+      proxy in both edit paths (feature 33 §4.1).
 - [x] Tests: `worker_contract.rs` (binding, convergence, failure states, extraction overwrite),
       `services_jobs.rs` (revert + resync), `batch_editing.rs` (extraction guard),
       `worker/src/imaging/exif.rs` (clear grouping).

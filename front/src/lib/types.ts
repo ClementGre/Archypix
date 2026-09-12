@@ -1,10 +1,15 @@
 // Shared domain types — wire shapes match API ref §10 and §6.3/6.6/6.8 exactly.
 
+// Feature 33 §4: every value is an observation — a read-direction one (`extracting`,
+// `extract_failed`, `unsupported_file`) or a write-direction one.
 export type ExifSyncStatus =
     | 'synced'
     | 'pending'
     | 'pending_job_creation'
-    | 'unsupported'
+    | 'extracting'
+    | 'extract_failed'
+    | 'unsupported_mime'
+    | 'unsupported_file'
     | 'write_failed'
 
 export type PictureVariant = 'original' | 'small' | 'medium' | 'large'

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures\n         SET mime_type = NULL, thumbnails_generated_at = (now() AT TIME ZONE 'utc'),\n             exif_sync_status = 'synced'\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7e5ce881d0f42425ad9509a9195c4d0418f5b1fce7a116decb14b7c73ffd58b7"
+}

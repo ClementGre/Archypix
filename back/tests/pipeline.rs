@@ -36,8 +36,8 @@ async fn run_pipeline(db: &PgPool, user: Uuid) {
 async fn seed_picture_2024(db: &PgPool, user_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, captured_at) \
-         VALUES ($1, $2, '2024-06-01 12:00:00')",
+        "INSERT INTO pictures (id, local_user_id, captured_at, exif_sync_status) \
+         VALUES ($1, $2, '2024-06-01 12:00:00', 'synced')",
         id,
         user_id,
     )
@@ -236,10 +236,10 @@ async fn pipeline_evaluates_composed_exif_predicate(db: PgPool) {
     // A Fujifilm photo at ISO 400, 1/2 s exposure, captured in summer 2024.
     let pic = Uuid::new_v4();
     sqlx::query!(
-        r#"INSERT INTO pictures (id, local_user_id, captured_at, mime_type, exif_data)
+        r#"INSERT INTO pictures (id, local_user_id, captured_at, mime_type, exif_data, exif_sync_status)
            VALUES ($1, $2, '2024-07-15 10:00:00', 'image/jpeg',
                    '{"camera_brand": "FUJIFILM", "iso_speed": 400,
-                     "exposure_time_num": 1, "exposure_time_den": 2}'::jsonb)"#,
+                     "exposure_time_num": 1, "exposure_time_den": 2}'::jsonb, 'synced')"#,
         pic,
         user,
     )
@@ -280,7 +280,8 @@ async fn pipeline_matches_creator_field(db: PgPool) {
 
     let credited = Uuid::new_v4();
     sqlx::query!(
-        r#"INSERT INTO pictures (id, local_user_id, creator) VALUES ($1, $2, 'Grandpa''s camera')"#,
+        r#"INSERT INTO pictures (id, local_user_id, creator, exif_sync_status)
+           VALUES ($1, $2, 'Grandpa''s camera', 'synced')"#,
         credited,
         user,
     )

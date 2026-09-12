@@ -32,8 +32,9 @@ pub fn extract_video_metadata(path: &Path) -> Result<ExtractedExif> {
         ])
         .arg(path)
         .output()
+        // Worker-environment fault, not a file verdict: retriable (feature 33 §7).
         .map_err(|e| {
-            WorkerError::Exif(format!(
+            WorkerError::ToolUnavailable(format!(
                 "failed to spawn ffprobe (installed / on PATH?): {e}"
             ))
         })?;

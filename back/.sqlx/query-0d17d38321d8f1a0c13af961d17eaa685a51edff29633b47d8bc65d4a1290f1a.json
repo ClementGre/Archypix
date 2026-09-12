@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures\n                   (local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                    filename, mime_type, file_size, width, height, metadata,\n                    blurhash, file_hash, content_hash, thumbnails_generated_at,\n                    remote_exif_data, owner_deleted_at, owner_purge_at, creator, remote_updated_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb,\n                       $10, $11, $16, $12, $13, $14, $15, $17, $18)\n               ON CONFLICT (local_user_id, remote_picture_id)\n               WHERE remote_picture_id IS NOT NULL\n               DO UPDATE SET\n                   filename  = COALESCE(EXCLUDED.filename,  pictures.filename),\n                   mime_type = COALESCE(EXCLUDED.mime_type, pictures.mime_type),\n                   file_size = COALESCE(EXCLUDED.file_size, pictures.file_size),\n                   width     = COALESCE(EXCLUDED.width,     pictures.width),\n                   height    = COALESCE(EXCLUDED.height,    pictures.height),\n                   blurhash  = COALESCE(EXCLUDED.blurhash,  pictures.blurhash),\n                   file_hash   = COALESCE(EXCLUDED.file_hash, pictures.file_hash),\n                   content_hash = COALESCE(EXCLUDED.content_hash, pictures.content_hash),\n                   thumbnails_generated_at = COALESCE(EXCLUDED.thumbnails_generated_at,\n                                                      pictures.thumbnails_generated_at),\n                   -- Owner-authoritative state is refreshed; local_exif_overrides + creator_override\n                   -- (the recipient's own relabel) are preserved. The stale-announce guard (§7) is\n                   -- applied by the caller before this upsert; here we just stamp the new value.\n                   remote_exif_data = EXCLUDED.remote_exif_data,\n                   owner_deleted_at = EXCLUDED.owner_deleted_at,\n                   owner_purge_at   = EXCLUDED.owner_purge_at,\n                   creator          = EXCLUDED.creator,\n                   remote_updated_at = COALESCE(EXCLUDED.remote_updated_at, pictures.remote_updated_at)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at, file_modified_at",
+  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height, exif_data, metadata, captured_at, original_file_created_at, exif_sync_status)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at, file_modified_at",
   "describe": {
     "columns": [
       {
@@ -343,9 +343,12 @@
               "Enum": [
                 "synced",
                 "pending",
-                "unsupported",
+                "unsupported_mime",
                 "pending_job_creation",
-                "write_failed"
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
               ]
             }
           }
@@ -460,23 +463,32 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Varchar",
-        "Varchar",
-        "Varchar",
+        "Uuid",
         "Varchar",
         "Varchar",
         "Int8",
         "Int4",
         "Int4",
-        "Text",
-        "Text",
-        "Timestamp",
         "Jsonb",
         "Timestamp",
         "Timestamp",
-        "Text",
-        "Text",
-        "Timestamp"
+        {
+          "Custom": {
+            "name": "picture_exif_sync_status",
+            "kind": {
+              "Enum": [
+                "synced",
+                "pending",
+                "unsupported_mime",
+                "pending_job_creation",
+                "write_failed",
+                "unsupported_file",
+                "extracting",
+                "extract_failed"
+              ]
+            }
+          }
+        }
       ]
     },
     "nullable": [
@@ -521,5 +533,5 @@
       false
     ]
   },
-  "hash": "82b2fb035a6237ec93cfbfe0e9e0d5fddab12487ab11a0dc5002e4ce8422161f"
+  "hash": "0d17d38321d8f1a0c13af961d17eaa685a51edff29633b47d8bc65d4a1290f1a"
 }

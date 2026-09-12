@@ -26,8 +26,9 @@ async fn seed_owned(db: &PgPool, user: Uuid, content_hash: &str, reason: Option<
     let deleted_at: Option<NaiveDateTime> = reason.map(|_| chrono::Utc::now().naive_utc());
     sqlx::query(
         r#"INSERT INTO pictures (id, local_user_id, content_hash, file_hash, deleted_at,
-                                 deleted_reason, thumbnails_generated_at)
-           VALUES ($1, $2, $3, $3, $4, $5::picture_deleted_reason, (now() AT TIME ZONE 'utc'))"#,
+                                 deleted_reason, thumbnails_generated_at, exif_sync_status)
+           VALUES ($1, $2, $3, $3, $4, $5::picture_deleted_reason, (now() AT TIME ZONE 'utc'),
+                   'synced')"#,
     )
     .bind(id)
     .bind(user)
@@ -47,9 +48,9 @@ async fn seed_received(db: &PgPool, user: Uuid, content_hash: &str, reason: Opti
     sqlx::query(
         r#"INSERT INTO pictures (id, local_user_id, remote_picture_id, owner_username,
                                  owner_instance_domain, content_hash, file_hash, deleted_at,
-                                 deleted_reason, thumbnails_generated_at)
+                                 deleted_reason, thumbnails_generated_at, exif_sync_status)
            VALUES ($1, $2, $6, 'owner', 'other.com', $3, $3, $4,
-                   $5::picture_deleted_reason, (now() AT TIME ZONE 'utc'))"#,
+                   $5::picture_deleted_reason, (now() AT TIME ZONE 'utc'), 'synced')"#,
     )
     .bind(id)
     .bind(user)

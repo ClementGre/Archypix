@@ -49,8 +49,8 @@ async fn seed_full_picture(
     let id = Uuid::new_v4();
     let hash = archypix_common::hash::hash_bytes(&bytes.to_vec()).unwrap();
     sqlx::query!(
-        "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, file_hash) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, file_hash, exif_sync_status) \
+         VALUES ($1, $2, $3, $4, $5, $6, 'synced')",
         id,
         user,
         filename,

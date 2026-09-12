@@ -391,7 +391,7 @@ async fn exif_completion_records_file_exif_and_syncs(db: PgPool) {
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
         "thumbnails_generated": false,
-        "exif": {"gps_lat": 48.856599999, "gps_lng": 2.3522000001},
+        "exif": {"extracted": {"gps_lat": 48.856599999, "gps_lng": 2.3522000001}},
     });
     let resp = app
         .clone()
@@ -448,7 +448,7 @@ async fn an_edit_during_processing_is_requeued_for_the_drain(db: PgPool) {
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
         "thumbnails_generated": false,
-        "exif": {"gps_lat": 48.8566, "gps_lng": 2.3522},
+        "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
     });
     let resp = app
         .clone()
@@ -521,6 +521,7 @@ async fn exif_permanent_failure_marks_write_failed(db: PgPool) {
     );
 }
 
+/// §4.4: `unsupported: true` on the write path means neither engine could open the file.
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn exif_unsupported_failure_is_terminal(db: PgPool) {
     let settings = test_settings_with(&[]);
@@ -552,7 +553,7 @@ async fn exif_unsupported_failure_is_terminal(db: PgPool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Unsupported);
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::UnsupportedFile);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -582,7 +583,7 @@ async fn extraction_overwrites_pending_edits_and_records_the_file(db: PgPool) {
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
         "thumbnails_generated": true,
-        "exif": {"gps_lat": 1.0, "gps_lng": 2.0, "camera_brand": "Nikon"},
+        "exif": {"extracted": {"gps_lat": 1.0, "gps_lng": 2.0, "camera_brand": "Nikon"}},
     });
     let resp = app
         .clone()
@@ -638,7 +639,7 @@ async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: P
             "claim_token": claim,
             "thumbnails_generated": false,
             "file_hash": hash,
-            "exif": {"gps_lat": 48.8566, "gps_lng": 2.3522},
+            "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
         });
         let app = app.clone();
         let token = token.clone();
@@ -684,5 +685,370 @@ async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: P
         mtime(db.clone()).await,
         after_write,
         "an unchanged hash must not move the last-modified"
+    );
+}
+
+// ── Feature 33: the read direction's outcomes ────────────────────────────────
+
+/// Seed a picture mid-extraction: a `gen_thumbnail(is_initial)` job plus the `extracting` status the
+/// insert paths stamp. Returns `(picture_id, job_id)`.
+async fn seed_extraction(db: &PgPool, user_id: Uuid, mime: &str) -> (Uuid, Uuid) {
+    let pic_id = common::seed_picture(db, user_id).await;
+    sqlx::query!(
+        "UPDATE pictures SET mime_type = $2 WHERE id = $1",
+        pic_id,
+        mime,
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    PictureRepository::set_exif_sync_status(db, pic_id, ExifSyncStatus::Extracting)
+        .await
+        .unwrap();
+    let job = enqueue_thumbnail_job(db, user_id, pic_id, true, None)
+        .await
+        .unwrap();
+    (pic_id, job.id)
+}
+
+/// Claim the next `gen_thumbnail` job, returning its `claim_token`.
+async fn claim_thumbnail(app: &axum::Router, token: &str) -> Uuid {
+    let resp = app
+        .clone()
+        .oneshot(get("/api/worker/jobs/next?types=gen_thumbnail", token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    json_body(resp).await["claim_token"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+/// §6.1: each extraction outcome lands its own state, and none of them is the schema's opinion.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn each_extraction_outcome_lands_its_state(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    for (outcome, expected) in [
+        (
+            serde_json::json!({"extracted": {"gps_lat": 1.0}}),
+            ExifSyncStatus::Synced,
+        ),
+        (
+            serde_json::json!("unsupported_mime"),
+            ExifSyncStatus::UnsupportedMime,
+        ),
+        (serde_json::json!("failed"), ExifSyncStatus::UnsupportedFile),
+    ] {
+        let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+        let claim_token = claim_thumbnail(&app, &token).await;
+        let resp = app
+            .clone()
+            .oneshot(post_json(
+                &format!("/api/worker/jobs/{job_id}/complete"),
+                &token,
+                &serde_json::json!({
+                    "claim_token": claim_token,
+                    "thumbnails_generated": true,
+                    "exif": outcome,
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let picture = PictureRepository::find_by_id(&db, pic_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(picture.exif_sync_status, expected, "outcome {outcome}");
+    }
+}
+
+/// §6.5: a permanently failed extraction job never reaches `complete_job` and the watchdog only
+/// rescues budget exhaustion, so `fail_job` has to settle the row — otherwise it stays `extracting`
+/// forever with no job left to move it, and every edit is refused.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn each_failed_extraction_outcome_settles_the_row(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    for (outcome, expected) in [
+        (
+            serde_json::json!({"extracted": {"gps_lat": 1.0}}),
+            ExifSyncStatus::Synced,
+        ),
+        (
+            serde_json::json!("unsupported_mime"),
+            ExifSyncStatus::UnsupportedMime,
+        ),
+        (serde_json::json!("failed"), ExifSyncStatus::UnsupportedFile),
+        // The job died before it got a verdict — an absence of one, not a verdict.
+        (
+            serde_json::json!("not_attempted"),
+            ExifSyncStatus::ExtractFailed,
+        ),
+    ] {
+        let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+        let claim_token = claim_thumbnail(&app, &token).await;
+        let resp = app
+            .clone()
+            .oneshot(post_json(
+                &format!("/api/worker/jobs/{job_id}/fail"),
+                &token,
+                &serde_json::json!({
+                    "claim_token": claim_token,
+                    "error": "thumbnailer: codec failure",
+                    "permanent": true,
+                    "exif": outcome,
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let picture = PictureRepository::find_by_id(&db, pic_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(picture.exif_sync_status, expected, "outcome {outcome}");
+    }
+}
+
+/// The read direction succeeded even though the job did not: the EXIF lands, but
+/// `thumbnails_generated_at` must not — the thumbnails are exactly what failed, and stamping it
+/// would serve a missing thumbnail and hide the row from the regeneration sweep.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_failed_thumbnail_job_still_records_what_it_read(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    let claim_token = claim_thumbnail(&app, &token).await;
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{job_id}/fail"),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim_token,
+                "error": "thumbnailer: codec failure",
+                "permanent": true,
+                "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Synced);
+    assert_eq!(picture.gps_lat, Some(48.8566));
+    assert!(
+        picture.file_exif.is_some(),
+        "the file snapshot lands, so Revert-to-file works on a picture whose thumbnails failed"
+    );
+    assert!(
+        picture.thumbnails_generated_at.is_none(),
+        "the thumbnails failed — the row must stay visible to the regeneration sweep"
+    );
+}
+
+/// A retriable failure is not a verdict: the job will be retried, so the row stays `extracting`.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_retriable_job_failure_leaves_the_row_extracting(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    let claim_token = claim_thumbnail(&app, &token).await;
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{job_id}/fail"),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim_token,
+                "error": "connection reset",
+                "permanent": false,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Extracting);
+}
+
+/// A retriable extraction failure never completes the job, so it must leave the status alone —
+/// the retry budget and the watchdog own the row from here (§6.1).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_retriable_extraction_failure_leaves_the_status_alone(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+    let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+
+    let claim_token = claim_thumbnail(&app, &token).await;
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{job_id}/fail"),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim_token,
+                "error": "connection reset while downloading",
+                "permanent": false,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Extracting);
+}
+
+/// §4.2: an extraction whose retry budget is exhausted never reaches `fail_job`, so the watchdog
+/// records the absence of a verdict itself.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn watchdog_exhaustion_marks_the_extraction_failed(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+    // A claimed job whose next retry is its last, stalled well past the processing timeout.
+    sqlx::query!(
+        "UPDATE jobs
+         SET status = 'processing', retry_count = max_retries - 1,
+             started_at = (now() AT TIME ZONE 'utc') - INTERVAL '1 day'
+         WHERE id = $1",
+        job_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let settings = test_settings_with(&[]);
+    archypix_back::infra::routine::Routine::run(
+        &archypix_back::infra::routine::job_watchdog::JobWatchdogRoutine::new(
+            db.clone(),
+            settings,
+        ),
+        (),
+    )
+    .await
+    .unwrap();
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::ExtractFailed);
+}
+
+/// §6.3: extraction only ever runs on new bytes, so a success is direct evidence against a stale
+/// verdict — the old `CASE` that preserved it would strand a file the user replaced with a good one.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_successful_re_extraction_clears_unsupported_file(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+    let (pic_id, job_id) = seed_extraction(&db, alice_id, "image/jpeg").await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::UnsupportedFile)
+        .await
+        .unwrap();
+
+    let claim_token = claim_thumbnail(&app, &token).await;
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{job_id}/complete"),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim_token,
+                "thumbnails_generated": true,
+                "exif": {"extracted": {"gps_lat": 7.5}},
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Synced);
+    assert_eq!(picture.gps_lat, Some(7.5));
+}
+
+/// §6.4: a WebDAV overwrite landing mid-edit sets `extracting`; the edit's completion must not write
+/// `synced` over it, nor overwrite the fresh state with its read-back of the pre-overwrite bytes.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn an_edit_completion_never_leaves_extracting(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let (pic_id, job_id) = seed_exif_edit(&db, alice_id).await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+
+    let (claim_token, _config) = claim_edit(&app, &token).await;
+    // The overwrite lands while the reconcile is in flight.
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::Extracting)
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{job_id}/complete"),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim_token,
+                "thumbnails_generated": false,
+                "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Extracting);
+    assert!(
+        picture.file_exif.is_none(),
+        "the stale read-back must not describe the new bytes"
     );
 }

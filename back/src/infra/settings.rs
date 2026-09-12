@@ -113,6 +113,7 @@ pub mod keys {
     pub const EXIF_DRAIN_INTERVAL_SECS: SettingKey<u64> =
         SettingKey::new("exif_drain_interval_secs");
     pub const EXIF_DRAIN_BATCH: SettingKey<i64> = SettingKey::new("exif_drain_batch");
+    pub const EXIF_RECHECK_BATCH: SettingKey<i64> = SettingKey::new("exif_recheck_batch");
     pub const PURGE_SWEEP_INTERVAL_SECS: SettingKey<u64> =
         SettingKey::new("purge_sweep_interval_secs");
     pub const PURGE_SWEEP_BATCH: SettingKey<i64> = SettingKey::new("purge_sweep_batch");
@@ -285,6 +286,8 @@ pub fn registry() -> Vec<SettingSpec> {
             .doc("Fallback sweep interval for the deferred-EXIF-job drain.", "5"),
         SettingSpec::new(EXIF_DRAIN_BATCH, group::PIPELINE).default("200").routine("exif_drain")
             .doc("Max pictures the EXIF drain turns into reconcile jobs per pass.", "200"),
+        SettingSpec::new(EXIF_RECHECK_BATCH, group::PIPELINE).default("200").routine("exif_recheck")
+            .doc("Max pictures the admin EXIF recheck sweep re-extracts per pass.", "200"),
         SettingSpec::new(PURGE_SWEEP_INTERVAL_SECS, group::PIPELINE).default("3600").routine("purge_sweep")
             .doc("How often the trash purge sweep runs.", "3600"),
         SettingSpec::new(PURGE_SWEEP_BATCH, group::PIPELINE).default("200").routine("purge_sweep")
