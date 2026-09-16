@@ -119,16 +119,16 @@ not a latency benchmark. Feature 19 §4/§6 to be updated: the startup-latency b
 
 Eight values. Every one has a distinct setter, a distinct exit trigger, and a distinct downstream gate.
 
-| State | Direction | Asserts | Edits | Job? |
-|---|---|---|---|---|
-| `extracting` | read | we have not read this file yet | **refused (409)** | — |
-| `extract_failed` | read | we tried and never got an answer | allowed | yes |
-| `unsupported_mime` | write | the format cannot receive EXIF writes | DB-only | no |
-| `unsupported_file` | read | both engines ran; neither could open it | DB-only | no |
-| `pending` | write | DB holds EXIF the file does not; a job exists | allowed (folds) | exists |
-| `pending_job_creation` | write | same, and the drain still owes a job | allowed | drain owes |
-| `write_failed` | write | the file opened, the write did not land | allowed | re-enqueue |
-| `synced` | — | no outstanding sync work | allowed | on edit |
+| State                  | Direction | Asserts                                       | Edits             | Job?       |
+|------------------------|-----------|-----------------------------------------------|-------------------|------------|
+| `extracting`           | read      | we have not read this file yet                | **refused (409)** | —          |
+| `extract_failed`       | read      | we tried and never got an answer              | allowed           | yes        |
+| `unsupported_mime`     | write     | the format cannot receive EXIF writes         | DB-only           | no         |
+| `unsupported_file`     | read      | both engines ran; neither could open it       | DB-only           | no         |
+| `pending`              | write     | DB holds EXIF the file does not; a job exists | allowed (folds)   | exists     |
+| `pending_job_creation` | write     | same, and the drain still owes a job          | allowed           | drain owes |
+| `write_failed`         | write     | the file opened, the write did not land       | allowed           | re-enqueue |
+| `synced`               | —         | no outstanding sync work                      | allowed           | on edit    |
 
 ### 4.1 `extracting` (new — and the column loses its default)
 
@@ -138,12 +138,12 @@ extraction outcome — see §6.4 for the one other path that must *not* move it.
 
 `exif_sync_status` **drops its column default**; each insert path states its own:
 
-| Insert path | Status at insert | Why |
-|---|---|---|
-| Upload (`create`) | `extracting`, or `unsupported_mime` when the MIME is neither EXIF- nor video-readable | an extraction job follows; pre-stamping the unreadable formats avoids a pointless edit-refusal window (§12.3 H) |
-| WebDAV PUT (`create`) | same as upload | same |
-| Physical copy (`create_copy`) | inherits the source's status and its `file_exif` | identical bytes, so the source's snapshot is valid without reading anything; `is_initial = false` means no extraction will ever report (§12.1 A) |
-| Federation receive (`create_received`) | `synced` (inert) | no local original; never reaches the write path |
+| Insert path                            | Status at insert                                                                      | Why                                                                                                                                              |
+|----------------------------------------|---------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| Upload (`create`)                      | `extracting`, or `unsupported_mime` when the MIME is neither EXIF- nor video-readable | an extraction job follows; pre-stamping the unreadable formats avoids a pointless edit-refusal window (§12.3 H)                                  |
+| WebDAV PUT (`create`)                  | same as upload                                                                        | same                                                                                                                                             |
+| Physical copy (`create_copy`)          | inherits the source's status and its `file_exif`                                      | identical bytes, so the source's snapshot is valid without reading anything; `is_initial = false` means no extraction will ever report (§12.1 A) |
+| Federation receive (`create_received`) | `synced` (inert)                                                                      | no local original; never reaches the write path                                                                                                  |
 
 A copy whose **source** is itself in a non-terminal read state (`extracting`, `extract_failed`)
 inherits `extract_failed` rather than a state nothing will resolve — no successful read of those
@@ -181,10 +181,13 @@ Two setters, both asserting the same thing:
   (`None`) is `extracting` on both sides: the backend cannot judge it and the worker attempts
   extraction anyway (`unwrap_or(true)`), which resolves it to a real verdict. The **write** side
   defaults the same way — see §10.
-- **The edit path**, when an edit lands on a format that is not EXIF-writable. This is where a video
-  arrives: it ingests, is read successfully, reaches `synced`, and only becomes `unsupported_mime`
-  when someone first tries to write to it — which is today's behaviour, now with a label that says
-  what it means.
+- **A successful extraction**, when the format that was just read is not EXIF-writable. This is
+  where a video arrives: ffprobe reads it, and the same completion that records the read stamps the
+  write verdict, because the MIME already decides it. See §4.6.
+- **The edit path**, when an edit lands on a format that is not EXIF-writable — the derivation §10
+  keeps. Now a backstop rather than the primary setter: it still closes the window between an
+  allowlist change and the sweep, and it is the only setter for a format whose read never landed
+  (an `extract_failed` video).
 
 Exit: the admin recheck sweep after an allowlist change (§8).
 
@@ -206,9 +209,21 @@ users after a batch edit.
 Now means only what it says: no outstanding sync work, established by an observation — extraction
 success, convergence against the bound target, or revert-to-file.
 
-A format that is readable but not writable (video) **does** legitimately reach `synced` after ingest:
-we read the file and the DB matches it. It moves to `unsupported_mime` only when an edit first tries
-to write. A format that is neither readable nor writable never arrives here at all — it is stamped
+**A successful read settles the read direction only.** Where the write direction is already decided
+by the MIME, that verdict wins: a format that is readable but not writable (video) goes
+`extracting` → `unsupported_mime`, never through `synced`. Each of the three observations above
+applies it — `extraction_settled_status(mime)` in `services::jobs`, passed to
+`update_from_worker`/`write_exif_snapshot` by the caller, so no allowlist enters the SQL.
+
+The read's success is not lost: `file_exif IS NOT NULL` is its witness (§4.7), and it is what
+separates a video's `unsupported_mime` from a GIF's.
+
+Why not simply stamp it at insert like a GIF (§4.1)? Because a video must stay `extracting` through
+its ingest window. A GIF's extraction returns `UnsupportedMime` and writes nothing, so an edit during
+that window is safe; a video's returns `Extracted` and calls `update_from_worker`, which would
+overwrite a DB-only edit with the file's values — the 04 §11.2 race `extracting` exists to prevent.
+
+A format that is neither readable nor writable never arrives here at all — it is stamped
 `unsupported_mime` at insert (§4.1).
 
 ### 4.7 Invariants
@@ -291,12 +306,12 @@ exists to remove, one layer down.
 So the worker publishes its extraction outcome as soon as it has one, and reports it on
 `fail_job` too. For a permanently failed `is_initial` job the backend settles the row:
 
-| Outcome | Row becomes |
-|---|---|
-| `Extracted` | `synced`, with the EXIF and `file_exif` recorded — the read succeeded even though the job did not |
-| `UnsupportedMime` | `unsupported_mime` |
-| `Failed` | `unsupported_file` |
-| `NotAttempted` | `extract_failed` — the job died before reaching a verdict |
+| Outcome           | Row becomes                                                                                                    |
+|-------------------|----------------------------------------------------------------------------------------------------------------|
+| `Extracted`       | §4.6's settled status, with the EXIF and `file_exif` recorded — the read succeeded even though the job did not |
+| `UnsupportedMime` | `unsupported_mime`                                                                                             |
+| `Failed`          | `unsupported_file`                                                                                             |
+| `NotAttempted`    | `extract_failed` — the job died before reaching a verdict                                                      |
 
 Two constraints:
 
@@ -482,7 +497,11 @@ explicit `409` over a silent dedupe.
   and does not touch the status; watchdog exhaustion sets `extract_failed`; a successful
   re-extraction clears `unsupported_file`.
 - `services_jobs.rs` — `reextract` refuses `pending`/`write_failed`; accepts `extract_failed`.
-- `batch_editing.rs` — the batch partition by status matches the old MIME partition on a mixed set.
+- `batch_editing.rs` — the batch partition by status matches the old MIME partition on a mixed set
+  (jpeg / gif / video / received), dry run and run agreeing; a video stays DB-only and enqueues no
+  job; the per-picture and batch paths reach the same verdict for one.
+- `worker_contract.rs` — a video's successful extraction settles on `unsupported_mime` with
+  `file_exif` populated (§4.6).
 - Migration: an `unsupported` row with an EXIF-capable MIME promotes to `unsupported_file`; one
   without stays `unsupported_mime`.
 
@@ -518,8 +537,8 @@ explicit `409` over a silent dedupe.
 
 ## 16. Implementation status
 
-Implemented. Migrations `0015_exif_read_path` + `0016_split_unsupported_exif`; routine
-`exif_recheck`; setting `exif_recheck_batch`.
+Implemented. Migrations `0015_exif_read_path` + `0016_split_unsupported_exif` +
+`0018_video_write_verdict`; routine `exif_recheck`; setting `exif_recheck_batch`.
 
 Deviations and residue, all deliberate:
 
@@ -540,11 +559,42 @@ Deviations and residue, all deliberate:
   (a stored `5/4` prints as `1.2`), so the parse yields `6/5`. Exactly-representable decimals
   (`0.5 → 1/2`, `2 → 2/1`, `30 → 30/1`) round-trip, and the fraction form — every exposure below
   1/4 s — is exact. Reading `-n` instead would mean rationalizing a float, which §3.3 forbids.
-- **A batch EXIF edit over a video is mislabelled.** §10 has the set-based path partition on stored
-  status only, but a video is legitimately `synced` (§4.6) and only the *per-picture* edit path keeps
-  the `supports_exif` derivation that would stamp `unsupported_mime` (§4.3). A batch therefore
-  enqueues a write job that fails, landing the row on `unsupported_file` ("unreadable") instead of
-  `unsupported_mime` ("n/a"). Tracked on the roadmap.
+- **A batch EXIF edit over a video was mislabelled — fixed by amending §4.6** (migration
+  `0018_video_write_verdict`). §10 has the set-based path partition on stored status only, but a
+  video was legitimately `synced` (§4.6 as written) and only the *per-picture* edit path kept the
+  `supports_exif` derivation that stamps `unsupported_mime` (§4.3). A batch therefore enqueued a
+  write job that failed, landing the row on `unsupported_file` ("unreadable") instead of
+  `unsupported_mime` ("n/a").
+
+  Two fixes were on the table; the second was taken.
+
+  1. *Let the batch `CASE` test a write-capability predicate too.* Rejected. It reintroduces the
+     allowlist §10 deleted, and not once — the batch `UPDATE`, `count_owned_unsupported_selection`
+     (or the dry run disagrees with the run it previews) and `aggregate_summary` (or §11's
+     "the counts become correct" still under-reports every video) each need their own copy, kept in
+     step with `MIME_TYPES_EXIF` by hand. It also leaves the column itself wrong — the frontend badge
+     would still read "synced" for a picture that can never sync a write — so every *future* reader
+     of the column inherits the same bug and the same obligation to re-derive.
+  2. *Carry the write verdict in the stored state.* Taken. §10's premise is that the status is
+     complete enough for set-based readers; the defect was the state machine, not the query. §4.3
+     already defines `unsupported_mime` as a **write** verdict with a MIME-only setter at ingest
+     (GIF), so a video is the same verdict discovered one step later — at extraction success rather
+     than at insert, because a video must stay `extracting` through its ingest window (§4.6). Every
+     downstream reader is then correct with no MIME test anywhere: batch partition, dry-run count,
+     aggregate buckets, and the badge, which already maps `unsupported_mime` → "n/a".
+
+  Cost, all paid: §4.6 amended, three settle points routed through one helper
+  (`extraction_settled_status`), and a one-time backfill of rows ingested under the old rule. No read
+  information is lost — §4.7's `file_exif IS NOT NULL` still witnesses the successful read, and is
+  what distinguishes a video's `unsupported_mime` from a GIF's.
+
+- **Residue: an `extract_failed` video still takes the doomed-job path on a batch edit.** §4.2 allows
+  edits from `extract_failed` because "the file is probably writable, we simply never read it" — a
+  read-direction rule that cannot see the MIME. For a video that rule is wrong, and the batch path
+  has no verdict stored to stop it, so the row still ends on `unsupported_file`. Far rarer than the
+  case fixed above (it needs watchdog exhaustion or copy inheritance first), already correct on the
+  per-picture path, and the label is defensible there: neither direction succeeded. Tracked on the
+  roadmap.
 - **A copy of a `pending` source can sit in `pending` with no job.** §4.1's inheritance rule carves
   out only the two never-read states; a copy of a row with an unsynced edit inherits `pending` while
   `is_initial = false` enqueues no reconcile. Recoverable through `/exif/resync`, and visible in the

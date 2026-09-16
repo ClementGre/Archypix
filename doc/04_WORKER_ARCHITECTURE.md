@@ -124,7 +124,7 @@ than an `Option`, which was overloaded three ways:
 
 | Variant           | Meaning                                         | Backend result     |
 |-------------------|-------------------------------------------------|--------------------|
-| `Extracted(…)`    | the read succeeded (also the edit read-back)    | `synced` + `file_exif` |
+| `Extracted(…)`    | the read succeeded (also the edit read-back)    | `file_exif` + `synced`, or `unsupported_mime` for a readable-but-unwritable format (video) — 33 §4.6 |
 | `NotAttempted`    | non-initial `gen_thumbnail`                      | status untouched   |
 | `UnsupportedMime` | the format carries no readable metadata          | `unsupported_mime` |
 | `Failed`          | dispatch **and** fallback ran; neither opened it | `unsupported_file` |

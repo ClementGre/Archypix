@@ -33,16 +33,24 @@
 - [x] **EXIF read path & engine fallback (feature 33)** — ExifTool read dispatch (BMFF) + fallback
   when rexiv2 returns a format verdict, with a differential parity test across both engines; the read
   direction gets observed states (`extracting`, `extract_failed`, `unsupported_mime` /
-  `unsupported_file`) so `synced` stops asserting a match against a file we never read. The status
+  `unsupported_file`) so `synced` stops asserting a match against a file we never read — or a write
+  a format can never take (§4.6). The status
   column lost its DEFAULT — each insert path states its own. Deleted the `thumbnails_generated_at`
   extraction proxy and the MIME allowlists threaded into set-based SQL. Adds
   `POST /pictures/{id}/exif/reextract` and the admin `POST /pictures/recheck-exif` sweep.
   See `doc/features/33_exif_read_path_and_engine_fallback.md`.
-  - [ ] A **batch** EXIF edit over a video now partitions on the stored status (33 §10), which still
-    reads `synced` — so it enqueues a doomed write job and the failure lands as `unsupported_file`
-    ("unreadable") rather than the correct `unsupported_mime` ("n/a"). The per-picture edit path,
-    which keeps the `supports_exif` derivation, labels it correctly. Fix: let the batch stamp the
-    MIME verdict too, or stamp videos at first ingest.
+  - [x] A **batch** EXIF edit over a video partitioned on the stored status (33 §10), which read
+    `synced` — so it enqueued a doomed write job and the failure landed as `unsupported_file`
+    ("unreadable") rather than the correct `unsupported_mime` ("n/a"). Fixed by amending 33 §4.6
+    rather than by re-deriving the MIME in SQL: a successful read settles the *read* direction only,
+    so a format the MIME already rules out for writes (video) settles on `unsupported_mime` instead
+    of `synced`, and every set-based reader — batch partition, dry-run count, aggregate buckets,
+    badge — is correct with no allowlist. Migration `0018_video_write_verdict` backfills the rows
+    ingested under the old rule. Reasoning and the rejected alternative: 33 §16.
+  - [ ] A video in `extract_failed` still takes the doomed-job path on a **batch** edit (33 §16
+    residue): 33 §4.2 allows edits from that state because the file is "probably writable", which
+    cannot see the MIME, so the row still ends on `unsupported_file`. Needs watchdog exhaustion or
+    copy inheritance to reach; the per-picture path already labels it correctly.
   - [ ] A physical copy inherits a `pending` / `pending_job_creation` source status (33 §4.1) without
     an accompanying reconcile job, so the copy can sit in `pending` until the user resyncs it.
   - [x] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passed

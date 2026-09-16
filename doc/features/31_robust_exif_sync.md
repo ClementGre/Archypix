@@ -137,8 +137,9 @@ meanings and different re-check triggers: `unsupported_mime` (the format cannot 
 "n/a") and `unsupported_file` (both engines ran and neither could open the file — "unreadable").
 
 - **MIME preflight** moves to **insert** (33 §4.1): a format that is neither EXIF- nor video-readable
-  is stamped `unsupported_mime` at ingest. Video ingests readable, reaches `synced`, and becomes
-  `unsupported_mime` only when an edit first tries to write it.
+  is stamped `unsupported_mime` at ingest. A video is readable, so it ingests `extracting` and takes
+  the same verdict one step later — at extraction success, since a successful read settles the read
+  direction only and the MIME already decides the write one (33 §4.6).
 - **Worker-detected** — only a file the metadata library cannot *open at all* yields
   `WorkerError::UnsupportedFormat`, which sets `unsupported: true` in the fail body →
   `unsupported_file`. A write that fails on a file that opened fine is `WorkerError::Exif` →
