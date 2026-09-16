@@ -2638,8 +2638,27 @@ All require a worker JWT (`WORKER_JWT_SECRET`, 300s TTL).
 | Method | Path                             | Description                                                              |
 |--------|----------------------------------|--------------------------------------------------------------------------|
 | `GET`  | `/api/worker/jobs/next`          | Claim next pending job; returns job + presigned S3 URLs + `claim_token`  |
-| `POST` | `/api/worker/jobs/{id}/complete` | Report success; backend applies picture updates atomically               |
-| `POST` | `/api/worker/jobs/{id}/fail`     | Report failure; auto-retries up to `max_retries` unless `permanent=true`. `unsupported=true` (feature 31 §6) marks the picture `unsupported_file` instead of `write_failed`. `exif` carries the read-direction outcome (same shape as on `/complete`), so a permanently failed `is_initial` `gen_thumbnail` still settles the picture instead of stranding it in `extracting` (feature 33 §6.5) |
+| `POST` | `/api/worker/jobs/{id}/respond`  | The single terminal response for a claimed job (replaces `/complete` + `/fail`) |
+
+`JobResponse` is `claim_token` plus two flattened enums:
+
+```ts
+// `outcome` — how the job ended. Replaces `/complete` vs `/fail` and its `permanent` bool.
+{ outcome: "done" }
+{ outcome: "retry",  error: string }   // transient; retried while the budget lasts
+{ outcome: "failed", error: string }   // terminal; skips the retry budget
+
+// `job` — what it produced, per job type. An ML job has no picture fields at all.
+{ job: "gen_thumbnail", exif, thumbnails_generated, blurhash, file_size, file_hash, content_hash, width, height }
+{ job: "edit_picture",  ...same }
+{ job: "ml" }
+```
+
+The product is reported **whatever the outcome**: a job that extracted EXIF and then died on the
+thumbnailer still records its read (feature 33 §6.5), and on `edit_picture` the `exif` variant is
+what separates `unsupported_mime` from `unsupported_file` (§4.4). A `retry` that still has budget
+re-queues the job and settles nothing. `409` if the `claim_token` is stale or the job is not
+`processing`.
 
 ### Resolver provisioning (`/api/resolver/*`) & heartbeat (feature 23 §3)
 

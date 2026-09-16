@@ -140,6 +140,8 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     // No `exif` in the body (e.g. a GIF) — decoded width/height must still be applied.
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "done",
+        "job": "gen_thumbnail",
         "thumbnails_generated": true,
         "file_hash": "abc123deadbeef",
         "file_size": 204800,
@@ -149,7 +151,7 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     let resp3 = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{}/complete", job.id),
+            &format!("/api/worker/jobs/{}/respond", job.id),
             &token,
             &complete_body,
         ))
@@ -185,7 +187,7 @@ async fn worker_claim_complete_cycle(db: PgPool) {
     let resp4 = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{}/complete", job.id),
+            &format!("/api/worker/jobs/{}/respond", job.id),
             &token,
             &complete_body,
         ))
@@ -224,13 +226,14 @@ async fn worker_fail_permanent_marks_job_failed(db: PgPool) {
     // Fail with permanent=true
     let fail_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "failed",
+        "job": "gen_thumbnail",
         "error": "unsupported image format",
-        "permanent": true
     });
     let resp_fail = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{}/fail", job.id),
+            &format!("/api/worker/jobs/{}/respond", job.id),
             &token,
             &fail_body,
         ))
@@ -273,12 +276,13 @@ async fn worker_fail_wrong_token_returns_conflict(db: PgPool) {
     let wrong_token = Uuid::new_v4();
     let fail_body = serde_json::json!({
         "claim_token": wrong_token,
+        "outcome": "retry",
+        "job": "gen_thumbnail",
         "error": "some error",
-        "permanent": false
     });
     let resp = app
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{}/fail", job.id),
+            &format!("/api/worker/jobs/{}/respond", job.id),
             &token,
             &fail_body,
         ))
@@ -390,13 +394,15 @@ async fn exif_completion_records_file_exif_and_syncs(db: PgPool) {
     // Convergence is decided against the written target, so this must still land on `synced`.
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "done",
+        "job": "edit_picture",
         "thumbnails_generated": false,
         "exif": {"extracted": {"gps_lat": 48.856599999, "gps_lng": 2.3522000001}},
     });
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/complete"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &complete_body,
         ))
@@ -447,13 +453,15 @@ async fn an_edit_during_processing_is_requeued_for_the_drain(db: PgPool) {
 
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "done",
+        "job": "edit_picture",
         "thumbnails_generated": false,
         "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
     });
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/complete"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &complete_body,
         ))
@@ -495,13 +503,14 @@ async fn exif_permanent_failure_marks_write_failed(db: PgPool) {
     let (claim_token, _config) = claim_edit(&app, &token).await;
     let fail_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "failed",
+        "job": "edit_picture",
         "error": "upload failed",
-        "permanent": true,
     });
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/fail"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &fail_body,
         ))
@@ -548,12 +557,13 @@ async fn exif_write_failure_verdicts_land_their_states(db: PgPool) {
         let resp = app
             .clone()
             .oneshot(post_json(
-                &format!("/api/worker/jobs/{job_id}/fail"),
+                &format!("/api/worker/jobs/{job_id}/respond"),
                 &token,
                 &serde_json::json!({
                     "claim_token": claim_token,
+                    "outcome": "failed",
+                    "job": "edit_picture",
                     "error": "write did not land",
-                    "permanent": true,
                     "exif": exif,
                 }),
             ))
@@ -595,13 +605,15 @@ async fn extraction_overwrites_pending_edits_and_records_the_file(db: PgPool) {
 
     let complete_body = serde_json::json!({
         "claim_token": claim_token,
+        "outcome": "done",
+        "job": "gen_thumbnail",
         "thumbnails_generated": true,
         "exif": {"extracted": {"gps_lat": 1.0, "gps_lng": 2.0, "camera_brand": "Nikon"}},
     });
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{}/complete", extraction.id),
+            &format!("/api/worker/jobs/{}/respond", extraction.id),
             &token,
             &complete_body,
         ))
@@ -650,6 +662,8 @@ async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: P
     let complete = |job: Uuid, claim: Uuid, hash: &str| {
         let body = serde_json::json!({
             "claim_token": claim,
+            "outcome": "done",
+            "job": "edit_picture",
             "thumbnails_generated": false,
             "file_hash": hash,
             "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
@@ -659,7 +673,7 @@ async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: P
         async move {
             let resp = app
                 .oneshot(post_json(
-                    &format!("/api/worker/jobs/{job}/complete"),
+                    &format!("/api/worker/jobs/{job}/respond"),
                     &token,
                     &body,
                 ))
@@ -764,10 +778,12 @@ async fn each_extraction_outcome_lands_its_state(db: PgPool) {
         let resp = app
             .clone()
             .oneshot(post_json(
-                &format!("/api/worker/jobs/{job_id}/complete"),
+                &format!("/api/worker/jobs/{job_id}/respond"),
                 &token,
                 &serde_json::json!({
                     "claim_token": claim_token,
+                    "outcome": "done",
+                    "job": "gen_thumbnail",
                     "thumbnails_generated": true,
                     "exif": outcome,
                 }),
@@ -816,12 +832,13 @@ async fn each_failed_extraction_outcome_settles_the_row(db: PgPool) {
         let resp = app
             .clone()
             .oneshot(post_json(
-                &format!("/api/worker/jobs/{job_id}/fail"),
+                &format!("/api/worker/jobs/{job_id}/respond"),
                 &token,
                 &serde_json::json!({
                     "claim_token": claim_token,
+                    "outcome": "failed",
+                    "job": "gen_thumbnail",
                     "error": "thumbnailer: codec failure",
-                    "permanent": true,
                     "exif": outcome,
                 }),
             ))
@@ -853,12 +870,13 @@ async fn a_failed_thumbnail_job_still_records_what_it_read(db: PgPool) {
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/fail"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &serde_json::json!({
                 "claim_token": claim_token,
+                "outcome": "failed",
+                "job": "gen_thumbnail",
                 "error": "thumbnailer: codec failure",
-                "permanent": true,
                 "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
             }),
         ))
@@ -896,12 +914,13 @@ async fn a_retriable_job_failure_leaves_the_row_extracting(db: PgPool) {
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/fail"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &serde_json::json!({
                 "claim_token": claim_token,
+                "outcome": "retry",
+                "job": "gen_thumbnail",
                 "error": "connection reset",
-                "permanent": false,
             }),
         ))
         .await
@@ -930,12 +949,13 @@ async fn a_retriable_extraction_failure_leaves_the_status_alone(db: PgPool) {
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/fail"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &serde_json::json!({
                 "claim_token": claim_token,
+                "outcome": "retry",
+                "job": "gen_thumbnail",
                 "error": "connection reset while downloading",
-                "permanent": false,
             }),
         ))
         .await
@@ -1000,10 +1020,12 @@ async fn a_successful_re_extraction_clears_unsupported_file(db: PgPool) {
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/complete"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &serde_json::json!({
                 "claim_token": claim_token,
+                "outcome": "done",
+                "job": "gen_thumbnail",
                 "thumbnails_generated": true,
                 "exif": {"extracted": {"gps_lat": 7.5}},
             }),
@@ -1040,10 +1062,12 @@ async fn an_edit_completion_never_leaves_extracting(db: PgPool) {
     let resp = app
         .clone()
         .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/complete"),
+            &format!("/api/worker/jobs/{job_id}/respond"),
             &token,
             &serde_json::json!({
                 "claim_token": claim_token,
+                "outcome": "done",
+                "job": "edit_picture",
                 "thumbnails_generated": false,
                 "exif": {"extracted": {"gps_lat": 48.8566, "gps_lng": 2.3522}},
             }),

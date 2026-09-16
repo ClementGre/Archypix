@@ -45,6 +45,14 @@
     outcome→status mapping instead of three copies, and the worker reaches `UnsupportedMime` from a
     preflight before the download, so the doomed fetch is skipped too. No state-machine change: §4.3
     already described the intended behaviour.
+  - [x] **One job response endpoint.** `/jobs/{id}/complete` + `/jobs/{id}/fail` collapse into
+    `POST /jobs/{id}/respond`, carrying a `JobOutcome` (`done`/`retry`/`failed` — replacing the
+    `permanent` bool, the same lossy-boolean shape as `unsupported`) and a `JobProduct` with one
+    variant per job type, so an ML job has no picture fields and an extraction's EXIF cannot be read
+    as an edit's read-back. The product is reported whatever the outcome, so "a job that half
+    succeeded" stops being a special case: `record_failed_extraction` and its `None, None, None…`
+    argument wall are gone, and a job that thumbnailed and then died on upload no longer discards its
+    blurhash and hashes. Worker handlers fill a `PictureWork` and `dispatch` sends one response.
   - [ ] A batch EXIF **dry run** previews a video under `edited`, and the aggregate counts it under
     `synced` — both read the stored status (33 §10) and a video only earns its verdict once a write
     is attempted. Cosmetic, but the dry run is a preview the user acts on.

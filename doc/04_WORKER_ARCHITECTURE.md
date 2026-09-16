@@ -117,10 +117,23 @@ kept distinct from file verdicts: a missing/unspawnable `ffprobe` or `exiftool` 
 parse is `UnsupportedFormat`. Folding any of these together is what silently strips EXIF during a
 transient outage.
 
+## Job response
+
+A claimed job ends with exactly one `POST /api/worker/jobs/{id}/respond` carrying a `JobResponse`:
+`claim_token`, a `JobOutcome` (`done` / `retry{error}` / `failed{error}`) and a `JobProduct` — one
+variant per job type, so an ML job has no picture fields and an extraction's EXIF cannot be read as
+an edit's read-back.
+
+The product is sent **whatever the outcome**. The handlers fill a `PictureWork` as they go and
+`dispatch` sends it either way, so a job that extracted EXIF and then died on the thumbnailer still
+reports the read (feature 33 §6.5) — under the old `/complete` + `/fail` split, only `exif` could be
+smuggled back through the failure body and the rest was discarded. A `retry` that still has budget
+re-queues the job and settles nothing on the picture.
+
 ## EXIF extraction outcome
 
-A `gen_thumbnail` completion carries `CompleteJobRequest.exif: ExifExtraction` (feature 33 §5) rather
-than an `Option`, which was overloaded three ways:
+`PictureWork.exif: ExifExtraction` (feature 33 §5) replaces an `Option` that was overloaded three
+ways, and serves both directions:
 
 | Variant           | Meaning                                         | Backend result     |
 |-------------------|-------------------------------------------------|--------------------|
@@ -158,6 +171,6 @@ Library crate shared between `back/` and `worker/` so wire shapes never drift:
 | Module           | Key types                                                                                                                                                                                                                                        |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `job.rs`         | `JobType`, `JobConfig`, `GenThumbnailConfig`, `EditPictureConfig`, `ExifEdit` (`target: FullExif`, bound at claim-time), `ExifField`, `CameraExif`, `FullExif` (promoted + `camera`), `ExtractedExif` (`width`/`height` + flattened `FullExif`) |
-| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `CompleteJobRequest` (+ `claim_token`, `exif: ExifExtraction`, `file_size`, `file_hash`, decoded `width`/`height`), `ExifExtraction`, `FailJobRequest` (+ `claim_token`, `permanent`, `unsupported`)                                            |
+| `transfer.rs`    | `ClaimQuery`, `ClaimJobResponse` (+ `claim_token`), `PresignedWrites`, `JobResponse` (`claim_token` + flattened `JobOutcome` + `JobProduct`), `JobOutcome`, `JobProduct`, `PictureWork` (`exif`, `thumbnails_generated`, `blurhash`, `file_size`, `file_hash`, `content_hash`, decoded `width`/`height`), `ExifExtraction` |
 | `mime.rs`        | `MIME_TYPES_EXIF`, `MIME_TYPES_IMAGE_THUMBNAIL`, `MIME_TYPES_VIDEO`, `supports_exif()`, `supports_image_thumbnail()` (image engine), `supports_video()`, `supports_thumbnail()` (image **or** video — "gets a thumbnail at all")                 |
 | `serde_utils.rs` | `csv` serde module for comma-separated `Vec<T>` query params                                                                                                                                                                                     |

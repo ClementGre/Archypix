@@ -243,7 +243,7 @@ a deliberate same-directory mapping. Resolve when WebDAV directory-level ops lan
 ## 10. Work breakdown
 
 - [x] Worker: compute metadata-stripped `content_hash` in `gen_thumbnail` (`imaging/content_hash.rs`);
-  report it via `CompleteJobRequest`; backend stores it (`update_from_worker`/`update_after_processing`);
+  report it via the job response; backend stores it (`update_from_worker`/`update_after_processing`);
   `AnnouncedPicture` + recipient write path (`create_received`) carry/persist it. `edit_picture`
   recomputes it from the result so a visual edit regroups.
 - [x] Copy endpoint `POST /pictures/{id}/copy` (`services::pictures::copy_picture`,

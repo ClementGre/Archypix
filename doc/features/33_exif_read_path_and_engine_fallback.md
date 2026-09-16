@@ -224,7 +224,7 @@ to write. A format that is neither readable nor writable never arrives here at a
 
 ## 5. Worker → backend contract
 
-`CompleteJobRequest.exif: Option<ExtractedExif>` is overloaded three ways today — non-initial job,
+`CompleteJobRequest.exif: Option<ExtractedExif>` was overloaded three ways — non-initial job,
 MIME-skipped, and attempted-but-failed. Replace it with an outcome:
 
 ```rust
@@ -513,7 +513,7 @@ explicit `409` over a silent dedupe.
 - [x] Worker: `exiftool_read` + MIME dispatch + failure fallback (§3.1–3.2).
 - [x] Worker: differential parity test + the four normalizations (§3.3).
 - [x] Worker: classification fixes — ffprobe `ToolUnavailable`, IO vs format on open, drop `FORCED` (§7).
-- [x] Common: `ExifExtraction` outcome on `CompleteJobRequest` (§5).
+- [x] Common: `ExifExtraction` outcome on the job response (§5).
 - [x] Worker: `thumbnail.rs` — three branches instead of one `warn!`; fail the job on retriable (§6.1).
 - [x] Migration: rename + three values + **drop** the column default; down migration; follow-up
       split migration (§9).

@@ -4,7 +4,7 @@ use crate::error::{Result, WorkerError};
 use crate::observability;
 use archypix_common::job::JobType;
 use archypix_common::transfer::{
-    ClaimJobResponse, ClaimQuery, CompleteJobRequest, ExifExtraction, FailJobRequest,
+    ClaimJobResponse, ClaimQuery, JobOutcome, JobProduct, JobResponse,
 };
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -127,57 +127,24 @@ impl BackendClient {
         Ok(Some(job))
     }
 
-    /// Report a job as completed.
-    #[instrument(skip(self, body), fields(job_id = %job_id))]
-    pub async fn complete_job(&self, job_id: Uuid, body: CompleteJobRequest) -> Result<()> {
-        let token = self.get_or_refresh_token()?;
-        let url = format!(
-            "{}/api/worker/jobs/{job_id}/complete",
-            self.back_url.trim_end_matches('/')
-        );
-        let mut headers = reqwest::header::HeaderMap::new();
-        observability::inject_into_headers(&mut headers);
-        let resp = self
-            .api_http
-            .post(&url)
-            .bearer_auth(&token)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(WorkerError::BackendError { status, body });
-        }
-        Ok(())
-    }
-
-    /// Report a job as failed.
-    ///
-    /// `claim_token` must match what was issued at claim time.
-    /// When `permanent` is `true` the backend marks the job permanently failed regardless of
-    /// remaining retries; `exif` carries whatever EXIF verdict the job reached, which is how a
-    /// terminal format verdict reaches the picture row (feature 33 §5).
-    #[instrument(skip(self, claim_token, error), fields(job_id = %job_id, permanent))]
-    pub async fn fail_job(
+    /// Report a job's terminal response — the only way a claimed job ends (04 §"Job response").
+    #[instrument(skip(self, claim_token, product), fields(job_id = %job_id))]
+    pub async fn respond(
         &self,
         job_id: Uuid,
         claim_token: Uuid,
-        error: &str,
-        permanent: bool,
-        exif: ExifExtraction,
+        outcome: JobOutcome,
+        product: JobProduct,
     ) -> Result<()> {
         let token = self.get_or_refresh_token()?;
         let url = format!(
-            "{}/api/worker/jobs/{job_id}/fail",
+            "{}/api/worker/jobs/{job_id}/respond",
             self.back_url.trim_end_matches('/')
         );
-        let body = FailJobRequest {
+        let body = JobResponse {
             claim_token,
-            error: error.to_string(),
-            permanent,
-            exif,
+            outcome,
+            product,
         };
         let mut headers = reqwest::header::HeaderMap::new();
         observability::inject_into_headers(&mut headers);

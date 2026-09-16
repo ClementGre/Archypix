@@ -1,6 +1,6 @@
 use crate::api::middleware::auth_worker::AuthWorker;
 use crate::api::worker::models::{
-    ClaimJobResponse, CompleteJobRequest, ExifExtraction, FailJobRequest,
+    ClaimJobResponse, ExifExtraction, JobOutcome, JobProduct, JobResponse, PictureWork,
 };
 use crate::domain::job::{ExifEdit, JobConfig, JobStatus, JobType};
 use crate::domain::picture::ExifSyncStatus;
@@ -21,6 +21,7 @@ use archypix_common::transfer::PresignedWrites;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use sqlx::Postgres;
 use tracing::debug;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -199,39 +200,31 @@ pub async fn claim_next_job(
     })))
 }
 
+/// The single terminal response for a claimed job (04 §"Job response").
+///
+/// `outcome` disposes of the job; `product` records what it managed to produce, which a job that
+/// died still has (feature 33 §6.5).
 #[tracing::instrument(skip(auth, state, body, headers), fields(worker = auth.worker_id(), job_id = %job_id))]
-pub async fn complete_job(
+pub async fn respond_job(
     auth: AuthWorker,
     headers: HeaderMap,
     State(state): State<AppState>,
     Path(job_id): Path<Uuid>,
-    Json(body): Json<CompleteJobRequest>,
+    Json(body): Json<JobResponse>,
 ) -> Result<StatusCode, AppError> {
-    // The worker injects its job span's context; reparent so completion is child of the job span.
+    // The worker injects its job span's context; reparent so the response is a child of the job span.
     let cx = observability::extract_from_headers(&headers);
     tracing::Span::current().set_parent(cx);
 
-    // Read job outside the transaction to get type/config early (fail fast on
-    // corrupt JSONB). The claim_token guard inside the UPDATE makes this safe.
+    // Read outside the transaction to fail fast on corrupt JSONB; the claim_token guard inside the
+    // dispose UPDATE is what makes that safe.
     let job = JobRepository::find_by_id(&state.db, job_id)
         .await?
         .ok_or(AppError::NotFound)?;
     let picture_id = job.picture_id;
-
-    // Pre-parse edit_picture config so we fail before touching the DB if it is corrupt.
-    let edit_cfg = if job.job_type == JobType::EditPicture {
-        match job.typed_config() {
-            Ok(JobConfig::EditPicture(c)) => Some(c),
-            Ok(_) => None,
-            Err(e) => {
-                return Err(AppError::InternalServerError(format!(
-                    "failed to parse job config: {e}"
-                )));
-            }
-        }
-    } else {
-        None
-    };
+    let config = job
+        .typed_config()
+        .map_err(|e| AppError::InternalServerError(format!("failed to parse job config: {e}")))?;
 
     let mut tx = state
         .db
@@ -239,108 +232,63 @@ pub async fn complete_job(
         .await
         .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
 
-    // Update picture columns from worker output.
-    if let Some(pid) = picture_id {
-        match (&job.job_type, &body.exif) {
-            // Extraction path (initial ingest / external overwrite): file state becomes authoritative.
-            (JobType::GenThumbnail, ExifExtraction::Extracted(extracted)) => {
-                PictureRepository::update_from_worker(
-                    &mut *tx,
-                    pid,
-                    &extracted.exif,
-                    body.width,
-                    body.height,
-                    body.blurhash.as_deref(),
-                    body.file_size,
-                    body.file_hash.as_deref(),
-                    body.content_hash.as_deref(),
-                    true,
-                )
-                .await?;
-            }
-            // Edit path: keep DB EXIF as-is; only processing metadata lands here.
-            _ => {
-                PictureRepository::update_after_processing(
-                    &mut *tx,
-                    pid,
-                    body.thumbnails_generated,
-                    body.blurhash.as_deref(),
-                    body.file_size,
-                    body.file_hash.as_deref(),
-                    body.content_hash.as_deref(),
-                    body.width,
-                    body.height,
-                )
-                .await?;
-            }
+    // Dispose first: claim-token guarded, and the resulting status says whether this attempt was the
+    // last one. A re-queued job has settled nothing, so none of the recording below applies to it.
+    let disposed = match &body.outcome {
+        JobOutcome::Done => {
+            let result = serde_json::json!({
+                "worker_id": auth.worker_id(),
+                "product": &body.product,
+            });
+            JobRepository::complete(&mut *tx, job_id, body.claim_token, result).await?
         }
-        // The read direction's verdict on an ingest (feature 33 §6.1). A successful extraction has
-        // already stamped `synced` above; the two terminal ones are recorded here.
-        if job.job_type == JobType::GenThumbnail {
-            if let Some(status) = terminal_verdict(&body.exif) {
-                PictureRepository::set_exif_sync_status(&mut *tx, pid, status).await?;
-            }
+        JobOutcome::Retry { error } => {
+            JobRepository::fail(&mut *tx, job_id, body.claim_token, error, false).await?
         }
-    }
-
-    let result = serde_json::json!({
-        "worker_id": auth.worker_id(),
-        "has_exif": body.exif.extracted().is_some(),
-        "has_blurhash": body.blurhash.is_some(),
-        "thumbnails_generated": body.thumbnails_generated,
-    });
-
-    // Mark job complete — returns None if claim_token mismatch or wrong status.
-    let completed = JobRepository::complete(&mut *tx, job_id, body.claim_token, result).await?;
-    if completed.is_none() {
+        JobOutcome::Failed { error } => {
+            JobRepository::fail(&mut *tx, job_id, body.claim_token, error, true).await?
+        }
+    };
+    let Some(job) = disposed else {
         tx.rollback().await.ok();
         return Err(AppError::Conflict(
             "job is no longer in processing state or claim token does not match".to_string(),
         ));
+    };
+    if job.status == JobStatus::Pending {
+        tx.commit().await.map_err(map_sqlx_error)?;
+        return Ok(StatusCode::NO_CONTENT);
     }
+    let dead = job.status == JobStatus::Failed;
 
-    // Re-announce on thumbnail completion (D): a `gen_thumbnail` job is usually what first computes
-    // `file_hash`/`blurhash`/`thumbnails_generated_at`, but the picture may have already been
-    // announced (with those fields still null) before the worker finished. The `updated_at` trigger
-    // has bumped the row past its recorded `announced_updated_at`, so re-marking it dirty makes the
-    // pipeline's delta deliver the refreshed metadata. Gated on tracking-table membership: a picture
-    // that was never announced has nothing to refresh.
-    // A `gen_thumbnail` completion is also where `content_hash` first lands, so wake the owner's
-    // pipeline (feature 11) to run the dedup reconciler — a freshly-ingested picture may dedupe
-    // against an existing copy. Done for every gen_thumbnail completion, not only tracked ones.
+    // Record the product. The job type picks the branch, so an extraction's EXIF can never be
+    // mistaken for an edit's read-back — a distinction the old `(job_type, exif)` match had to make.
     let mut reannounce_owner: Option<Uuid> = None;
-    if job.job_type == JobType::GenThumbnail {
-        if let Some(pid) = picture_id {
-            if ShareAnnouncementRepository::is_picture_tracked(&mut *tx, pid).await? {
-                PipelineRepository::invalidate(&mut *tx, &[pid]).await?;
-            }
-            reannounce_owner = Some(job.owner_id);
-        }
-    }
-
-    // State-based EXIF convergence: record what the worker read back from the file, then compare the
-    // DB against the target this job wrote — never against the read-back (feature 31 §3.3).
     let mut needs_exif_drain = false;
-    if let (Some(cfg), Some(pid)) = (&edit_cfg, picture_id) {
-        if let Some(edit) = &cfg.exif {
-            let picture = PictureRepository::find_by_id(&mut *tx, pid)
-                .await?
-                .ok_or(AppError::NotFound)?;
-            // A re-extraction landed while this job ran (33 §6.4): it owns both writes now, and this
-            // job's read-back describes the pre-overwrite bytes. Skip them rather than corrupt them.
-            if picture.exif_sync_status == ExifSyncStatus::Extracting {
-                debug!(picture_id = %pid, "edit completion skipped: an extraction is in flight");
-            } else {
-                if let Some(extracted) = body.exif.extracted() {
-                    PictureRepository::set_file_exif(&mut *tx, pid, &extracted.exif).await?;
+    if let Some(pid) = picture_id {
+        match (&body.product, &config) {
+            (JobProduct::GenThumbnail(work), JobConfig::GenThumbnail(cfg)) => {
+                record_extraction(&mut tx, pid, work, cfg.is_initial, dead).await?;
+                // A completion is where `file_hash`/`blurhash`/`content_hash` first land. Re-mark a
+                // tracked picture dirty so the pipeline delta re-announces the refreshed metadata,
+                // and wake the owner's pipeline so the dedup reconciler (feature 11) sees the hash.
+                if !dead {
+                    if ShareAnnouncementRepository::is_picture_tracked(&mut *tx, pid).await? {
+                        PipelineRepository::invalidate(&mut *tx, &[pid]).await?;
+                    }
+                    reannounce_owner = Some(job.owner_id);
                 }
-                let (status, drain) = if picture.full_exif() == edit.target {
-                    (ExifSyncStatus::Synced, false)
-                } else {
-                    (ExifSyncStatus::PendingJobCreation, true)
-                };
-                PictureRepository::set_exif_sync_status(&mut *tx, pid, status).await?;
-                needs_exif_drain = drain;
+            }
+            (JobProduct::EditPicture(work), JobConfig::EditPicture(cfg)) => {
+                needs_exif_drain = record_edit(&mut tx, pid, work, cfg, dead).await?;
+            }
+            (JobProduct::Ml, _) => {}
+            (product, _) => {
+                tx.rollback().await.ok();
+                return Err(AppError::BadRequest(format!(
+                    "product {product:?} does not match job type {:?}",
+                    job.job_type
+                )));
             }
         }
     }
@@ -361,71 +309,8 @@ pub async fn complete_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[tracing::instrument(skip(auth, state, body, headers), fields(worker = auth.worker_id(), job_id = %job_id))]
-pub async fn fail_job(
-    auth: AuthWorker,
-    headers: HeaderMap,
-    State(state): State<AppState>,
-    Path(job_id): Path<Uuid>,
-    Json(body): Json<FailJobRequest>,
-) -> Result<StatusCode, AppError> {
-    let cx = observability::extract_from_headers(&headers);
-    tracing::Span::current().set_parent(cx);
-    debug!(
-        worker = auth.worker_id(),
-        job_id = %job_id,
-        permanent = body.permanent,
-        error = %body.error,
-        "worker: fail_job"
-    );
-    let updated = JobRepository::fail(
-        &state.db,
-        job_id,
-        body.claim_token,
-        &body.error,
-        body.permanent,
-    )
-    .await?;
-    let Some(job) = updated else {
-        return Err(AppError::Conflict(
-            "job is no longer in processing state or claim token does not match".to_string(),
-        ));
-    };
-
-    // Permanent EXIF reconcile failure (feature 31 §3.3/§6): keep the DB edit and surface the
-    // divergence for an explicit user action. A file that cannot carry the metadata is terminal.
-    if job.status == JobStatus::Failed && job.job_type == JobType::EditPicture {
-        if let (Ok(JobConfig::EditPicture(cfg)), Some(pid)) = (job.typed_config(), job.picture_id) {
-            if cfg.exif.is_some() {
-                // The worker's verdict, in the same vocabulary the read path uses: the format takes
-                // no writes (`unsupported_mime`) or these bytes would not open (`unsupported_file`).
-                // Anything else opened fine and the write simply did not land (§4.4/§4.5).
-                let status = terminal_verdict(&body.exif).unwrap_or(ExifSyncStatus::WriteFailed);
-                PictureRepository::set_exif_sync_status(&state.db, pid, status).await?;
-            }
-        }
-    }
-
-    // A permanently failed extraction never reaches `complete_job`, and the watchdog only rescues
-    // budget exhaustion — so without this the picture stays in `extracting` forever with no job
-    // left to move it, and every edit is refused (feature 33 §6.5). The worker reports what the
-    // read direction saw before the job died, so a file that extracted fine and then failed to
-    // thumbnail still records its EXIF.
-    if job.status == JobStatus::Failed && job.job_type == JobType::GenThumbnail {
-        if let (Ok(JobConfig::GenThumbnail(cfg)), Some(pid)) = (job.typed_config(), job.picture_id) {
-            if cfg.is_initial {
-                record_failed_extraction(&state, pid, &body.exif).await?;
-            }
-        }
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
 /// The terminal sync status an [`ExifExtraction`] carries, or `None` when it carries no verdict.
-///
-/// One mapping for both directions (feature 33 §5): the read path reports these on `complete_job`
-/// and `fail_job`, the write path on `fail_job`. Each caller supplies its own fallback for `None` —
-/// `extract_failed` for a dead extraction, `write_failed` for a write that never landed.
+/// One mapping for both directions (feature 33 §5); each caller supplies its own fallback.
 fn terminal_verdict(exif: &ExifExtraction) -> Option<ExifSyncStatus> {
     match exif {
         ExifExtraction::UnsupportedMime => Some(ExifSyncStatus::UnsupportedMime),
@@ -434,55 +319,137 @@ fn terminal_verdict(exif: &ExifExtraction) -> Option<ExifSyncStatus> {
     }
 }
 
-/// Settle a picture's read direction after its extraction job failed permanently (feature 33 §6.5).
+/// Record what a `gen_thumbnail` produced. `dead` means the job will not run again (feature 33 §6.5).
 ///
-/// Every write is conditional on the row still being `extracting`: a re-extraction may have landed
-/// while this job was dying, and its verdict is the newer observation.
-async fn record_failed_extraction(
-    state: &AppState,
+/// A dead job's read is still good, but it must not overwrite a re-extraction that landed while it
+/// was dying, and `thumbnails_generated` is whatever it actually uploaded — not an assumed `true`.
+async fn record_extraction(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
     picture_id: Uuid,
-    exif: &ExifExtraction,
+    work: &PictureWork,
+    is_initial: bool,
+    dead: bool,
 ) -> Result<(), AppError> {
-    if let ExifExtraction::Extracted(extracted) = exif {
-        // The read succeeded even though the job did not: record it, but never stamp
-        // `thumbnails_generated_at` — the thumbnails are exactly what failed, and stamping it would
-        // both serve a missing thumbnail and hide the row from the regeneration sweep.
-        let mut tx = state
-            .db
-            .begin()
-            .await
-            .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
-        let still_extracting = PictureRepository::find_by_id(&mut *tx, picture_id)
+    // A dead non-initial job was never asked for a verdict and has nothing to settle.
+    if dead && !is_initial {
+        return Ok(());
+    }
+    if dead
+        && !PictureRepository::find_by_id(&mut **tx, picture_id)
             .await?
-            .is_some_and(|p| p.exif_sync_status == ExifSyncStatus::Extracting);
-        if still_extracting {
-            PictureRepository::update_from_worker(
-                &mut *tx,
-                picture_id,
-                &extracted.exif,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                false,
-            )
-            .await?;
-        }
-        tx.commit().await.map_err(map_sqlx_error)?;
+            .is_some_and(|p| p.exif_sync_status == ExifSyncStatus::Extracting)
+    {
         return Ok(());
     }
 
-    // No usable read: `unsupported_*` are verdicts the worker reached, `NotAttempted` means the job
-    // died before it got one — an absence of a verdict, which is what `extract_failed` records.
-    let status = terminal_verdict(exif).unwrap_or(ExifSyncStatus::ExtractFailed);
-    PictureRepository::set_exif_sync_status_bulk(
-        &state.db,
-        &[picture_id],
-        Some(ExifSyncStatus::Extracting),
-        status,
+    match &work.exif {
+        // The file's own metadata is authoritative for the row (feature 31 §5).
+        ExifExtraction::Extracted(extracted) => {
+            PictureRepository::update_from_worker(
+                &mut **tx,
+                picture_id,
+                &extracted.exif,
+                work.width,
+                work.height,
+                work.blurhash.as_deref(),
+                work.file_size,
+                work.file_hash.as_deref(),
+                work.content_hash.as_deref(),
+                work.thumbnails_generated,
+            )
+            .await?;
+        }
+        // No read to record. `unsupported_*` are verdicts the worker reached; `NotAttempted` on a
+        // dead job is an absence of one, which is what `extract_failed` records.
+        exif => {
+            PictureRepository::update_after_processing(
+                &mut **tx,
+                picture_id,
+                work.thumbnails_generated,
+                work.blurhash.as_deref(),
+                work.file_size,
+                work.file_hash.as_deref(),
+                work.content_hash.as_deref(),
+                work.width,
+                work.height,
+            )
+            .await?;
+            let fallback = dead.then_some(ExifSyncStatus::ExtractFailed);
+            if let Some(status) = terminal_verdict(exif).or(fallback) {
+                PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Record what an `edit_picture` produced. Returns whether the EXIF drain owes a follow-up job.
+///
+/// On success this is state-based convergence (feature 31 §3.3): the DB is compared against the
+/// target *this job wrote*, never against the read-back. On a dead job it is the write verdict.
+async fn record_edit(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    picture_id: Uuid,
+    work: &PictureWork,
+    cfg: &archypix_common::job::EditPictureConfig,
+    dead: bool,
+) -> Result<bool, AppError> {
+    let Some(edit) = &cfg.exif else {
+        if !dead {
+            PictureRepository::update_after_processing(
+                &mut **tx,
+                picture_id,
+                work.thumbnails_generated,
+                work.blurhash.as_deref(),
+                work.file_size,
+                work.file_hash.as_deref(),
+                work.content_hash.as_deref(),
+                work.width,
+                work.height,
+            )
+            .await?;
+        }
+        return Ok(false);
+    };
+
+    if dead {
+        // The worker's verdict, in the read path's vocabulary: the format takes no writes, or these
+        // bytes would not open. Anything else opened fine and the write simply did not land.
+        let status = terminal_verdict(&work.exif).unwrap_or(ExifSyncStatus::WriteFailed);
+        PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+        return Ok(false);
+    }
+
+    PictureRepository::update_after_processing(
+        &mut **tx,
+        picture_id,
+        work.thumbnails_generated,
+        work.blurhash.as_deref(),
+        work.file_size,
+        work.file_hash.as_deref(),
+        work.content_hash.as_deref(),
+        work.width,
+        work.height,
     )
     .await?;
-    Ok(())
+
+    let picture = PictureRepository::find_by_id(&mut **tx, picture_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    // A re-extraction landed while this job ran (33 §6.4): it owns both writes now, and this job's
+    // read-back describes the pre-overwrite bytes. Skip them rather than corrupt them.
+    if picture.exif_sync_status == ExifSyncStatus::Extracting {
+        debug!(picture_id = %picture_id, "edit response skipped: an extraction is in flight");
+        return Ok(false);
+    }
+    if let Some(extracted) = work.exif.extracted() {
+        PictureRepository::set_file_exif(&mut **tx, picture_id, &extracted.exif).await?;
+    }
+    let (status, drain) = if picture.full_exif() == edit.target {
+        (ExifSyncStatus::Synced, false)
+    } else {
+        (ExifSyncStatus::PendingJobCreation, true)
+    };
+    PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+    Ok(drain)
 }

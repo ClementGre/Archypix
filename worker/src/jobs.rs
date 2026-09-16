@@ -5,8 +5,8 @@ pub mod thumbnail;
 use crate::backend::BackendClient;
 use crate::config::Config;
 use crate::observability;
-use archypix_common::job::JobConfig;
-use archypix_common::transfer::{ClaimJobResponse, ExifExtraction};
+use archypix_common::job::{JobConfig, JobType};
+use archypix_common::transfer::{ClaimJobResponse, JobOutcome, JobProduct, PictureWork};
 use opentelemetry::trace::TraceContextExt;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -74,12 +74,7 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     let mime_type = job.mime_type;
     let trace_context = job.trace_context.clone();
 
-    // Create a **new root** span for this job and **link** it back to the enqueueing trace. A link
-    // (not parent-child) is correct because the job is decoupled in time from the enqueue: it may be
-    // claimed long after enqueue, and may be claimed more than once (watchdog reset → re-claim), so
-    // it is genuinely not the same trace. `otel.name` sets the Jaeger operation name to the job type
-    // (e.g. `gen_thumbnail`, `edit_picture`) so operations group by kind of work — bounded
-    // cardinality — rather than collapsing into one generic `job` operation.
+    // Create a new root span for this job and link it back to the enqueueing trace.
     let job_span = tracing::info_span!(
         "job",
         "otel.name" = %job_type,
@@ -96,19 +91,18 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     }
 
     async move {
-        // What the read direction observed, even if the job dies later (feature 33 §6.5).
-        let mut extraction = ExifExtraction::NotAttempted;
+        // Handlers fill this in as they go, so a job that dies still reports its partial work.
+        let mut work = PictureWork::default();
         let result = match job.config {
             JobConfig::GenThumbnail(config) => {
                 thumbnail::handle(
                     client,
                     job_id,
-                    claim_token,
                     config,
                     presigned_read,
                     presigned_writes,
                     mime_type,
-                    &mut extraction,
+                    &mut work,
                 )
                 .await
             }
@@ -116,37 +110,43 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
                 edit_picture::handle(
                     client,
                     job_id,
-                    claim_token,
                     config,
                     presigned_read,
                     presigned_writes,
                     mime_type,
+                    &mut work,
                 )
                 .await
             }
             JobConfig::MlStyle | JobConfig::MlPeople | JobConfig::MlGroupLocation => {
-                ml::handle_stub(client, job_id, claim_token, job_type).await
+                ml::handle_stub(job_id, &job_type)
             }
         };
 
-        if let Err(ref e) = result {
-            let permanent = !e.is_retriable();
-            // A format verdict the handler never got to record — the write path reaches one this
-            // way. Same vocabulary as the read path, so the backend needs no second channel.
+        let outcome = match &result {
+            Ok(()) => JobOutcome::Done,
+            Err(e) if e.is_retriable() => JobOutcome::Retry {
+                error: e.to_string(),
+            },
+            Err(e) => JobOutcome::Failed {
+                error: e.to_string(),
+            },
+        };
+        if let Err(e) = &result {
+            // A format verdict the handler never got to record — the write path reaches one here.
             if let Some(verdict) = e.exif_verdict() {
-                extraction = verdict;
+                work.exif = verdict;
             }
-            error!(job_id = %job_id, permanent, verdict = ?extraction, error = ?e, "job failed");
-            if let Err(report_err) = client
-                .fail_job(job_id, claim_token, &e.to_string(), permanent, extraction)
-                .await
-            {
-                error!(
-                    job_id = %job_id,
-                    error = ?report_err,
-                    "failed to report job failure to backend"
-                );
-            }
+            error!(job_id = %job_id, ?outcome, error = ?e, "job failed");
+        }
+
+        let product = match job_type {
+            JobType::GenThumbnail => JobProduct::GenThumbnail(work),
+            JobType::EditPicture => JobProduct::EditPicture(work),
+            _ => JobProduct::Ml,
+        };
+        if let Err(report_err) = client.respond(job_id, claim_token, outcome, product).await {
+            error!(job_id = %job_id, error = ?report_err, "failed to report job response");
         }
     }
     .instrument(job_span)

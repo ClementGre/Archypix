@@ -2,7 +2,7 @@ use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
 use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
 use archypix_common::job::EditPictureConfig;
-use archypix_common::transfer::{CompleteJobRequest, ExifExtraction, PresignedWrites};
+use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -31,11 +31,11 @@ use uuid::Uuid;
 pub async fn handle(
     client: &BackendClient,
     job_id: Uuid,
-    claim_token: Uuid,
     config: EditPictureConfig,
     presigned_read: Option<String>,
     presigned_writes: PresignedWrites,
     mime_type: Option<String>,
+    work: &mut PictureWork,
 ) -> Result<()> {
     let presigned_read = presigned_read.ok_or_else(|| WorkerError::MissingPresignedUrl {
         key: "original".to_string(),
@@ -103,16 +103,20 @@ pub async fn handle(
     // edit (`PresignedWrites::exif_only` otherwise) — so an EXIF-only edit never decodes the image.
     // Keeping the original upload last preserves the file-untouched-on-failure invariant.
     let thumb = thumbnailer::run(client, &file_path, &presigned_writes, tmp.path()).await?;
+    work.blurhash = thumb.blurhash;
+    work.thumbnails_generated = thumb.generated;
+    work.width = thumb.width;
+    work.height = thumb.height;
 
     // ── File size + hash (after EXIF write, so values match what is uploaded) ─
-    let file_size = std::fs::metadata(&file_path).map(|m| m.len() as i64).ok();
+    work.file_size = std::fs::metadata(&file_path).map(|m| m.len() as i64).ok();
 
     let path_for_hash = file_path.clone();
-    let file_hash =
+    work.file_hash =
         tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path_for_hash))
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
-    if file_hash.is_none() {
+    if work.file_hash.is_none() {
         warn!(job_id = %job_id, "failed to compute file hash; skipping");
     }
 
@@ -121,7 +125,7 @@ pub async fn handle(
     // EXIF-write spawn_blocking task above.
     let path_for_content = file_path.clone();
     let content_span = tracing::Span::current();
-    let content_hash = tokio::task::spawn_blocking(move || {
+    work.content_hash = tokio::task::spawn_blocking(move || {
         let _guard = content_span.enter();
         content_hash_mod::content_hash(&path_for_content)
     })
@@ -129,7 +133,7 @@ pub async fn handle(
     .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
 
     // Read back the physical file EXIF after the write so the backend can record `file_exif`.
-    let extracted = if config.exif.is_some() {
+    work.exif = if config.exif.is_some() {
         let path = file_path.clone();
         let mime = mime_type.clone();
         let span = tracing::Span::current();
@@ -157,26 +161,9 @@ pub async fn handle(
     info!(job_id = %job_id, "edit_picture: uploading modified original");
     client.upload_presigned(&output_url, &file_path).await?;
 
-    client
-        .complete_job(
-            job_id,
-            CompleteJobRequest {
-                claim_token,
-                exif: extracted,
-                blurhash: thumb.blurhash,
-                thumbnails_generated: thumb.generated,
-                file_size,
-                file_hash,
-                content_hash,
-                width: thumb.width,
-                height: thumb.height,
-            },
-        )
-        .await?;
-
     info!(
         job_id = %job_id,
-        thumbnails_regenerated = thumb.generated,
+        thumbnails_regenerated = work.thumbnails_generated,
         "edit_picture completed"
     );
     Ok(())

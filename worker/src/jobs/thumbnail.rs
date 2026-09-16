@@ -25,7 +25,7 @@ use crate::imaging::{
 };
 use archypix_common::job::GenThumbnailConfig;
 use archypix_common::mime::{supports_exif, supports_image_thumbnail, supports_video};
-use archypix_common::transfer::{CompleteJobRequest, ExifExtraction, PresignedWrites};
+use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -37,12 +37,11 @@ use uuid::Uuid;
 pub async fn handle(
     client: &BackendClient,
     job_id: Uuid,
-    claim_token: Uuid,
     config: GenThumbnailConfig,
     presigned_read: Option<String>,
     presigned_writes: PresignedWrites,
     mime_type: Option<String>,
-    extraction: &mut ExifExtraction,
+    work: &mut PictureWork,
 ) -> Result<()> {
     let presigned_read = presigned_read.ok_or_else(|| WorkerError::MissingPresignedUrl {
         key: "original".to_string(),
@@ -75,19 +74,17 @@ pub async fn handle(
         .download_presigned(&presigned_read, &original_path)
         .await?;
 
-    let file_size = std::fs::metadata(&original_path)
+    work.file_size = std::fs::metadata(&original_path)
         .map(|m| m.len() as i64)
         .ok();
-    debug!(size_bytes = ?file_size, "Original downloaded");
+    debug!(size_bytes = ?work.file_size, "Original downloaded");
 
     // ── Metadata extraction (initial jobs only, blocking) ─────────────────────
     // Runs before the thumbnails/hashes so a retriable failure costs one download (feature 33 §6.1).
     // Image EXIF via the two-engine read path, or video container metadata via ffprobe; both map
     // onto ExtractedExif. The outcome — not a silent skip — is what settles the picture's state.
-    // Written into the caller's slot so a permanent failure *after* this point (a codec error in
-    // the thumbnailer, a dead upload) still tells the backend what the read direction saw — without
-    // it the picture is stranded in `extracting` with no job left to rescue it (feature 33 §6.5).
-    *extraction = if extract_image_exif || (config.is_initial && is_video) {
+    // Written into the caller's product so a failure *after* this point still reports it (33 §6.5).
+    work.exif = if extract_image_exif || (config.is_initial && is_video) {
         let path = original_path.clone();
         let mime = mime_type.clone();
         let span =
@@ -124,11 +121,11 @@ pub async fn handle(
     // ── File hash (blocking) ─────────────────────────────────────────────────
     let path_for_hash = original_path.clone();
     info!(path = %path_for_hash.display(), "Hashing file...");
-    let file_hash =
+    work.file_hash =
         tokio::task::spawn_blocking(move || archypix_common::hash::hash_file(&path_for_hash))
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
-    if file_hash.is_none() {
+    if work.file_hash.is_none() {
         warn!("File hash failed; skipping");
     }
 
@@ -138,7 +135,7 @@ pub async fn handle(
     // attributed to the job trace, like the EXIF/edit spawn_blocking tasks.
     let path_for_content = original_path.clone();
     let content_span = tracing::Span::current();
-    let content_hash = tokio::task::spawn_blocking(move || {
+    work.content_hash = tokio::task::spawn_blocking(move || {
         let _guard = content_span.enter();
         content_hash_mod::content_hash(&path_for_content)
     })
@@ -173,38 +170,24 @@ pub async fn handle(
         None
     };
 
-    let (blurhash, thumbnails_generated, decoded_dims) = if let Some(ref src) = thumb_source {
+    let decoded_dims = if let Some(ref src) = thumb_source {
         let thumb = thumbnailer::run(client, src, &presigned_writes, tmp.path()).await?;
-        (thumb.blurhash, thumb.generated, (thumb.width, thumb.height))
+        work.blurhash = thumb.blurhash;
+        work.thumbnails_generated = thumb.generated;
+        (thumb.width, thumb.height)
     } else {
-        (None, false, (None, None))
+        (None, None)
     };
 
     // Dimensions: prefer the decoded image (authoritative, orientation-consistent with the raw
     // thumbnails); fall back to EXIF only when the image was not decoded (non-thumbnailable format).
-    let exif_dims = extraction
+    let exif_dims = work
+        .exif
         .extracted()
         .map(|e| (e.width, e.height))
         .unwrap_or((None, None));
-    let width = decoded_dims.0.or(exif_dims.0);
-    let height = decoded_dims.1.or(exif_dims.1);
-
-    client
-        .complete_job(
-            job_id,
-            CompleteJobRequest {
-                claim_token,
-                exif: extraction.clone(),
-                blurhash,
-                thumbnails_generated,
-                file_size,
-                file_hash,
-                content_hash,
-                width,
-                height,
-            },
-        )
-        .await?;
+    work.width = decoded_dims.0.or(exif_dims.0);
+    work.height = decoded_dims.1.or(exif_dims.1);
 
     Ok(())
 }

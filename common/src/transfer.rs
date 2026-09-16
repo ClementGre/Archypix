@@ -164,19 +164,62 @@ impl ExifExtraction {
     }
 }
 
-/// Request body for `POST /api/worker/jobs/{id}/complete`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CompleteJobRequest {
-    /// Must match the `claim_token` issued when this job was claimed.
-    /// The backend rejects completions from stale/wrong workers.
-    pub claim_token: Uuid,
-    /// What the read path made of this file (feature 33 §5). Absent ⇒ `NotAttempted`.
+/// How a job ended. Replaces the `/complete` + `/fail` split and its `permanent: bool`: the
+/// disposition is three-way, and a job that dies still reports what it produced (04 §"Job response").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum JobOutcome {
+    /// Every step succeeded.
+    Done,
+    /// Transient failure; the backend decrements the retry budget and re-queues while it lasts.
+    Retry { error: String },
+    /// Will never succeed against these inputs — skip the retry budget.
+    Failed { error: String },
+}
+
+/// What a job produced, per job type — an ML job has no blurhash to report, and the backend cannot
+/// mistake an extraction's EXIF for an edit's read-back.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(tag = "job", rename_all = "snake_case")]
+pub enum JobProduct {
+    /// Ingest or re-extraction: `exif` is the file's own metadata, authoritative for the row.
+    GenThumbnail(PictureWork),
+    /// Edit reconcile: `exif` is the post-write read-back, or the verdict that stopped the write.
+    EditPicture(PictureWork),
+    /// ML jobs touch no picture columns yet.
+    #[default]
+    Ml,
+}
+
+impl JobProduct {
+    /// The picture-processing fields, for the two job types that have them.
+    pub fn picture_work(&self) -> Option<&PictureWork> {
+        match self {
+            Self::GenThumbnail(w) | Self::EditPicture(w) => Some(w),
+            Self::Ml => None,
+        }
+    }
+
+    /// Mutable access, for a handler filling in results as it goes.
+    pub fn picture_work_mut(&mut self) -> Option<&mut PictureWork> {
+        match self {
+            Self::GenThumbnail(w) | Self::EditPicture(w) => Some(w),
+            Self::Ml => None,
+        }
+    }
+}
+
+/// Everything a picture job produces. Every field is what the job got to before it ended, so a
+/// failure reports its partial work rather than discarding it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct PictureWork {
+    /// What this job made of the file's EXIF (feature 33 §5). Absent ⇒ `NotAttempted`.
     #[serde(default)]
     pub exif: ExifExtraction,
     /// BlurHash string computed from the original or processed image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blurhash: Option<String>,
-    /// Set to `true` when the worker generated and uploaded thumbnail variants.
+    /// Set once the worker generated **and uploaded** the thumbnail variants.
     #[serde(default)]
     pub thumbnails_generated: bool,
     /// Size in bytes of the file as it now exists in S3 (after any EXIF writes or
@@ -199,27 +242,61 @@ pub struct CompleteJobRequest {
     pub height: Option<i32>,
 }
 
-/// Request body for `POST /api/worker/jobs/{id}/fail`.
+/// Request body for `POST /api/worker/jobs/{id}/respond`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FailJobRequest {
-    /// Must match the `claim_token` issued when this job was claimed.
+pub struct JobResponse {
+    /// Must match the `claim_token` issued at claim time — the guard against a stale worker
+    /// (watchdog-reset, then re-claimed) overwriting a live job's results.
     pub claim_token: Uuid,
-    /// Human-readable error description for debugging and the job's `error_message` column.
-    pub error: String,
-    /// When `true`, skip the retry counter and mark the job as permanently `failed`.
-    ///
-    /// Set this for errors that will never resolve by retrying: unsupported file
-    /// format, corrupt image, invalid config, etc. Leave `false` (default) for
-    /// transient errors like network failures or backend 5xx responses.
-    #[serde(default)]
-    pub permanent: bool,
-    /// The EXIF verdict this job reached before it died — for **both** directions (feature 33 §5).
-    ///
-    /// A `gen_thumbnail` that extracted fine and then failed to thumbnail still knows the file's
-    /// EXIF, and a permanent failure that never got that far still has to say so, or the picture is
-    /// stranded in `extracting` with no job to rescue it. On the write side the same variants carry
-    /// the distinction a boolean could not: `UnsupportedMime` (the format takes no EXIF writes) vs
-    /// `Failed` (no engine could open the file).
-    #[serde(default)]
-    pub exif: ExifExtraction,
+    #[serde(flatten)]
+    pub outcome: JobOutcome,
+    #[serde(flatten)]
+    pub product: JobProduct,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both enums flatten into one object, so a response is a flat map with an `outcome` tag and a
+    /// `job` tag. Worth pinning: `flatten` + internally-tagged enums is the fragile combination here.
+    #[test]
+    fn job_response_round_trips_flattened() {
+        let body = JobResponse {
+            claim_token: Uuid::nil(),
+            outcome: JobOutcome::Failed {
+                error: "codec".into(),
+            },
+            product: JobProduct::GenThumbnail(PictureWork {
+                exif: ExifExtraction::UnsupportedMime,
+                thumbnails_generated: true,
+                file_size: Some(42),
+                ..Default::default()
+            }),
+        };
+        let v = serde_json::to_value(&body).unwrap();
+        assert_eq!(v["outcome"], "failed");
+        assert_eq!(v["error"], "codec");
+        assert_eq!(v["job"], "gen_thumbnail");
+        assert_eq!(v["exif"], "unsupported_mime");
+        assert_eq!(v["file_size"], 42);
+
+        let back: JobResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(back.outcome, body.outcome);
+        assert_eq!(back.product, body.product);
+    }
+
+    /// An ML job carries no picture fields at all — the reason the product is per-job-type.
+    #[test]
+    fn ml_product_has_no_picture_fields() {
+        let v = serde_json::to_value(JobResponse {
+            claim_token: Uuid::nil(),
+            outcome: JobOutcome::Done,
+            product: JobProduct::Ml,
+        })
+        .unwrap();
+        assert_eq!(v["job"], "ml");
+        assert!(v.get("blurhash").is_none());
+        assert!(v.get("exif").is_none());
+    }
 }
