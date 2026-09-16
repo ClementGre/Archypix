@@ -44,12 +44,10 @@ async fn seed_owned(
 ) -> Uuid {
     let id = Uuid::new_v4();
     // Mirror the ingest model (feature 33 §4.1): a format carrying no readable metadata is stamped
-    // `unsupported_mime` at insert; everything else is `extracting` until its extraction lands, and
-    // a landed extraction settles on §4.6's verdict — `synced`, or `unsupported_mime` for a format
-    // we can read but never write (video).
+    // `unsupported_mime` at insert; everything else is `extracting` until its extraction lands.
     let status = match (thumbnails_done, jobs::ingest_exif_status(Some(mime))) {
         (_, ExifSyncStatus::UnsupportedMime) => ExifSyncStatus::UnsupportedMime,
-        (true, _) => jobs::extraction_settled_status(Some(mime)),
+        (true, _) => ExifSyncStatus::Synced,
         (false, s) => s,
     };
     sqlx::query!(
@@ -632,130 +630,6 @@ async fn unsupported_owned_batch_exif_marks_unsupported(db: PgPool) {
     assert_eq!(pic_row.orientation, Some(3));
 }
 
-/// Feature 33 §4.6: a video is readable (ffprobe) and never writable, so its successful extraction
-/// settles on the **write** verdict, not `synced`. That is what makes the status-only partition
-/// correct for it — a batch edit must land DB-only and stay `unsupported_mime` ("n/a"), not enqueue
-/// a doomed write job that `fail_job` would relabel `unsupported_file` ("unreadable").
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn video_batch_exif_stays_db_only(db: PgPool) {
-    let user = common::seed_user(&db, "alice", "pass").await;
-    let pic = seed_owned(
-        &db,
-        user,
-        "video/mp4",
-        100,
-        None,
-        None,
-        None,
-        json!({}),
-        true,
-    )
-    .await;
-    // The two axes disagree for a video, which is the whole reason the verdict is stored: it is
-    // readable, so ingest does not pre-stamp it, and unwritable, so the read must not leave `synced`.
-    assert_eq!(
-        jobs::ingest_exif_status(Some("video/mp4")),
-        ExifSyncStatus::Extracting,
-    );
-    assert_eq!(
-        jobs::extraction_settled_status(Some("video/mp4")),
-        ExifSyncStatus::UnsupportedMime,
-    );
-    let pic_row = PictureRepository::find_by_id(&db, pic)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::UnsupportedMime);
-
-    let sel = ResolvedSelection::explicit(vec![pic]);
-    let set = FullExif {
-        gps_lat: Some(48.0),
-        gps_lng: Some(2.0),
-        ..Default::default()
-    };
-    let counts = PictureRepository::batch_apply_exif_owned_selection(&db, user, &sel, &set, &[])
-        .await
-        .unwrap();
-    assert_eq!(
-        (counts.edited, counts.unsupported),
-        (0, 1),
-        "the batch partition sees the stored write verdict without testing the MIME",
-    );
-
-    let pic_row = PictureRepository::find_by_id(&db, pic)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(pic_row.exif_sync_status, ExifSyncStatus::UnsupportedMime);
-    assert_eq!(pic_row.gps_lat, Some(48.0), "the DB edit still lands");
-    assert_eq!(
-        jobs::create_deferred_exif_jobs(&db, 10).await.unwrap(),
-        0,
-        "no write job, so nothing can relabel the row `unsupported_file`",
-    );
-}
-
-/// The same verdict reached through the per-picture path (§10's kept `supports_exif` derivation).
-/// Both paths must agree: before this, only this one stamped `unsupported_mime` for a video.
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn video_single_and_batch_edit_paths_agree(db: PgPool) {
-    let waker = RoutineHandle::<Uuid>::disconnected();
-    let user = common::seed_user(&db, "alice", "pass").await;
-    let single = seed_owned(
-        &db,
-        user,
-        "video/quicktime",
-        100,
-        None,
-        None,
-        None,
-        json!({}),
-        true,
-    )
-    .await;
-    let batched = seed_owned(
-        &db,
-        user,
-        "video/quicktime",
-        100,
-        None,
-        None,
-        None,
-        json!({}),
-        true,
-    )
-    .await;
-
-    let set = FullExif {
-        orientation: Some(3),
-        ..Default::default()
-    };
-    let outcome = jobs::edit_pictures_exif(&db, &waker, user, &[single], set.clone(), vec![])
-        .await
-        .unwrap();
-    assert_eq!(outcome.unsupported, vec![single]);
-    assert!(outcome.jobs.is_empty());
-
-    PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &ResolvedSelection::explicit(vec![batched]),
-        &set,
-        &[],
-    )
-    .await
-    .unwrap();
-
-    for id in [single, batched] {
-        let row = PictureRepository::find_by_id(&db, id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.exif_sync_status, ExifSyncStatus::UnsupportedMime);
-        assert_eq!(row.orientation, Some(3));
-    }
-}
-
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn worker_marked_unsupported_stays_terminal_on_re_edit(db: PgPool) {
     // A jpeg the worker could not open: the MIME says "supported", but `unsupported_file` is
@@ -989,25 +863,10 @@ async fn batch_exif_dry_run_partitions(db: PgPool) {
         true,
     )
     .await;
-    // Readable but not writable: `unsupported` on the write axis the dry run reports, even though
-    // its extraction succeeded (§4.6).
-    let video = seed_owned(
-        &db,
-        user,
-        "video/mp4",
-        100,
-        None,
-        None,
-        None,
-        json!({}),
-        true,
-    )
-    .await;
     let recv = seed_received(&db, user, "carol", json!({})).await;
-    let sel = ResolvedSelection::explicit(vec![jpeg, gif, video, recv]);
+    let sel = ResolvedSelection::explicit(vec![jpeg, gif, recv]);
 
     assert!(!archypix_common::mime::supports_exif("image/gif"));
-    assert!(!archypix_common::mime::supports_exif("video/mp4"));
 
     let out = jobs::batch_edit_exif_selection(
         &db,
@@ -1032,29 +891,14 @@ async fn batch_exif_dry_run_partitions(db: PgPool) {
     .unwrap();
     match out {
         ExifBatchOutcome::DryRun(d) => {
-            assert_eq!(d.affected, 4);
+            assert_eq!(d.affected, 3);
             assert_eq!(d.edited, Some(1), "one jpeg supported");
-            assert_eq!(d.unsupported, Some(2), "gif unreadable, mp4 unwritable");
+            assert_eq!(d.unsupported, Some(1), "one png unsupported");
             assert_eq!(d.local_override, Some(1), "one received → local override");
             assert_eq!(d.suggested, Some(0));
         }
         _ => panic!("expected dry-run"),
     }
-
-    // The dry run and the real run read the same column, so they cannot disagree.
-    let counts = PictureRepository::batch_apply_exif_owned_selection(
-        &db,
-        user,
-        &sel,
-        &FullExif {
-            orientation: Some(2),
-            ..Default::default()
-        },
-        &[],
-    )
-    .await
-    .unwrap();
-    assert_eq!((counts.edited, counts.unsupported), (1, 2));
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

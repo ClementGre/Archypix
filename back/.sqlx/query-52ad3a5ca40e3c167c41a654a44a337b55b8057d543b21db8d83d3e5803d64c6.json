@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE pictures\n               SET width       = COALESCE($2,  width),\n                   height      = COALESCE($3,  height),\n                   captured_at = $4,\n                   gps_lat     = $5,\n                   gps_lng     = $6,\n                   gps_alt     = $7,\n                   orientation = $8,\n                   blurhash    = COALESCE($9,  blurhash),\n                   exif_data   = (exif_data - $10::text[]) || $11::jsonb,\n                   file_size   = COALESCE($12, file_size),\n                   file_hash   = COALESCE($13, file_hash),\n                   content_hash = COALESCE($14, content_hash),\n                   file_exif   = $15::jsonb,\n                   -- A successful extraction is direct evidence against any stale verdict (§6.3).\n                   -- `settled` is `synced`, or the write verdict for a format that is readable but\n                   -- not writable (§4.6) — the caller derives it from the row's MIME.\n                   exif_sync_status = $16,\n                   thumbnails_generated_at = CASE WHEN $17\n                                                  THEN COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')\n                                                  ELSE thumbnails_generated_at\n                                             END,\n                   last_pipeline_run_at = NULL\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at, file_modified_at",
+  "query": "UPDATE pictures\n               SET width       = COALESCE($2,  width),\n                   height      = COALESCE($3,  height),\n                   captured_at = $4,\n                   gps_lat     = $5,\n                   gps_lng     = $6,\n                   gps_alt     = $7,\n                   orientation = $8,\n                   blurhash    = COALESCE($9,  blurhash),\n                   exif_data   = (exif_data - $10::text[]) || $11::jsonb,\n                   file_size   = COALESCE($12, file_size),\n                   file_hash   = COALESCE($13, file_hash),\n                   content_hash = COALESCE($14, content_hash),\n                   file_exif   = $15::jsonb,\n                   -- A successful extraction is direct evidence against any stale verdict (§6.3).\n                   exif_sync_status = 'synced'::picture_exif_sync_status,\n                   thumbnails_generated_at = CASE WHEN $16\n                                                  THEN COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')\n                                                  ELSE thumbnails_generated_at\n                                             END,\n                   last_pipeline_run_at = NULL\n               WHERE id = $1\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at, file_modified_at",
   "describe": {
     "columns": [
       {
@@ -477,23 +477,6 @@
         "Text",
         "Text",
         "Jsonb",
-        {
-          "Custom": {
-            "name": "picture_exif_sync_status",
-            "kind": {
-              "Enum": [
-                "synced",
-                "pending",
-                "unsupported_mime",
-                "pending_job_creation",
-                "write_failed",
-                "unsupported_file",
-                "extracting",
-                "extract_failed"
-              ]
-            }
-          }
-        },
         "Bool"
       ]
     },
@@ -539,5 +522,5 @@
       false
     ]
   },
-  "hash": "4e407e558df443eebb2ce15e8ebec6a33d0e5d0869b3e475af7abc93efe961a8"
+  "hash": "52ad3a5ca40e3c167c41a654a44a337b55b8057d543b21db8d83d3e5803d64c6"
 }

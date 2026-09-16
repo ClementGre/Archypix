@@ -640,7 +640,8 @@ CREATE INDEX idx_users_username ON public.users USING btree (username);
 
 CREATE UNIQUE INDEX uq_edit_picture_inflight ON public.jobs USING btree (picture_id) WHERE ((job_type = 'edit_picture'::public.job_type) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
 
-CREATE UNIQUE INDEX uq_jobs_idempotency_live ON public.jobs USING btree (owner_id, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
+CREATE UNIQUE INDEX uq_jobs_idempotency_live ON public.jobs USING btree (owner_id, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND
+                                                                                                           (status = ANY (ARRAY ['pending'::public.job_status, 'processing'::public.job_status])));
 
 CREATE UNIQUE INDEX uq_outgoing_share ON public.outgoing_shares USING btree (owner_id, tag_path, recipient_username, recipient_instance) WHERE (status <> ALL (ARRAY['revoked'::public.share_status, 'tombstoned'::public.share_status]));
 

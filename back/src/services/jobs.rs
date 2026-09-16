@@ -64,18 +64,6 @@ pub fn ingest_exif_status(mime_type: Option<&str>) -> ExifSyncStatus {
     }
 }
 
-/// The status a successful read settles on (feature 33 §4.6). A read succeeding says nothing about
-/// the write direction, and for a format we know cannot receive EXIF writes — a video, read by
-/// ffprobe and never written — that verdict is already decided: stamp it now rather than leaving the
-/// row `synced` until an edit discovers it. An unknown MIME is `Synced`, matching every other
-/// default in §10: absence of a MIME is a gap in our metadata, not evidence about the file.
-pub fn extraction_settled_status(mime_type: Option<&str>) -> ExifSyncStatus {
-    match mime_type {
-        Some(m) if !supports_exif(m) => ExifSyncStatus::UnsupportedMime,
-        _ => ExifSyncStatus::Synced,
-    }
-}
-
 /// The status a physical copy inherits (feature 33 §4.1): the source's verdict about the identical
 /// bytes, except that a source nothing ever read successfully has no verdict to lend — the copy
 /// takes `extract_failed`, which keeps edits allowed and lets a re-extract settle it.
@@ -479,9 +467,8 @@ pub async fn revert_picture_exif_to_file(
             "a reconcile job is already in flight for this picture".into(),
         ));
     }
-    // The DB now matches the file, which settles the read direction — not the write one (§4.6).
-    let settled = extraction_settled_status(picture.mime_type.as_deref());
-    PictureRepository::write_exif_snapshot(db, picture_id, &file_exif.0, settled).await?;
+    PictureRepository::write_exif_snapshot(db, picture_id, &file_exif.0, ExifSyncStatus::Synced)
+        .await?;
     waker.trigger_debounced(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?

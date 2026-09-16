@@ -1350,8 +1350,8 @@ impl PictureRepository {
     ///
     /// Used by `gen_thumbnail` extraction (initial ingest and external overwrites, feature 31 §5):
     /// the promoted columns and the camera keys of `exif_data` are set to the file's values,
-    /// `file_exif` records the same snapshot, and the row takes `settled` — the caller's verdict on
-    /// the *write* direction, which a successful read does not settle (feature 33 §4.6).
+    /// `file_exif` records the same snapshot, and the row becomes `synced` — unless it is
+    /// `unsupported`, a terminal state extraction must not undo.
     #[tracing::instrument(skip(ex, extracted), fields(picture_id = %id))]
     pub async fn update_from_worker<'e, E>(
         ex: E,
@@ -1364,7 +1364,6 @@ impl PictureRepository {
         file_hash: Option<&str>,
         content_hash: Option<&str>,
         set_thumbnails: bool,
-        settled: ExifSyncStatus,
     ) -> Result<Picture, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -1391,10 +1390,8 @@ impl PictureRepository {
                    content_hash = COALESCE($14, content_hash),
                    file_exif   = $15::jsonb,
                    -- A successful extraction is direct evidence against any stale verdict (§6.3).
-                   -- `settled` is `synced`, or the write verdict for a format that is readable but
-                   -- not writable (§4.6) — the caller derives it from the row's MIME.
-                   exif_sync_status = $16,
-                   thumbnails_generated_at = CASE WHEN $17
+                   exif_sync_status = 'synced'::picture_exif_sync_status,
+                   thumbnails_generated_at = CASE WHEN $16
                                                   THEN COALESCE(thumbnails_generated_at, now() AT TIME ZONE 'utc')
                                                   ELSE thumbnails_generated_at
                                              END,
@@ -1428,7 +1425,6 @@ impl PictureRepository {
             file_hash,
             content_hash,
             file_exif_json,
-            settled as ExifSyncStatus,
             set_thumbnails,
         )
             .fetch_one(ex)
@@ -1853,9 +1849,8 @@ impl PictureRepository {
             .map_err(map_sqlx_error)
     }
 
-    /// Count owned pictures in the selection carrying a terminal verdict — the dry-run `unsupported`
-    /// partition, and exactly the rows [`Self::batch_apply_exif_owned_selection`] takes DB-only, so
-    /// the preview and the run cannot disagree.
+    /// Count owned pictures in the selection whose format cannot embed EXIF (the dry-run
+    /// `unsupported` partition). `supported_mimes` is the lower-cased whitelist.
     #[tracing::instrument(skip(db, sel), fields(user_id = %local_user_id))]
     pub async fn count_owned_unsupported_selection(
         db: &PgPool,
@@ -2213,8 +2208,7 @@ impl PictureRepository {
     /// 14 §5). One statement: rows carrying a terminal verdict take the DB-only branch and keep it,
     /// every other row is stamped `pending_job_creation` for the drain. `extracting` rows are
     /// skipped — an in-flight extraction would overwrite the edit (04 §11.2). The partition is the
-    /// stored status, never a MIME list (feature 33 §10): the status carries the *write* verdict for
-    /// every row that has one, including a video's, which its extraction settles (§4.6).
+    /// stored status, never a MIME list (feature 33 §10).
     #[tracing::instrument(skip(ex, sel, set, clear), fields(user_id = %local_user_id))]
     pub async fn batch_apply_exif_owned_selection<'e, E>(
         ex: E,

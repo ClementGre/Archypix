@@ -2729,14 +2729,12 @@ type VersioningMode =
 // EXIF sync status. Every value is set by an observation, never by a schema default (feature 33 §4);
 // the column has no DEFAULT and each insert path states its own.
 type ExifSyncStatus =
-        | "synced"               // no outstanding sync work; only for a format writes can reach
+        | "synced"               // no outstanding sync work
         | "pending"              // edit_picture job is in flight reconciling the file
         | "pending_job_creation" // batch edit applied set-based; the drain will create the reconcile job (feature 14 §5)
         | "extracting"           // the file has not been read yet — the only state that refuses edits (409)
         | "extract_failed"       // the extraction never returned an answer; edits are allowed and repair the row
-        | "unsupported_mime"     // format cannot receive EXIF writes; DB is updated, file is not.
-                                 // Stamped at ingest, or — for a format that reads but never writes
-                                 // (video) — when its extraction succeeds (feature 33 §4.6)
+        | "unsupported_mime"     // format cannot receive EXIF writes; DB is updated, file is not
         | "unsupported_file"     // both read engines ran and neither could open the file
         | "write_failed";        // the file write failed permanently; DB and file diverge (feature 31)
 

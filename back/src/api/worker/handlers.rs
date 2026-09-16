@@ -244,12 +244,6 @@ pub async fn complete_job(
         match (&job.job_type, &body.exif) {
             // Extraction path (initial ingest / external overwrite): file state becomes authoritative.
             (JobType::GenThumbnail, ExifExtraction::Extracted(extracted)) => {
-                // A successful read settles the read direction only. A format we can read but never
-                // write (video) takes its write verdict here rather than sitting in `synced` until
-                // an edit discovers it — which is what the set-based batch path reads (33 §4.6).
-                let mime = PictureRepository::find_by_id(&mut *tx, pid)
-                    .await?
-                    .and_then(|p| p.mime_type);
                 PictureRepository::update_from_worker(
                     &mut *tx,
                     pid,
@@ -261,7 +255,6 @@ pub async fn complete_job(
                     body.file_hash.as_deref(),
                     body.content_hash.as_deref(),
                     true,
-                    crate::services::jobs::extraction_settled_status(mime.as_deref()),
                 )
                 .await?;
             }
@@ -453,12 +446,10 @@ async fn record_failed_extraction(
             .begin()
             .await
             .map_err(|e| AppError::InternalServerError(format!("failed to begin tx: {e}")))?;
-        let row = PictureRepository::find_by_id(&mut *tx, picture_id).await?;
-        let still_extracting = row
-            .as_ref()
+        let still_extracting = PictureRepository::find_by_id(&mut *tx, picture_id)
+            .await?
             .is_some_and(|p| p.exif_sync_status == ExifSyncStatus::Extracting);
         if still_extracting {
-            let mime = row.and_then(|p| p.mime_type);
             PictureRepository::update_from_worker(
                 &mut *tx,
                 picture_id,
@@ -470,7 +461,6 @@ async fn record_failed_extraction(
                 None,
                 None,
                 false,
-                crate::services::jobs::extraction_settled_status(mime.as_deref()),
             )
             .await?;
         }
