@@ -131,17 +131,14 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
 
         if let Err(ref e) = result {
             let permanent = !e.is_retriable();
-            let unsupported = e.is_unsupported();
-            error!(job_id = %job_id, permanent, unsupported, error = ?e, "job failed");
+            // A format verdict the handler never got to record — the write path reaches one this
+            // way. Same vocabulary as the read path, so the backend needs no second channel.
+            if let Some(verdict) = e.exif_verdict() {
+                extraction = verdict;
+            }
+            error!(job_id = %job_id, permanent, verdict = ?extraction, error = ?e, "job failed");
             if let Err(report_err) = client
-                .fail_job(
-                    job_id,
-                    claim_token,
-                    &e.to_string(),
-                    permanent,
-                    unsupported,
-                    extraction,
-                )
+                .fail_job(job_id, claim_token, &e.to_string(), permanent, extraction)
                 .await
             {
                 error!(

@@ -277,12 +277,7 @@ pub async fn complete_job(
         // The read direction's verdict on an ingest (feature 33 §6.1). A successful extraction has
         // already stamped `synced` above; the two terminal ones are recorded here.
         if job.job_type == JobType::GenThumbnail {
-            let verdict = match body.exif {
-                ExifExtraction::UnsupportedMime => Some(ExifSyncStatus::UnsupportedMime),
-                ExifExtraction::Failed => Some(ExifSyncStatus::UnsupportedFile),
-                _ => None,
-            };
-            if let Some(status) = verdict {
+            if let Some(status) = terminal_verdict(&body.exif) {
                 PictureRepository::set_exif_sync_status(&mut *tx, pid, status).await?;
             }
         }
@@ -402,12 +397,10 @@ pub async fn fail_job(
     if job.status == JobStatus::Failed && job.job_type == JobType::EditPicture {
         if let (Ok(JobConfig::EditPicture(cfg)), Some(pid)) = (job.typed_config(), job.picture_id) {
             if cfg.exif.is_some() {
-                // Both engines failed to open the file — a read verdict, not a write one (§4.4).
-                let status = if body.unsupported {
-                    ExifSyncStatus::UnsupportedFile
-                } else {
-                    ExifSyncStatus::WriteFailed
-                };
+                // The worker's verdict, in the same vocabulary the read path uses: the format takes
+                // no writes (`unsupported_mime`) or these bytes would not open (`unsupported_file`).
+                // Anything else opened fine and the write simply did not land (§4.4/§4.5).
+                let status = terminal_verdict(&body.exif).unwrap_or(ExifSyncStatus::WriteFailed);
                 PictureRepository::set_exif_sync_status(&state.db, pid, status).await?;
             }
         }
@@ -426,6 +419,19 @@ pub async fn fail_job(
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The terminal sync status an [`ExifExtraction`] carries, or `None` when it carries no verdict.
+///
+/// One mapping for both directions (feature 33 §5): the read path reports these on `complete_job`
+/// and `fail_job`, the write path on `fail_job`. Each caller supplies its own fallback for `None` —
+/// `extract_failed` for a dead extraction, `write_failed` for a write that never landed.
+fn terminal_verdict(exif: &ExifExtraction) -> Option<ExifSyncStatus> {
+    match exif {
+        ExifExtraction::UnsupportedMime => Some(ExifSyncStatus::UnsupportedMime),
+        ExifExtraction::Failed => Some(ExifSyncStatus::UnsupportedFile),
+        ExifExtraction::Extracted(_) | ExifExtraction::NotAttempted => None,
+    }
 }
 
 /// Settle a picture's read direction after its extraction job failed permanently (feature 33 §6.5).
@@ -470,11 +476,7 @@ async fn record_failed_extraction(
 
     // No usable read: `unsupported_*` are verdicts the worker reached, `NotAttempted` means the job
     // died before it got one — an absence of a verdict, which is what `extract_failed` records.
-    let status = match exif {
-        ExifExtraction::UnsupportedMime => ExifSyncStatus::UnsupportedMime,
-        ExifExtraction::Failed => ExifSyncStatus::UnsupportedFile,
-        _ => ExifSyncStatus::ExtractFailed,
-    };
+    let status = terminal_verdict(exif).unwrap_or(ExifSyncStatus::ExtractFailed);
     PictureRepository::set_exif_sync_status_bulk(
         &state.db,
         &[picture_id],

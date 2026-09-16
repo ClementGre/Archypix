@@ -714,6 +714,7 @@ fn round2(f: f64) -> f64 {
 mod tests {
     use super::*;
     use archypix_common::job::CameraExif;
+    use archypix_common::transfer::ExifExtraction;
 
     fn gps_target(lat: Option<f64>, lng: Option<f64>, alt: Option<i32>) -> FullExif {
         FullExif {
@@ -808,7 +809,7 @@ mod tests {
         ] {
             let mapped = classify_exiftool_error(path, e);
             assert!(mapped.is_retriable(), "{mapped} must not be a file verdict");
-            assert!(!mapped.is_unsupported());
+            assert_eq!(mapped.exif_verdict(), None);
         }
     }
 
@@ -969,7 +970,11 @@ mod tests {
                 command_args: String::new(),
             },
         );
-        assert!(err.is_unsupported(), "{err} must be a terminal verdict");
+        assert_eq!(
+            err.exif_verdict(),
+            Some(ExifExtraction::Failed),
+            "{err} must be a terminal verdict about these bytes"
+        );
         assert!(!err.is_retriable());
     }
 
@@ -1004,6 +1009,6 @@ mod tests {
 
         let err = read_metadata(&path, None).expect_err("an empty file cannot be read");
         assert!(err.is_retriable(), "{err} must be retriable");
-        assert!(!err.is_unsupported());
+        assert_eq!(err.exif_verdict(), None);
     }
 }

@@ -143,9 +143,11 @@ The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` 
   row. On completion it records the worker's read-back in `file_exif` and compares the DB against *that target*: equal → `synced`; changed (an edit
   landed mid-flight) → `pending_job_creation`, and the drain enqueues the follow-up. The read-back is never compared field-by-field — EXIF stores
   rationals, so a GPS round-trip never returns the exact `f64` it was given.
-- **Failure**: permanent → `write_failed` (the DB edit is kept; the user retries or reverts to the file); `unsupported: true` in the fail body → the
-  terminal `unsupported_file` state (neither engine could open the file). A watchdog-exhausted reconcile is marked `write_failed` by the watchdog,
-  since no worker reports it.
+- **Failure**: the fail body's `exif: ExifExtraction` carries the verdict, same vocabulary as the read direction (feature 33 §5) — `UnsupportedMime`
+  → the terminal `unsupported_mime` (the format takes no EXIF writes; reached by a preflight, before the download), `Failed` → the terminal
+  `unsupported_file` (the write engine could not open these bytes), anything else → `write_failed` (the file opened, the write did not land; the DB
+  edit is kept and the user retries or reverts to the file). A watchdog-exhausted reconcile is marked `write_failed` by the watchdog, since no worker
+  reports it.
 - **Extraction race** (feature 33 §6.4): the completion skips both its status and its `file_exif`
   write when the row has moved to `extracting` — a re-extraction landed mid-flight and owns them.
 

@@ -190,9 +190,11 @@ Exit: the admin recheck sweep after an allowlist change (§8).
 
 ### 4.4 `unsupported_file` (new)
 
-Set by a `Failed` ingest outcome after dispatch **and** fallback, and by `fail_job` with
-`unsupported: true` on the write path. Exit: new bytes, or an engine-upgrade sweep. Never a retry
-against the same bytes — the success rate is zero and a Retry button would be a lie.
+Set by a `Failed` outcome — after dispatch **and** fallback on the read path, or from the write
+engine on `fail_job`. Both directions report it through the same `ExifExtraction` (§5), so a write
+that failed because the *format* takes no EXIF lands `unsupported_mime`, not here. Exit: new bytes,
+or an engine-upgrade sweep. Never a retry against the same bytes — the success rate is zero and a
+Retry button would be a lie.
 
 ### 4.5 Write-direction states
 
@@ -234,12 +236,21 @@ pub enum ExifExtraction {
 }
 ```
 
-The same outcome rides on `FailJobRequest`, because a job that dies still knows what it read (§6.5).
+The same outcome rides on `FailJobRequest`, because a job that dies still knows what it read (§6.5)
+— and it is the **write** direction's channel too. `FailJobRequest` carried a parallel
+`unsupported: bool` for that, which is the identical overloading one paragraph up, one direction
+over: a boolean cannot separate "this format takes no EXIF writes" (`unsupported_mime`) from "these
+bytes would not open" (`unsupported_file`), so every write failure was recorded as the latter. The
+bool is gone; both directions report the same four variants, and the backend has one mapping from
+outcome to status (`terminal_verdict`) with a per-caller fallback.
 
 Retriable failures have no representation on the *complete* path: they never reach `complete_job`.
 On the fail path they arrive as `NotAttempted` with `permanent = false`, which the backend ignores —
-the job will be retried. The edit path only ever sends `Extracted` (a failed read-back is already
-downgraded to `write_failed`) or fails the job.
+the job will be retried. On the edit path `NotAttempted` on a *permanent* failure means the file
+opened and the write did not land: `write_failed`.
+
+The write path reaches `UnsupportedMime` from a preflight, before the download — the verdict is
+about the MIME, so fetching the bytes is waste, and on a video that is the whole container.
 
 ## 6. Flows
 
@@ -540,11 +551,31 @@ Deviations and residue, all deliberate:
   (a stored `5/4` prints as `1.2`), so the parse yields `6/5`. Exactly-representable decimals
   (`0.5 → 1/2`, `2 → 2/1`, `30 → 30/1`) round-trip, and the fraction form — every exposure below
   1/4 s — is exact. Reading `-n` instead would mean rationalizing a float, which §3.3 forbids.
-- **A batch EXIF edit over a video is mislabelled.** §10 has the set-based path partition on stored
-  status only, but a video is legitimately `synced` (§4.6) and only the *per-picture* edit path keeps
-  the `supports_exif` derivation that would stamp `unsupported_mime` (§4.3). A batch therefore
-  enqueues a write job that fails, landing the row on `unsupported_file` ("unreadable") instead of
-  `unsupported_mime` ("n/a"). Tracked on the roadmap.
+- **A batch EXIF edit over a video was mislabelled — fixed in §5, no state-machine change.** A batch
+  partitions on stored status (§10), so a video — legitimately `synced` (§4.6) — enqueued a write
+  job, and the failure landed `unsupported_file` ("unreadable") instead of `unsupported_mime`
+  ("n/a").
+
+  §4.3 already described the intended behaviour: a video reaches `synced` and takes the write verdict
+  when something first tries to write it. That holds for the per-picture path, which derives it
+  locally. The batch path goes through the worker, and the verdict could not survive the trip:
+  `FailJobRequest` flattened it to `unsupported: bool`, which cannot separate a format verdict from a
+  file verdict — the same overloading §5 had already removed from the read direction, left standing
+  on the write one.
+
+  So the fix was a deletion, not an amendment: drop the bool, report both directions through
+  `ExifExtraction`, and collapse the backend's three near-identical mappings into one
+  (`terminal_verdict` + a per-caller fallback). The worker reaches `UnsupportedMime` from a preflight
+  *before* the download, so the doomed fetch never happens either.
+
+  An earlier attempt amended §4.6 instead, settling videos on `unsupported_mime` at extraction
+  success with a backfill migration. It worked, but it added a helper, a repository parameter, three
+  call sites and a migration to fix what was a lossy channel, and it made the spec describe the
+  workaround rather than the intent. Reverted in favour of the above.
+
+  Still open, and genuinely a §10 consequence rather than a channel bug: a batch **dry run** previews
+  a video under `edited`, and the aggregate counts it under `synced`, because both read the stored
+  status and the verdict only exists after a write is attempted. Tracked on the roadmap.
 - **A copy of a `pending` source can sit in `pending` with no job.** §4.1's inheritance rule carves
   out only the two never-read states; a copy of a row with an unsynced edit inherits `pending` while
   `is_initial = false` enqueues no reconcile. Recoverable through `/exif/resync`, and visible in the

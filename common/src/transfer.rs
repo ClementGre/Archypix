@@ -146,10 +146,11 @@ pub enum ExifExtraction {
     /// No extraction was asked of this job (a non-initial `gen_thumbnail`) — status untouched.
     #[default]
     NotAttempted,
-    /// The MIME can carry no EXIF this worker writes — terminal `unsupported_mime`.
+    /// The MIME can carry no EXIF this worker reads or writes — terminal `unsupported_mime`.
+    /// A format verdict, reached without opening the file.
     UnsupportedMime,
-    /// Dispatch **and** fallback ran and neither engine could open the file — terminal
-    /// `unsupported_file`.
+    /// Every engine ran and none could open the file — terminal `unsupported_file`. A file verdict:
+    /// dispatch **and** fallback on the read side, the write engine on the edit side.
     Failed,
 }
 
@@ -212,14 +213,13 @@ pub struct FailJobRequest {
     /// transient errors like network failures or backend 5xx responses.
     #[serde(default)]
     pub permanent: bool,
-    /// The file itself cannot carry the requested metadata (feature 31 §6) — the backend marks the
-    /// picture `unsupported` instead of `write_failed`, since retrying can never help.
-    #[serde(default)]
-    pub unsupported: bool,
-    /// What the read direction observed before the job died (feature 33 §6.5). A `gen_thumbnail`
-    /// that extracted fine and then failed to thumbnail still knows the file's EXIF, and a
-    /// permanent failure that never got that far still has to say so — otherwise the picture is
-    /// stranded in `extracting` with no job to rescue it.
+    /// The EXIF verdict this job reached before it died — for **both** directions (feature 33 §5).
+    ///
+    /// A `gen_thumbnail` that extracted fine and then failed to thumbnail still knows the file's
+    /// EXIF, and a permanent failure that never got that far still has to say so, or the picture is
+    /// stranded in `extracting` with no job to rescue it. On the write side the same variants carry
+    /// the distinction a boolean could not: `UnsupportedMime` (the format takes no EXIF writes) vs
+    /// `Failed` (no engine could open the file).
     #[serde(default)]
     pub exif: ExifExtraction,
 }

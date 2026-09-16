@@ -521,39 +521,52 @@ async fn exif_permanent_failure_marks_write_failed(db: PgPool) {
     );
 }
 
-/// §4.4: `unsupported: true` on the write path means neither engine could open the file.
+/// §4.4/§4.5: the write path's failure carries a verdict in the same vocabulary as the read path,
+/// and each variant lands its own state. `Failed` is about these bytes, `UnsupportedMime` about the
+/// format, and anything else opened fine so the write merely did not land.
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn exif_unsupported_failure_is_terminal(db: PgPool) {
+async fn exif_write_failure_verdicts_land_their_states(db: PgPool) {
     let settings = test_settings_with(&[]);
     let token = worker_token(&settings);
     let alice_id = common::seed_user(&db, "alice", "pass").await;
-    let (pic_id, job_id) = seed_exif_edit(&db, alice_id).await;
     let app = archypix_back::api::routes(settings.clone())
         .with_state(common::test_app_state(db.clone(), &settings));
 
-    let (claim_token, _config) = claim_edit(&app, &token).await;
-    let fail_body = serde_json::json!({
-        "claim_token": claim_token,
-        "error": "this file cannot carry EXIF",
-        "permanent": true,
-        "unsupported": true,
-    });
-    let resp = app
-        .clone()
-        .oneshot(post_json(
-            &format!("/api/worker/jobs/{job_id}/fail"),
-            &token,
-            &fail_body,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    for (exif, expected) in [
+        (serde_json::json!("failed"), ExifSyncStatus::UnsupportedFile),
+        (
+            serde_json::json!("unsupported_mime"),
+            ExifSyncStatus::UnsupportedMime,
+        ),
+        (
+            serde_json::json!("not_attempted"),
+            ExifSyncStatus::WriteFailed,
+        ),
+    ] {
+        let (pic_id, job_id) = seed_exif_edit(&db, alice_id).await;
+        let (claim_token, _config) = claim_edit(&app, &token).await;
+        let resp = app
+            .clone()
+            .oneshot(post_json(
+                &format!("/api/worker/jobs/{job_id}/fail"),
+                &token,
+                &serde_json::json!({
+                    "claim_token": claim_token,
+                    "error": "write did not land",
+                    "permanent": true,
+                    "exif": exif,
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let picture = PictureRepository::find_by_id(&db, pic_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(picture.exif_sync_status, ExifSyncStatus::UnsupportedFile);
+        let picture = PictureRepository::find_by_id(&db, pic_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(picture.exif_sync_status, expected, "verdict {exif}");
+    }
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -956,10 +969,7 @@ async fn watchdog_exhaustion_marks_the_extraction_failed(db: PgPool) {
 
     let settings = test_settings_with(&[]);
     archypix_back::infra::routine::Routine::run(
-        &archypix_back::infra::routine::job_watchdog::JobWatchdogRoutine::new(
-            db.clone(),
-            settings,
-        ),
+        &archypix_back::infra::routine::job_watchdog::JobWatchdogRoutine::new(db.clone(), settings),
         (),
     )
     .await

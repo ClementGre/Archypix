@@ -38,11 +38,16 @@
   extraction proxy and the MIME allowlists threaded into set-based SQL. Adds
   `POST /pictures/{id}/exif/reextract` and the admin `POST /pictures/recheck-exif` sweep.
   See `doc/features/33_exif_read_path_and_engine_fallback.md`.
-  - [ ] A **batch** EXIF edit over a video now partitions on the stored status (33 §10), which still
-    reads `synced` — so it enqueues a doomed write job and the failure lands as `unsupported_file`
-    ("unreadable") rather than the correct `unsupported_mime` ("n/a"). The per-picture edit path,
-    which keeps the `supports_exif` derivation, labels it correctly. Fix: let the batch stamp the
-    MIME verdict too, or stamp videos at first ingest.
+  - [x] A **batch** EXIF edit over a video landed as `unsupported_file` ("unreadable") rather than
+    `unsupported_mime` ("n/a"): the batch goes through the worker, and `FailJobRequest` flattened the
+    verdict to `unsupported: bool`, which cannot separate a format verdict from a file one. Fixed by
+    deleting the bool — both directions now report `ExifExtraction` (33 §5), the backend has one
+    outcome→status mapping instead of three copies, and the worker reaches `UnsupportedMime` from a
+    preflight before the download, so the doomed fetch is skipped too. No state-machine change: §4.3
+    already described the intended behaviour.
+  - [ ] A batch EXIF **dry run** previews a video under `edited`, and the aggregate counts it under
+    `synced` — both read the stored status (33 §10) and a video only earns its verdict once a write
+    is attempted. Cosmetic, but the dry run is a preview the user acts on.
   - [ ] A physical copy inherits a `pending` / `pending_job_creation` source status (33 §4.1) without
     an accompanying reconcile job, so the copy can sit in `pending` until the user resyncs it.
   - [x] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passed
