@@ -37,6 +37,8 @@ architecture doc (03 §I backend/Rust, 05 §11 frontend), not here.
 - Keep docs up to date, at the level of detail already present — no overly specific blow-by-blow of a
   single change.
 - Editing the API → update doc/06_API_REFERENCE.md. Completing a task → update doc/99_ROADMAP_MVP.md.
+- Do not run cargo fmt crate-wide — HEAD is not rustfmt-clean.
+- Do not start or stop Docker containers; if the dev Postgres is down, report it instead.
 
 ## Section index (file › section › line)
 

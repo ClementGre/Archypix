@@ -229,8 +229,10 @@ hashing gives identity (§8) and a stable ETag immediately, before the worker ru
 Any write that creates or replaces bytes enqueues **`gen_thumbnail`** (EXIF extraction,
 thumbnails, blurhash, final hash) — identical to the existing upload path. The initial-extraction
 job's idempotency key is scoped to the **whole-file hash** (`gen_thumbnail_extract:{picture_id}:{hash}`),
-so an overwrite with new bytes re-extracts EXIF while an accidental re-enqueue of the same version is
-deduped — the first-upload key would otherwise block the overwrite.
+so an overwrite with new bytes re-extracts EXIF — even while the previous extraction is still
+`processing` on the old bytes — while an accidental re-enqueue of the same version returns the job
+already in flight. A key is live-scoped (`uq_jobs_idempotency_live`), so it dedupes only against a
+`pending`/`processing` job and never blocks a later re-upload of bytes seen before.
 
 ### 7.1 Operation taxonomy
 

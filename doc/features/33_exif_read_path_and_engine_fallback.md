@@ -439,16 +439,16 @@ real verdict (`unsupported_file` if no engine can open it). The cost is one doom
 
 All found in the post-spec verification pass; all resolved in the sections referenced.
 
-| # | Case | Resolution |
-|---|---|---|
-| A | Physical copies would sit in `extracting` forever (`is_initial = false` reports `NotAttempted`), refusing every edit with 409 | No column default; copies inherit the source's status and `file_exif` — §4.1 |
-| B | `POST /exif/reextract` and the sweep collide with the permanent, globally-unique key `gen_thumbnail_initial:{pid}` | No key + an in-flight guard; sweep-scoped key — §8 |
-| C | `RENAME VALUE` breaks an old binary reading the renamed label | Accepted: no old backend runs against the migrated DB — §9 |
-| D | An `edit_picture` completion overwrites `extracting` and clobbers a fresh `file_exif` with a stale read-back | The convergence branch skips both writes while `extracting` — §6.4 |
-| E | `regenerate_thumbnails(reextract_exif = true)` enqueues an extraction without setting `extracting`, letting an edit race it | The admin path sets `extracting` too — §8 |
-| F | Received rows would inherit `extracting` and never leave it | `create_received` sets `synced` explicitly — §4.1 |
-| G | The down migration cannot drop the added enum values | Folds them back and leaves the labels orphaned — §9 |
-| H | A format that is neither EXIF- nor video-readable would refuse edits during its ingest window | Stamped `unsupported_mime` at insert — §4.1, §4.3 |
+| # | Case                                                                                                                          | Resolution                                                                                    |
+|---|-------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| A | Physical copies would sit in `extracting` forever (`is_initial = false` reports `NotAttempted`), refusing every edit with 409 | No column default; copies inherit the source's status and `file_exif` — §4.1                  |
+| B | `POST /exif/reextract` and the sweep collide with the permanent, globally-unique key `gen_thumbnail_initial:{pid}`            | No key + an in-flight guard; sweep-scoped key — §8. The key itself was fixed later, see §12.2 |
+| C | `RENAME VALUE` breaks an old binary reading the renamed label                                                                 | Accepted: no old backend runs against the migrated DB — §9                                    |
+| D | An `edit_picture` completion overwrites `extracting` and clobbers a fresh `file_exif` with a stale read-back                  | The convergence branch skips both writes while `extracting` — §6.4                            |
+| E | `regenerate_thumbnails(reextract_exif = true)` enqueues an extraction without setting `extracting`, letting an edit race it   | The admin path sets `extracting` too — §8                                                     |
+| F | Received rows would inherit `extracting` and never leave it                                                                   | `create_received` sets `synced` explicitly — §4.1                                             |
+| G | The down migration cannot drop the added enum values                                                                          | Folds them back and leaves the labels orphaned — §9                                           |
+| H | A format that is neither EXIF- nor video-readable would refuse edits during its ingest window                                 | Stamped `unsupported_mime` at insert — §4.1, §4.3                                             |
 
 ### 12.1 Still open, inherited from feature 31
 
@@ -456,15 +456,21 @@ A reconcile already claimed when an external overwrite lands still writes its ol
 new bytes (31 §5). §6.4 stops it corrupting `file_exif`, and the in-flight extraction settles the
 row, but the file briefly carries the pre-overwrite target. Unchanged by this feature.
 
-### 12.2 Noted, out of scope
+### 12.2 Noted, out of scope — since fixed
 
-The job idempotency mechanism is not idempotent: `JobRepository::create` has no `ON CONFLICT`, so a
-duplicate key surfaces as a 23505 → `AppError::Conflict` rather than returning the existing job; the
-key is never scoped to liveness, so it is burned until `JobCleanupRoutine` prunes the row; and
-`jobs` carries two overlapping unique constraints (`idempotency_key UNIQUE` and
+The job idempotency mechanism was not idempotent: `JobRepository::create` had no `ON CONFLICT`, so a
+duplicate key surfaced as a 23505 → `AppError::Conflict` rather than returning the existing job; the
+key was never scoped to liveness, so it stayed burned until `JobCleanupRoutine` pruned the row; and
+`jobs` carried two overlapping unique constraints (`idempotency_key UNIQUE` and
 `uq_job_idempotency (owner_id, idempotency_key)`), the global one subsuming the composite and forcing
-owner scoping to be encoded in the key string. `enqueue_thumbnail_job` is its only producer, and
-`regenerate_thumbnails` already routes around it. This feature avoids it (§8) rather than fixing it.
+owner scoping to be encoded in the key string. This feature avoided it (§8) rather than fixing it.
+
+Fixed afterwards by migration `0017_job_idempotency_liveness`: both constraints are replaced by the
+partial unique index `uq_jobs_idempotency_live (owner_id, idempotency_key) WHERE idempotency_key IS
+NOT NULL AND status IN ('pending','processing')`, and `JobRepository::create_idempotent` upserts
+against it, returning the live job instead of a conflict. §8's two workarounds stand on their own
+merits and were kept: a re-extract has no content to key on, and an explicit user action deserves an
+explicit `409` over a silent dedupe.
 
 ## 13. Testing
 

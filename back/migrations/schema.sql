@@ -489,9 +489,6 @@ ALTER TABLE ONLY public.invites
     ADD CONSTRAINT invites_pkey PRIMARY KEY (code);
 
 ALTER TABLE ONLY public.jobs
-    ADD CONSTRAINT jobs_idempotency_key_key UNIQUE (idempotency_key);
-
-ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.outgoing_shares
@@ -526,9 +523,6 @@ ALTER TABLE ONLY public.hierarchies
 
 ALTER TABLE ONLY public.incoming_shares
     ADD CONSTRAINT uq_incoming_share UNIQUE (recipient_id, sender_username, sender_instance, outgoing_share_id);
-
-ALTER TABLE ONLY public.jobs
-    ADD CONSTRAINT uq_job_idempotency UNIQUE (owner_id, idempotency_key);
 
 ALTER TABLE ONLY public.picture_versions
     ADD CONSTRAINT uq_picture_version UNIQUE (picture_id, version_number);
@@ -645,6 +639,9 @@ CREATE INDEX idx_users_email ON public.users USING btree (email);
 CREATE INDEX idx_users_username ON public.users USING btree (username);
 
 CREATE UNIQUE INDEX uq_edit_picture_inflight ON public.jobs USING btree (picture_id) WHERE ((job_type = 'edit_picture'::public.job_type) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
+
+CREATE UNIQUE INDEX uq_jobs_idempotency_live ON public.jobs USING btree (owner_id, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND
+                                                                                                           (status = ANY (ARRAY ['pending'::public.job_status, 'processing'::public.job_status])));
 
 CREATE UNIQUE INDEX uq_outgoing_share ON public.outgoing_shares USING btree (owner_id, tag_path, recipient_username, recipient_instance) WHERE (status <> ALL (ARRAY['revoked'::public.share_status, 'tombstoned'::public.share_status]));
 

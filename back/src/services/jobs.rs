@@ -18,7 +18,11 @@ use uuid::Uuid;
 /// Enqueue a thumbnail + EXIF extraction job for a picture.
 ///
 /// Pass `is_initial = true` for a run that (re-)extracts EXIF from the file (first upload, or a
-/// WebDAV overwrite whose bytes changed).
+/// WebDAV overwrite whose bytes changed). An extraction is keyed on the bytes it will read, so a
+/// retried enqueue of the same version returns the job already in flight while an overwrite with
+/// new bytes always gets its own job — even while the previous one is still `processing` on the old
+/// bytes. Without a hash the key degrades to the picture, which is enough for the upload path
+/// (the row is brand new, so nothing can collide).
 #[tracing::instrument(skip(ex), fields(owner_id = %owner_id, picture_id = %picture_id))]
 pub async fn enqueue_thumbnail_job<'e, E>(
     ex: E,
@@ -39,14 +43,14 @@ where
         (true, None) => Some(format!("gen_thumbnail_initial:{picture_id}")),
         (false, _) => None,
     };
-    JobRepository::create(
-        ex,
-        owner_id,
-        Some(picture_id),
-        &config,
-        idempotency.as_deref(),
-    )
-    .await
+    match idempotency {
+        Some(key) => {
+            JobRepository::create_idempotent(ex, owner_id, Some(picture_id), &config, &key)
+                .await
+                .map(|c| c.job)
+        }
+        None => JobRepository::create(ex, owner_id, Some(picture_id), &config).await,
+    }
 }
 
 /// The status a freshly ingested row starts in (feature 33 §4.1). An extraction job follows, except
@@ -92,34 +96,28 @@ pub async fn regenerate_thumbnails(
     let targets =
         PictureRepository::find_for_thumbnail_regen(db, only_missing, &thumbnailable, limit)
             .await?;
-    let mut enqueued = 0usize;
-    let mut reextracted: Vec<Uuid> = Vec::new();
+    let mut enqueued: Vec<Uuid> = Vec::new();
     for (picture_id, owner_id) in targets {
-        // No idempotency key (the initial-upload key may already exist); the in-flight guard in the
-        // query prevents duplicate concurrent jobs.
+        // No idempotency key: an admin regen is content-agnostic, and `find_for_thumbnail_regen`
+        // already excludes pictures with an in-flight `gen_thumbnail`.
         let config = JobConfig::GenThumbnail(GenThumbnailConfig {
             picture_id,
             is_initial: reextract_exif,
         });
-        if JobRepository::create(db, owner_id, Some(picture_id), &config, None)
-            .await
-            .is_ok()
-        {
-            enqueued += 1;
-            reextracted.push(picture_id);
-        }
+        JobRepository::create(db, owner_id, Some(picture_id), &config).await?;
+        enqueued.push(picture_id);
     }
     // A re-extraction is authoritative, so the rows must refuse edits until it lands (§8, §12 E).
     if reextract_exif {
         PictureRepository::set_exif_sync_status_bulk(
             db,
-            &reextracted,
+            &enqueued,
             None,
             ExifSyncStatus::Extracting,
         )
         .await?;
     }
-    Ok(enqueued)
+    Ok(enqueued.len())
 }
 
 #[tracing::instrument(skip(db), fields(user_id = %user_id, job_id = %job_id))]
@@ -291,7 +289,7 @@ async fn enqueue_if_absent_edit(
     }
 
     let config = exif_reconcile_config(picture_id);
-    let job = JobRepository::create(&mut **tx, user_id, Some(picture_id), &config, None).await?;
+    let job = JobRepository::create(&mut **tx, user_id, Some(picture_id), &config).await?;
     Ok(Some(job.id))
 }
 
@@ -328,7 +326,7 @@ pub async fn resync_picture_exif(
     }
     let config = exif_reconcile_config(picture_id);
     PictureRepository::set_exif_sync_status(db, picture_id, ExifSyncStatus::Pending).await?;
-    let job = JobRepository::create(db, user_id, Some(picture_id), &config, None).await?;
+    let job = JobRepository::create(db, user_id, Some(picture_id), &config).await?;
     // Debounced: EXIF resync is a worker-driven reconcile path.
     waker.trigger_debounced(user_id);
     Ok(job)
@@ -338,9 +336,9 @@ pub async fn resync_picture_exif(
 /// which pushes the DB the other way: extraction makes the **file** authoritative (31 §5), so it is
 /// refused while the row holds an unsynced DB edit that would be silently discarded.
 ///
-/// Carries no idempotency key — `gen_thumbnail_initial:{picture_id}` is permanent and globally
-/// unique, so reusing it would 409 every re-extraction until job cleanup prunes the original row.
-/// An in-flight `gen_thumbnail` guard takes its place.
+/// Carries no idempotency key: a re-extract is content-agnostic (it reads whatever is on disk now),
+/// so there is nothing to key on, and an explicit user action deserves an explicit `409` rather than
+/// the silent dedupe an idempotency key would give it. An in-flight `gen_thumbnail` guard does that.
 #[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn reextract_picture_exif(
     db: &PgPool,
@@ -374,7 +372,7 @@ pub async fn reextract_picture_exif(
         picture_id,
         is_initial: true,
     });
-    let job = JobRepository::create(&mut *tx, user_id, Some(picture_id), &config, None).await?;
+    let job = JobRepository::create(&mut *tx, user_id, Some(picture_id), &config).await?;
     PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Extracting)
         .await?;
     tx.commit().await.map_err(map_sqlx_error)?;
@@ -411,8 +409,9 @@ impl RecheckScope {
 /// to `limit` rows in `scope`, stamping each `extracting`. Returns the number enqueued; a short
 /// count means the worklist is drained.
 ///
-/// The sweep-scoped idempotency key is idempotent within one sweep and never against the previous
-/// one. Rows holding unsynced DB edits are never in scope, so no edit can be discarded.
+/// The sweep-scoped idempotency key collapses a repeated tick within one sweep and never dedupes
+/// against a previous one. Rows holding unsynced DB edits are never in scope, so no edit can be
+/// discarded.
 #[tracing::instrument(skip(db, mime_types))]
 pub async fn recheck_exif_batch(
     db: &PgPool,
@@ -431,12 +430,8 @@ pub async fn recheck_exif_batch(
             is_initial: true,
         });
         let key = format!("gen_thumbnail_reextract:{picture_id}:{sweep_id}");
-        if JobRepository::create(db, owner_id, Some(picture_id), &config, Some(&key))
-            .await
-            .is_ok()
-        {
-            enqueued.push(picture_id);
-        }
+        JobRepository::create_idempotent(db, owner_id, Some(picture_id), &config, &key).await?;
+        enqueued.push(picture_id);
     }
     PictureRepository::set_exif_sync_status_bulk(db, &enqueued, None, ExifSyncStatus::Extracting)
         .await?;
@@ -667,7 +662,7 @@ pub async fn create_deferred_exif_jobs(db: &PgPool, limit: i64) -> Result<usize,
     for (picture_id, owner_id) in pending {
         let config = exif_reconcile_config(picture_id);
         let mut tx = db.begin().await.map_err(map_sqlx_error)?;
-        JobRepository::create(&mut *tx, owner_id, Some(picture_id), &config, None).await?;
+        JobRepository::create(&mut *tx, owner_id, Some(picture_id), &config).await?;
         PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Pending)
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;

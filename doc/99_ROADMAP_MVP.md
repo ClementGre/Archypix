@@ -48,8 +48,12 @@
   - [ ] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passes
     `-Orientation=<n>`, which ExifTool rejects with "not in PrintConv" — it needs `-Orientation#=<n>`.
     Pre-existing (feature 31); surfaced while building the 33 parity fixtures.
-  - [ ] Job idempotency keys are not idempotent (no `ON CONFLICT`, never liveness-scoped, two
-    overlapping unique constraints). Feature 33 routes around it; see its §12.2.
+  - [x] Job idempotency keys are not idempotent (no `ON CONFLICT`, never liveness-scoped, two
+    overlapping unique constraints) — fixed by migration `0017_job_idempotency_liveness`: both
+    constraints collapse into the partial unique index `uq_jobs_idempotency_live` over
+    `pending`/`processing`, and `JobRepository::create_idempotent` upserts against it and returns the
+    live job. A terminal job now frees its key instead of burning it until `JobCleanupRoutine` runs.
+    See 33 §12.2.
 - [x] **Admin endpoints** — user management, job status, instance metrics.
 - [x] **Hierarchies** — mirror/query/static node-tree config, read resolver, CRUD + `tree`/`browse` endpoints, write-back schema. See
   `doc/features/05_hierarchies.md`.

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET picture_id = NULL WHERE picture_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d12db79e37b535b5ed0451ffe0ff08f8ee049ec8565a809580c0f30ffa088c1b"
+}

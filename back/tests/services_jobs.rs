@@ -515,7 +515,7 @@ async fn reextract_is_allowed_from_extract_failed(db: PgPool) {
     assert_eq!(job.picture_id, Some(pic_id));
     assert!(
         job.idempotency_key.is_none(),
-        "the permanent initial-extraction key would 409 every re-extraction (§8)"
+        "a re-extract reads whatever is on disk now — there is no content to key on (§8)"
     );
     let picture = PictureRepository::find_by_id(&db, pic_id)
         .await
@@ -526,4 +526,134 @@ async fn reextract_is_allowed_from_extract_failed(db: PgPool) {
     // The in-flight guard takes the key's place: a second call conflicts.
     let again = jobs::reextract_picture_exif(&db, &waker, alice_id, pic_id).await;
     assert!(matches!(again, Err(AppError::Conflict(_))));
+}
+
+// ── gen_thumbnail idempotency ─────────────────────────────────────────────────
+
+/// Two enqueues for the same bytes collapse into the job already in flight instead of raising a
+/// 409, so an upload-complete retry is a no-op.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn enqueue_thumbnail_dedupes_the_same_bytes_while_live(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+
+    let first = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-a"))
+        .await
+        .unwrap();
+    let retry = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-a"))
+        .await
+        .unwrap();
+    assert_eq!(retry.id, first.id, "the retry must return the live job");
+}
+
+/// New bytes are new work: a WebDAV overwrite gets its own extraction even while the previous one is
+/// still in flight on the old bytes (feature 06 §7).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn enqueue_thumbnail_for_new_bytes_is_a_new_job(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+
+    let first = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-a"))
+        .await
+        .unwrap();
+    let overwrite = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-b"))
+        .await
+        .unwrap();
+    assert_ne!(overwrite.id, first.id);
+}
+
+/// The key guards the queue, not all of history: once the extraction is terminal the same bytes can
+/// be re-enqueued, with no dependency on `JobCleanupRoutine`'s retention window.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn enqueue_thumbnail_after_completion_is_a_new_job(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+
+    let first = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-a"))
+        .await
+        .unwrap();
+    sqlx::query!(
+        "UPDATE jobs SET status = 'completed', completed_at = (now() AT TIME ZONE 'utc') WHERE id = $1",
+        first.id,
+    )
+        .execute(&db)
+        .await
+        .unwrap();
+
+    let again = jobs::enqueue_thumbnail_job(&db, alice_id, pic_id, true, Some("hash-a"))
+        .await
+        .unwrap();
+    assert_ne!(again.id, first.id, "a terminal job must release its key");
+}
+
+// ── admin EXIF recheck sweep ──────────────────────────────────────────────────
+
+/// One sweep tick enqueues an extraction per matching row and stamps each `extracting`, so an edit
+/// cannot race the re-read (feature 33 §8).
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn recheck_sweep_enqueues_and_stamps_extracting(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::UnsupportedMime)
+        .await
+        .unwrap();
+
+    let enqueued =
+        jobs::recheck_exif_batch(&db, jobs::RecheckScope::Mime, None, Uuid::new_v4(), 10)
+            .await
+            .unwrap();
+    assert_eq!(enqueued, 1);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Extracting);
+    assert_eq!(
+        jobs::list_picture_jobs(&db, pic_id, alice_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// A tick that re-sees a row within the same sweep now reuses the live job instead of failing on the
+/// key — the sweep no longer has to swallow the error to keep draining.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    let sweep = Uuid::new_v4();
+
+    for _ in 0..2 {
+        PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::UnsupportedMime)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "UPDATE jobs SET picture_id = NULL WHERE picture_id = $1",
+            pic_id
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        jobs::recheck_exif_batch(&db, jobs::RecheckScope::Mime, None, sweep, 10)
+            .await
+            .unwrap();
+    }
+
+    let live = sqlx::query_scalar!(
+        "SELECT count(*) FROM jobs WHERE owner_id = $1 AND idempotency_key IS NOT NULL",
+        alice_id,
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        live,
+        Some(1),
+        "the sweep-scoped key must collapse the repeat"
+    );
 }

@@ -16,6 +16,13 @@ pub struct StaleReset {
     pub config: serde_json::Value,
 }
 
+/// Outcome of [`JobRepository::create_idempotent`]: the live job for the key, and whether this call
+/// is the one that enqueued it (`false` means an equivalent job was already in flight).
+pub struct IdempotentJob {
+    pub job: Job,
+    pub created: bool,
+}
+
 pub struct JobRepository;
 
 impl JobRepository {
@@ -204,17 +211,53 @@ impl JobRepository {
 
     /// Enqueue a new job. Captures the current OTel trace context so the worker can link back.
     ///
-    /// `job_type` is derived from `config` via `JobConfig::job_type()` so the
-    /// DB column and the JSONB discriminant can never disagree.
-    /// Idempotency conflict returns `AppError::Conflict`.
+    /// `job_type` is derived from `config` via `JobConfig::job_type()` so the DB column and the
+    /// JSONB discriminant can never disagree.
     #[tracing::instrument(skip(ex, config), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
         picture_id: Option<Uuid>,
         config: &JobConfig,
-        idempotency_key: Option<&str>,
     ) -> Result<Job, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        Self::insert(ex, owner_id, picture_id, config, None)
+            .await
+            .map(|c| c.job)
+    }
+
+    /// Enqueue a job under an idempotency key: at most one **live** (`pending` / `processing`) job
+    /// per `(owner_id, idempotency_key)`, enforced by `uq_jobs_idempotency_live`. A call that loses
+    /// the race returns the job already in flight rather than an error, so a retry is a no-op.
+    ///
+    /// The key is scoped to liveness, not to all time: once the job reaches a terminal status the
+    /// key is free again, so it says "don't duplicate work that is still queued", never "this work
+    /// may only ever happen once". Encode in the key whatever makes two enqueues *the same work*
+    /// (e.g. the file hash an extraction will read) — owner scoping is the index's job, not the
+    /// key's.
+    #[tracing::instrument(skip(ex, config), fields(owner_id = %owner_id))]
+    pub async fn create_idempotent<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        picture_id: Option<Uuid>,
+        config: &JobConfig,
+        idempotency_key: &str,
+    ) -> Result<IdempotentJob, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        Self::insert(ex, owner_id, picture_id, config, Some(idempotency_key)).await
+    }
+
+    async fn insert<'e, E>(
+        ex: E,
+        owner_id: Uuid,
+        picture_id: Option<Uuid>,
+        config: &JobConfig,
+        idempotency_key: Option<&str>,
+    ) -> Result<IdempotentJob, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
@@ -229,10 +272,18 @@ impl JobRepository {
             serde_json::to_value(&ctx_map).ok()
         };
 
-        sqlx::query_as!(
+        // The id is minted here rather than by the column default so the returned row identifies
+        // which branch ran. `DO UPDATE` on a no-op assignment rather than `DO NOTHING`: it makes
+        // `RETURNING` yield the conflicting row, which `DO NOTHING` plus a follow-up `SELECT`
+        // cannot do race-free (the select runs on a snapshot taken before the winner committed).
+        let id = Uuid::new_v4();
+        let job = sqlx::query_as!(
             Job,
-            r#"INSERT INTO jobs (owner_id, job_type, picture_id, config, idempotency_key, trace_context)
-               VALUES ($1, $2, $3, $4, $5, $6)
+            r#"INSERT INTO jobs (id, owner_id, job_type, picture_id, config, idempotency_key, trace_context)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (owner_id, idempotency_key)
+                   WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'processing')
+                   DO UPDATE SET idempotency_key = jobs.idempotency_key
                RETURNING
                    id, owner_id,
                    job_type    AS "job_type: JobType",
@@ -245,6 +296,7 @@ impl JobRepository {
                    picture_id, claimed_by, claim_token,
                    trace_context AS "trace_context: _",
                    created_at, started_at, completed_at"#,
+            id,
             owner_id,
             job_type as JobType,
             picture_id,
@@ -254,7 +306,12 @@ impl JobRepository {
         )
         .fetch_one(ex)
         .await
-        .map_err(map_sqlx_error)
+            .map_err(map_sqlx_error)?;
+
+        Ok(IdempotentJob {
+            created: job.id == id,
+            job,
+        })
     }
 
     /// Whether a `gen_thumbnail` job is in flight (`pending` / `processing`) for a picture. The
@@ -496,7 +553,7 @@ mod tests {
             picture_id: Uuid::new_v4(),
             is_initial: true,
         });
-        JobRepository::create(db, owner_id, None, &config, None)
+        JobRepository::create(db, owner_id, None, &config)
             .await
             .unwrap()
     }
@@ -694,21 +751,100 @@ mod tests {
 
     // ── idempotency key ───────────────────────────────────────────────────────
 
-    #[sqlx::test(migrator = "MIGRATOR")]
-    async fn duplicate_idempotency_key_returns_conflict(db: PgPool) {
-        let owner = seed_user(&db).await;
-        let config = JobConfig::GenThumbnail(GenThumbnailConfig {
+    fn thumb_config() -> JobConfig {
+        JobConfig::GenThumbnail(GenThumbnailConfig {
             picture_id: Uuid::new_v4(),
             is_initial: true,
-        });
-        JobRepository::create(&db, owner, None, &config, Some("unique-key"))
+        })
+    }
+
+    /// The point of the mechanism: a retry is a no-op that hands back the job already in flight,
+    /// not a 409.
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn duplicate_idempotency_key_returns_the_live_job(db: PgPool) {
+        let owner = seed_user(&db).await;
+        let config = thumb_config();
+
+        let first = JobRepository::create_idempotent(&db, owner, None, &config, "unique-key")
             .await
             .unwrap();
+        assert!(first.created);
 
-        let result = JobRepository::create(&db, owner, None, &config, Some("unique-key")).await;
-        assert!(
-            matches!(result, Err(AppError::Conflict(_))),
-            "second insert with same idempotency key should conflict"
-        );
+        let second = JobRepository::create_idempotent(&db, owner, None, &config, "unique-key")
+            .await
+            .unwrap();
+        assert!(!second.created, "the retry must not enqueue a second job");
+        assert_eq!(second.job.id, first.job.id);
+    }
+
+    /// Liveness scoping: the key guards the queue, not all of history. A terminal job releases it,
+    /// so re-enqueuing no longer waits on `JobCleanupRoutine`'s retention window.
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn terminal_job_frees_its_idempotency_key(db: PgPool) {
+        let owner = seed_user(&db).await;
+        let config = thumb_config();
+
+        let first = JobRepository::create_idempotent(&db, owner, None, &config, "unique-key")
+            .await
+            .unwrap();
+        let claimed = JobRepository::claim_next(&db, "worker1", &[])
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Still live while `processing`.
+        let during = JobRepository::create_idempotent(&db, owner, None, &config, "unique-key")
+            .await
+            .unwrap();
+        assert!(!during.created);
+        assert_eq!(during.job.id, first.job.id);
+
+        JobRepository::complete(
+            &db,
+            claimed.id,
+            claimed.claim_token.unwrap(),
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+        let after = JobRepository::create_idempotent(&db, owner, None, &config, "unique-key")
+            .await
+            .unwrap();
+        assert!(after.created, "a terminal job must release its key");
+        assert_ne!(after.job.id, first.job.id);
+    }
+
+    /// Owner scoping comes from the index, so a key no longer has to carry the owner in its text.
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn idempotency_key_is_scoped_per_owner(db: PgPool) {
+        let alice = seed_user(&db).await;
+        let bob = seed_user(&db).await;
+        let config = thumb_config();
+
+        let a = JobRepository::create_idempotent(&db, alice, None, &config, "shared-key")
+            .await
+            .unwrap();
+        let b = JobRepository::create_idempotent(&db, bob, None, &config, "shared-key")
+            .await
+            .unwrap();
+        assert!(a.created && b.created);
+        assert_ne!(a.job.id, b.job.id);
+    }
+
+    /// Unkeyed enqueues are never deduplicated against each other.
+    #[sqlx::test(migrator = "MIGRATOR")]
+    async fn create_without_a_key_always_inserts(db: PgPool) {
+        let owner = seed_user(&db).await;
+        let config = thumb_config();
+
+        let first = JobRepository::create(&db, owner, None, &config)
+            .await
+            .unwrap();
+        let second = JobRepository::create(&db, owner, None, &config)
+            .await
+            .unwrap();
+        assert_ne!(first.id, second.id);
+        assert!(first.idempotency_key.is_none());
     }
 }

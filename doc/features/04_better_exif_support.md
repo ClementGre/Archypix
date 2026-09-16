@@ -108,8 +108,9 @@ job watchdog resets it → idempotent retry completes forward.
 
 ## 5. Concurrency: one in-flight reconcile per picture
 
-Enforced by a **partial unique index** (a static `idempotency_key` cannot be used — keys
-are globally `UNIQUE` and rows linger until cleanup):
+Enforced by a **partial unique index** — the job's own key would not do: it identifies a *unit of
+work*, and a reconcile's unit of work is "whatever the DB holds at claim time", which changes under
+it (the idempotency key is itself liveness-scoped since `0017_job_idempotency_liveness`):
 
 ```sql
 CREATE UNIQUE INDEX uq_edit_picture_inflight
