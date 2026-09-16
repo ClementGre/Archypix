@@ -394,29 +394,13 @@ async fn record_edit(
     cfg: &archypix_common::job::EditPictureConfig,
     dead: bool,
 ) -> Result<bool, AppError> {
-    let Some(edit) = &cfg.exif else {
-        if !dead {
-            PictureRepository::update_after_processing(
-                &mut **tx,
-                picture_id,
-                work.thumbnails_generated,
-                work.blurhash.as_deref(),
-                work.file_size,
-                work.file_hash.as_deref(),
-                work.content_hash.as_deref(),
-                work.width,
-                work.height,
-            )
-            .await?;
-        }
-        return Ok(false);
-    };
-
+    // Job failed
     if dead {
-        // The worker's verdict, in the read path's vocabulary: the format takes no writes, or these
-        // bytes would not open. Anything else opened fine and the write simply did not land.
-        let status = terminal_verdict(&work.exif).unwrap_or(ExifSyncStatus::WriteFailed);
-        PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+        if cfg.exif.is_some() {
+            // Update exif sync status
+            let status = terminal_verdict(&work.exif).unwrap_or(ExifSyncStatus::WriteFailed);
+            PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+        }
         return Ok(false);
     }
 
@@ -433,23 +417,29 @@ async fn record_edit(
     )
     .await?;
 
-    let picture = PictureRepository::find_by_id(&mut **tx, picture_id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    // A re-extraction landed while this job ran (33 §6.4): it owns both writes now, and this job's
-    // read-back describes the pre-overwrite bytes. Skip them rather than corrupt them.
-    if picture.exif_sync_status == ExifSyncStatus::Extracting {
-        debug!(picture_id = %picture_id, "edit response skipped: an extraction is in flight");
-        return Ok(false);
+    if let Some(edit) = cfg.exif.as_ref() {
+        // Update file exif and exif sync status
+
+        let picture = PictureRepository::find_by_id(&mut **tx, picture_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        // A re-extraction landed while this job ran (33 §6.4): it owns both writes now, and this job's
+        // read-back describes the pre-overwrite bytes. Skip them rather than corrupt them.
+        if picture.exif_sync_status == ExifSyncStatus::Extracting {
+            debug!(picture_id = %picture_id, "edit response skipped: an extraction is in flight");
+            return Ok(false);
+        }
+        if let Some(extracted) = work.exif.extracted() {
+            PictureRepository::set_file_exif(&mut **tx, picture_id, &extracted.exif).await?;
+        }
+
+        let (status, drain) = if picture.full_exif() == edit.target {
+            (ExifSyncStatus::Synced, false)
+        } else {
+            (ExifSyncStatus::PendingJobCreation, true)
+        };
+        PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
+        return Ok(drain);
     }
-    if let Some(extracted) = work.exif.extracted() {
-        PictureRepository::set_file_exif(&mut **tx, picture_id, &extracted.exif).await?;
-    }
-    let (status, drain) = if picture.full_exif() == edit.target {
-        (ExifSyncStatus::Synced, false)
-    } else {
-        (ExifSyncStatus::PendingJobCreation, true)
-    };
-    PictureRepository::set_exif_sync_status(&mut **tx, picture_id, status).await?;
-    Ok(drain)
+    Ok(false)
 }

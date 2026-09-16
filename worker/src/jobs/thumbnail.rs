@@ -28,15 +28,13 @@ use archypix_common::mime::{supports_exif, supports_image_thumbnail, supports_vi
 use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 #[tracing::instrument(
     skip(client, config, presigned_read, presigned_writes),
-    fields(job_id = %job_id, picture_id = %config.picture_id),
+    fields(picture_id = %config.picture_id),
 )]
 pub async fn handle(
     client: &BackendClient,
-    job_id: Uuid,
     config: GenThumbnailConfig,
     presigned_read: Option<String>,
     presigned_writes: PresignedWrites,

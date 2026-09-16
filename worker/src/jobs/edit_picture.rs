@@ -26,11 +26,10 @@ use uuid::Uuid;
 /// 6. Upload the modified original to the `output` presigned URL — the last fallible step.
 #[tracing::instrument(
     skip(client, config, presigned_read, presigned_writes, mime_type),
-    fields(job_id = %job_id, picture_id = %config.picture_id),
+    fields(picture_id = %config.picture_id),
 )]
 pub async fn handle(
     client: &BackendClient,
-    job_id: Uuid,
     config: EditPictureConfig,
     presigned_read: Option<String>,
     presigned_writes: PresignedWrites,
@@ -77,11 +76,11 @@ pub async fn handle(
     );
 
     // ── Visual transforms ────────────────────────────────────────────────────
-    // TODO: implement crop / resize once the imaging primitives are ready.
-    // Must stay **above** the EXIF write: a re-encode drops embedded metadata, and a rotate/crop
-    // invalidates the `Orientation` tag, so the EXIF target has to be laid down over the result.
     if config.visual.is_some() {
-        warn!(job_id = %job_id, "visual transforms not yet implemented; uploading original");
+        // TODO: implement crop / resize once the imaging primitives are ready.
+        // Must stay **above** the EXIF write: a re-encode drops embedded metadata, and a rotate/crop
+        // invalidates the `Orientation` tag, so the EXIF target has to be laid down over the result.
+        warn!("visual transforms not yet implemented; uploading original");
     }
 
     // ── Apply the EXIF edit (set/clear) into the file ─────────────────────────
@@ -117,7 +116,7 @@ pub async fn handle(
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?;
     if work.file_hash.is_none() {
-        warn!(job_id = %job_id, "failed to compute file hash; skipping");
+        warn!("failed to compute file hash; skipping");
     }
 
     // Metadata-stripped content hash (feature 11): unchanged by an EXIF-only edit, refreshed by a
@@ -158,11 +157,10 @@ pub async fn handle(
     };
 
     // ── Upload modified original (last fallible step) ────────────────────────
-    info!(job_id = %job_id, "edit_picture: uploading modified original");
+    info!("edit_picture: uploading modified original");
     client.upload_presigned(&output_url, &file_path).await?;
 
     info!(
-        job_id = %job_id,
         thumbnails_regenerated = work.thumbnails_generated,
         "edit_picture completed"
     );

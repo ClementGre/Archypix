@@ -93,11 +93,11 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
     async move {
         // Handlers fill this in as they go, so a job that dies still reports its partial work.
         let mut work = PictureWork::default();
+
         let result = match job.config {
             JobConfig::GenThumbnail(config) => {
                 thumbnail::handle(
                     client,
-                    job_id,
                     config,
                     presigned_read,
                     presigned_writes,
@@ -109,7 +109,6 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
             JobConfig::EditPicture(config) => {
                 edit_picture::handle(
                     client,
-                    job_id,
                     config,
                     presigned_read,
                     presigned_writes,
@@ -119,7 +118,7 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
                 .await
             }
             JobConfig::MlStyle | JobConfig::MlPeople | JobConfig::MlGroupLocation => {
-                ml::handle_stub(job_id, &job_type)
+                ml::handle_stub(&job_type)
             }
         };
 
@@ -133,7 +132,6 @@ async fn dispatch(client: &BackendClient, job: ClaimJobResponse) {
             },
         };
         if let Err(e) = &result {
-            // A format verdict the handler never got to record — the write path reaches one here.
             if let Some(verdict) = e.exif_verdict() {
                 work.exif = verdict;
             }
