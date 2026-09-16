@@ -45,9 +45,10 @@
     MIME verdict too, or stamp videos at first ingest.
   - [ ] A physical copy inherits a `pending` / `pending_job_creation` source status (33 §4.1) without
     an accompanying reconcile job, so the copy can sit in `pending` until the user resyncs it.
-  - [ ] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passes
-    `-Orientation=<n>`, which ExifTool rejects with "not in PrintConv" — it needs `-Orientation#=<n>`.
-    Pre-existing (feature 31); surfaced while building the 33 parity fixtures.
+  - [x] BMFF (ExifTool) writes never land `Orientation`: `write_exif_overrides_with_exiftool` passed
+    `-Orientation=<n>`, which ExifTool rejects with "not in PrintConv" — fixed to `-Orientation#=<n>`
+    (also hardened `-GPSAltitudeRef=` to the same numeric form). Pre-existing (feature 31); surfaced
+    while building the 33 parity fixtures.
   - [x] Job idempotency keys are not idempotent (no `ON CONFLICT`, never liveness-scoped, two
     overlapping unique constraints) — fixed by migration `0017_job_idempotency_liveness`: both
     constraints collapse into the partial unique index `uq_jobs_idempotency_live` over

@@ -449,7 +449,9 @@ fn write_exif_overrides_with_exiftool(
         args.push(format!("-ModifyDate={s}"));
     }
     if let Some(orientation) = set.orientation {
-        args.push(format!("-Orientation={orientation}"));
+        // `#` forces the numeric ValueConv form; without it exiftool rejects the print-form
+        // description and silently drops the tag.
+        args.push(format!("-Orientation#={orientation}"));
     }
     if let Some(lat) = set.gps_lat {
         args.push(format!("-GPSLatitude={}", lat.abs()));
@@ -467,7 +469,7 @@ fn write_exif_overrides_with_exiftool(
     }
     if let Some(alt) = set.gps_alt {
         args.push(format!("-GPSAltitude={}", alt.abs()));
-        args.push(format!("-GPSAltitudeRef={}", if alt >= 0 { 0 } else { 1 }));
+        args.push(format!("-GPSAltitudeRef#={}", if alt >= 0 { 0 } else { 1 }));
     } else if set.gps_lat.is_some() || set.gps_lng.is_some() {
         // Coordinates without an altitude: drop any altitude the file still carries.
         args.push("-GPSAltitude=".to_string());
@@ -969,6 +971,29 @@ mod tests {
         );
         assert!(err.is_unsupported(), "{err} must be a terminal verdict");
         assert!(!err.is_retriable());
+    }
+
+    /// Regression for the `-Orientation=` print-form bug: exiftool warns
+    /// `Can't convert IFD0:Orientation (not in PrintConv)` and drops the tag unless the numeric
+    /// ValueConv form (`-Orientation#=`) is used. Exercises the same write path BMFF containers use.
+    #[test]
+    fn exiftool_write_persists_orientation() {
+        if !exiftool_available() {
+            eprintln!("exiftool not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orientation.jpg");
+        std::fs::write(&path, TINY_JPEG).unwrap();
+
+        let target = FullExif {
+            orientation: Some(6),
+            ..Default::default()
+        };
+        write_exif_overrides_with_exiftool(&path, &target, &target_clear_fields(&target)).unwrap();
+
+        let read = exiftool_read(&path).expect("exiftool read");
+        assert_eq!(read.exif.orientation, Some(6));
     }
 
     #[test]
