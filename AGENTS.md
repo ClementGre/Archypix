@@ -11,6 +11,8 @@
 - Do not start or stop Docker containers; if the dev Postgres is down, report it instead.
 - Always favor refactoring and rebuilding over patching. Code should stay simple with no boilerplate
   from deprecated paradigms.
+- Don’t write code duplicate. Factorize code as much as possible. In frontend reuse/repurpose
+  existing components or redevelop components instead of duplicating code. Same logic in backend.
 
 # Read-me gates
 
