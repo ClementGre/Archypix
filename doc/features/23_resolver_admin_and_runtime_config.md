@@ -416,7 +416,7 @@ the worker lacks today.)
 - **06_API_REFERENCE.md** — all new endpoints (§11).
 - **22_storage_quotas.md** — `default_storage_quota_bytes` becomes a runtime setting; §9 resolver seed
   aligns with this delegation model.
-- **99_ROADMAP_MVP.md** — mark the three items in progress → done.
+- **99_ROADMAP.md** — mark the three items in progress → done.
 
 ## 16. Work breakdown
 

@@ -142,4 +142,4 @@ Driven entirely by `FieldMeta` (`06 §7`):
 
 - `05_FRONTEND_ARCHITECTURE.md` — add the `/admin/resolver` route, the `resolverAuth` store + client, and
   the shared `SettingsPanel` to the route/state/data sections as it ships.
-- `99_ROADMAP_MVP.md` — flip the three feature-23 items' "frontend pending" once this lands.
+- `99_ROADMAP.md` — flip the three feature-23 items' "frontend pending" once this lands.

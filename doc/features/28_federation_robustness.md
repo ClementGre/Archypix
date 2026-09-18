@@ -487,7 +487,7 @@ The connect timeout and the reqwest client are rebuilt at startup, so `FEDERATIO
   the `federation_messages` mention if any.
 - `doc/07_RESOLVER_ARCHITECTURE.md` — note the backend serves stale resolve results to peers on
   resolver failure (§4.5) — resolver behaviour unchanged.
-- `doc/99_ROADMAP_MVP.md` — tick **Federation robustness** and record deviations.
+- `doc/99_ROADMAP.md` — tick **Federation robustness** and record deviations.
 
 ## 16. Work breakdown
 

@@ -228,7 +228,7 @@ representative should affect the hidden `content_dedupe` siblings (delete-the-co
 survivor (after which the reconciler promotes a sibling, resurrecting the file). The natural
 `/SharedToMe/<sender>/…` layout sidesteps this (copies sit in per-sender folders); it only bites under
 a deliberate same-directory mapping. Resolve when WebDAV directory-level ops land
-([99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md) "Advanced WebDav").
+([99_ROADMAP.md](../99_ROADMAP.md) "Advanced WebDav").
 
 ## 9. Documentation updates
 

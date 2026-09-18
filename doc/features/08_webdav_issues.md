@@ -198,7 +198,7 @@ loss; the original picture was never touched.
 - **06_webdav.md** — add an "atomic-save / staging namespace" subsection (a fourth transient
   class alongside pending-dirs §9 and junk sidecars §11) and note it in the write taxonomy
   (§7.1 MOVE row) and §21 implementation status.
-- **99_ROADMAP_MVP.md** and this file's work-breakdown — tick when shipped.
+- **99_ROADMAP.md** and this file's work-breakdown — tick when shipped.
 
 ### Reference log (trimmed)
 

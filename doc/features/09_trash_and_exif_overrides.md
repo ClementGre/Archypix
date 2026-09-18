@@ -2,7 +2,7 @@
 
 ## 1. Overview & goals
 
-Roadmap item **"Trash & restore"** ([99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)), expanded to cover the
+Roadmap item **"Trash & restore"** ([99_ROADMAP.md](../99_ROADMAP.md)), expanded to cover the
 way deletion and received-picture EXIF interact with sharing and transitive sharing:
 
 1. **Trash & restore** — soft delete (`deleted_at`) for owned and received pictures, with

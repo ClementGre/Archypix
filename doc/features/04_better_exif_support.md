@@ -2,7 +2,7 @@
 
 ## 1. Overview & goals
 
-Roadmap item **"Exif edition"** ([99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)), expanded to:
+Roadmap item **"Exif edition"** ([99_ROADMAP.md](../99_ROADMAP.md)), expanded to:
 
 1. **Edit and batch-edit EXIF/metadata** for owned pictures.
 2. **Guarantee the S3 original's embedded EXIF converges to the DB** — a WebDAV
@@ -319,7 +319,7 @@ This reuses the existing deliver-then-record machinery; no new federation verb.
    are allowed straight through. The set-based batch path applies the same rule (feature 31): a row
    whose MIME the worker extracts from is skipped until `thumbnails_generated_at` lands, so the
    extraction cannot overwrite the edit. `thumbnails_generated_at` is a proxy for "extraction done";
-   a dedicated flag would be clearer — noted in 99_ROADMAP_MVP.md.
+   a dedicated flag would be clearer — noted in 99_ROADMAP.md.
 3. **`captured_at` change** moves a picture between segments — handled by the §3.1 pipeline
    wake; overlap warnings still apply.
 4. **Clearing a pipeline-relevant field** (e.g. GPS) drops dependent rule tags

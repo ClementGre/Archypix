@@ -88,7 +88,7 @@ Any S3-compatible store (MinIO, AWS S3, Backblaze B2...), presigned URLs for dow
 
 ### Roadmap
 
-Not yet implemented, full detail in [doc/99_ROADMAP_MVP.md](doc/99_ROADMAP_MVP.md):
+Not yet implemented, full detail in [doc/99_ROADMAP.md](doc/99_ROADMAP.md):
 
 - **Versioning UI** — browsing and restoring picture versions.
 - **ML workers** — style, people, and location-grouping inference.

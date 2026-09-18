@@ -2,7 +2,7 @@
 
 ## 1. Overview & goals
 
-Roadmap item **"Hierarchies"** ([99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)): CRUD for
+Roadmap item **"Hierarchies"** ([99_ROADMAP.md](../99_ROADMAP.md)): CRUD for
 user-defined hierarchies, plus the **resolver** that turns a hierarchy into a navigable
 directory tree. A hierarchy is a saved, customisable mapping from the user's tag graph to a
 filesystem-like tree, used by **two front-ends**: the webapp sidebar/navigation and (later)
@@ -578,7 +578,7 @@ endpoint both consume it.
 - **[01_GENERAL_SPECIFICATIONS.md](../01_GENERAL_SPECIFICATIONS.md) §4**: align the
   Hierarchies section with the node-tree model (replacing the `roots/collapsedTags/
   disabledTags` sketch).
-- **[99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)**: tick the Hierarchies item (resolver +
+- **[99_ROADMAP.md](../99_ROADMAP.md)**: tick the Hierarchies item (resolver +
   CRUD); note WebDAV still carries the write endpoints.
 
 ```

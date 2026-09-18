@@ -2,7 +2,7 @@
 
 ## 1. Overview & goals
 
-Roadmap item **"WebDAV"** ([99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)): a bidirectional
+Roadmap item **"WebDAV"** ([99_ROADMAP.md](../99_ROADMAP.md)): a bidirectional
 filesystem over the **hierarchy** resolver. A user mounts a hierarchy as a network drive
 (macOS Finder, Windows Explorer, Linux GVFS/davfs2, rclone, Cyberduck, mobile file apps).
 Reads render the hierarchy's directory tree and serve picture bytes; writes
@@ -455,7 +455,7 @@ The WebDAV protocol surface itself lives at `/webdav/{slug}` (Basic auth, §3) �
   the `/webdav/*` route group.
 - **[01_GENERAL_SPECIFICATIONS.md](../01_GENERAL_SPECIFICATIONS.md) §4:** note the write
   endpoints now ship (WebDAV) and the auth/identity model.
-- **[99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md):** tick the WebDAV item.
+- **[99_ROADMAP.md](../99_ROADMAP.md):** tick the WebDAV item.
 - **[05_hierarchies.md](05_hierarchies.md) §13:** the WebDAV out-of-scope item is now this
   spec.
 

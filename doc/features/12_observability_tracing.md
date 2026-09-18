@@ -523,7 +523,7 @@ and list each other in `TRACE_PROPAGATION_PEERS` to see federation traces joined
 ## 9. Roadmap
 
 Implements the "Logging robustness — Better tracing, logs that does not mix up with
-multi-threading (Otel compatibility?)" item in `doc/99_ROADMAP_MVP.md`. Step 1 satisfies the
+multi-threading (Otel compatibility?)" item in `doc/99_ROADMAP.md`. Step 1 satisfies the
 multi-threading-correlation half on its own; Step 2 adds the OTel/Jaeger half. Mark the roadmap
 item and update `doc/03_BACKEND_ARCHITECTURE.md` (new `infra/observability.rs`) and
 `doc/04_WORKER_ARCHITECTURE.md` (new `observability.rs` + `trace_context` on the job wire type)

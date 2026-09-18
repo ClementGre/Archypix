@@ -736,8 +736,8 @@ mobile) and shown only when its `ui` store toggle is on:
 
 - **Don't start or preview the frontend dev server yourself.** Only check that it builds (`npm run build`). The user can give feedback on frontend
   changes by running the app themselves.
-- Keep code comments short and sparse — see the shared rule in doc/00_CODING_GUIDELINES.md.
+- Keep code comments short and sparse — see the shared rule in AGENTS.md.
 - Keep documentation (this file included) up to date, matching the level of detail already present — don't add overly specific descriptions of a
   single change beyond what the rest of the doc covers.
 - When editing an endpoint's request/response shape, check it against doc/06_API_REFERENCE.md.
-- When completing a task, update doc/99_ROADMAP_MVP.md, and add things not yet implemented to it.
+- When completing a task, update doc/99_ROADMAP.md, and add things not yet implemented to it.

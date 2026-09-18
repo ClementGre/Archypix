@@ -334,7 +334,7 @@ Validation: `collapsed[i] <@ tagRoot` still required; `exclude[i]` only needs to
   if they affect the module summary.
 - **[06_API_REFERENCE.md](../06_API_REFERENCE.md):** any `tree`/`browse` response notes for
   drop dirs (always-shown, empty).
-- **[99_ROADMAP_MVP.md](../99_ROADMAP_MVP.md)** and
+- **[99_ROADMAP.md](../99_ROADMAP.md)** and
   **[15_qol_improvements.md](15_qol_improvements.md):** tick these four bullets, pointing here.
 
 ## 11. Other things to make sure

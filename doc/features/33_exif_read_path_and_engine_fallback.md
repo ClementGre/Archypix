@@ -506,7 +506,7 @@ explicit `409` over a silent dedupe.
 - `19_exiftool_metadata_engine.md` — §4/§6: the startup-latency blocker is resolved; mutex
   serialization replaced it; a process pool is the new prerequisite.
 - `06_API_REFERENCE.md` — §10 enum, the two new endpoints.
-- `99_ROADMAP_MVP.md` — new entry; close the "Extraction-done flag" sub-item under feature 31.
+- `99_ROADMAP.md` — new entry; close the "Extraction-done flag" sub-item under feature 31.
 
 ## 15. Work breakdown
 

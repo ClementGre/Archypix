@@ -333,7 +333,7 @@ Mirror the new vars into `Config::test_default()`.
 - **09_trash_and_exif_overrides.md** — note trash counts against quota until purge.
 - **11_physical_copy_and_dedup.md** — copies are billed; dedup siblings billed as trashed until purge.
 - **03_BACKEND_ARCHITECTURE.md** — the `user_storage` triggers + reconcile routine; `Storage::prefix_usage`.
-- **99_ROADMAP_MVP.md** — mark **Storage quotas** in progress/done.
+- **99_ROADMAP.md** — mark **Storage quotas** in progress/done.
 
 ---
 

@@ -565,8 +565,8 @@ For things involving the `archypix-worker` crate, run in `nix develop`.
 
 ### Agents — working on back/worker
 
-- Keep code comments short and sparse — see the shared rule in doc/00_CODING_GUIDELINES.md.
+- Keep code comments short and sparse — see the shared rule in AGENTS.md.
 - When editing the API, update doc/06_API_REFERENCE.md.
 - Keep tests up to date: new features and modified behaviour should be reflected in the test suite.
 - Keep documentation up to date, matching the level of detail already present.
-- When completing a task, update doc/99_ROADMAP_MVP.md, and add things not yet implemented to it.
+- When completing a task, update doc/99_ROADMAP.md, and add things not yet implemented to it.
