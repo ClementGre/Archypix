@@ -1,5 +1,53 @@
 # Timeline view
 
+## 0. Handoff — what feature 34 already landed
+
+Feature 34 shipped (commit `feat: tag metadata (feature 34)`). Read **34 §16** first: it lists the
+deviations taken and what is stored-but-unwired. The short version for this feature:
+
+**Already there, build on it — do not rebuild.**
+
+| Need | Where |
+|---|---|
+| the app-start payload (§6 row 1) | `GET /tags` → `TagListItem[]`; `useAllTags()` (5-min refetch), `useTagTree(trash)` |
+| display names, ordering, counts | `front/src/lib/tagTree.ts` — `display`, `buildTagTree`, `sortSiblings`, `countsFor`, `effectiveDate`, `reorderWrites`, `collidingNames`, `walkTags`, `TrashView` |
+| the §12.7 write queue | `front/src/lib/tagMetaQueue.ts` + `useWriteTagMeta()` / `flushTagMetaFor()` |
+| season bucketing's hemisphere | `user_settings.hemisphere`, in `useSettings()` and the settings UI |
+
+`useWriteTagMeta()({ tag_path, view_mode, grouping, subtag_placement })` **already works end to end**
+— validation, 60 s coalescing, unload flush, prune-if-all-default, root row included. Work-breakdown
+item 7 is therefore only the *UI that calls it*.
+
+**Stored, validated and served, but with no UI yet** — this feature is their first consumer:
+`view_mode`, `grouping`, `subtag_placement`, `cover_picture_id` (the edit dialog can only *clear* a
+cover; §5's blocks need a picker, or keep 34 §2's first-loaded-photo fallback). `children_order` has
+one control: entering reorder mode switches it to `manual`.
+
+**Still to do exactly as written here.** Item 1 (`exa[]` removal — `TagTree` still has the `(=)`
+"Include exactly" control, and the include↔exact chip toggle now lives in `TagFilterBar`), item 2
+(`file_size` / `updated_at` on `PictureListItem`, and single-valued wire `exact`), items 3–6, 8, 9.
+
+**Gotchas found while building 34.**
+
+- **Grouping validation is strict and server-side.** Unknown keys are rejected (`400`), and each kind
+  must suit its field: the three date fields take `none|year|quarter|season|month`, `filename` takes
+  `none|prefix{chars 1..=16}`, and `file_size`/`geo_near`/`time_near` take `none|magnitude`. The TS
+  mirror is `Grouping`/`GroupingKind` in `front/src/lib/types.ts`; keep the two in step.
+- **`subtag_placement`'s derived default is not implemented.** The column and its `null` are stored;
+  the §3.4 resolution table (`in_sections` for a date sort at a nested tag, `top` at the root and for
+  every non-date sort) has no helper yet — `tagTree.ts` deliberately stops at ordering.
+- **Read dates through `effectiveDate(node, side, trash)`, not `item.date_from`.** An override
+  replaces the derived value on that side only.
+- **The root entry is always returned with zero counts**, not omitted — never read root counts.
+- **Trash structure is already resolved client-side.** The server returns tags whose pictures are all
+  trashed; `isVisible()` in `tagTree.ts` hides them unless the active `TrashView` is `include`/`only`,
+  and `TagTree` passes `params.trash` through. §10's trash-view behaviour falls out of that.
+- **Empty (`show_when_empty`) tags are ancestor-expanded server-side**, so an intermediate node always
+  exists — but `buildTagTree` synthesizes missing ones anyway; keep that if you rebuild it.
+- **`PictureListItem` still carries no tags** (§6's premise holds, unchanged).
+- The tag tree's rows are now photo **drop targets** (34 §9) and its `…` menu gained New subtag /
+  Reorder subtags / Edit tag — factor in that a second drag system on those rows would be ambiguous.
+
 ## 1. Overview & goals
 
 Hierarchical tags are the primary navigation method, and they stop being ergonomic once a library has
