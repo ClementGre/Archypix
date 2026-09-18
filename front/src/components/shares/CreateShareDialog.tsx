@@ -17,6 +17,7 @@ import {TagPath} from '@/lib/utils'
 import {formatIdentity, parseIdentity} from '@/lib/identity'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {useIncomingShares} from '@/hooks/useShares'
+import {useTagTree} from '@/hooks/useTags'
 import {useAuthStore} from '@/stores/auth'
 import type {IncomingShareResponse} from '@/lib/types'
 
@@ -73,6 +74,7 @@ export function CreateShareDialog({
         if (controlledOpen === undefined) setUncontrolledOpen(o)
     }
 
+    const {metaByPath: tagMetaByPath} = useTagTree()
     const [name, setName] = useState('')
     const [message, setMessage] = useState('')
     const [tag, setTag] = useState('')
@@ -119,8 +121,10 @@ export function CreateShareDialog({
             setSharebackOfId(seed?.id ?? '')
             setRecipients(seed ? [recipientFor(seed)] : [newRecipient()])
             setTag(initialTag ?? '')
-            // Reuse the original share's name so the owner recognises the ShareBack (still editable).
-            setName(seed?.name ?? '')
+            // Reuse the original share's name so the owner recognises the ShareBack; otherwise
+            // prefill from the tag's display name (feature 34 §10.1). Still editable — a share can
+            // be labelled differently from the subject it covers.
+            setName(seed?.name ?? (initialTag ? tagMetaByPath.get(initialTag)?.display_name ?? '' : ''))
         } else {
             setName('')
             setMessage('')

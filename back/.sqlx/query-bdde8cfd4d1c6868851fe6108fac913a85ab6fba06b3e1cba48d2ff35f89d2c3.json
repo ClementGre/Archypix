@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE incoming_shares SET sender_tag_meta = $2 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bdde8cfd4d1c6868851fe6108fac913a85ab6fba06b3e1cba48d2ff35f89d2c3"
+}

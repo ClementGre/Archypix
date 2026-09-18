@@ -1,5 +1,6 @@
 use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::tag::TagPath;
+use crate::domain::tag_metadata::TagMetadataPatch;
 use crate::repository::tag::TagRepository;
 use crate::services;
 use crate::services::selection::{self, PictureSelection};
@@ -26,8 +27,9 @@ fn parse_tag_paths(paths: &[String]) -> Result<Vec<String>, AppError> {
 #[derive(Debug, Deserialize)]
 pub struct ListTagsQuery {
     pub picture_id: Option<Uuid>,
-    /// When true (and `picture_id` is set), return each tag with the list of sources that
-    /// assert it, instead of the folded display set.
+    /// Add the per-source provenance breakdown. With `picture_id` it replaces the folded display
+    /// set; on the whole-library branch it triggers the heavier path×source query, which the
+    /// app-start payload never asks for (feature 34 §11).
     #[serde(default)]
     pub with_sources: bool,
 }
@@ -69,8 +71,63 @@ pub async fn list(
         return Ok(Json(serde_json::json!({ "tags": paths })));
     }
 
-    let tags = TagRepository::list_paths_by_user(&state.db, user_id).await?;
+    let tags = services::tag_metadata::list_tree(
+        &state.db,
+        state.cache.as_ref(),
+        user_id,
+        query.with_sources,
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "tags": tags })))
+}
+
+/// `PUT /api/authenticated/tags/meta` — partial upsert of the decorative metadata (§11). Takes an
+/// array because the frontend's write queue flushes a coalesced batch (§4.1); a single-item array
+/// is the common case. Absent fields are left unchanged, explicit `null` clears them, and a row
+/// that ends up all-default is deleted rather than stored (§2).
+#[derive(Debug, Deserialize)]
+pub struct UpsertTagMetaRequest {
+    pub items: Vec<TagMetadataPatch>,
+}
+
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), count = payload.items.len()))]
+pub async fn upsert_meta(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(payload): Json<UpsertTagMetaRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let items = services::tag_metadata::upsert(
+        &state.db,
+        state.cache.as_ref(),
+        user_id,
+        payload.items,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "items": items })))
+}
+
+/// `DELETE /api/authenticated/tags/meta` — *Reset metadata* (§6): drop the rows, keep the tags.
+#[derive(Debug, Deserialize)]
+pub struct DeleteTagMetaRequest {
+    pub tag_paths: Vec<String>,
+}
+
+#[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), count = payload.tag_paths.len()))]
+pub async fn delete_meta(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(payload): Json<DeleteTagMetaRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
+    let deleted = services::tag_metadata::delete(
+        &state.db,
+        state.cache.as_ref(),
+        user_id,
+        &payload.tag_paths,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
 }
 
 /// `PATCH /api/authenticated/tags` — add/remove tags across a [`PictureSelection`] (feature 14
@@ -110,6 +167,7 @@ pub async fn edit(
     .await?;
     let outcome = services::tags::batch_edit_tags(
         &state.db,
+        state.cache.as_ref(),
         &state.routines.pipeline,
         user_id,
         &sel,

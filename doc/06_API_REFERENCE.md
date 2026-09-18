@@ -237,8 +237,11 @@ token is `404` (no oracle). The frontend reaches these after resolving the owner
 `/s/<global_domain>/<username>/<token>`. Management + Convert live in §6.9b.
 
 - `GET /api/public/shares/{token}` → `{ name, message, owner_display, tag_path, permissions, picture_count,
-  requires_password, expires_at, view_only }`. Returned even when locked (no pictures). `tag_path` (wire/ltree)
-  lets a logged-in visitor detect an existing incoming share from this owner for this tag.
+  requires_password, expires_at, view_only, tag_meta }`. Returned even when locked (no pictures). `tag_path`
+  (wire/ltree) lets a logged-in visitor detect an existing incoming share from this owner for this tag.
+  `tag_meta` is the owner's decoration for that tag (`display_name`/`description`/`color`/
+  `cover_remote_picture_id`, feature 34 §10.1) so the landing page shows a name instead of a slug —
+  a purely local read, `null` when the owner set none.
 - `POST /api/public/shares/{token}/unlock` `{ password }` → `{ token }` — a short-lived `PublicShare` JWT
   presented as `Authorization: Bearer` on subsequent calls (password-gated shares only).
 - `GET /api/public/shares/{token}/pictures?page=&page_size=&thumbnail=` → the standard picture-list page
@@ -304,6 +307,7 @@ Get the current user's settings.
     user_id: string;
     versioning_mode: VersioningMode;
   trash_retention_days: number;   // days a trashed owned picture is kept before physical purge (default 30)
+  hemisphere: "north" | "south";  // season-grouping convention (feature 34 §3); the viewer's, not the photo's
     created_at: string;
     updated_at: string;
 }
@@ -313,7 +317,7 @@ Get the current user's settings.
 
 #### `PATCH /api/authenticated/settings`
 
-Update settings. Both fields are optional; an omitted field keeps its current value.
+Update settings. Every field is optional; an omitted field keeps its current value.
 
 **Request:**
 
@@ -321,6 +325,7 @@ Update settings. Both fields are optional; an omitted field keeps its current va
 {
   versioning_mode ? : VersioningMode;
   trash_retention_days ? : number;  // 1–3650; 400 if out of range
+  hemisphere ? : "north" | "south";
 }
 ```
 
@@ -1090,15 +1095,42 @@ List tags. Behavior varies by query params.
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `picture_id` | `string` | — | When set, returns tags for that specific picture only |
-| `with_sources` | `boolean` | `false` | When true (and `picture_id` is set), returns per-source provenance |
+| `with_sources` | `boolean` | `false` | Adds per-source provenance. With `picture_id` it replaces the folded set; on the whole-library branch it triggers the heavier path×source query (feature 34 §11) |
 
-**Response `200` — all user tags (no `picture_id`):**
+**Response `200` — all user tags (no `picture_id`):** the enriched tree (feature 34 §4) — one
+payload carrying everything needed to render, name, order, date and group the tag tree, fetched once
+at app start and on a 5-minute interval.
 
 ```ts
 {
-    tags: string[];  // all distinct ltree paths the user holds across all pictures
+    tags: Array<{
+        path: string;              // ltree path; "" is the root view (feature 34 §3.3)
+        count: number;             // ancestor-inclusive, live pictures only
+        exact_count: number;       // pictures stored at exactly this path
+        date_from: string | null;  // MIN(captured_at) over the subtree
+        date_to: string | null;    // MAX(captured_at)
+        trashed?: {                // omitted when the tag has no trashed pictures
+            count: number; exact_count: number;
+            date_from: string | null; date_to: string | null;
+        };
+        sources?: Array<{ source: TagSource; count: number }>;  // only with with_sources=true
+        meta: TagMeta | null;      // the decorative row (feature 34 §3), null when absent
+    }>;
 }
 ```
+
+`TagMeta` mirrors the `tag_metadata` columns: `tag_path`, `display_name`, `description`,
+`cover_picture_id`, `color`, `date_from`, `date_to`, `show_when_empty`, `sort_index`,
+`children_order`, `view_mode`, `subtag_placement`, `grouping`, `webdav_dir_name`.
+
+Ancestors are expanded server-side. Tags with no live pictures appear iff they carry
+`show_when_empty = true` or have trashed pictures — the client hides the latter unless the trash
+filter is `include`/`only`. The root (`path: ""`) is always returned; its counts are zero and
+meaningless.
+
+Served from a per-user Redis blob with a 60 s TTL plus explicit busts (end of a pipeline run,
+`PATCH /tags`, the rename cascade, tagging-service CRUD, trash/restore/purge, `captured_at` edits,
+share accept/revoke/reject, and any `tag_metadata` write). WebDAV `PUT`/`MKCOL` bust it too.
 
 **Response `200` — picture tags (`picture_id` set, `with_sources=false`):**
 
@@ -1157,14 +1189,59 @@ Tag paths must not start with `SharedToMe` (protected prefix).
 **Response `200` (dry-run):** the [§6.11 dry-run breakdown](#611-batch-operations-feature-14)
 (`added` = pictures that gain a tag; `removed` = pictures holding a manual row under a removed path).
 
-**Side-effects:** Pipeline is invalidated for all affected pictures and woken.
+**Side-effects:** Pipeline is invalidated for all affected pictures and woken; the cached tag tree is
+busted.
+
+#### `PUT /api/authenticated/tags/meta`
+
+Partial upsert of the decorative tag metadata (feature 34 §11). Takes an array because the frontend's
+write queue flushes a coalesced batch (§4.1); a single-item array is the common case. ltree paths
+carry dots, so they travel in the body rather than a URL segment.
+
+**Request:**
+
+```ts
+{
+    items: Array<{
+        tag_path: string;   // "" addresses the root view; reserved prefixes are allowed here
+        // Every other field is optional. Absent = leave unchanged; explicit null = clear.
+        display_name?: string | null;   // trimmed 1–128, emoji allowed, control chars rejected
+        description?: string | null;    // trimmed ≤2000, newlines kept, other control chars rejected
+        cover_picture_id?: string | null;  // must belong to the caller
+        color?: string | null;          // "#RRGGBB"
+        date_from?: string | null;      // override; null restores the derived value
+        date_to?: string | null;
+        show_when_empty?: boolean;
+        sort_index?: number | null;     // a drag is an ordinary write — there is no reorder endpoint
+        children_order?: "manual" | "date_from" | "date_to" | "path" | "display_name";
+        view_mode?: "direct" | "subtag" | "all";
+        subtag_placement?: "top" | "in_sections" | null;
+        grouping?: Record<GroupingField, GroupingKind>;  // keys and kinds are validated per field
+        webdav_dir_name?: string | null; // no "/", no control chars, ≤255
+    }>;
+}
+```
+
+The patch is merged onto the stored row and the **merged** result is validated (so `date_from <=
+date_to` holds across a one-sided write). A merged row equal to every column default is **deleted**
+instead of written, so browsing with default view settings never litters the table (§2).
+
+**Response `200`:** `{ ok: true; items: TagMeta[] }` — the rows that survived the prune.
+
+**Side-effects:** busts the cached tag tree.
+
+#### `DELETE /api/authenticated/tags/meta`
+
+*Reset metadata* (feature 34 §6): drop the rows, keep the tags.
+
+**Request:** `{ tag_paths: string[] }` · **Response `200`:** `{ ok: true; deleted: number }`
 
 #### `POST /api/authenticated/tags/rename`
 
 Rename a tag subtree everywhere the user references it (edge case §7, "Tag rename cascade"). A real
 search-and-replace: manual picture tags, outgoing-share tags, tagging-service gates + config
-(SharedTagMapping included), and hierarchy configs all have the `old_tag` prefix swapped for
-`new_tag`. Changed services are invalidated and covered pictures marked dirty; the pipeline is woken
+(SharedTagMapping included), hierarchy configs and the tag's own `tag_metadata` row all have the
+`old_tag` prefix swapped for `new_tag` (the root metadata row is excluded — `'' @> anything`). Changed services are invalidated and covered pictures marked dirty; the pipeline is woken
 to re-derive service tags and re-announce shares under the renamed tag (the share tracking table is
 untouched, so any pending announce/unannounce delta survives).
 

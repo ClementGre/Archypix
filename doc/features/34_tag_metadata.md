@@ -584,39 +584,81 @@ not imply the user wants their mounted folder renamed.
 
 ## 14. Doc updates
 
-- `01_GENERAL_SPECIFICATIONS.md §1` — note that tags may carry optional metadata, decorative only.
-- `01_GENERAL_SPECIFICATIONS.md §6` — tag metadata seeded on share accept (§10.1).
-- `06_API_REFERENCE.md §6.7` — the reshaped `GET /tags`, plus `PUT`/`DELETE /tags/meta`.
-- `05_FRONTEND_ARCHITECTURE.md §7` — edit dialog, new-tag action, share badges/popover,
-  drag-and-drop, reorder mode.
-- `features/02_pipeline_announcement_robustness.md` — the announce payload carries tag metadata.
-- `features/06_webdav.md §9` — `MKCOL` no longer needs the pending-dir sidecar; custom directory names
-  and their resolution order. `§10c` — case folding applies to custom names.
-- `features/27_public_shares.md` — the public landing page renders tag metadata.
-- `99_ROADMAP.md` — entry.
+- [x] `01_GENERAL_SPECIFICATIONS.md §1` — tags may carry optional metadata, decorative only.
+- [x] `01_GENERAL_SPECIFICATIONS.md §6` — tag metadata seeded on share accept (§10.1).
+- [x] `06_API_REFERENCE.md §6.7` — the reshaped `GET /tags`, plus `PUT`/`DELETE /tags/meta`; §6.1
+  gains `hemisphere`; §5 gains `tag_meta` on the public-share meta payload.
+- [x] `05_FRONTEND_ARCHITECTURE.md §7` — edit dialog, new-tag action, share badges/popover,
+  drag-and-drop, reorder mode; §5 the `tagDrag` store; §9 the write queue and drop/undo rules.
+- [x] `features/02_pipeline_announcement_robustness.md §3` — the announce payload carries tag metadata.
+- [x] `features/06_webdav.md §9` — `MKCOL` mints a `show_when_empty` row instead of the pending-dir
+  sidecar; custom directory names and their resolution order. `§10c` — case folding applies to them.
+- [x] `features/27_public_shares.md §15` — the public landing page renders tag metadata.
+- [x] `99_ROADMAP.md` — entry moved to Done; collection `MOVE` noted under Advanced WebDAV.
 
 ## 15. Work breakdown
 
-1. Migration `0018_tag_metadata` — three enums, the table, two indexes, `user_settings.hemisphere`.
-   (`0014`–`0017` are taken; confirm `nlevel(''::ltree) = 0` first, §3.3.)
-2. `TagMetadataRepository` — batch partial upsert (with the prune-if-all-default rule), batch delete,
-   `rename_subtree`, list-for-user; `grouping` JSONB and `color` validation per §3.1/§3.2.
-3. `TagRepository::list_tags_enriched` — counts, exact counts, trashed counts and both date ranges in
-   one pass (§4); Redis `tags:tree:{user_id}` with TTL, end-of-pipeline-run bust and the §4 bust set.
-4. Reshape `GET /tags`; add `PUT`/`DELETE /tags/meta`; extend the `tag_rename` routine with the
+1. [x] Migration `0018_tag_metadata` — three enums, the table, two indexes,
+   `user_settings.hemisphere`, and `incoming_shares.sender_tag_meta` (§10.1 parks the announced
+   decoration until accept). `nlevel(''::ltree) = 0` confirmed.
+2. [x] `TagMetadataRepository` — batch partial upsert (with the prune-if-all-default rule), batch
+   delete, `rename_subtree`, list-for-user; `grouping` JSONB and `color` validation per §3.1/§3.2.
+3. [x] `TagRepository::list_tags_enriched` — counts, exact counts, trashed counts and both date
+   ranges in one pass (§4); Redis `tags:tree:{user_id}` with TTL, end-of-pipeline-run bust and the
+   §4 bust set.
+4. [x] Reshape `GET /tags`; add `PUT`/`DELETE /tags/meta`; extend the `tag_rename` routine with the
    metadata prefix swap and the root-row exclusion.
-5. WebDAV: `webdav_dir_name` in path resolution (custom → label → slugify) and `PROPFIND` listing;
-   `MKCOL` creates the row; remove `WebdavPendingDir` and its sidecar.
-6. Frontend `useTags` for the enriched payload (5-min refetch); client-side ordering resolution (§7);
-   one `display()` helper replacing the three `decodeLabel` copies (§5).
-7. The §4.1 write queue — per-tag coalescing, 60 s trailing debounce, batch flush,
+5. [x] WebDAV: `webdav_dir_name` in path resolution (custom → label → slugify) and `PROPFIND`
+   listing; `MKCOL` creates the row; `WebdavPendingDir` and its sidecar removed.
+6. [x] Frontend `useTags` for the enriched payload (5-min refetch); client-side ordering resolution
+   (§7); one `display()` helper replacing the three `decodeLabel` copies (§5).
+7. [x] The §4.1 write queue — per-tag coalescing, 60 s trailing debounce, batch flush,
    `visibilitychange`/`pagehide` flush via `fetch(keepalive)` with proactive token refresh,
    optimistic local state.
-8. `EditTagDialog` absorbing `RenameTagDialog`; the **New tag** action; consequence-worded reset.
-9. Tag tree: share badges + popover, reorder mode, empty-tag rendering, colour.
-10. Drag-and-drop with the §9 dialogs and the `added`-scoped undo.
-11. Share metadata propagation (§10.1) — announce payload, seed-on-first-accept, cover resolution via
-    `remote_picture_id`, `name` prefill in the create-share dialog, public landing page.
-12. Tests: prune-if-default, rename collision, root-row exclusion from the swap, reserved-prefix
+8. [x] `EditTagDialog` absorbing `RenameTagDialog`; the **New tag** action; consequence-worded reset.
+9. [x] Tag tree: share badges + popover, reorder mode, empty-tag rendering, colour.
+10. [x] Drag-and-drop with the §9 dialogs and the undo (offered only when every selected picture
+    gained the tag — see §16).
+11. [x] Share metadata propagation (§10.1) — announce payload, seed-on-first-accept, cover resolution
+    via `remote_picture_id`, `name` prefill in the create-share dialog, public landing page.
+12. [x] Tests: prune-if-default, rename collision, root-row exclusion from the swap, reserved-prefix
     metadata, `MKCOL` round-trip, custom-name resolution precedence, derived-vs-override dates,
-    trashed counts and visibility, write-queue coalescing and flush, seed-once-on-accept.
+    trashed counts and visibility, seed-once-on-accept. Write-queue coalescing is covered by the
+    build only — the frontend has no test runner.
+
+## 16. Deviations taken while implementing
+
+- **Undo after a drop is offered only when every selected picture gained the tag.** §9 scopes the
+  undo to the dry run's `added` *set*, but the dry run reports a **count**, not ids, and no endpoint
+  returns "the selection minus the pictures already carrying this tag". When some pictures already
+  had it, the toast says so instead of offering a removal that would over-strip.
+- **The announced decoration is parked on `incoming_shares.sender_tag_meta` (one JSONB column).**
+  §10.1 wants the seed at *accept*, but the decoration arrives at *announce*. Seeding
+  `tag_metadata` straight from the announce would re-seed a recipient who had reset their metadata,
+  which §10.1 forbids. One JSONB column keeps seed-on-first-accept exact and follows the house
+  precedent for side payloads.
+- **`ShareAnnounce` keeps `VERSION = 1`.** `tag_meta` is additive and `#[serde(default)]`, matching
+  how feature 10 added `allow_exif_edit`; `check_version` is strict equality, so a bump would reject
+  every peer that predates the field.
+- **The root entry is always returned, with zero counts**, rather than "no counts": one uniform item
+  shape, and the client never has to invent a root node. Root counts are meaningless either way.
+- **Collection `MOVE` now returns `405`.** §8 keeps it out of scope and forbids a Finder rename from
+  writing `webdav_dir_name`; removing the pending-dir sidecar therefore removes the old
+  rename-the-marker path. A folder keeps the name `MKCOL` minted. Noted on the roadmap.
+- **CRLF in a description is normalised to `\n`** rather than rejected as a control character, so a
+  paste from a Windows client is not an error.
+- **Reorder mode uses up/down buttons on desktop too**, not the drag handles §7 sketches: the same
+  rows are already photo drop targets, and a second drag system on them would be ambiguous.
+
+### 16.1 Deferred (stored and served, no UI yet)
+
+- **Cover picker** (§6). `cover_picture_id` is validated, stored, rewritten on picture delete,
+  carried across a share and resolved through `remote_picture_id`; the edit dialog can only *clear*
+  it. Nothing renders a cover until feature 35's timeline blocks, so a picker would be dead UI.
+- **`view_mode`, `grouping`, `subtag_placement`, `children_order`** are stored, validated and served,
+  but only `children_order` has a control (entering reorder mode switches it to `manual`). The rest
+  are feature 35's view surfaces.
+- **Share popover: unmap a share-mapping target** (§10) — the popover covers recipients, status,
+  revoke, public links and "share with someone else", but not the `tagging_services` JSONB
+  containment lookup that finds a mapping's sender.
+- **Shares tabs** (§10, last paragraph) — the pending-count nav badge and the regrouped tabs.

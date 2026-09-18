@@ -25,12 +25,29 @@ pub struct PresignTokenItem {
     pub variant: Option<String>,
 }
 
+/// Normalise an inbound tag decoration, dropping any field the local validators reject rather than
+/// failing the whole announcement over cosmetics (feature 34 §10.1).
+fn validate_shared_tag_meta(
+    meta: crate::clients::federation::models::SharedTagMeta,
+) -> Result<crate::clients::federation::models::SharedTagMeta, AppError> {
+    use crate::domain::tag_metadata::{validate_color, validate_description, validate_display_name};
+    Ok(crate::clients::federation::models::SharedTagMeta {
+        display_name: meta
+            .display_name
+            .and_then(|s| validate_display_name(&s).ok()),
+        description: meta.description.and_then(|s| validate_description(&s).ok()),
+        color: meta.color.and_then(|s| validate_color(&s).ok()),
+        cover_remote_picture_id: meta.cover_remote_picture_id,
+    })
+}
+
 /// Validate and record an inbound share announcement from a remote instance.
 /// Returns incoming share ID and a boolean indicating if the share was automatically accepted.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, settings, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
+#[tracing::instrument(skip(db, cache, settings, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_announcement(
     db: &PgPool,
+    cache: &dyn crate::infra::redis::Cache,
     settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
@@ -46,6 +63,7 @@ pub async fn receive_share_announcement(
     allow_exif_edit: bool,
     future: bool,
     shareback_of: Option<Uuid>,
+    tag_meta: Option<crate::clients::federation::models::SharedTagMeta>,
 ) -> Result<(Uuid, bool), AppError> {
     if recipient_instance != settings.get(keys::GLOBAL_DOMAIN) {
         warn!(
@@ -113,6 +131,15 @@ pub async fn receive_share_announcement(
     )
     .await?;
 
+    // Park the sender's decoration until accept seeds it (feature 34 §10.1). Validated like the
+    // name/message above — it comes from a remote instance.
+    if let Some(meta) = tag_meta.filter(|m| !m.is_empty()) {
+        let meta = validate_shared_tag_meta(meta)?;
+        let value = serde_json::to_value(&meta)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        IncomingShareRepository::set_sender_tag_meta(db, incoming.id, &value).await?;
+    }
+
     // ── ShareBack auto-accept ────────────────────────────────────
     // If this announcement references one of the recipient's own outgoing shares (the one the
     // sender is sharing back) and that share permits it, auto-accept locally and wire up the
@@ -127,6 +154,7 @@ pub async fn receive_share_announcement(
             if verified {
                 crate::services::shares::auto_accept_shareback_local(
                     db,
+                    cache,
                     pipeline_waker,
                     recipient.id,
                     &incoming,

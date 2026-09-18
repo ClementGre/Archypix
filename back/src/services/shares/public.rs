@@ -89,6 +89,9 @@ pub struct PublicShareMeta {
     pub requires_password: bool,
     pub expires_at: Option<NaiveDateTime>,
     pub view_only: bool,
+    /// The owner's decoration for the covered tag (feature 34 §10.1) — a purely local read, no
+    /// protocol involved, so the landing page renders a name instead of a bare slug.
+    pub tag_meta: Option<crate::clients::federation::models::SharedTagMeta>,
 }
 
 /// Public metadata for the share landing page. Returned even for a locked share (so the frontend
@@ -115,6 +118,8 @@ pub async fn public_meta(
         SortOrder::default(),
     );
     let picture_count = PictureRepository::count(db, share.owner_id, &filter).await?;
+    let tag_meta =
+        crate::services::tag_metadata::shared_meta_for(db, share.owner_id, &share.tag_path).await?;
     let permissions = share.permissions();
     let requires_password = share.requires_password();
     let view_only = share.view_only();
@@ -129,6 +134,7 @@ pub async fn public_meta(
         requires_password,
         expires_at,
         view_only,
+        tag_meta,
     })
 }
 

@@ -27,7 +27,8 @@ import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {listPictureTagsWithSources} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
-import {useBatchEditTags, usePictureTags} from '@/hooks/useTags'
+import {useBatchEditTags, usePictureTags, useTagTree} from '@/hooks/useTags'
+import {display as tagDisplay} from '@/lib/tagTree'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
 import {useSettings} from '@/hooks/useSettings'
@@ -61,10 +62,6 @@ import type {IncomingShareResponse, PictureDetail, TagSource} from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function decodeLabel(label: string): string {
-    return label.replace(/_AT_/g, '@').replace(/_DOT_/g, '.')
-}
-
 /** Format a decoded `alice@ex.com` handle as `@alice:ex.com`. */
 function formatHandle(handle: string): string {
     const [username, ...rest] = handle.split('@')
@@ -75,7 +72,7 @@ function formatHandle(handle: string): string {
 function parseSharedTag(wire: string): { handle: string; subpath: string } {
     const seg = wire.split('.')
     return {
-        handle: seg[1] ? formatHandle(decodeLabel(seg[1])) : 'Unknown',
+        handle: seg[1] ? formatHandle(TagPath.leaf(seg[1])) : 'Unknown',
         subpath: seg.length > 2 ? TagPath.toDisplay(seg.slice(2).join('.')) : '/',
     }
 }
@@ -83,7 +80,7 @@ function parseSharedTag(wire: string): { handle: string; subpath: string } {
 function incomingShareIdForTag(wire: string, shares: IncomingShareResponse[]): string | null {
     const seg = wire.split('.')
     if (seg[0] !== 'SharedToMe' || !seg[1]) return null
-    const handle = decodeLabel(seg[1])
+    const handle = TagPath.leaf(seg[1])
     return shares.find((s) => `${s.sender_username}@${s.sender_instance}` === handle)?.id ?? null
 }
 
@@ -106,17 +103,19 @@ const SOURCE_COLOR: Record<TagSource, string> = {
 
 // ── Tag components ────────────────────────────────────────────────────────────
 
+/** Display name on the chip, full path in the tooltip (feature 34 §5). */
 function TagChip({wire, onRemove, onTagClick}: { wire: string; onRemove?: () => void; onTagClick: () => void }) {
-    const display = TagPath.toDisplay(wire)
+    const {metaByPath} = useTagTree()
+    const path = TagPath.toDisplay(wire)
     return (
         <Badge variant="secondary" className="min-w-0 max-w-full gap-1 font-normal">
             <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                     <button onClick={onTagClick} className="truncate hover:text-primary">
-                        {display}
+                        {tagDisplay(wire, metaByPath.get(wire))}
                     </button>
                 </TooltipTrigger>
-                <TooltipContent className="max-w-[16rem] break-all text-xs">{display}</TooltipContent>
+                <TooltipContent className="max-w-[16rem] break-all text-xs">{path}</TooltipContent>
             </Tooltip>
             {onRemove && (
                 <button onClick={onRemove} aria-label={`Remove ${wire}`} className="-mr-0.5 ml-0.5 shrink-0 rounded p-0.5 hover:bg-foreground/20">

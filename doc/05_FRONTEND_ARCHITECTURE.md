@@ -121,6 +121,7 @@ session exists.
 | `theme.ts`        | `theme: 'dark' \| 'light'` (applies/removes `.light`); `initTheme()` at boot                                                                                                                                                                                                                                                                                                                                                                                                                                  | `archypix_theme`                                                               |
 | `selection.ts`    | the feature-14 **selection descriptor** `query: PictureFilter \| null, includeIds, excludeIds, anchor, multiSelect` (explicit mode = `query null`; select-all = an adopted view `query` + `excludeIds`; helpers `isMemberSelected`/`toApiSelection`/`hasSelection`/`isSingleSelection`; click / ⌘-toggle / shift-range / ⌘A; `multiSelect` = touch long-press mode, see §9)                                                                                                                                   | none (session only)                                                            |
 | `upload.ts`       | `open, initialFiles, openDialog(files?), closeDialog` — upload dialog trigger shared by `TopBar` and `GalleryPage`                                                                                                                                                                                                                                                                                                                                                                                            | none (session only)                                                            |
+| `tagDrag.ts`      | the in-flight drag-to-tag (feature 34 §9): `selection, count, sourceTag` + `start`/`end`. Desktop only — HTML5 `draggable` does not fire on touch, so it cannot collide with the long-press multi-select.                                                                                                                                                                                                                                                                                                       | none (session only)                                                            |
 | `lightbox.ts`     | Lightbox chrome: top-bar / carousel visibility kept **separately per fullscreen vs non-fullscreen** (`toggleTopBar`/`toggleCarousel` flip the current mode's flag), `fullscreen` (mirrors `document.fullscreenElement`), `originalQuality` (session-only, defaults off — presign the `original` instead of `large`); `topBarVisible`/`carouselVisible` selectors resolve the mode.                                                                                                                            | `archypix_lightbox` (visibility flags only; quality + fullscreen session-only) |
 | `imageCache.ts`   | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                                                                                                                                                  | none (session only)                                                            |
 
@@ -339,13 +340,25 @@ in a large modal `Dialog`), and **favourite locations** — saved points (localS
 shown as star pins (click to centre the pin/rect/circle on them), saved via the ★ control and renamed inline (default
 name = coordinates).
 
-**`tags/`** — `TagTree` (recursive hierarchy from `useAllTags`; a plain click sets the `tag` filter as the sole include and **clears any compound
-filter + active `hierarchy`/`hpath`**; auto-expands ancestors of the active tag and scrolls it into view when it changes externally. Each row has a
-**`…` menu** with toggle actions **Include / Include exactly / Exclude** (writing the `inc`/`exa`/`exc` params), plus **Share this tag…** (opens a
-pre-filled `CreateShareDialog`) and **Rename tag…**, and **⌘/Ctrl-click** quick-toggles a
+**`tags/`** — `TagTree` (recursive hierarchy built by `lib/tagTree.ts` from the one enriched `useAllTags`
+payload — see feature 34; a plain click sets the `tag` filter as the sole include and **clears any compound
+filter + active `hierarchy`/`hpath`**; auto-expands ancestors of the active tag and scrolls it into view when it changes externally. Rows show the
+tag's **display name** with the ltree label muted beside it when overridden (forced visible on a sibling-name collision) and the full path on hover,
+plus a colour dot, a **share badge** (avatar stack ≤3 / `Share2` + count for outgoing, `Link2` for public links, a fainter marker on descendants of a
+shared tag — all computed client-side by prefix from the already-fetched share lists) opening a popover with recipients, status, revoke, copy-link and
+"Share with someone else…". Each row has a
+**`…` menu** with toggle actions **Include / Include exactly / Exclude** (writing the `inc`/`exa`/`exc` params), plus **New subtag…**, **Reorder
+subtags**, **Share this tag…** (opens a pre-filled `CreateShareDialog`), **New public share link…** and **Edit tag…**, and **⌘/Ctrl-click** quick-toggles a
 tag in the include set to build "X and Y" fast; "Include exactly" is the strict/no-descendant mode (backend `exact`). The tree only **highlights**
 rows by state — emerald (included/exact, `=` icon) or struck-through red (excluded, `⦸` icon); the active filter itself is surfaced in the centre
-`TagFilterBar` breadcrumb (not in the tree)), `TagPicker` (autocomplete over existing tags + create-new; `allowProtected` prop — see §9; optional `trigger` prop
+`TagFilterBar` breadcrumb (not in the tree). Rows are also **drop targets** for photos dragged from the grid (§9 below), and reorder mode swaps the `…`
+menu for up/down buttons — each move is an ordinary `sort_index` write through the queue, not a reorder endpoint),
+`EditTagDialog` (the one tag dialog, absorbing the old `RenameTagDialog`: display name, description, colour palette + custom picker, date-range
+overrides with per-side reset-to-derived, *show when empty*, WebDAV folder name, the rename control with its async-cascade warning, and a footer
+*Reset metadata* / *Delete tag* worded by consequence), `NewTagDialog` (mints an empty `show_when_empty` tag; the typed label is slugified for the path
+and kept as the display name, and a sibling collision is rejected rather than auto-disambiguated), `TagDropDialog` (the §9 drop confirmation, with real
+figures from a `dry_run` batch edit), `TagShareBadge`, `TagPicker` (autocomplete over existing tags + create-new, matching **both** display name and
+path; `allowProtected` prop — see §9; optional `trigger` prop
 to
 render a custom trigger, e.g. the small **+** button in the details-panel Tags section header. Each list row carries a **›** button (and **Tab**
 autocompletes the highlighted tag) that fills the field with `<tag>/` so the user can append a child without retyping — e.g. autocomplete `/Event`
@@ -622,7 +635,18 @@ mobile) and shown only when its `ui` store toggle is on:
 - **Pipeline is async:** tagging-service mutations invalidate `['tagging']`/`['tags']`/`['pictures']` immediately **and again ~1.5 s later** (the
   backend re-evaluates tags in the background, so the converged tags/pictures show up without a manual refresh). Service *state* (enabled/gates) does
   update immediately on refetch; the pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
-  Navigating the **`TagTree`** (picking or expanding/collapsing a tag) also invalidates `['tags']` so the tree keeps up with background tag changes.
+  Navigating the **`TagTree`** (picking a tag) also invalidates `['tags']` so the tree keeps up with background tag changes.
+- **Tag metadata writes are debounced (feature 34 §4.1):** every `tag_metadata` write goes through one queue (`lib/tagMetaQueue.ts`) that coalesces
+  per tag (last value wins per field) and flushes as one `PUT /tags/meta` on a 60 s trailing debounce, applying optimistically to the cached payload so
+  the UI never waits. Immediate flushes on `visibilitychange → hidden`, `pagehide`/`beforeunload` (installed once by `AppShell`) and on leaving reorder
+  mode. The unload flush uses `fetch(keepalive)` rather than `navigator.sendBeacon` — auth is a `Bearer` header, which `sendBeacon` cannot set — and
+  refreshes the access token first when it is within its last minute of validity, because a raw `fetch` escapes the 401 → refresh → retry interceptor.
+  Writes carry only the fields that changed, so a stale flush can never clobber a concurrent change from another device; a failed flush re-queues once
+  then toasts.
+- **Drag-to-tag (feature 34 §9):** a dragged `PhotoCard` in the current selection drags the whole selection, otherwise it is selected and dragged
+  alone. Tag rows are the drop targets; `SharedToMe.*` is refused. A single photo onto a non-sibling tag is assigned silently, everything else confirms
+  through `TagDropDialog`. The undo is offered only when *every* selected picture gained the tag — the dry run reports how many gained it, not which, so
+  a blanket removal would otherwise strip the tag from pictures that already carried it.
 - **EXIF editing:** owned pictures (`picture.owner_username == null`) edit through `useEditExif`, which POSTs the diff (`set`/`clear`) then polls
   `getJob` (1/2/4/8/15 s) while `exif_sync_status === 'pending'`. A permanent failure (`'write_failed'`) stops the polling and shows the retry/revert
   actions; `useRetryExifSync` re-enqueues the job and `useRevertExifToFile` resets the row to the file. **Received pictures** edit through `useOverrideExif` →

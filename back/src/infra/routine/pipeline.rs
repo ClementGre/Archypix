@@ -144,6 +144,9 @@ impl Routine for PipelineRoutine {
             waker: handle,
         };
         evaluation::run_for_user(&run, user_id).await?;
+        // The tag set has just converged — bust here rather than at the wake, which would
+        // repopulate the cache from pre-pipeline state (feature 34 §4).
+        crate::services::tag_metadata::bust_cache(run.cache, user_id).await;
         Ok(())
     }
 }
@@ -164,5 +167,7 @@ pub async fn run_once_for_user(
         settings,
         waker,
     };
-    evaluation::run_for_user(&run, user_id).await
+    evaluation::run_for_user(&run, user_id).await?;
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
+    Ok(())
 }

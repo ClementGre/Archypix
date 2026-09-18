@@ -90,6 +90,10 @@ pub fn authenticated_routes() -> Router<AppState> {
         .route("/settings", get(settings::get_settings))
         .route("/settings", patch(settings::update_settings))
         .route("/tags", get(tags::list).patch(tags::edit))
+        .route(
+            "/tags/meta",
+            put(tags::upsert_meta).delete(tags::delete_meta),
+        )
         .route("/tags/rename", post(tags::rename))
         .route(
             "/shares/outgoing",

@@ -638,6 +638,30 @@ impl PictureRepository {
         .map_err(map_sqlx_error)
     }
 
+    /// Narrow `ids` to the ones the user actually holds (trashed included — a trashed picture is
+    /// still a legitimate tag cover, feature 34 §3.2).
+    #[tracing::instrument(skip(ex, ids), fields(user_id = %local_user_id))]
+    pub async fn filter_owned_ids<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<Uuid>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        sqlx::query_scalar!(
+            "SELECT id FROM pictures WHERE local_user_id = $1 AND id = ANY($2::uuid[])",
+            local_user_id,
+            ids as &[Uuid],
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
     /// Delete the received pictures in `picture_ids` that have no remaining `incoming_share`
     /// tag. Returns the deleted ids. Used by per-picture unannounce.
     #[tracing::instrument(skip(ex, picture_ids), fields(user_id = %recipient_id))]

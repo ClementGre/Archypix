@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days)\n               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30))\n               ON CONFLICT (user_id) DO UPDATE SET\n                   versioning_mode = COALESCE($2, user_settings.versioning_mode),\n                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days)\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                         trash_retention_days, created_at, updated_at",
+  "query": "SELECT user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                      trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                      created_at, updated_at\n               FROM user_settings\n               WHERE user_id = $1",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,27 @@
       },
       {
         "ordinal": 3,
+        "name": "hemisphere: Hemisphere",
+        "type_info": {
+          "Custom": {
+            "name": "hemisphere",
+            "kind": {
+              "Enum": [
+                "north",
+                "south"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "hemisphere"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -59,7 +80,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -72,20 +93,7 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        {
-          "Custom": {
-            "name": "versioning_mode",
-            "kind": {
-              "Enum": [
-                "none",
-                "original_copy",
-                "full_versioning"
-              ]
-            }
-          }
-        },
-        "Int4"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -93,8 +101,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "d8beb905bcc633a3a7f12db7c39c4152cf6e49eb9abd9ec79277d393b2ccbf53"
+  "hash": "7d32b118d2615d5e8608be439af31d4ece9b5edfdf69c77f388cabd55bf9765d"
 }

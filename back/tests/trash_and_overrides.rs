@@ -404,6 +404,7 @@ async fn find_purgeable_respects_retention_and_owner_only(db: PgPool) {
         alice_id,
         None,
         Some(1),
+        None,
     )
     .await
     .unwrap();

@@ -4,10 +4,6 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 
 ## Next
 
-- [ ] **Tag metadata** — decorative `tag_metadata` side table (display names, colour, cover, date
-  range, order, per-tag view prefs, `webdav_dir_name`); engine-invisible except WebDAV naming and
-  empty-directory existence. Carries the sender's name/description/cover across a share. See
-  `features/34_tag_metadata.md`.
 - [ ] **Timeline view** — structured browse over any tag subtree (a View dropdown, plus Group by
   merged into the sort menu) + the gallery filter-param rewrite. Depends on tag metadata. See
   `features/35_timeline_view.md`.
@@ -32,7 +28,8 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 - [ ] **Versioning better support** — presign and CRUD on versions; frontend viewing and editing.
 - [ ] **EXIF edit history** — per-picture metadata revision history for review/undo.
 - [ ] **Advanced WebDAV** — directory-level DELETE/MOVE/COPY, conditional/range requests, real
-  LOCK/UNLOCK.
+  LOCK/UNLOCK. Collection `MOVE` now `405`s (it used to rename a transient pending-dir marker), so a
+  Finder folder rename keeps the name `MKCOL` minted — wiring it to `webdav_dir_name` is the fix.
   - [ ] **Directory CTag** — derived per-collection change token; must key off `updated_at`, not
     `file_modified_at` (feature 32).
 - [ ] **Visual picture editing** — crop, brightness/contrast, resize in the `edit_picture` worker.
@@ -125,5 +122,12 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 - [x] **Photos fix tools** — guided GPS/capture-date fix modes with suggestions, interpolation and bulk
   preview. See `features/30`. *Deferred:* date run-interpolation, null-island heuristic, batched-propose
   endpoint.
+- [x] **Tag metadata** — decorative `tag_metadata` side table (display names, colour, cover, date
+  range, order, per-tag view prefs, `webdav_dir_name`); engine-invisible except WebDAV naming and
+  empty-directory existence. One enriched `GET /tags` payload behind a 60 s cache, a debounced
+  client write queue, the edit/new-tag dialogs, share badges, reorder mode and drag-to-tag, and the
+  sender's name/description/cover carried across a share. See `features/34_tag_metadata.md`.
+  *Deviations + deferred:* `features/34 §16` — notably the cover picker and the per-tag view controls
+  (`view_mode`/`grouping`/`subtag_placement`), which are stored and served but wait on feature 35.
 - [x] **Frontend fixes** — `dark:` variant keyed off the in-app `.light` class, not
   `prefers-color-scheme`.

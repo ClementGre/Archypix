@@ -9,6 +9,7 @@
 //! [`crate::services::tags::cascade_rename`].
 
 use crate::domain::tag::TagPath;
+use crate::infra::redis::Cache;
 use crate::infra::routine::{Routine, RoutineHandle};
 use crate::infra::settings::keys;
 use archypix_common::settings::Settings;
@@ -29,14 +30,21 @@ pub struct TagRenameInput {
 /// pipeline so the re-tag + re-announce work runs.
 pub struct TagRenameRoutine {
     db: PgPool,
+    cache: Arc<dyn Cache>,
     pipeline: RoutineHandle<Uuid>,
     settings: Arc<Settings>,
 }
 
 impl TagRenameRoutine {
-    pub fn new(db: PgPool, pipeline: RoutineHandle<Uuid>, settings: Arc<Settings>) -> Self {
+    pub fn new(
+        db: PgPool,
+        cache: Arc<dyn Cache>,
+        pipeline: RoutineHandle<Uuid>,
+        settings: Arc<Settings>,
+    ) -> Self {
         Self {
             db,
+            cache,
             pipeline,
             settings,
         }
@@ -68,7 +76,9 @@ impl Routine for TagRenameRoutine {
         } = input;
         let old = TagPath::from_ltree(old_tag);
         let new = TagPath::from_ltree(new_tag);
-        let outcome = crate::services::tags::cascade_rename(&self.db, user_id, &old, &new).await?;
+        let outcome =
+            crate::services::tags::cascade_rename(&self.db, self.cache.as_ref(), user_id, &old, &new)
+                .await?;
         tracing::info!(
             %user_id, old = %old, new = %new,
             tags_renamed = outcome.tags_renamed,

@@ -74,8 +74,8 @@ Scope of this spec:
 - **Dotfiles (§11).** `.DS_Store`, `._*`, `Thumbs.db`, etc. are **sidecar**ed in Redis
   (accepted so clients don't hang) and never become pictures.
 - **Atomic-save writes ([08_webdav_issues.md](08_webdav_issues.md) §1).** OS "safe-save"
-  scratch paths (macOS `.sb-…` temp dirs, Windows `.tmp`, …) are a third transient class
-  alongside pending-dirs (§9) and junk sidecars (§11): they never resolve through the tag
+  scratch paths (macOS `.sb-…` temp dirs, Windows `.tmp`, …) are a transient class
+  alongside the junk sidecars (§11): they never resolve through the tag
   tree. Their bytes are **staged in the staging bucket** (not ingested) until the client's
   **terminal rename** promotes them — an overwrite of the target picture (versioned) or a new
   ingest. This is what makes editing a picture in Preview/Explorer land as one clean version
@@ -316,10 +316,21 @@ sub-paths) translate to tag assignment:
   rejected, since a sync client (Finder) often writes into a folder it created with a default
   name like `dossier sans titre` before it can be renamed. Only a reserved (`SharedToMe`) prefix
   still rejects (`409`). Case collisions are folded per §10c.
-- **`MKCOL`:** static/query → `405 Method Not Allowed` (structure is fixed). Under a mirror
-  (or where the nearest existing ancestor is a mirror) → **sidecar**: record a transient
-  `webdav:pendingdir:{hierarchy}:{path}` in Redis (short TTL) so PROPFIND shows the empty
-  dir until a file lands and mints the real tag. GC by TTL if nothing arrives.
+- **`MKCOL`:** static/query → `405 Method Not Allowed` (structure is fixed). Under a mirror (or where
+  the nearest existing ancestor is a mirror) it mints a **`show_when_empty` tag-metadata row**
+  (feature 34 §8.1): the requested name is slugified into the tag label and kept verbatim as both
+  `display_name` and `webdav_dir_name`, so the directory **persists and lists** with no pictures in
+  it. The Redis `webdav:pendingdir:*` sidecar it replaced is gone. Deleting the (still empty)
+  directory deletes the row. `MOVE` on a collection stays out of scope (§19), so a Finder rename
+  returns `405` rather than writing `webdav_dir_name`.
+- **Custom directory names (feature 34 §8):** a tag's `webdav_dir_name` replaces its ltree label in
+  listings and in path resolution, which is strictly **custom name → ltree label → slugify-and-mint**
+  — a near-miss on a custom folder name must not silently mint a new tag. It is *never* derived from
+  `display_name`: a mounted client sees a directory rename as delete + create, so the folder name
+  must not churn when a label is tidied. An authored `static`/`query`/`mirror` node name always wins
+  over a custom mirror name; within one directory every ltree label is reserved first, and the later
+  sibling by path sort falls back to its label on a collision. Both the WebDAV VFS and the webapp
+  directory tree resolve through `services::hierarchy::resolve_for_user`, so they never disagree.
 
 ## 10. Case-sensitivity
 
@@ -336,7 +347,10 @@ sub-problems:
 - **(c) Write-side duplicate minting** (a client folds `Photos/travel` onto existing
   `Photos.Travel`): on write, do **case-insensitive sibling matching** — if a sibling tag
   differing only by case exists, **reuse the existing-cased tag**; reject minting a new
-  case-colliding sibling (`409`). Applies to the §9 mirror auto-tag path too.
+  case-colliding sibling (`409`). Applies to the §9 mirror auto-tag path too, and to custom
+  `webdav_dir_name`s (feature 34 §8): a custom name differing only by case from a sibling's
+  effective name is treated as a collision and falls back to the ltree label the same way, so a
+  case-insensitive client never sees two directories it cannot tell apart.
 
 ## 11. Dotfiles
 
@@ -369,7 +383,7 @@ The webapp caches the tree client-side; WebDAV must cache server-side. Cache the
 directory tree** per hierarchy in Redis, keyed by `(hierarchy_id, config updated_at)` so a
 config edit invalidates it. PROPFIND directory listings and `stat` reuse this; per-directory
 picture **counts/listings** stay live (cheap predicate over `list_pictures`). The §3.3 auth
-entry, §9 pending-dir markers, §11 sidecars, and the atomic-save staging markers
+entry, §11 sidecars, and the atomic-save staging markers
 (`webdav:staging:*`, pointing at bytes in the staging bucket — 08_webdav_issues.md §1.7) are
 the other Redis keys.
 
@@ -499,19 +513,20 @@ support). It deviates from the design above in a few deliberate MVP simplificati
   (`tagRoot + new segments`). New segments are **slugified** to valid tag labels via
   `TagPath::slugify_label` (Finder's `dossier sans titre` → `dossier_sans_titre`) rather than
   rejected — a sync client can't always rename a folder before its first write. Only a reserved
-  (`SharedToMe`) prefix still `409`s. `MKCOL` under a mirror records a transient **Redis
-  pending-dir** marker (`webdav:pendingdir:{hierarchy}:{parent}`, day TTL) under the folder's
-  *original* name so PROPFIND shows the empty directory until a file lands and mints the slugified
-  tag (the marker is then cleared / GC'd by TTL). The empty-folder lifecycle is fully wired: a
-  pending dir can be renamed (`MOVE`) or removed (`DELETE`) by moving/dropping its marker, so
-  Finder's create→rename→drop flow works. `MKCOL` outside a mirror or on an existing path is
-  rejected (`403`/`409`). `ResolvedDir` carries the new `mirror_tag` to drive this.
+  (`SharedToMe`) prefix still `409`s. `MKCOL` under a mirror now mints a **`show_when_empty`
+  tag-metadata row** (feature 34 §8.1) instead of the old Redis pending-dir marker: the folder's
+  *original* name is kept as `webdav_dir_name` (and as the display name), so the empty directory
+  persists across sessions and lists under the name the client chose. `DELETE` on the still-empty
+  directory drops the row; `MOVE` on a collection is out of scope and returns `405`, so Finder's
+  create→rename flow keeps the original name rather than renaming. `MKCOL` outside a mirror or on an
+  existing path (label **or** custom name) is rejected (`403`/`409`). `ResolvedDir` carries
+  `mirror_tag` to drive this.
 - **Case-insensitive write-side tag reuse (§10c) is implemented** — on write, each assigned tag
   path is folded onto an existing case-variant tag (`domain::hierarchy::reuse_existing_case`), so a
   case-insensitive client never mints a case-only-duplicate sibling. Authored sibling
   case-insensitivity (§10a) and the mirror collision tolerance (§10b) are also in place.
 - **Atomic-save ("safe-save") staging is implemented ([08_webdav_issues.md](08_webdav_issues.md) §1)** —
-  a fourth transient class next to pending-dirs (§9) and junk sidecars (§11). A recognizer
+  a transient class next to the junk sidecars (§11). A recognizer
   (`is_atomic_staging`, precedence junk → staging → tag-tree) matches OS scratch names (macOS
   `<base>.sb-<hex>-<alnum>` temp dirs, Windows `.tmp`/`~`, browser/rsync `.part`/`.partial`/…). Such
   paths bypass tag resolution: `MKCOL` records a scratch-dir marker, `PUT` streams the bytes to the

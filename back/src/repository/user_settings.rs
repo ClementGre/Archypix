@@ -1,4 +1,4 @@
-use crate::domain::user_settings::{UserSettings, VersioningMode};
+use crate::domain::user_settings::{Hemisphere, UserSettings, VersioningMode};
 use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
@@ -39,7 +39,8 @@ impl UserSettingsRepository {
         sqlx::query_as!(
             UserSettings,
             r#"SELECT user_id, versioning_mode as "versioning_mode: VersioningMode",
-                      trash_retention_days, created_at, updated_at
+                      trash_retention_days, hemisphere as "hemisphere: Hemisphere",
+                      created_at, updated_at
                FROM user_settings
                WHERE user_id = $1"#,
             user_id,
@@ -56,19 +57,24 @@ impl UserSettingsRepository {
         user_id: Uuid,
         versioning_mode: Option<VersioningMode>,
         trash_retention_days: Option<i32>,
+        hemisphere: Option<Hemisphere>,
     ) -> Result<UserSettings, AppError> {
         sqlx::query_as!(
             UserSettings,
-            r#"INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days)
-               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30))
+            r#"INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days, hemisphere)
+               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30),
+                       COALESCE($4, 'north'::hemisphere))
                ON CONFLICT (user_id) DO UPDATE SET
                    versioning_mode = COALESCE($2, user_settings.versioning_mode),
-                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days)
+                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days),
+                   hemisphere = COALESCE($4, user_settings.hemisphere)
                RETURNING user_id, versioning_mode as "versioning_mode: VersioningMode",
-                         trash_retention_days, created_at, updated_at"#,
+                         trash_retention_days, hemisphere as "hemisphere: Hemisphere",
+                         created_at, updated_at"#,
             user_id,
             versioning_mode as Option<VersioningMode>,
             trash_retention_days,
+            hemisphere as Option<Hemisphere>,
         )
         .fetch_one(db)
         .await

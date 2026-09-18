@@ -9,6 +9,7 @@ pub mod received_exif;
 pub mod segmentation;
 pub mod share;
 pub mod tag;
+pub mod tag_metadata;
 pub mod tagging;
 pub mod user;
 pub mod user_settings;

@@ -4,17 +4,22 @@
 
 import {Ban, Equal, Hash, X} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
+import {useTagTree} from '@/hooks/useTags'
+import {display} from '@/lib/tagTree'
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {cn, TagPath} from '@/lib/utils'
 
 function Chip({
                   path,
+                  name,
                   kind,
                   onSwitch,
                   switchTo,
                   onRemove,
               }: {
     path: string
+    /** Display name; the path stays in the tooltip (feature 34 §5). */
+    name: string
     kind: 'inc' | 'exa' | 'exc'
     /** Toggle this tag's mode (include ↔ exact); absent for exclude. */
     onSwitch?: () => void
@@ -30,7 +35,7 @@ function Chip({
             )}
         >
             <Icon className="h-3 w-3 shrink-0"/>
-            <span className="truncate" title={TagPath.toDisplay(path)}>{TagPath.toDisplay(path)}</span>
+            <span className="truncate" title={TagPath.toDisplay(path)}>{name}</span>
             {onSwitch && (
                 <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>
@@ -52,6 +57,8 @@ function Chip({
 
 export function TagFilterBar() {
     const {params, update} = useGalleryParams()
+    const {metaByPath} = useTagTree()
+    const nameOf = (p: string) => display(p, metaByPath.get(p))
     const {tag, include, exact, exclude} = params
 
     const active = !!tag || include.length > 0 || exact.length > 0 || exclude.length > 0
@@ -85,13 +92,15 @@ export function TagFilterBar() {
     return (
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
             {includes.map((p) => (
-                <Chip key={`inc:${p}`} path={p} kind="inc" switchTo="exa" onSwitch={() => toExact(p)} onRemove={() => remove(p)}/>
+                <Chip key={`inc:${p}`} path={p} name={nameOf(p)} kind="inc" switchTo="exa" onSwitch={() => toExact(p)}
+                      onRemove={() => remove(p)}/>
             ))}
             {exact.map((p) => (
-                <Chip key={`exa:${p}`} path={p} kind="exa" switchTo="inc" onSwitch={() => toInclude(p)} onRemove={() => remove(p)}/>
+                <Chip key={`exa:${p}`} path={p} name={nameOf(p)} kind="exa" switchTo="inc"
+                      onSwitch={() => toInclude(p)} onRemove={() => remove(p)}/>
             ))}
             {exclude.map((p) => (
-                <Chip key={`exc:${p}`} path={p} kind="exc" onRemove={() => remove(p)}/>
+                <Chip key={`exc:${p}`} path={p} name={nameOf(p)} kind="exc" onRemove={() => remove(p)}/>
             ))}
             {tot_length > 1 && (
                 <button

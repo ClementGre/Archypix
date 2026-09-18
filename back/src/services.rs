@@ -7,6 +7,7 @@ pub mod pictures;
 pub mod selection;
 pub mod shares;
 pub mod storage;
+pub mod tag_metadata;
 pub mod tagging;
 pub mod tags;
 pub mod user_settings;

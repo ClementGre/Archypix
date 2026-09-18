@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH dedup AS (\n                 DELETE FROM tag_metadata t\n                 WHERE t.user_id = $1\n                   AND nlevel(t.tag_path) > 0\n                   AND t.tag_path <@ $2::text::ltree\n                   AND EXISTS (\n                     SELECT 1 FROM tag_metadata e\n                     WHERE e.user_id = t.user_id\n                       AND e.tag_path = CASE WHEN t.tag_path = $2::text::ltree THEN $3::text::ltree\n                                             ELSE $3::text::ltree || subpath(t.tag_path, nlevel($2::text::ltree)) END\n                   )\n               )\n               UPDATE tag_metadata\n               SET tag_path = CASE WHEN tag_path = $2::text::ltree THEN $3::text::ltree\n                                   ELSE $3::text::ltree || subpath(tag_path, nlevel($2::text::ltree)) END,\n                   updated_at = now() AT TIME ZONE 'utc'\n               WHERE user_id = $1\n                 AND nlevel(tag_path) > 0\n                 AND tag_path <@ $2::text::ltree\n                 AND NOT EXISTS (\n                   SELECT 1 FROM tag_metadata e\n                   WHERE e.user_id = tag_metadata.user_id\n                     AND e.tag_path = CASE WHEN tag_metadata.tag_path = $2::text::ltree THEN $3::text::ltree\n                                           ELSE $3::text::ltree || subpath(tag_metadata.tag_path, nlevel($2::text::ltree)) END\n                 )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4c342dee92073f1067e228d9173f244d47a754daf24f8c2d553537179b20cc66"
+}

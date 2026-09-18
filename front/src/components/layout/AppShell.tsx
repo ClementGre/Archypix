@@ -3,10 +3,13 @@ import {TopBar} from './TopBar'
 import {StatusBar} from './StatusBar'
 import {UploadDialog} from '@/components/photos/UploadDialog'
 import {useUploadStore} from '@/stores/upload'
+import {useTagMetaQueue} from '@/hooks/useTags'
 
 /** App chrome for authenticated routes: global top bar + routed content + status bar. */
 export function AppShell() {
     const {open, initialFiles, closeDialog} = useUploadStore()
+    // Tag-preference writes are debounced, so the unload/visibility flush lives at app level (§4.1).
+    useTagMetaQueue()
 
     return (
         // Below md: document scrolls (sticky header/footer) so mobile browser chrome can retract;

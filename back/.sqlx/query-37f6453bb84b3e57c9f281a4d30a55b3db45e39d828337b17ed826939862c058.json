@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM tag_metadata WHERE user_id = $1 AND tag_path = ANY($2::text[]::ltree[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "37f6453bb84b3e57c9f281a4d30a55b3db45e39d828337b17ed826939862c058"
+}

@@ -68,6 +68,13 @@ Pending | PendingFirstAnnouncement | Active | Errored | Revoked | Tombstoned
 tracking table* — and differ only by entry reason (and the UI label: "never delivered" vs "delivery
 degraded"). `Active` is the same diff with coverage scoped to dirty pictures.
 
+The **share announcement** (`ShareAnnounce`, sent once at share creation) also carries the sender's
+optional `tag_meta` — display name, description, colour and the cover's owner-side picture id
+(feature 34 §10.1). It is an additive, `#[serde(default)]` field rather than a `VERSION` bump, so
+peers that predate it are unaffected. The recipient parks it on `incoming_shares.sender_tag_meta` and
+seeds its own `tag_metadata` row on **first accept only**. Per-picture announcements do not carry it —
+the decoration describes the share's tag, not each photo.
+
 | Status (outgoing)          | Reconcile coverage scope   | On full success | On failure                      |
 |----------------------------|----------------------------|-----------------|---------------------------------|
 | `PendingFirstAnnouncement` | all pictures under the tag | → `Active`      | stay `PendingFirstAnnouncement` |

@@ -1,11 +1,13 @@
 use crate::domain::tag::TagPath;
 use crate::domain::tagging::ServiceType;
+use crate::infra::redis::Cache;
 use crate::infra::routine::RoutineHandle;
 use crate::repository::hierarchy::HierarchyRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::pipeline::PipelineRepository;
 use crate::repository::share::OutgoingShareRepository;
 use crate::repository::tag::TagRepository;
+use crate::repository::tag_metadata::TagMetadataRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use crate::services::aggregate::DryRun;
 use archypix_common::error::{AppError, map_sqlx_error};
@@ -23,9 +25,10 @@ pub enum TagBatchOutcome {
 /// rows (so the removable count reflects `manual_count`, not `count`). With `dry_run` the call
 /// computes the §6.1 breakdown without mutating; otherwise it resolves the set inside the
 /// transaction, applies remove-then-add atomically, invalidates the pipeline, and wakes it.
-#[tracing::instrument(skip(db, waker, sel, add_tags, remove_tags), fields(user_id = %user_id, dry_run))]
+#[tracing::instrument(skip(db, cache, waker, sel, add_tags, remove_tags), fields(user_id = %user_id, dry_run))]
 pub async fn batch_edit_tags(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     sel: &ResolvedSelection,
@@ -75,6 +78,7 @@ pub async fn batch_edit_tags(
     TagRepository::batch_remove(&mut *tx, user_id, &ids, remove_tags).await?;
     TagRepository::batch_assign(&mut *tx, user_id, &ids, add_tags).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     waker.trigger(user_id);
     Ok(TagBatchOutcome::Applied {
         affected: ids.len() as i64,
@@ -107,9 +111,10 @@ impl RenameOutcome {
 /// dirty so the pipeline re-derives service tags and re-announces shares under the renamed tag. The
 /// share tracking table is left untouched — re-announcement rides the picture `updated_at` bump, so
 /// any pending announce/unannounce delta survives. Runs in one transaction.
-#[tracing::instrument(skip(db), fields(user_id = %user_id, old = %old, new = %new))]
+#[tracing::instrument(skip(db, cache), fields(user_id = %user_id, old = %old, new = %new))]
 pub async fn cascade_rename(
     db: &PgPool,
+    cache: &dyn Cache,
     user_id: Uuid,
     old: &TagPath,
     new: &TagPath,
@@ -132,6 +137,9 @@ pub async fn cascade_rename(
     // ── Manual picture tags ────────────────────────────────────────────────────
     outcome.tags_renamed =
         TagRepository::rename_manual_subtree(&mut *tx, user_id, old_ltree, new_ltree).await?;
+
+    // ── Tag metadata (feature 34 §12): the same prefix swap, root row excluded ──
+    TagMetadataRepository::rename_subtree(&mut *tx, user_id, old_ltree, new_ltree).await?;
 
     // ── Outgoing shares ────────────────────────────────────────────────────────
     outcome.shares_renamed =
@@ -180,6 +188,9 @@ pub async fn cascade_rename(
     .await?;
 
     tx.commit().await.map_err(map_sqlx_error)?;
+    // Busting here rather than at the endpoint: the cascade is async, so a trigger-time bust would
+    // repopulate from pre-rename state and hold it for the TTL (§4).
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     Ok(outcome)
 }
 
@@ -297,6 +308,7 @@ fn rename_json_str(value: &mut Value, old: &TagPath, new: &TagPath) -> bool {
 #[cfg(test)]
 mod rename_tests {
     use super::*;
+    use crate::infra::redis::NoopCache;
     use serde_json::json;
 
     static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -386,7 +398,9 @@ mod rename_tests {
 
         let old = TagPath::from_ltree("Photos.Travel");
         let new = TagPath::from_ltree("Trips.2024");
-        let outcome = cascade_rename(&db, user, &old, &new).await.unwrap();
+        let outcome = cascade_rename(&db, &NoopCache, user, &old, &new)
+            .await
+            .unwrap();
 
         assert_eq!(outcome.tags_renamed, 1);
         assert_eq!(outcome.shares_renamed, 1);
@@ -451,6 +465,7 @@ mod rename_tests {
 
         let outcome = cascade_rename(
             &db,
+            &NoopCache,
             user,
             &TagPath::from_ltree("Photos.Travel"),
             &TagPath::from_ltree("Photos.Vacation"),

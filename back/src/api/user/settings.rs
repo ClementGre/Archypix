@@ -1,5 +1,5 @@
 use crate::api::middleware::auth_user::AuthUser;
-use crate::domain::user_settings::{UserSettings, VersioningMode};
+use crate::domain::user_settings::{Hemisphere, UserSettings, VersioningMode};
 use crate::services;
 use crate::state::AppState;
 use archypix_common::error::AppError;
@@ -25,6 +25,9 @@ pub struct UpdateSettingsBody {
     /// Retention window (days) before a soft-deleted owned picture is physically purged (09 §5.1).
     #[serde(default)]
     pub trash_retention_days: Option<i32>,
+    /// Season-grouping convention (feature 34 §3).
+    #[serde(default)]
+    pub hemisphere: Option<Hemisphere>,
 }
 
 #[tracing::instrument(skip(auth, state, body), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default()))]
@@ -38,6 +41,7 @@ pub async fn update_settings(
         auth.user_id()?,
         body.versioning_mode,
         body.trash_retention_days,
+        body.hemisphere,
     )
     .await?;
     Ok(Json(settings))

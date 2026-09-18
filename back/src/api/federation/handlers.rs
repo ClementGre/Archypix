@@ -107,6 +107,7 @@ pub async fn message(
             let p: ShareAnnouncementRequest = decode(envelope)?;
             let (incoming_id, auto_accepted) = fed::receive_share_announcement(
                 &state.db,
+                state.cache.as_ref(),
                 &state.settings,
                 &state.routines.pipeline,
                 &peer,
@@ -122,6 +123,7 @@ pub async fn message(
                 p.allow_exif_edit,
                 p.future,
                 p.shareback_of,
+                p.tag_meta,
             )
                 .await?;
             debug!(share_id = %incoming_id, auto_accepted, "federation: incoming share stored");

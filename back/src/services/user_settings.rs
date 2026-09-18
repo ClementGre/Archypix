@@ -1,4 +1,4 @@
-use crate::domain::user_settings::{UserSettings, VersioningMode};
+use crate::domain::user_settings::{Hemisphere, UserSettings, VersioningMode};
 use crate::repository::user_settings::UserSettingsRepository;
 use archypix_common::error::AppError;
 use sqlx::PgPool;
@@ -15,6 +15,7 @@ pub async fn update(
     user_id: Uuid,
     versioning_mode: Option<VersioningMode>,
     trash_retention_days: Option<i32>,
+    hemisphere: Option<Hemisphere>,
 ) -> Result<UserSettings, AppError> {
     if let Some(days) = trash_retention_days {
         if !(1..=3650).contains(&days) {
@@ -23,5 +24,12 @@ pub async fn update(
             ));
         }
     }
-    UserSettingsRepository::upsert(db, user_id, versioning_mode, trash_retention_days).await
+    UserSettingsRepository::upsert(
+        db,
+        user_id,
+        versioning_mode,
+        trash_retention_days,
+        hemisphere,
+    )
+    .await
 }

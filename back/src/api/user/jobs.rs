@@ -71,6 +71,7 @@ pub async fn enqueue_edit(
     let picture = PictureRepository::find_by_id(&state.db, picture_id)
         .await?
         .ok_or(AppError::NotFound)?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({
         "id": picture.id,
         "exif_sync_status": picture.exif_sync_status,
@@ -120,6 +121,10 @@ pub async fn batch_edit_exif(
         body.dry_run,
     )
     .await?;
+    if !body.dry_run {
+        // An edit to `captured_at` moves every covering tag's derived range (feature 34 §4).
+        services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
+    }
     Ok(Json(match outcome {
         ExifBatchOutcome::DryRun(dry) => {
             serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
@@ -211,6 +216,7 @@ pub async fn revert_exif_to_file(
         picture_id,
     )
     .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({
         "id": picture.id,
         "exif_sync_status": picture.exif_sync_status,

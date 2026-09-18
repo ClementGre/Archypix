@@ -47,13 +47,12 @@ pub enum RedisKey<'a> {
     AdminStats,
     /// Cached per-user admin analytics (short TTL).
     AdminUserStats(Uuid),
+    /// Cached enriched tag tree — one JSON blob per user, short TTL plus explicit bust
+    /// (34_tag_metadata.md §4). Never holds the `with_sources` provenance.
+    TagTree(Uuid),
     /// Cached WebDAV auth resolution, keyed by the SHA-256 of the presented token
     /// (so the plaintext token is never a Redis key). See 06_webdav.md §3.3.
     WebdavToken(&'a str),
-    /// Transient brand-new mirror sub-directories created by `MKCOL` before a file lands and
-    /// mints the real tag. Keyed by `(hierarchy_id, parent_path)`; value is the set of pending
-    /// child directory names under that parent (06_webdav.md §9).
-    WebdavPendingDir(Uuid, &'a str),
     /// OS-junk sidecar files (`.DS_Store`, `._*`, …) echoed back in listings but never ingested
     /// as pictures. Keyed by `(hierarchy_id, parent_path)`; value is a map of name → stored bytes
     /// (06_webdav.md §11).
@@ -89,8 +88,8 @@ impl<'a> RedisKey<'a> {
             Self::UserByUsername(username) => format!("user:username:{username}"),
             Self::AdminStats => "admin:stats:instance".to_string(),
             Self::AdminUserStats(id) => format!("admin:stats:user:{id}"),
+            Self::TagTree(id) => format!("tags:tree:{id}"),
             Self::WebdavToken(hash) => format!("webdav:token:{hash}"),
-            Self::WebdavPendingDir(h, parent) => format!("webdav:pendingdir:{h}:{parent}"),
             Self::WebdavSidecar(h, parent) => format!("webdav:sidecar:{h}:{parent}"),
             Self::WebdavStaging(h, parent) => format!("webdav:staging:{h}:{parent}"),
             Self::StorageCommitted(id) => format!("storage:committed:{id}"),
@@ -313,6 +312,37 @@ impl Cache for RedisClient {
             .into_iter()
             .filter_map(|v| v.and_then(|s| s.parse::<i64>().ok()))
             .sum())
+    }
+}
+
+/// A [`Cache`] that stores nothing, for in-crate unit tests that only need a cache to pass along.
+/// Integration tests use `tests/common::InMemoryCache` instead, which actually remembers.
+#[cfg(test)]
+pub struct NoopCache;
+
+#[cfg(test)]
+#[async_trait]
+impl Cache for NoopCache {
+    async fn get_str(&self, _key: RedisKey<'_>) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+    async fn set_str_ex(&self, _: RedisKey<'_>, _: &str, _: u64) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn del(&self, _key: RedisKey<'_>) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn set_str_nx_ex(&self, _: RedisKey<'_>, _: &str, _: u64) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    async fn scan_keys(&self, _pattern: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    async fn incr_ex(&self, _key: RedisKey<'_>, _ttl_secs: u64) -> Result<u64, AppError> {
+        Ok(1)
+    }
+    async fn sum_int_by_prefix(&self, _prefix: &str) -> Result<i64, AppError> {
+        Ok(0)
     }
 }
 

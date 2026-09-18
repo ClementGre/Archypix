@@ -275,13 +275,11 @@ pub async fn trash(
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let picture = services::pictures::trash_picture(
-        &state.db,
-        &state.routines.pipeline,
-        auth.user_id()?,
-        picture_id,
-    )
-    .await?;
+    let user_id = auth.user_id()?;
+    let picture =
+        services::pictures::trash_picture(&state.db, &state.routines.pipeline, user_id, picture_id)
+            .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({
         "id": picture.id,
         "deleted_at": picture.deleted_at,
@@ -423,6 +421,10 @@ async fn batch_set_trashed(
         body.dry_run,
     )
     .await?;
+    if !body.dry_run {
+        // Trashed counts and ranges are a separate half of the tag tree (feature 34 §4).
+        services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
+    }
     Ok(Json(match outcome {
         TrashBatchOutcome::DryRun(dry) => {
             serde_json::to_value(dry).map_err(|e| AppError::InternalServerError(e.to_string()))?
@@ -465,13 +467,15 @@ pub async fn restore(
     State(state): State<AppState>,
     Path(picture_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
     let picture = services::pictures::restore_picture(
         &state.db,
         &state.routines.pipeline,
-        auth.user_id()?,
+        user_id,
         picture_id,
     )
     .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({
         "id": picture.id,
         "deleted_at": picture.deleted_at,
@@ -531,6 +535,8 @@ pub async fn edit_received_exif(
                 body.clear,
             )
             .await?;
+            // A local `captured_at` override moves the tag's derived date range (feature 34 §4).
+            services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
             Ok((
                 axum::http::StatusCode::OK,
                 Json(serde_json::json!({

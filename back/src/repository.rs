@@ -12,6 +12,7 @@ pub mod public_share;
 pub mod share;
 pub mod share_announcement;
 pub mod tag;
+pub mod tag_metadata;
 pub mod tagging;
 pub mod user;
 pub mod user_settings;

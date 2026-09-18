@@ -170,13 +170,23 @@ impl Routine for PurgeSweepRoutine {
             return Ok(());
         }
         let mut purged = 0usize;
+        let mut touched: Vec<Uuid> = Vec::new();
         for (picture_id, user_id) in purgeable {
             match self.purge_one(picture_id, user_id).await {
-                Ok(()) => purged += 1,
+                Ok(()) => {
+                    purged += 1;
+                    if !touched.contains(&user_id) {
+                        touched.push(user_id);
+                    }
+                }
                 Err(e) => {
                     warn!(picture_id = %picture_id, error = ?e, "purge: failed to purge picture")
                 }
             }
+        }
+        // A purge drops the picture's tag rows, so the owner's trashed counts change (feature 34 §4).
+        for user_id in touched {
+            crate::services::tag_metadata::bust_cache(self.cache.as_ref(), user_id).await;
         }
         if purged > 0 {
             info!(

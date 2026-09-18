@@ -91,6 +91,12 @@ interface PhotoCardProps {
     /** Long-press (touch) on the card — enters/extends multi-select. */
     onLongPress: () => void
     onOpen: () => void
+    /**
+     * Start a drag-to-tag (feature 34 §9). Desktop only — HTML5 `draggable` does not fire on touch,
+     * so it cannot collide with `onLongPress`. Omit to make the card undraggable.
+     */
+    onDragStart?: () => void
+    onDragEnd?: () => void
 }
 
 /** How long a touch must be held (ms) before it counts as a long-press. */
@@ -117,7 +123,9 @@ export const PhotoCard = memo(function PhotoCard({
                                                      dimmed,
                                                      onSelect,
                                                      onLongPress,
-                                                     onOpen
+                                                     onOpen,
+                                                     onDragStart,
+                                                     onDragEnd,
                                                  }: PhotoCardProps) {
     // Long-press detection (touch/pen only — desktop uses modifier-click). A held touch
     // that hasn't moved past the threshold enters multi-select mode; the long-press also
@@ -244,6 +252,14 @@ export const PhotoCard = memo(function PhotoCard({
             )}
             onClick={handleClick}
             onDoubleClick={isMobile ? undefined : onOpen}
+            draggable={!!onDragStart && !dimmed}
+            onDragStart={(e) => {
+                // Some payload is required for Firefox to start a drag at all.
+                e.dataTransfer.setData('text/plain', item.id)
+                e.dataTransfer.effectAllowed = 'copy'
+                onDragStart?.()
+            }}
+            onDragEnd={() => onDragEnd?.()}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={cancelPress}

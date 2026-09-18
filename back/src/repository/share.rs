@@ -455,6 +455,47 @@ impl IncomingShareRepository {
             .map_err(map_sqlx_error)
     }
 
+    /// Park the sender's announced tag decoration on the share until accept seeds it
+    /// (feature 34 §10.1). A setter rather than a `create` argument, like
+    /// `set_derived_from_public_share`, so the existing call sites stay untouched.
+    #[tracing::instrument(skip(ex, meta), fields(share_id = %share_id))]
+    pub async fn set_sender_tag_meta<'e, E>(
+        ex: E,
+        share_id: Uuid,
+        meta: &serde_json::Value,
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            "UPDATE incoming_shares SET sender_tag_meta = $2 WHERE id = $1",
+            share_id,
+            meta,
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(ex), fields(share_id = %share_id))]
+    pub async fn sender_tag_meta<'e, E>(
+        ex: E,
+        share_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            "SELECT sender_tag_meta FROM incoming_shares WHERE id = $1",
+            share_id,
+        )
+        .fetch_optional(ex)
+        .await
+        .map_err(map_sqlx_error)
+        .map(|opt| opt.flatten())
+    }
+
     #[tracing::instrument(skip(ex), fields(user_id = %recipient_id))]
     pub async fn list_by_recipient<'e, E>(
         ex: E,

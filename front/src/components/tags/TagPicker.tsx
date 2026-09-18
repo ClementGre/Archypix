@@ -3,7 +3,8 @@ import {AlertTriangle, ChevronRight, Plus, Tag as TagIcon} from 'lucide-react'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList} from '@/components/ui/command'
 import {Button} from '@/components/ui/button'
-import {useAllTags} from '@/hooks/useTags'
+import {useTagTree} from '@/hooks/useTags'
+import {display} from '@/lib/tagTree'
 import {TagPath} from '@/lib/utils'
 
 const LABEL_OK = /^[A-Za-z0-9_/]+$/
@@ -90,9 +91,11 @@ export function TagPicker({
   const [replaced, setReplaced] = useState<string[]>([])
   // The cmdk-highlighted item value (a wire path, or a `__create__…` token).
   const [active, setActive] = useState('')
-  const {data: tags} = useAllTags()
+  const {items, metaByPath} = useTagTree()
 
-    const allTags = tags ?? []
+    const allTags = items.map((i) => i.path).filter(Boolean)
+    /** Display name + muted path, and **search matches both** (feature 34 §5). */
+    const nameOf = (wire: string) => display(wire, metaByPath.get(wire))
 
     // Ancestors virtually covered by already-assigned tags must also be excluded.
     const excludeSet = new Set(excludePaths)
@@ -115,7 +118,12 @@ export function TagPicker({
         .sort()
 
   const q = query.trim()
-  const options = q ? all.filter((t) => TagPath.toDisplay(t).toLowerCase().includes(q.toLowerCase())) : all
+  const options = q
+      ? all.filter((t) => {
+          const needle = q.toLowerCase()
+          return TagPath.toDisplay(t).toLowerCase().includes(needle) || nameOf(t).toLowerCase().includes(needle)
+      })
+      : all
 
   const bad = invalidChars(q)
   const wireFromInput = q ? TagPath.toWire(q) : ''
@@ -213,7 +221,14 @@ export function TagPicker({
                 {options.map((t) => (
                     <CommandItem key={t} value={t} onSelect={() => choose(t)} className="group/item">
                       <TagIcon className="mr-2 h-3.5 w-3.5 opacity-60"/>
-                      <span className="min-w-0 flex-1 truncate">{TagPath.toDisplay(t)}</span>
+                      {/* Display name + muted path — the ltree path is never hidden here, because
+                          this surface writes it (§5). */}
+                      <span className="min-w-0 flex-1 truncate">
+                          {nameOf(t)}
+                          {nameOf(t) !== TagPath.leaf(t) && (
+                              <span className="ml-1.5 text-[11px] text-muted-foreground">{TagPath.toDisplay(t)}</span>
+                          )}
+                      </span>
                       <button
                           type="button"
                           onMouseDown={(e) => {

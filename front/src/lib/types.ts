@@ -156,6 +156,67 @@ export interface PictureTagsWithSources {
     }>
 }
 
+// Tag metadata (feature 34). Purely decorative — nothing in the engine reads it.
+
+export type TagOrder = 'manual' | 'date_from' | 'date_to' | 'path' | 'display_name'
+export type TagViewMode = 'direct' | 'subtag' | 'all'
+export type TagSubtagPlacement = 'top' | 'in_sections'
+
+/** Grouping buckets the **sort field**, so sections stay contiguous runs in the sorted order (§3.1). */
+export type GroupingField =
+    | 'captured_at' | 'ingested_at' | 'updated_at'
+    | 'filename' | 'file_size' | 'geo_near' | 'time_near'
+
+export type GroupingKind =
+    | { kind: 'none' | 'year' | 'quarter' | 'season' | 'month' | 'magnitude' }
+    | { kind: 'prefix'; chars: number }
+
+export type Grouping = Partial<Record<GroupingField, GroupingKind>>
+
+/** A stored `tag_metadata` row. Every field is optional — absence means "not overridden" (§3). */
+export interface TagMeta {
+    tag_path: string
+    display_name: string | null
+    description: string | null
+    cover_picture_id: string | null
+    /** `#RRGGBB`. */
+    color: string | null
+    /** Explicit override; `null` means the derived MIN/MAX(captured_at) applies (§4). */
+    date_from: string | null
+    date_to: string | null
+    show_when_empty: boolean
+    sort_index: number | null
+    children_order: TagOrder
+    view_mode: TagViewMode
+    /** `null` ⇒ derived (§3.4). */
+    subtag_placement: TagSubtagPlacement | null
+    grouping: Grouping
+    webdav_dir_name: string | null
+}
+
+/** Live-or-trashed counts and derived date range for one tag path (§4). */
+export interface TagCounts {
+    /** Ancestor-inclusive. */
+    count: number
+    /** Only pictures stored at exactly this path. */
+    exact_count: number
+    date_from: string | null
+    date_to: string | null
+}
+
+/** One entry of `GET /tags` (§11). The root is `path: ""` and carries only its `meta`. */
+export interface TagListItem extends TagCounts {
+    path: string
+    /** Omitted when the tag has no trashed pictures. */
+    trashed?: TagCounts
+    /** Only with `with_sources=true`. */
+    sources?: Array<{ source: TagSource; count: number }>
+    meta: TagMeta | null
+}
+
+/** A partial upsert item — absent fields are left unchanged, explicit `null` clears them (§4.1). */
+export type TagMetaPatch = { tag_path: string } & Partial<Omit<TagMeta, 'tag_path'>>
+
 // ---------- Shares ----------
 
 export interface ShareResponse {
@@ -525,6 +586,8 @@ export interface UserSettings {
     versioning_mode: VersioningMode
     /** Days a trashed owned picture is kept before physical purge (default 30). */
     trash_retention_days: number
+    /** Season-grouping convention (feature 34 §3) — the *viewer's*, applied to every photo. */
+    hemisphere: Hemisphere
     created_at: string
     updated_at: string
 }

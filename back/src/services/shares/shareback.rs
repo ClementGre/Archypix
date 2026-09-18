@@ -15,15 +15,18 @@ use uuid::Uuid;
 /// pictures are registered here — the initiator's pictures are announced by its pipeline once its
 /// OutgoingShare is moved to `pending_first_announcement` (cross-instance: the initiator does this
 /// on the `auto_accepted` response; same-backend: `create_outgoing_share` does it).
-#[tracing::instrument(skip(db, pipeline_waker, incoming, original_outgoing), fields(user_id = %recipient_id, share_id = %incoming.id))]
+#[tracing::instrument(skip(db, cache, pipeline_waker, incoming, original_outgoing), fields(user_id = %recipient_id, share_id = %incoming.id))]
 pub async fn auto_accept_shareback_local(
     db: &PgPool,
+    cache: &dyn crate::infra::redis::Cache,
     pipeline_waker: &RoutineHandle<Uuid>,
     recipient_id: Uuid,
     incoming: &IncomingShare,
     original_outgoing: &OutgoingShare,
 ) -> Result<(), AppError> {
     IncomingShareRepository::set_status(db, incoming.id, ShareStatus::Active).await?;
+    // An auto-accept is a first accept (feature 34 §10.1).
+    crate::services::shares::lifecycle::seed_shared_tag_metadata(db, cache, incoming).await?;
 
     // One shared_tag_mapping service per incoming share (feature 20 §10.1).
     let config = serde_json::json!({

@@ -98,7 +98,32 @@ pub struct ShareAnnouncementRequest {
     pub allow_exif_edit: bool,
     pub future: bool,
     pub shareback_of: Option<Uuid>,
+    /// The sender's decoration for the shared tag (feature 34 §10.1). Absent for peers that predate
+    /// the field, which is why it is additive rather than a `VERSION` bump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_meta: Option<SharedTagMeta>,
 }
+
+/// What travels across the share boundary (feature 34 §10.1). Not `webdav_dir_name` (the
+/// recipient's mount is theirs), not ordering, not view preferences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SharedTagMeta {
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub color: Option<String>,
+    /// The **owner's** picture id; the recipient resolves it through `pictures.remote_picture_id`.
+    pub cover_remote_picture_id: Option<Uuid>,
+}
+
+impl SharedTagMeta {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none()
+            && self.description.is_none()
+            && self.color.is_none()
+            && self.cover_remote_picture_id.is_none()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShareAnnouncementResponse {
     pub accepted: bool,

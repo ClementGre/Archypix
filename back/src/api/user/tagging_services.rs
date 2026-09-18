@@ -301,6 +301,7 @@ pub async fn update_service(
     // other config change re-derives tags on the next pipeline run (via touch_invalidated).
     if payload.enabled == Some(false) {
         TagRepository::remove_service_tags(&state.db, service_id).await?;
+        services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     }
     TaggingServiceRepository::touch_invalidated(&state.db, service_id).await?;
     state.routines.pipeline.trigger(user_id);
@@ -365,6 +366,8 @@ pub async fn delete_service(
     if !deleted {
         return Err(AppError::NotFound);
     }
+    // The service's tags were promoted or removed synchronously (feature 34 §4).
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     state.routines.pipeline.trigger(user_id);
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

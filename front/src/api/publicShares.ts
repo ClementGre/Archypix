@@ -26,6 +26,17 @@ export interface PublicShareMeta {
     expires_at: string | null
     /** `true` ⇒ thumbnails only, EXIF/GPS stripped. */
     view_only: boolean
+    /**
+     * The owner's decoration for the covered tag (feature 34 §10.1) — a purely local read, so the
+     * landing page shows a name and colour instead of a bare slug. The share's own `name`/`message`
+     * are about *this act of sharing* and stay separate.
+     */
+    tag_meta: {
+        display_name: string | null
+        description: string | null
+        color: string | null
+        cover_remote_picture_id: string | null
+    } | null
 }
 
 export interface PublicPictureDetail {

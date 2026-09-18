@@ -17,6 +17,7 @@ async fn edit_picture_tags_rejects_empty_picture_ids(db: PgPool) {
 
     let result = tags::batch_edit_tags(
         &db,
+        &common::InMemoryCache::new(),
         &pipeline_waker,
         user_id,
         &ResolvedSelection::explicit(vec![]),
@@ -37,6 +38,7 @@ async fn edit_picture_tags_rejects_no_add_and_no_remove(db: PgPool) {
 
     let result = tags::batch_edit_tags(
         &db,
+        &common::InMemoryCache::new(),
         &pipeline_waker,
         alice_id,
         &ResolvedSelection::explicit(vec![pic_id.clone()]),
@@ -56,6 +58,7 @@ async fn edit_picture_tags_add_is_applied(db: PgPool) {
 
     tags::batch_edit_tags(
         &db,
+        &common::InMemoryCache::new(),
         &pipeline_waker,
         alice_id,
         &ResolvedSelection::explicit(vec![pic_id.clone()]),
@@ -83,6 +86,7 @@ async fn edit_picture_tags_remove_is_applied(db: PgPool) {
 
     tags::batch_edit_tags(
         &db,
+        &common::InMemoryCache::new(),
         &pipeline_waker,
         alice_id,
         &ResolvedSelection::explicit(vec![pic_id.clone()]),
@@ -110,6 +114,7 @@ async fn edit_picture_tags_add_and_remove_are_atomic(db: PgPool) {
 
     tags::batch_edit_tags(
         &db,
+        &common::InMemoryCache::new(),
         &pipeline_waker,
         alice_id,
         &ResolvedSelection::explicit(vec![pic_id.clone()]),

@@ -1,0 +1,55 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pfx.prefix::text AS \"path!\", tg.source AS \"source!: TagSource\",\n                      COUNT(DISTINCT tg.picture_id) AS \"count!\"\n               FROM tags tg\n               JOIN pictures p ON p.id = tg.picture_id\n               CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix\n                                   FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx\n               WHERE p.local_user_id = $1 AND p.deleted_at IS NULL\n               GROUP BY pfx.prefix, tg.source\n               ORDER BY pfx.prefix",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "path!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "source!: TagSource",
+        "type_info": {
+          "Custom": {
+            "name": "tag_source",
+            "kind": {
+              "Enum": [
+                "manual",
+                "rule",
+                "segment",
+                "share_mapping",
+                "incoming_share"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "tags",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null
+    ]
+  },
+  "hash": "5b7d60c44dfa5a76998f4fdf00dbabe7397e6fd1004576c10694f9128e5a973e"
+}

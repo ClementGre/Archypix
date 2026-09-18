@@ -327,7 +327,7 @@ async fn put_overwrite_replaces_bytes_no_version_when_none(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None)
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None, None)
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -381,7 +381,13 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
+    UserSettingsRepository::upsert(
+        &state.db,
+        user,
+        Some(VersioningMode::FullVersioning),
+        None,
+        None,
+    )
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -439,7 +445,13 @@ async fn put_overwrite_identical_hash_is_noop(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
+    UserSettingsRepository::upsert(
+        &state.db,
+        user,
+        Some(VersioningMode::FullVersioning),
+        None,
+        None,
+    )
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -980,87 +992,109 @@ async fn put_into_multi_level_new_path_mints_deepest_tag(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn mkcol_then_put_mints_tag_and_lists_pending(db: PgPool) {
+async fn mkcol_creates_a_persistent_empty_directory(db: PgPool) {
+    // 34_tag_metadata.md §8.1: MKCOL now mints a `show_when_empty` tag-metadata row, so the
+    // directory persists and lists with no pictures in it — no Redis pending-dir sidecar.
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
     seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
-    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    // MKCOL records a transient pending directory, surfaced by PROPFIND/list before any file.
-    vfs.mkcol(&seg(&["Photos", "Travel", "Pending"]))
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "Travel", "Empty"]))
         .await
         .unwrap();
+
+    // Each WebDAV request builds a fresh Vfs, so the next one resolves the new tag.
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
     let listed = vfs.list_dir(&seg(&["Photos", "Travel"])).await.unwrap();
     assert!(
-        listed.iter().any(|e| e.is_dir && e.name == "Pending"),
-        "pending MKCOL dir shows in the listing"
+        listed.iter().any(|e| e.is_dir && e.name == "Empty"),
+        "the empty MKCOL'd directory shows in the listing"
     );
-    // stat the pending directory directly.
-    let st = vfs
-        .stat(&seg(&["Photos", "Travel", "Pending"]))
-        .await
-        .unwrap();
-    assert!(st.is_dir);
+    assert!(
+        vfs.stat(&seg(&["Photos", "Travel", "Empty"]))
+            .await
+            .unwrap()
+            .is_dir
+    );
     // A second MKCOL on the same path conflicts.
     assert!(matches!(
-        vfs.mkcol(&seg(&["Photos", "Travel", "Pending"]))
+        vfs.mkcol(&seg(&["Photos", "Travel", "Empty"]))
             .await
             .unwrap_err(),
         AppError::Conflict(_)
     ));
 
-    // A file landing in it mints the real tag.
+    // A file landing in it carries the directory's tag.
     put(
         &vfs,
-        &["Photos", "Travel", "Pending", "p.jpg"],
-        b"pendingbytes",
+        &["Photos", "Travel", "Empty", "p.jpg"],
+        b"emptybytes",
         Some("image/jpeg"),
     )
     .await
     .unwrap();
-    let pic = pic_by_hash(&state.db, user, b"pendingbytes").await;
+    let pic = pic_by_hash(&state.db, user, b"emptybytes").await;
     assert_eq!(
         tags_of(&state.db, user, pic.id).await,
-        vec!["Photos.Travel.Pending"]
+        vec!["Photos.Travel.Empty"]
     );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn finder_untitled_folder_flow_mkcol_rename_then_put_slugifies(db: PgPool) {
+async fn mkcol_keeps_the_requested_name_and_delete_drops_the_row(db: PgPool) {
+    // Finder creates "dossier sans titre": the tag is slugified, the folder keeps its own name via
+    // `webdav_dir_name` (§8.1). Deleting the empty directory deletes the row again.
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
     seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
-    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    // Finder creates "dossier sans titre" — MKCOL must NOT 409 on the spaces.
-    vfs.mkcol(&seg(&["Photos", "dossier sans titre"]))
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "dossier sans titre"]))
         .await
         .unwrap();
+
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
     let listed = vfs.list_dir(&seg(&["Photos"])).await.unwrap();
     assert!(
         listed
             .iter()
             .any(|e| e.is_dir && e.name == "dossier sans titre"),
-        "the untitled folder shows with its original name"
+        "the folder keeps the requested name"
     );
-
-    // The user renames it (Finder MOVE on the empty pending directory).
-    vfs.move_(
-        &seg(&["Photos", "dossier sans titre"]),
-        &seg(&["Photos", "Mes Vacances"]),
+    let meta = archypix_back::repository::tag_metadata::TagMetadataRepository::list_for_user(
+        &state.db, user,
     )
     .await
     .unwrap();
-    let listed = vfs.list_dir(&seg(&["Photos"])).await.unwrap();
-    assert!(!listed.iter().any(|e| e.name == "dossier sans titre"));
-    assert!(listed.iter().any(|e| e.is_dir && e.name == "Mes Vacances"));
+    let row = meta
+        .iter()
+        .find(|m| m.tag_path == "Photos.dossier_sans_titre")
+        .expect("the slugified tag carries the row");
+    assert!(row.show_when_empty);
+    assert_eq!(row.webdav_dir_name.as_deref(), Some("dossier sans titre"));
 
-    // Dropping a photo in mints a slugified tag.
+    // MOVE on a collection is out of scope (§8) — a Finder rename does not write the folder name.
+    assert!(matches!(
+        vfs.move_(
+            &seg(&["Photos", "dossier sans titre"]),
+            &seg(&["Photos", "Mes Vacances"]),
+        )
+        .await
+        .unwrap_err(),
+        AppError::MethodNotAllowed(_)
+    ));
+
+    // Dropping a photo in tags it with the slugified path.
     put(
         &vfs,
-        &["Photos", "Mes Vacances", "p.jpg"],
+        &["Photos", "dossier sans titre", "p.jpg"],
         b"slugme",
         Some("image/jpeg"),
     )
@@ -1069,8 +1103,133 @@ async fn finder_untitled_folder_flow_mkcol_rename_then_put_slugifies(db: PgPool)
     let pic = pic_by_hash(&state.db, user, b"slugme").await;
     assert_eq!(
         tags_of(&state.db, user, pic.id).await,
-        vec!["Photos.Mes_Vacances"]
+        vec!["Photos.dossier_sans_titre"]
     );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn deleting_an_empty_mkcol_directory_drops_its_row(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "Travel", "Gone"]))
+        .await
+        .unwrap();
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .delete(&seg(&["Photos", "Travel", "Gone"]))
+        .await
+        .unwrap();
+
+    let listed = Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .list_dir(&seg(&["Photos", "Travel"]))
+        .await
+        .unwrap();
+    assert!(!listed.iter().any(|e| e.name == "Gone"));
+    assert!(
+        archypix_back::repository::tag_metadata::TagMetadataRepository::list_for_user(
+            &state.db, user
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "the row that *was* the directory is gone"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn custom_dir_name_resolves_before_the_label(db: PgPool) {
+    // §8: resolution is custom `webdav_dir_name` → ltree label → slugify-and-mint. A near-miss on
+    // a custom name must not silently mint a new tag.
+    use archypix_back::domain::tag_metadata::TagMetadata;
+    use archypix_back::repository::tag_metadata::TagMetadataRepository;
+
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Vietnam_2024").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    TagMetadataRepository::upsert_many(
+        &state.db,
+        user,
+        &[TagMetadata {
+            webdav_dir_name: Some("Vietnam 2024".into()),
+            ..TagMetadata::new("Photos.Vietnam_2024".into())
+        }],
+    )
+    .await
+    .unwrap();
+
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    let listed = vfs.list_dir(&seg(&["Photos"])).await.unwrap();
+    assert!(
+        listed.iter().any(|e| e.is_dir && e.name == "Vietnam 2024"),
+        "the custom name replaces the ltree label"
+    );
+    assert!(!listed.iter().any(|e| e.name == "Vietnam_2024"));
+
+    // Writing through the custom name reuses the existing tag rather than slugifying a new one.
+    put(
+        &vfs,
+        &["Photos", "Vietnam 2024", "x.jpg"],
+        b"customname",
+        Some("image/jpeg"),
+    )
+    .await
+    .unwrap();
+    let pic = pic_by_hash(&state.db, user, b"customname").await;
+    assert_eq!(
+        tags_of(&state.db, user, pic.id).await,
+        vec!["Photos.Vietnam_2024"]
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn custom_dir_name_losing_a_collision_falls_back_to_the_label(db: PgPool) {
+    // §8: within one directory the later sibling (by path sort) falls back to its ltree label, and
+    // the comparison is case-insensitive so a case-folding client never sees two identical names.
+    use archypix_back::domain::tag_metadata::TagMetadata;
+    use archypix_back::repository::tag_metadata::TagMetadataRepository;
+
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Alps").await;
+    seed_full_picture(&state, user, "b.jpg", "image/jpeg", b"b", "Photos.Jura").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    TagMetadataRepository::upsert_many(
+        &state.db,
+        user,
+        &[TagMetadata {
+            // Differs from the sibling label only by case.
+            webdav_dir_name: Some("jura".into()),
+            ..TagMetadata::new("Photos.Alps".into())
+        }],
+    )
+    .await
+    .unwrap();
+
+    let listed = Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .list_dir(&seg(&["Photos"]))
+        .await
+        .unwrap();
+    let mut names: Vec<&str> = listed
+        .iter()
+        .filter(|e| e.is_dir)
+        .map(|e| e.name.as_str())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["Alps", "Jura"], "the custom name was refused");
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -1329,7 +1488,13 @@ async fn macos_safe_save_resolves_to_a_single_versioned_overwrite(db: PgPool) {
     let (state, storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
     let pic = seed_full_picture(&state, user, "phare.jpg", "image/jpeg", b"orig", "Photos").await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::FullVersioning), None)
+    UserSettingsRepository::upsert(
+        &state.db,
+        user,
+        Some(VersioningMode::FullVersioning),
+        None,
+        None,
+    )
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -1623,7 +1788,7 @@ async fn overwrite_put_moves_last_modified_and_identical_reput_does_not(db: PgPo
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
     seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"v1", "Photos.Travel").await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None)
+    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None, None)
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;

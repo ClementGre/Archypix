@@ -8,7 +8,8 @@ import {queryKeys} from '@/lib/constants'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
 import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
-import {isMemberSelected, useSelectionStore} from '@/stores/selection'
+import {isMemberSelected, toApiSelection, useSelectionStore} from '@/stores/selection'
+import {useTagDragStore} from '@/stores/tagDrag'
 import {useFixReference} from '@/stores/fixReference'
 import {useFixHighlight} from '@/stores/fixHighlight'
 import {useGridItems} from '@/stores/gridItems'
@@ -135,6 +136,8 @@ export function PhotoGrid() {
     const queueLand = useSelectionStore((s) => s.queueLand)
     const pendingLand = useSelectionStore((s) => s.pendingLand)
     const clear = useSelectionStore((s) => s.clear)
+    const startTagDrag = useTagDragStore((s) => s.start)
+    const endTagDrag = useTagDragStore((s) => s.end)
 
     // ⌘/Ctrl+A selects everything matching the current view (§2.1), unless focus is in a field.
     useEffect(() => {
@@ -212,6 +215,22 @@ export function PhotoGrid() {
     const handleLongPress = (id: string) => () => {
         if (multiSelect) toggle(id)
         else enterMultiSelect(id)
+    }
+
+    // Drag-to-tag (feature 34 §9): a dragged card that is in the current selection drags the whole
+    // selection; otherwise it is selected and dragged alone.
+    const handleDragStart = (id: string) => () => {
+        const inSelection = isMemberSelected(query, includeIds, excludeIds, id)
+        if (!inSelection) select(id)
+        const s = useSelectionStore.getState()
+        startTagDrag({
+            selection: inSelection ? toApiSelection(s) : {include_ids: [id]},
+            // 0 means "unknown" — a select-all over a query; the drop dialog uses the dry run.
+            count: inSelection ? (s.query === null ? s.includeIds.length : 0) : 1,
+            // "Sibling" is only defined when the drag starts inside a subtag block; the flat grid
+            // has no source tag (§9).
+            sourceTag: null,
+        })
     }
 
     // Let the Lightbox page in more items as it nears the end of what's loaded (large libraries).
@@ -308,6 +327,8 @@ export function PhotoGrid() {
                                 onLongPress={referenceActive ? () => {
                                     if (canRef) toggleRef(it.id)
                                 } : handleLongPress(it.id)}
+                                onDragStart={referenceActive ? undefined : handleDragStart(it.id)}
+                                onDragEnd={endTagDrag}
                                 onOpen={() => openViewer(it.id)}
                             />
                         )

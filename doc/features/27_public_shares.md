@@ -299,7 +299,10 @@ Public pages are `noindex`; token lookup is constant-time-ish via the unique ind
   contributor name.
 - **Public page** — route `/s/:global_domain/:username/:token`: resolves the backend, renders the
   gallery; password gate when required; download/copy/convert controls per permissions; an upload
-  widget (contributor name + files) when `allow_upload`.
+  widget (contributor name + files) when `allow_upload`. The header renders the covered tag's
+  **display name, description and colour** when the owner set them (`tag_meta` on the meta payload,
+  feature 34 §10.1) instead of a bare slug — a purely local read, no protocol involved. The share's
+  own `name`/`message` stay separate: they are about *this act of sharing*.
 - **Authed visitor** — the convert menu (save a copy / subscribe / subscribe + share-back with a tag
   picker and the consent warning).
 

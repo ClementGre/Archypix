@@ -26,6 +26,38 @@ async function refreshAccessToken(): Promise<string> {
     return data.access_token as string
 }
 
+/** Seconds of remaining validity below which a flush refreshes before sending (feature 34 §4.1). */
+const TOKEN_REFRESH_MARGIN_S = 60
+
+function expiresWithin(token: string, seconds: number): boolean {
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1] ?? ''))
+        return typeof payload.exp === 'number' && payload.exp - Date.now() / 1000 < seconds
+    } catch {
+        return false // an unreadable token is left to the ordinary 401 → refresh path
+    }
+}
+
+/**
+ * Return an access token that is safe to put on a raw `fetch` — one that escapes the response
+ * interceptor's 401 → refresh → retry, and at `pagehide` has no document left to retry in. Refreshes
+ * proactively when the current token is nearly expired; otherwise returns it unchanged.
+ */
+export async function freshAccessToken(): Promise<string | null> {
+    const {accessToken} = useAuthStore.getState()
+    if (!accessToken || !expiresWithin(accessToken, TOKEN_REFRESH_MARGIN_S)) return accessToken
+    try {
+        if (!refreshPromise) {
+            refreshPromise = refreshAccessToken().finally(() => {
+                refreshPromise = null
+            })
+        }
+        return await refreshPromise
+    } catch {
+        return accessToken
+    }
+}
+
 apiClient.interceptors.response.use(
     (response) => response,
     async (error: AxiosError) => {

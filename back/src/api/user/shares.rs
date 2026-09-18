@@ -184,17 +184,19 @@ pub async fn accept_incoming(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
     services::shares::accept_incoming_share(
         &state.db,
         state.cache.as_ref(),
         &state.federation,
         &state.settings,
         &state.routines.pipeline,
-        auth.user_id()?,
+        user_id,
         &auth.claims.sub,
         share_id,
     )
     .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     // Pictures are announced asynchronously: the sender's OutgoingShare moves to
     // `pending_first_announcement` and the pipeline announces + activates it.
     Ok(Json(serde_json::json!({ "accepted": true })))
@@ -206,6 +208,7 @@ pub async fn revoke_outgoing(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
     services::shares::revoke_outgoing_share(
         &state.db,
         state.cache.as_ref(),
@@ -213,11 +216,12 @@ pub async fn revoke_outgoing(
         &state.settings,
         &state.routines.unannounce,
         &state.routines.pipeline,
-        auth.user_id()?,
+        user_id,
         &auth.claims.sub,
         share_id,
     )
     .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
@@ -227,6 +231,7 @@ pub async fn reject_incoming(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = auth.user_id()?;
     services::shares::reject_incoming_share(
         &state.db,
         state.cache.as_ref(),
@@ -234,10 +239,11 @@ pub async fn reject_incoming(
         &state.settings,
         &state.routines.unannounce,
         &state.routines.pipeline,
-        auth.user_id()?,
+        user_id,
         &auth.claims.sub,
         share_id,
     )
     .await?;
+    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({ "rejected": true })))
 }

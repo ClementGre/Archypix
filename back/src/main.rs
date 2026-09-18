@@ -294,7 +294,12 @@ fn start_routines(
 
     // Tag-rename cascade (trigger-only) — wakes the pipeline to re-tag + re-announce.
     let (tag_rename_handle, tag_rename_status, tag_rename_join) = routine::spawn_with_status(
-        TagRenameRoutine::new(db.clone(), pipeline_handle.clone(), settings.clone()),
+        TagRenameRoutine::new(
+            db.clone(),
+            cache.clone(),
+            pipeline_handle.clone(),
+            settings.clone(),
+        ),
         RoutineStatus::default(),
         shutdown_rx.clone(),
     );

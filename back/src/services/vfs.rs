@@ -7,12 +7,16 @@
 
 use crate::domain::hierarchy::{NamingStrategy, SafeDeleteMode, TagOp, TagOpKind};
 use crate::domain::tag::TagPath;
+use crate::domain::tag_metadata::{
+    TagMetadata, validate_display_name, validate_webdav_dir_name,
+};
 use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::s3;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::tag::TagRepository;
+use crate::repository::tag_metadata::TagMetadataRepository;
 use crate::repository::user_settings::UserSettingsRepository;
 use crate::services::hierarchy::{self, ResolvedDir};
 use crate::services::pictures::{self, PictureVariant};
@@ -199,9 +203,9 @@ impl<'a> Vfs<'a> {
         Ok(project_files(&pics, dir.naming, dir.writable))
     }
 
-    /// List a directory: child directories first, then direct files. Brand-new mirror
-    /// sub-directories created via `MKCOL` (Redis pending markers) and OS-junk sidecar files are
-    /// merged in so they survive a round-trip until a real file lands (06_webdav.md §9, §11).
+    /// List a directory: child directories first, then direct files. OS-junk sidecar files are
+    /// merged in so they survive a round-trip (06_webdav.md §11). A `MKCOL`'d empty directory is an
+    /// ordinary `show_when_empty` tag and is already in the resolved tree (34_tag_metadata.md §8.1).
     #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn list_dir(&self, segments: &[String]) -> Result<Vec<VfsEntry>, AppError> {
         let mut out: Vec<VfsEntry> = Vec::new();
@@ -217,17 +221,11 @@ impl<'a> Vfs<'a> {
                 real_names.insert(f.name.clone());
             }
             out.extend(files);
-        } else if !self.is_pending_dir(segments).await? && !self.is_staging_dir(segments).await? {
-            // Not a real directory, nor a known pending/atomic-staging one.
+        } else if !self.is_staging_dir(segments).await? {
+            // Not a real directory, nor a known atomic-staging one.
             return Err(AppError::NotFound);
         }
 
-        // Pending sub-directories (writable, since they only exist under a mirror).
-        for name in self.pending_dir_children(segments).await? {
-            if real_names.insert(name.clone()) {
-                out.push(dir_entry(&name, true));
-            }
-        }
         // Sidecar (OS-junk) files echoed back in the listing.
         for sc in self.sidecars(segments).await? {
             if real_names.insert(sc.name.clone()) {
@@ -249,7 +247,7 @@ impl<'a> Vfs<'a> {
         Ok(out)
     }
 
-    /// Stat a path — a directory (real or pending) or a file (real or sidecar).
+    /// Stat a path — a directory or a file (real or sidecar).
     #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn stat(&self, segments: &[String]) -> Result<VfsEntry, AppError> {
         if segments.is_empty() {
@@ -263,7 +261,7 @@ impl<'a> Vfs<'a> {
             Err(AppError::NotFound) => {}
             Err(e) => return Err(e),
         }
-        if self.is_pending_dir(segments).await? || self.is_staging_dir(segments).await? {
+        if self.is_staging_dir(segments).await? {
             let name = segments.last().cloned().unwrap_or_default();
             return Ok(dir_entry(&name, true));
         }
@@ -509,7 +507,7 @@ impl<'a> Vfs<'a> {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
             trace!("vfs put: hash matched live picture — retag instead of new upload");
             let added = self.apply_add_ops(&on_add, p.id).await?;
-            self.clear_pending_dir(parent).await;
+            self.bust_tag_tree().await;
             self.state.routines.pipeline.trigger_debounced(self.user_id);
             return Ok(added);
         }
@@ -521,7 +519,7 @@ impl<'a> Vfs<'a> {
             trace!("vfs put: hash matched trashed picture — un-delete and retag");
             PictureRepository::set_deleted(&self.state.db, self.user_id, p.id, false).await?;
             self.apply_add_ops(&on_add, p.id).await?;
-            self.clear_pending_dir(parent).await;
+            self.bust_tag_tree().await;
             self.state.routines.pipeline.trigger_debounced(self.user_id);
             return Ok(true);
         }
@@ -591,8 +589,7 @@ impl<'a> Vfs<'a> {
         crate::services::storage::invalidate_committed(self.state.cache.as_ref(), self.user_id)
             .await;
         self.apply_add_ops(&on_add, new_id).await?;
-        // A real file now lives here, so the directory is a live tag — drop any pending marker.
-        self.clear_pending_dir(parent).await;
+        self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(true)
     }
@@ -666,17 +663,14 @@ impl<'a> Vfs<'a> {
     /// DELETE a file per the directory's `safeDeleteMode` (§7.1).
     #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), picture_id))]
     pub async fn delete(&self, segments: &[String]) -> Result<(), AppError> {
-        // Deleting an empty, still-pending MKCOL directory just drops its Redis marker.
-        if self.dir(segments).is_none() && self.is_pending_dir(segments).await? {
-            trace!("vfs delete: drop pending directory marker");
-            self.clear_pending_dir(segments).await;
-            return Ok(());
-        }
-        // Deleting a real directory: accept it if the directory is empty.
-        if self.dir(segments).is_some() {
+        // Deleting a real directory: accept it if the directory is empty. An empty one may be a
+        // `MKCOL`'d `show_when_empty` tag, whose metadata row *is* the directory (§8.1).
+        if let Some(dir) = self.dir(segments) {
             if self.list_dir(segments).await?.is_empty() {
-                trace!("vfs delete: empty directory — no-op success");
-                self.clear_pending_dir(segments).await;
+                trace!("vfs delete: empty directory — drop its metadata row");
+                if let Some(tag) = dir.mirror_tag.clone() {
+                    self.delete_tag_metadata(&tag).await?;
+                }
                 return Ok(());
             }
             return Err(AppError::Conflict(
@@ -712,6 +706,7 @@ impl<'a> Vfs<'a> {
                 self.apply_remove_ops(&wb.on_remove, pid).await?;
             }
         }
+        self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(())
     }
@@ -722,13 +717,12 @@ impl<'a> Vfs<'a> {
         fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, from = %from.join("/"), to = %to.join("/"), picture_id)
     )]
     pub async fn move_(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
-        // Renaming a freshly-created (empty, pending) directory just moves its Redis marker —
-        // Finder creates "dossier sans titre" then immediately MOVEs it to the chosen name.
-        if self.dir(from).is_none() && self.is_pending_dir(from).await? {
-            trace!("vfs move: rename pending directory");
-            self.clear_pending_dir(from).await;
-            self.add_pending_dir(to).await?;
-            return Ok(());
+        // MOVE on a collection stays out of scope (99_ROADMAP "Advanced WebDAV"): renaming a
+        // directory in Finder does not write `webdav_dir_name` (34_tag_metadata.md §8).
+        if self.dir(from).is_some() {
+            return Err(AppError::MethodNotAllowed(
+                "renaming or moving a directory is not supported — rename the tag instead".into(),
+            ));
         }
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
@@ -755,7 +749,7 @@ impl<'a> Vfs<'a> {
         let dst_on_add = self.on_add_ops(&self.resolve_path(to_parent)?)?;
         self.apply_remove_ops(&src_wb.on_remove, pid).await?;
         self.apply_add_ops(&dst_on_add, pid).await?;
-        self.clear_pending_dir(to_parent).await;
+        self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(())
     }
@@ -774,18 +768,20 @@ impl<'a> Vfs<'a> {
         let dst_on_add = self.on_add_ops(&self.resolve_path(to_parent)?)?;
         trace!("vfs copy: add destination tags");
         self.apply_add_ops(&dst_on_add, pid).await?;
-        self.clear_pending_dir(to_parent).await;
+        self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(())
     }
 
-    /// MKCOL: directories are tag-derived. Under a writable `mirror` node a brand-new sub-path is
-    /// recorded as a transient Redis pending marker so PROPFIND shows the empty directory until a
-    /// file lands and mints the real tag (06_webdav.md §9). `static`/`query` structure is fixed,
-    /// and an already-existing path is rejected.
+    /// MKCOL: directories are tag-derived. Under a writable `mirror` node a brand-new sub-path
+    /// mints a `show_when_empty` tag-metadata row, so the directory persists and lists with no
+    /// pictures in it (34_tag_metadata.md §8.1). The requested name is kept verbatim as
+    /// `webdav_dir_name` (and as the display name), with the slugified label as the tag itself.
+    /// `static`/`query` structure is fixed, and an already-existing path is rejected.
     #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
-        if self.dir(segments).is_some() || self.is_pending_dir(segments).await? {
+        // The resolved tree already carries custom names, so this covers both (§8.1).
+        if self.dir(segments).is_some() {
             return Err(AppError::Conflict("directory already exists".into()));
         }
         // A drop inbox is a leaf — MKCOL inside it is not allowed (feature 18 §4).
@@ -796,16 +792,63 @@ impl<'a> Vfs<'a> {
                 ));
             }
         }
+        let (_, requested) = split_last(segments)?;
         match self.resolve_path(segments)? {
             PathResolution::Existing(_) => {
                 Err(AppError::Conflict("directory already exists".into()))
             }
-            PathResolution::MirrorExtension { .. } => {
-                trace!("vfs mkcol: recorded pending mirror sub-directory");
-                self.add_pending_dir(segments).await?;
+            PathResolution::MirrorExtension { tag } => {
+                // Fold onto an existing case-variant sibling, as the PUT path does (§10c) — a tag
+                // that already exists under a different display name is still a conflict.
+                let tag = self.fold_case(vec![tag]).await?.remove(0);
+                if self.tag_dir_exists(&tag) {
+                    return Err(AppError::Conflict("directory already exists".into()));
+                }
+                trace!(%tag, "vfs mkcol: minting an empty tag");
+                self.create_empty_tag(&tag, &requested).await?;
                 Ok(())
             }
         }
+    }
+
+    /// Whether any directory in the resolved tree already maps to `tag` — the slugified label of a
+    /// `MKCOL` can collide with an existing sibling whose displayed name differs.
+    fn tag_dir_exists(&self, tag: &str) -> bool {
+        fn walk(dir: &ResolvedDir, tag: &str) -> bool {
+            dir.mirror_tag.as_deref() == Some(tag) || dir.children.iter().any(|c| walk(c, tag))
+        }
+        walk(&self.root, tag)
+    }
+
+    /// Mint the `show_when_empty` metadata row that *is* a brand-new empty directory (§8.1).
+    async fn create_empty_tag(&self, tag: &str, requested_name: &str) -> Result<(), AppError> {
+        let webdav_dir_name = validate_webdav_dir_name(requested_name)
+            .map_err(AppError::BadRequest)
+            .ok();
+        let row = TagMetadata {
+            display_name: validate_display_name(requested_name).ok(),
+            show_when_empty: true,
+            webdav_dir_name,
+            ..TagMetadata::new(tag.to_string())
+        };
+        TagMetadataRepository::upsert_many(&self.state.db, self.user_id, &[row]).await?;
+        self.bust_tag_tree().await;
+        Ok(())
+    }
+
+    /// Drop the row behind an empty `MKCOL`'d directory (§8.1). A tag that still has pictures keeps
+    /// its decoration — only `show_when_empty` made the directory exist in the first place.
+    async fn delete_tag_metadata(&self, tag: &str) -> Result<(), AppError> {
+        TagMetadataRepository::delete_many(&self.state.db, self.user_id, &[tag.to_string()])
+            .await?;
+        self.bust_tag_tree().await;
+        Ok(())
+    }
+
+    /// WebDAV mints tags outside the API, so the cached tag tree has to be dropped here too
+    /// (34_tag_metadata.md §4 leaves the *read* path to the TTL, but a write we perform is known).
+    async fn bust_tag_tree(&self) {
+        crate::services::tag_metadata::bust_cache(self.state.cache.as_ref(), self.user_id).await;
     }
 
     // `user_id`/`picture_id` are already on the calling span (put_file/move_/copy record
@@ -865,78 +908,6 @@ impl<'a> Vfs<'a> {
             TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
         }
         Ok(())
-    }
-
-    // ── Pending mirror sub-directories (MKCOL, §9) ────────────────────────────────
-
-    /// Pending child directory names recorded under `parent` (06_webdav.md §9).
-    async fn pending_dir_children(&self, parent: &[String]) -> Result<Vec<String>, AppError> {
-        let key = path_key(parent);
-        Ok(cache_get_json::<Vec<String>>(
-            self.state.cache.as_ref(),
-            RedisKey::WebdavPendingDir(self.hierarchy_id, &key),
-        )
-        .await?
-        .unwrap_or_default())
-    }
-
-    /// Whether `segments` names a pending (MKCOL'd, not-yet-real) directory.
-    async fn is_pending_dir(&self, segments: &[String]) -> Result<bool, AppError> {
-        let Some((name, parent)) = segments.split_last() else {
-            return Ok(false);
-        };
-        Ok(self
-            .pending_dir_children(parent)
-            .await?
-            .iter()
-            .any(|n| n == name))
-    }
-
-    /// Record `segments` as a pending child directory of its parent.
-    async fn add_pending_dir(&self, segments: &[String]) -> Result<(), AppError> {
-        let (parent, name) = split_last(segments)?;
-        let key = path_key(parent);
-        let mut set = self.pending_dir_children(parent).await?;
-        if !set.iter().any(|n| n == &name) {
-            set.push(name);
-        }
-        cache_set_json_ex(
-            self.state.cache.as_ref(),
-            RedisKey::WebdavPendingDir(self.hierarchy_id, &key),
-            &set,
-            TRANSIENT_TTL_SECS,
-        )
-        .await
-    }
-
-    /// Best-effort: drop the pending marker for `segments` once a real file/tag makes it live.
-    async fn clear_pending_dir(&self, segments: &[String]) {
-        let Ok((parent, name)) = split_last(segments) else {
-            return;
-        };
-        let key = path_key(parent);
-        let Ok(mut set) = self.pending_dir_children(parent).await else {
-            return;
-        };
-        let before = set.len();
-        set.retain(|n| n != &name);
-        if set.len() == before {
-            return;
-        }
-        let cache = self.state.cache.as_ref();
-        let _ = if set.is_empty() {
-            cache
-                .del(RedisKey::WebdavPendingDir(self.hierarchy_id, &key))
-                .await
-        } else {
-            cache_set_json_ex(
-                cache,
-                RedisKey::WebdavPendingDir(self.hierarchy_id, &key),
-                &set,
-                TRANSIENT_TTL_SECS,
-            )
-            .await
-        };
     }
 
     // ── OS-junk sidecars (§11) ────────────────────────────────────────────────────

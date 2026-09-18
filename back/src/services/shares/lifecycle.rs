@@ -339,6 +339,9 @@ pub async fn create_outgoing_share(
     )
     .await?;
 
+    // The sender's decoration for the shared tag travels with the announcement (feature 34 §10.1).
+    let tag_meta = crate::services::tag_metadata::shared_meta_for(db, owner_id, tag_path).await?;
+
     let mut same_backend_incoming: Option<(Uuid, IncomingShare)> = None;
     let mut cross_instance_auto_accepted = false;
     if let Some(recipient_id) = recipient_local_id {
@@ -364,6 +367,11 @@ pub async fn create_outgoing_share(
             shareback_of,
         )
         .await?;
+        if let Some(meta) = &tag_meta {
+            let value = serde_json::to_value(meta)
+                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+            IncomingShareRepository::set_sender_tag_meta(&mut *tx, incoming.id, &value).await?;
+        }
         same_backend_incoming = Some((recipient_id, incoming));
     } else {
         // Cross-instance share: announce via federation protocol inside the transaction, so a
@@ -386,6 +394,7 @@ pub async fn create_outgoing_share(
                     allow_exif_edit,
                     future,
                     shareback_of,
+                    tag_meta: tag_meta.clone(),
                 },
             )
             .await?
@@ -427,6 +436,7 @@ pub async fn create_outgoing_share(
             if verified {
                 match auto_accept_shareback_local(
                     db,
+                    cache,
                     pipeline_waker,
                     recipient_id,
                     &incoming,
@@ -491,6 +501,8 @@ pub async fn accept_incoming_share(
         ShareStatus::Revoked | ShareStatus::Tombstoned => return Err(AppError::NotFound),
     }
 
+    seed_shared_tag_metadata(db, cache, &incoming).await?;
+
     let sender_local_id = find_local_user_id(
         cache,
         db,
@@ -537,6 +549,27 @@ pub async fn accept_incoming_share(
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(())
     }
+}
+
+/// Seed the recipient's `SharedToMe.<sender>.<subpath>` row from the sender's announced decoration,
+/// on **first accept only** (feature 34 §10.1). Only the `SharedToMe` node — a share-mapping target
+/// is a tag the recipient already owns and may already have named, so it is never seeded.
+pub(super) async fn seed_shared_tag_metadata(
+    db: &PgPool,
+    cache: &dyn Cache,
+    incoming: &IncomingShare,
+) -> Result<(), AppError> {
+    let (Some(path), Some(raw)) = (
+        incoming.shared_tag_path.as_deref(),
+        IncomingShareRepository::sender_tag_meta(db, incoming.id).await?,
+    ) else {
+        return Ok(());
+    };
+    let Ok(meta) = serde_json::from_value(raw) else {
+        return Ok(()); // a decoration we cannot read is not worth failing an accept over
+    };
+    crate::services::tag_metadata::seed_once(db, cache, incoming.recipient_id, path, &meta).await?;
+    Ok(())
 }
 
 /// Revoke an outgoing share owned by `owner_id`.

@@ -344,6 +344,7 @@ async fn aggregate_service_summary_and_exif(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_tags_apply_and_dry_run(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
+    let cache = common::InMemoryCache::new();
     let user = common::seed_user(&db, "alice", "pass").await;
     let p1 = common::seed_picture(&db, user).await;
     let p2 = common::seed_picture(&db, user).await;
@@ -351,7 +352,7 @@ async fn batch_tags_apply_and_dry_run(db: PgPool) {
 
     // Dry-run reports affected + added without mutating.
     let outcome =
-        tags::batch_edit_tags(&db, &waker, user, &sel, &["Holiday".to_string()], &[], true)
+        tags::batch_edit_tags(&db, &cache, &waker, user, &sel, &["Holiday".to_string()], &[], true)
             .await
             .unwrap();
     match outcome {
@@ -371,6 +372,7 @@ async fn batch_tags_apply_and_dry_run(db: PgPool) {
     // Apply.
     let outcome = tags::batch_edit_tags(
         &db,
+        &cache,
         &waker,
         user,
         &sel,
@@ -393,13 +395,15 @@ async fn batch_tags_apply_and_dry_run(db: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn batch_tags_remove_only_affects_manual(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
+    let cache = common::InMemoryCache::new();
     let user = common::seed_user(&db, "alice", "pass").await;
     let p1 = common::seed_picture_with_tag(&db, user, "Trip").await;
     let sel = ResolvedSelection::explicit(vec![p1]);
 
-    let outcome = tags::batch_edit_tags(&db, &waker, user, &sel, &[], &["Trip".to_string()], true)
-        .await
-        .unwrap();
+    let outcome =
+        tags::batch_edit_tags(&db, &cache, &waker, user, &sel, &[], &["Trip".to_string()], true)
+            .await
+            .unwrap();
     match outcome {
         TagBatchOutcome::DryRun(d) => {
             assert_eq!(d.removed, Some(1), "one picture has a manual Trip tag")

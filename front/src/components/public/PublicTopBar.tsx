@@ -117,9 +117,18 @@ export function PublicTopBar() {
                 <Logo/>
             </Link>
 
-            {/* Share info stands in for the gallery breadcrumb (title + owner; description on hover). */}
+            {/* Share info stands in for the gallery breadcrumb (title + owner; description on hover).
+                The tag's own display name and colour decorate it when the owner set them (feature
+                34 §10.1) — the share's `name`/`message` still describe *this act of sharing*. */}
             <div className="min-w-0 flex-1">
-                <h1 className="truncate text-sm font-semibold leading-tight" title={meta.message ?? meta.name}>{meta.name}</h1>
+                <h1 className="flex items-center gap-1.5 truncate text-sm font-semibold leading-tight"
+                    title={meta.tag_meta?.description ?? meta.message ?? meta.name}>
+                    {meta.tag_meta?.color && (
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{backgroundColor: meta.tag_meta.color}} aria-hidden/>
+                    )}
+                    <span className="truncate">{meta.tag_meta?.display_name || meta.name}</span>
+                </h1>
                 <p className="truncate text-xs leading-tight text-muted-foreground">
                     {meta.owner_display} · {meta.picture_count} photo{meta.picture_count === 1 ? '' : 's'}
                     {meta.view_only && ' · view-only'}

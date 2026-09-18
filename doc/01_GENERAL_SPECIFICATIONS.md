@@ -25,6 +25,13 @@ Tags are hierarchical paths. A picture can carry any number of tags.
   camera roll, a shared family camera, an anonymous public contribution). Creator defaults to the
   owner, is carried on share announcements, and is locally overrideable by a recipient. It is pure
   attribution — never an access principal. See `doc/features/26_picture_creator.md`.
+- A tag may carry optional **metadata** — a display name, description, colour, cover, date range,
+  ordering and view preferences, keyed `(user_id, tag_path)`. It is **purely decorative**: the
+  pipeline, hierarchy resolver, sharing and federation all continue to see only the stored tags, so
+  an absent row means exactly today's behaviour. The one deliberate exception is WebDAV directory
+  *naming* and the *existence* of an empty directory (both presentation of the path set, not
+  membership). Metadata also lets a tag exist with no pictures at all. See
+  `doc/features/34_tag_metadata.md`.
 
  --- 
 
@@ -320,6 +327,12 @@ Alice shares `/Photos/Travel/Alps` with Bob → `OutgoingShare` created, `Incomi
 `active`; pictures registered as `/SharedToMe/alice_AT_instance_DOT_com/Photos/Travel/Alps`. The picture's `owner` remains `@alice:instance.com`;
 Bob's client fetches blobs directly from Alice's backend. With `future: true`, new pictures Alice adds are announced automatically (if share is
 `active`), re-running Bob's pipeline with label `incoming-share`.
+
+Alice's **tag metadata** (display name, description, colour, cover) rides the share announcement and
+seeds Bob's row for the `/SharedToMe/…` node on **first accept only**, so Alice tidying her own label
+later never clobbers a name Bob chose. A share-mapping target is a tag Bob already owns and is never
+seeded. The cover travels as Alice's picture id and is resolved through `remote_picture_id`, or
+dropped when that picture is not in the share. See `doc/features/34_tag_metadata.md §10.1`.
 
 ### 6.3 Re-tagging received pictures
 

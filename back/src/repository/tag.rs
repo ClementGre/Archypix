@@ -17,9 +17,130 @@ pub struct TagAgg {
     pub sources: Vec<(TagSource, i64)>,
 }
 
+/// Live-or-trashed halves of one ancestor-expanded tag aggregate (feature 34 §4). `count` is
+/// ancestor-inclusive; `exact_count` counts only pictures stored at exactly this path. The dates are
+/// `MIN`/`MAX(captured_at)` and are what a tag's range derives from when it carries no override.
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TagCounts {
+    pub count: i64,
+    pub exact_count: i64,
+    pub date_from: Option<chrono::NaiveDateTime>,
+    pub date_to: Option<chrono::NaiveDateTime>,
+}
+
+impl TagCounts {
+    pub fn is_zero(&self) -> bool {
+        self.count == 0
+    }
+}
+
+/// One tag path with both halves. The trashed half is what lets the trash view keep its structure
+/// instead of losing every tag whose pictures are all deleted (feature 35 §10).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TagEnriched {
+    pub path: String,
+    pub live: TagCounts,
+    pub trashed: TagCounts,
+}
+
 pub struct TagRepository;
 
 impl TagRepository {
+    /// Whole-library ancestor-expanded aggregation (feature 34 §4): counts, exact counts, trashed
+    /// counts and both date ranges in one pass. Shaped like [`aggregate_tags`](Self::aggregate_tags)
+    /// — same `generate_series`/`subpath` prefix lateral — but over the user's whole library rather
+    /// than a selection, and with the six extra aggregates.
+    ///
+    /// No index makes this cheap (it is a full scan of the user's `tags` joined to `pictures`); the
+    /// caller's cache is what makes the cost affordable.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id))]
+    pub async fn list_tags_enriched<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+    ) -> Result<Vec<TagEnriched>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let rows = sqlx::query!(
+            r#"SELECT pfx.prefix::text AS "path!",
+                      COUNT(DISTINCT tg.picture_id) FILTER (WHERE p.deleted_at IS NULL)
+                          AS "count!",
+                      COUNT(DISTINCT tg.picture_id)
+                          FILTER (WHERE p.deleted_at IS NULL AND pfx.prefix = tg.tag_path)
+                          AS "exact_count!",
+                      COUNT(DISTINCT tg.picture_id) FILTER (WHERE p.deleted_at IS NOT NULL)
+                          AS "trashed_count!",
+                      COUNT(DISTINCT tg.picture_id)
+                          FILTER (WHERE p.deleted_at IS NOT NULL AND pfx.prefix = tg.tag_path)
+                          AS "trashed_exact_count!",
+                      MIN(p.captured_at) FILTER (WHERE p.deleted_at IS NULL) AS date_from,
+                      MAX(p.captured_at) FILTER (WHERE p.deleted_at IS NULL) AS date_to,
+                      MIN(p.captured_at) FILTER (WHERE p.deleted_at IS NOT NULL)
+                          AS trashed_date_from,
+                      MAX(p.captured_at) FILTER (WHERE p.deleted_at IS NOT NULL) AS trashed_date_to
+               FROM tags tg
+               JOIN pictures p ON p.id = tg.picture_id
+               CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix
+                                   FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx
+               WHERE p.local_user_id = $1
+               GROUP BY pfx.prefix
+               ORDER BY pfx.prefix"#,
+            local_user_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TagEnriched {
+                path: r.path,
+                live: TagCounts {
+                    count: r.count,
+                    exact_count: r.exact_count,
+                    date_from: r.date_from,
+                    date_to: r.date_to,
+                },
+                trashed: TagCounts {
+                    count: r.trashed_count,
+                    exact_count: r.trashed_exact_count,
+                    date_from: r.trashed_date_from,
+                    date_to: r.trashed_date_to,
+                },
+            })
+            .collect())
+    }
+
+    /// Whole-library path×source provenance — the heavier half of `GET /tags?with_sources=true`
+    /// (feature 34 §11). Kept out of the app-start payload.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id))]
+    pub async fn list_sources_by_user<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+    ) -> Result<Vec<(String, TagSource, i64)>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let rows = sqlx::query!(
+            r#"SELECT pfx.prefix::text AS "path!", tg.source AS "source!: TagSource",
+                      COUNT(DISTINCT tg.picture_id) AS "count!"
+               FROM tags tg
+               JOIN pictures p ON p.id = tg.picture_id
+               CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix
+                                   FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx
+               WHERE p.local_user_id = $1 AND p.deleted_at IS NULL
+               GROUP BY pfx.prefix, tg.source
+               ORDER BY pfx.prefix"#,
+            local_user_id,
+        )
+        .fetch_all(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.path, r.source, r.count))
+            .collect())
+    }
+
     #[tracing::instrument(skip(ex), fields(user_id = %local_user_id))]
     pub async fn list_paths_by_user<'e, E>(
         ex: E,

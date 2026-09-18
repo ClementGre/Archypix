@@ -1,0 +1,133 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days, hemisphere)\n               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30),\n                       COALESCE($4, 'north'::hemisphere))\n               ON CONFLICT (user_id) DO UPDATE SET\n                   versioning_mode = COALESCE($2, user_settings.versioning_mode),\n                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days),\n                   hemisphere = COALESCE($4, user_settings.hemisphere)\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                         trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                         created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "versioning_mode: VersioningMode",
+        "type_info": {
+          "Custom": {
+            "name": "versioning_mode",
+            "kind": {
+              "Enum": [
+                "none",
+                "original_copy",
+                "full_versioning"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "versioning_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "trash_retention_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "trash_retention_days"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "hemisphere: Hemisphere",
+        "type_info": {
+          "Custom": {
+            "name": "hemisphere",
+            "kind": {
+              "Enum": [
+                "north",
+                "south"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "hemisphere"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamp",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "versioning_mode",
+            "kind": {
+              "Enum": [
+                "none",
+                "original_copy",
+                "full_versioning"
+              ]
+            }
+          }
+        },
+        "Int4",
+        {
+          "Custom": {
+            "name": "hemisphere",
+            "kind": {
+              "Enum": [
+                "north",
+                "south"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2f466a96679232f1bdb6b1b94c5d6ed78ff3766c228e9dea91d653da76323a53"
+}

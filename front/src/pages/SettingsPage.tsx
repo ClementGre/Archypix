@@ -16,7 +16,7 @@ import {apiErrorMessage} from '@/api/client'
 import {useSettings, useStorage, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
 import {useInvitations, useInviteMutations, useInvites, useRegistrationInfo} from '@/hooks/useInvites'
 import {cn, formatBytes} from '@/lib/utils'
-import type {VersioningMode} from '@/lib/types'
+import type {Hemisphere, VersioningMode} from '@/lib/types'
 
 // ---------- Account (profile + library) — one form, explicit Save ----------
 
@@ -38,6 +38,7 @@ function AccountCard() {
     const [email, setEmail] = useState('')
     const [versioning, setVersioning] = useState<VersioningMode>('none')
     const [retention, setRetention] = useState(30)
+    const [hemisphere, setHemisphere] = useState<Hemisphere>('north')
 
     useEffect(() => {
         if (user) {
@@ -49,11 +50,16 @@ function AccountCard() {
         if (settings) {
             setVersioning(settings.versioning_mode)
             setRetention(settings.trash_retention_days)
+            setHemisphere(settings.hemisphere)
         }
     }, [settings])
 
     const profileDirty = !!user && (displayName !== user.display_name || email !== user.email)
-    const settingsDirty = !!settings && (versioning !== settings.versioning_mode || retention !== settings.trash_retention_days)
+    const settingsDirty =
+        !!settings &&
+        (versioning !== settings.versioning_mode ||
+            retention !== settings.trash_retention_days ||
+            hemisphere !== settings.hemisphere)
     const dirty = profileDirty || settingsDirty
     const busy = updateProfile.isPending || updateSettings.isPending
 
@@ -63,7 +69,13 @@ function AccountCard() {
         if (retention < 1 || retention > 3650) return toast.error('Retention must be between 1 and 3650 days')
         try {
             if (profileDirty) await updateProfile.mutateAsync({display_name: displayName.trim(), email: email.trim()})
-            if (settingsDirty) await updateSettings.mutateAsync({versioning_mode: versioning, trash_retention_days: retention})
+            if (settingsDirty) {
+                await updateSettings.mutateAsync({
+                    versioning_mode: versioning,
+                    trash_retention_days: retention,
+                    hemisphere,
+                })
+            }
             toast.success('Changes saved')
         } catch (e) {
             toast.error('Could not save changes', {description: apiErrorMessage(e)})
@@ -78,6 +90,7 @@ function AccountCard() {
         if (settings) {
             setVersioning(settings.versioning_mode)
             setRetention(settings.trash_retention_days)
+            setHemisphere(settings.hemisphere)
         }
     }
 
@@ -140,6 +153,26 @@ function AccountCard() {
                     </div>
                     <p className="text-xs text-muted-foreground">
                         How long your trashed photos are kept before being permanently deleted (1–3650).
+                    </p>
+                </div>
+
+                {/* Season grouping is the viewer's convention, applied to every photo regardless of
+                    where it was taken (feature 34 §3). */}
+                <div className="space-y-1.5">
+                    <Label htmlFor="hemisphere">Seasons</Label>
+                    <RadioGroup value={hemisphere} onValueChange={(v) => setHemisphere(v as Hemisphere)}
+                                className="flex gap-6">
+                        {(['north', 'south'] as const).map((h) => (
+                            <div key={h} className="flex items-center gap-2">
+                                <RadioGroupItem value={h} id={`hemisphere-${h}`}/>
+                                <Label htmlFor={`hemisphere-${h}`} className="font-normal">
+                                    {h === 'north' ? 'Northern hemisphere' : 'Southern hemisphere'}
+                                </Label>
+                            </div>
+                        ))}
+                    </RadioGroup>
+                    <p className="text-xs text-muted-foreground">
+                        Which months count as which season when photos are grouped by season.
                     </p>
                 </div>
 

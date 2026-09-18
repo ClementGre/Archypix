@@ -22,6 +22,7 @@ use crate::repository::picture::{
     PictureListFilter, PictureSortField, PresenceFilter, SortOrder, TrashFilter,
 };
 use crate::repository::tag::TagRepository;
+use crate::repository::tag_metadata::TagMetadataRepository;
 use crate::services::pictures::{PictureListResult, ThumbnailSize};
 use archypix_common::error::AppError;
 use archypix_common::settings::Settings;
@@ -525,6 +526,47 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
     }
 }
 
+/// Apply custom WebDAV directory names over a resolved tree (feature 34 §8).
+///
+/// Resolution is **custom `webdav_dir_name` → ltree label**, never `display_name`: a mounted client
+/// sees a directory rename as delete + create, so the folder name must not churn when a label is
+/// tidied. Only a directory still named after its bare ltree label is renamed — an authored
+/// `static`/`query`/`mirror` node name always wins. Every label in a sibling set is reserved before
+/// any custom name is applied, and matching is case-insensitive (06_webdav.md §10c), so a
+/// case-folding client can never end up with two directories it cannot tell apart.
+pub fn apply_custom_dir_names(dir: &mut ResolvedDir, custom: &HashMap<String, String>) {
+    if !custom.is_empty() {
+        let mut taken: HashSet<String> = dir
+            .children
+            .iter()
+            .map(|c| c.name.to_lowercase())
+            .collect();
+        // Path order, so a contested name resolves the same way on every host.
+        let mut order: Vec<usize> = (0..dir.children.len()).collect();
+        order.sort_by_key(|&i| dir.children[i].mirror_tag.clone().unwrap_or_default());
+        for i in order {
+            let child = &mut dir.children[i];
+            let Some(tag) = child.mirror_tag.clone() else {
+                continue;
+            };
+            if child.name != leaf_label(&tag) {
+                continue; // authored name — it wins over a custom one
+            }
+            let Some(name) = custom.get(&tag) else { continue };
+            if taken.insert(name.to_lowercase()) {
+                child.name = name.clone();
+            }
+        }
+    }
+    for child in &mut dir.children {
+        apply_custom_dir_names(child, custom);
+    }
+}
+
+fn leaf_label(ltree: &str) -> String {
+    ltree.rsplit('.').next().unwrap_or(ltree).to_string()
+}
+
 /// Navigate from `root` to the directory addressed by `segments` (directory names).
 pub fn find_dir<'a>(root: &'a ResolvedDir, segments: &[String]) -> Option<&'a ResolvedDir> {
     let mut cur = root;
@@ -638,8 +680,7 @@ pub async fn resolve_tree(
 ) -> Result<TreeResult, AppError> {
     let row = load_owned(db, user_id, hierarchy_id).await?;
     let config = parse_config(&row.config)?;
-    let distinct = TagRepository::list_paths_by_user(db, user_id).await?;
-    let root = resolve(&config, &distinct);
+    let root = resolve_for_user(db, user_id, &config).await?;
 
     let segments = split_path(path);
     let target = find_dir(&root, &segments).ok_or(AppError::NotFound)?;
@@ -694,8 +735,7 @@ pub async fn browse(
     }
     let row = load_owned(db, user_id, hierarchy_id).await?;
     let hierarchy_config = parse_config(&row.config)?;
-    let distinct = TagRepository::list_paths_by_user(db, user_id).await?;
-    let root = resolve(&hierarchy_config, &distinct);
+    let root = resolve_for_user(db, user_id, &hierarchy_config).await?;
 
     let segments = split_path(path);
     let target = find_dir(&root, &segments).ok_or(AppError::NotFound)?;
@@ -780,9 +820,36 @@ pub async fn load_resolved(
 ) -> Result<(HierarchyRow, HierarchyConfig, ResolvedDir), AppError> {
     let row = load_owned(db, user_id, hierarchy_id).await?;
     let config = parse_config(&row.config)?;
-    let distinct = TagRepository::list_paths_by_user(db, user_id).await?;
-    let root = resolve(&config, &distinct);
+    let root = resolve_for_user(db, user_id, &config).await?;
     Ok((row, config, root))
+}
+
+/// Resolve a config against the user's live tag set **plus** the feature-34 naming inputs: the
+/// deliberately-empty tags that must still render as directories (§8.1) and the custom
+/// `webdav_dir_name` overrides (§8). The one place both the WebDAV VFS and the webapp directory
+/// tree go through, so they never disagree about a directory's name.
+pub async fn resolve_for_user(
+    db: &PgPool,
+    user_id: Uuid,
+    config: &HierarchyConfig,
+) -> Result<ResolvedDir, AppError> {
+    let mut distinct = TagRepository::list_paths_by_user(db, user_id).await?;
+    let meta = TagMetadataRepository::list_for_user(db, user_id).await?;
+    let mut custom: HashMap<String, String> = HashMap::new();
+    for m in meta {
+        if m.tag_path.is_empty() {
+            continue; // the root view is not a directory
+        }
+        if m.show_when_empty && !distinct.contains(&m.tag_path) {
+            distinct.push(m.tag_path.clone());
+        }
+        if let Some(name) = m.webdav_dir_name {
+            custom.insert(m.tag_path, name);
+        }
+    }
+    let mut root = resolve(config, &distinct);
+    apply_custom_dir_names(&mut root, &custom);
+    Ok(root)
 }
 
 /// Build a [`PictureListFilter`] that returns up to `page_size` pictures matching `pred`.

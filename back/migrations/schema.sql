@@ -1,6 +1,11 @@
 
 CREATE SCHEMA public;
 
+CREATE TYPE public.hemisphere AS ENUM (
+    'north',
+    'south'
+);
+
 CREATE TYPE public.job_status AS ENUM (
     'pending',
     'processing',
@@ -58,12 +63,31 @@ CREATE TYPE public.share_status AS ENUM (
     'tombstoned'
 );
 
+CREATE TYPE public.tag_order AS ENUM (
+    'manual',
+    'date_from',
+    'date_to',
+    'path',
+    'display_name'
+);
+
 CREATE TYPE public.tag_source AS ENUM (
     'manual',
     'rule',
     'segment',
     'share_mapping',
     'incoming_share'
+);
+
+CREATE TYPE public.tag_subtag_placement AS ENUM (
+    'top',
+    'in_sections'
+);
+
+CREATE TYPE public.tag_view_mode AS ENUM (
+    'direct',
+    'subtag',
+    'all'
 );
 
 CREATE TYPE public.versioning_mode AS ENUM (
@@ -273,7 +297,8 @@ CREATE TABLE public.incoming_shares (
     last_announcement_received_at timestamp without time zone,
     shareback_of uuid,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    revoked_at timestamp without time zone
+    revoked_at timestamp without time zone,
+    sender_tag_meta jsonb
 );
 
 CREATE TABLE public.invites (
@@ -413,6 +438,26 @@ CREATE TABLE public.share_announcements (
     announced_updated_at timestamp without time zone
 );
 
+CREATE TABLE public.tag_metadata (
+    user_id uuid NOT NULL,
+    tag_path public.ltree NOT NULL,
+    display_name character varying(128),
+    description character varying(2000),
+    cover_picture_id uuid,
+    color character varying(16),
+    date_from timestamp without time zone,
+    date_to timestamp without time zone,
+    show_when_empty boolean DEFAULT false NOT NULL,
+    sort_index integer,
+    children_order public.tag_order DEFAULT 'manual'::public.tag_order NOT NULL,
+    view_mode public.tag_view_mode DEFAULT 'subtag'::public.tag_view_mode NOT NULL,
+    subtag_placement public.tag_subtag_placement,
+    "grouping" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    webdav_dir_name character varying(255),
+    created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+);
+
 CREATE TABLE public.tagging_services (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     owner_id uuid NOT NULL,
@@ -452,7 +497,8 @@ CREATE TABLE public.user_settings (
     versioning_mode public.versioning_mode DEFAULT 'none'::public.versioning_mode NOT NULL,
     trash_retention_days integer DEFAULT 30 NOT NULL,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    hemisphere public.hemisphere DEFAULT 'north'::public.hemisphere NOT NULL
 );
 
 CREATE TABLE public.user_storage (
@@ -511,6 +557,9 @@ ALTER TABLE ONLY public.refresh_tokens
 
 ALTER TABLE ONLY public.share_announcements
     ADD CONSTRAINT share_announcements_pkey PRIMARY KEY (outgoing_share_id, picture_id);
+
+ALTER TABLE ONLY public.tag_metadata
+    ADD CONSTRAINT tag_metadata_pkey PRIMARY KEY (user_id, tag_path);
 
 ALTER TABLE ONLY public.tagging_services
     ADD CONSTRAINT tagging_services_pkey PRIMARY KEY (id);
@@ -616,6 +665,10 @@ CREATE INDEX idx_share_announcements_picture ON public.share_announcements USING
 
 CREATE INDEX idx_share_announcements_token ON public.share_announcements USING btree (picture_token);
 
+CREATE INDEX idx_tag_metadata_cover ON public.tag_metadata USING btree (cover_picture_id) WHERE (cover_picture_id IS NOT NULL);
+
+CREATE INDEX idx_tag_metadata_path ON public.tag_metadata USING gist (tag_path);
+
 CREATE INDEX idx_tagging_services_enabled ON public.tagging_services USING btree (enabled);
 
 CREATE INDEX idx_tagging_services_mapping_share ON public.tagging_services USING btree (((config ->> 'incoming_share_id'::text))) WHERE (service_type = 'shared_tag_mapping'::public.service_type);
@@ -640,8 +693,7 @@ CREATE INDEX idx_users_username ON public.users USING btree (username);
 
 CREATE UNIQUE INDEX uq_edit_picture_inflight ON public.jobs USING btree (picture_id) WHERE ((job_type = 'edit_picture'::public.job_type) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
 
-CREATE UNIQUE INDEX uq_jobs_idempotency_live ON public.jobs USING btree (owner_id, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND
-                                                                                                           (status = ANY (ARRAY ['pending'::public.job_status, 'processing'::public.job_status])));
+CREATE UNIQUE INDEX uq_jobs_idempotency_live ON public.jobs USING btree (owner_id, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::public.job_status, 'processing'::public.job_status])));
 
 CREATE UNIQUE INDEX uq_outgoing_share ON public.outgoing_shares USING btree (owner_id, tag_path, recipient_username, recipient_instance) WHERE (status <> ALL (ARRAY['revoked'::public.share_status, 'tombstoned'::public.share_status]));
 
@@ -708,6 +760,12 @@ ALTER TABLE ONLY public.refresh_tokens
 
 ALTER TABLE ONLY public.share_announcements
     ADD CONSTRAINT share_announcements_outgoing_share_id_fkey FOREIGN KEY (outgoing_share_id) REFERENCES public.outgoing_shares(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.tag_metadata
+    ADD CONSTRAINT tag_metadata_cover_picture_id_fkey FOREIGN KEY (cover_picture_id) REFERENCES public.pictures(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.tag_metadata
+    ADD CONSTRAINT tag_metadata_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.tagging_services
     ADD CONSTRAINT tagging_services_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;

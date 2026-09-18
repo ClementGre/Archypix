@@ -7,8 +7,20 @@ pub struct UserSettings {
     pub user_id: Uuid,
     pub versioning_mode: VersioningMode,
     pub trash_retention_days: i32,
+    /// Season grouping convention (feature 34 §3) — the *viewer's*, applied to every photo
+    /// regardless of where it was taken.
+    pub hemisphere: Hemisphere,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "hemisphere", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum Hemisphere {
+    #[default]
+    North,
+    South,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
