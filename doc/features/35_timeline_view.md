@@ -1,52 +1,11 @@
 # Timeline view
 
-## 0. Handoff — what feature 34 already landed
+## 0. Status
 
-Feature 34 shipped (commit `feat: tag metadata (feature 34)`). Read **34 §16** first: it lists the
-deviations taken and what is stored-but-unwired. The short version for this feature:
-
-**Already there, build on it — do not rebuild.**
-
-| Need | Where |
-|---|---|
-| the app-start payload (§6 row 1) | `GET /tags` → `TagListItem[]`; `useAllTags()` (5-min refetch), `useTagTree(trash)` |
-| display names, ordering, counts | `front/src/lib/tagTree.ts` — `display`, `buildTagTree`, `sortSiblings`, `countsFor`, `effectiveDate`, `reorderWrites`, `collidingNames`, `walkTags`, `TrashView` |
-| the §12.7 write queue | `front/src/lib/tagMetaQueue.ts` + `useWriteTagMeta()` / `flushTagMetaFor()` |
-| season bucketing's hemisphere | `user_settings.hemisphere`, in `useSettings()` and the settings UI |
-
-`useWriteTagMeta()({ tag_path, view_mode, grouping, subtag_placement })` **already works end to end**
-— validation, 60 s coalescing, unload flush, prune-if-all-default, root row included. Work-breakdown
-item 7 is therefore only the *UI that calls it*.
-
-**Stored, validated and served, but with no UI yet** — this feature is their first consumer:
-`view_mode`, `grouping`, `subtag_placement`, `cover_picture_id` (the edit dialog can only *clear* a
-cover; §5's blocks need a picker, or keep 34 §2's first-loaded-photo fallback). `children_order` has
-one control: entering reorder mode switches it to `manual`.
-
-**Still to do exactly as written here.** Item 1 (`exa[]` removal — `TagTree` still has the `(=)`
-"Include exactly" control, and the include↔exact chip toggle now lives in `TagFilterBar`), item 2
-(`file_size` / `updated_at` on `PictureListItem`, and single-valued wire `exact`), items 3–6, 8, 9.
-
-**Gotchas found while building 34.**
-
-- **Grouping validation is strict and server-side.** Unknown keys are rejected (`400`), and each kind
-  must suit its field: the three date fields take `none|year|quarter|season|month`, `filename` takes
-  `none|prefix{chars 1..=16}`, and `file_size`/`geo_near`/`time_near` take `none|magnitude`. The TS
-  mirror is `Grouping`/`GroupingKind` in `front/src/lib/types.ts`; keep the two in step.
-- **`subtag_placement`'s derived default is not implemented.** The column and its `null` are stored;
-  the §3.4 resolution table (`in_sections` for a date sort at a nested tag, `top` at the root and for
-  every non-date sort) has no helper yet — `tagTree.ts` deliberately stops at ordering.
-- **Read dates through `effectiveDate(node, side, trash)`, not `item.date_from`.** An override
-  replaces the derived value on that side only.
-- **The root entry is always returned with zero counts**, not omitted — never read root counts.
-- **Trash structure is already resolved client-side.** The server returns tags whose pictures are all
-  trashed; `isVisible()` in `tagTree.ts` hides them unless the active `TrashView` is `include`/`only`,
-  and `TagTree` passes `params.trash` through. §10's trash-view behaviour falls out of that.
-- **Empty (`show_when_empty`) tags are ancestor-expanded server-side**, so an intermediate node always
-  exists — but `buildTagTree` synthesizes missing ones anyway; keep that if you rebuild it.
-- **`PictureListItem` still carries no tags** (§6's premise holds, unchanged).
-- The tag tree's rows are now photo **drop targets** (34 §9) and its `…` menu gained New subtag /
-  Reorder subtags / Edit tag — factor in that a second drag system on those rows would be ambiguous.
+Shipped. Built on feature 34's app-start tag payload, `lib/tagTree.ts` resolution helpers and the
+§12.7 write queue — see **34 §16** for what that feature deferred to this one (`view_mode`,
+`grouping`, `subtag_placement` and the cover, all stored and served but with no UI until now).
+Deviations taken here are in **§13**.
 
 ## 1. Overview & goals
 
@@ -362,37 +321,87 @@ and accepting degraded interpolation — is a possible later feature, deliberate
 
 ## 11. Doc updates
 
-- `05_FRONTEND_ARCHITECTURE.md §8` — grouped rendering, the View dropdown and its stickiness
-  indicator, the merged two-column Sort + Group by menu, the `GroupedGridContext`, and the reduced
-  param model in §9's gotchas.
-- `06_API_REFERENCE.md` — `exact` becomes single-valued on `GET /pictures`; `file_size` and
-  `updated_at` added to `PictureListItem` (§10 Shared Type Reference too).
-- `features/29_query_proximity_and_missing_filter.md` — note that `distance_m` now also feeds
-  `geo_near` bucketing.
-- `features/30_photos_fix_tools.md` — note the grouping **and content-mode** exclusivity (§9).
-- `99_ROADMAP.md` — entry.
+- [x] `05_FRONTEND_ARCHITECTURE.md §8` — a *Structured browse* subsection (the recursive rule, the
+  bucketers, block placement and laziness, the `GroupedGridContext`, the fix-mode pin); §5's param
+  table and §7's tag-tree/`TagFilterBar`/toolbar entries for the reduced param model, the **View**
+  dropdown and the merged Sort + Group by menu.
+- [x] `06_API_REFERENCE.md §6.3` — `exact` is single-valued on `GET /pictures`; `file_size` and
+  `updated_at` added to `PictureListItem`.
+- [x] `features/29_query_proximity_and_missing_filter.md §6` — `distance_m` now also feeds `geo_near`
+  bucketing.
+- [x] `features/30_photos_fix_tools.md §3` — the grouping **and content-mode** exclusivity (§9).
+- [x] `features/34_tag_metadata.md §16.1` — the deferred view controls and cover picker now exist.
+- [x] `99_ROADMAP.md` — entry moved to Done.
 
 ## 12. Work breakdown
 
-1. `useGalleryParams` rewrite: `tag` + `inc[]` + `exc[]`; drop `exa[]` (and the `TagFilterBar`
-   include↔exact chip toggle); `selectionFilter` per content mode, root included (§7).
-2. Backend: `build_flat_predicate` takes a single `exact` (drop the multi-value wire param); add
-   `file_size` and `updated_at` to `PictureListItem` and its row mapping (§6).
-3. `GroupedGridContext` — registration with per-section `fetchNextPage`, flattened visible order, and
-   rewiring `orderedIds` / `useGridItems` / `Lightbox.loadMore` onto it (§8).
-4. Grouping engine, one bucketer per sort field: date (`year`/`quarter`/`season`/`month`),
-   `filename` → `prefix(N)`, and `magnitude` over three ladders (`file_size` bytes, `geo_near`
-   `distance_m`, `time_near` `|captured_at − near_time|`), each with its null bucket. Place children
-   by the sort-leading endpoint; flush undated; honour `subtag_placement`.
-5. `SubtagBlock` (collapsed card) and `SubtagSection` (expanded, recursive) with the
-   `IntersectionObserver` load gate and the off-screen page release.
-6. **View** dropdown in the grid header with the non-default indicator; merge `SortMenu` into the
-   two-column Sort + Group by menu whose bucket column follows the selected field; remove the `(=)`
-   control from `TagTree`.
-7. Persist `view_mode` / `grouping` / `subtag_placement` through the 34 §4.1 write queue (60 s
-   debounce, visibility and unload flush, prune-if-all-default), root row included.
-8. Fix-mode exclusivity guards for grouping **and** content mode, both directions, with reasons (§9).
-9. Tests: root view (untagged as `direct`, namespaces as blocks), no-direct-photos degeneracy, child
-   placement by the sort-leading endpoint, undated flush, null buckets, `top` vs `in_sections`,
-   per-sort-field grouping round-trip, shift-click across groups, lightbox paging across a section
-   boundary, selection preservation across `subtag`↔`all`, trash-view structure.
+1. [x] `useGalleryParams` rewrite: `tag` + `inc[]` + `exc[]`; `exa[]` dropped (and the `TagFilterBar`
+   include↔exact chip toggle); `selectionFilter` moved to `useTimelineView`, per content mode, root
+   included (§7).
+2. [x] Backend: `build_flat_predicate` takes a single `exact`; `file_size` and `updated_at` added to
+   `PictureListItem` and its row mapping (§6).
+3. [x] `GroupedGridContext` — registration with per-section `fetchNextPage`, flattened visible order,
+   and `selectTo` / `useGridItems` / `Lightbox.loadMore` rewired onto it (§8).
+4. [x] Grouping engine (`lib/grouping.ts`), one bucketer per sort field, each with its null bucket;
+   children placed by the sort-leading endpoint, undated flushed, `subtag_placement` honoured
+   (`lib/timeline.ts`).
+5. [x] `SubtagBlock` (collapsed card) and the recursive `TagStream` with the `IntersectionObserver`
+   load gate.
+6. [x] **View** dropdown with the non-default indicator + reset; `SortMenu` merged into the
+   two-column Sort + Group by menu; the `(=)` control removed from `TagTree`.
+7. [x] `view_mode` / `grouping` / `subtag_placement` persisted through the 34 §4.1 write queue, root
+   row included.
+8. [x] Fix-mode exclusivity guards for grouping **and** content mode, with reasons (§9, §13).
+9. [x] Tests: `build_flat_predicate`'s single-valued `exact` (and that `untagged` still rejects a tag
+   arm) as unit tests in `services/pictures.rs`. The rendering rules are frontend-only and the
+   frontend has no test runner (34 §15.12), so they are covered by the build.
+
+## 13. Deviations taken while implementing
+
+- **Fix mode pins the view; it does not disable the fix entry points.** §9 says "the fix entry points
+  are disabled while a grouped view is active", but grouping defaults to `month` for every date sort,
+  so that would make fix mode unreachable from a default view. Both overrides are applied and stated
+  in a header strip instead, and the exclusivity is enforced the other way: grouping is forced off and
+  the Sort menu's bucket column disappears while `fix` is set.
+- **Fix mode rules out `subtag` only, not `direct`.** §9 forces `view_mode` to `all`, but its reason —
+  `useFixAnchors` needs a flat stream of neighbours — is satisfied by `direct` too, and narrowing to
+  one tag's own photos is often exactly the set being fixed. Only `subtag` is unavailable, and it is
+  the stored value that comes back on exit.
+- **A stored view is not flagged as "non-default".** §4 wants the header to state a non-`subtag` mode
+  with a one-click reset. Once the mode genuinely persists, highlighting it and offering an X reads as
+  an anomaly to undo rather than a preference. The **View** trigger simply names the active mode, and
+  the Sort trigger keeps its highlight only for a proximity sort, which *is* transient URL state.
+- **An expanded block replaces its tile** instead of staying in the row with its stream spliced
+  underneath (§5's "opens full-width immediately after the block row"). Leaving the tile in place made
+  the panel look like a second, separate object; the same card widened reads as one thing opening. A
+  corner **↗** covers the other intent — browsing *into* the tag as the view root.
+- **Blocks lay out on a grid, not the photo flex row.** §5 puts blocks "in the same flow as the
+  photos". Growing them like photos made a short last row wider than the rows above it; an `auto-fill`
+  track per tile keeps every block the same size, which is the point of a block having no aspect ratio.
+- **Headers stack instead of overlapping.** §5 only asks for sticky section headers. With the
+  recursion those pin at the same offset and cover each other, so every level is handed the
+  accumulated height of the levels above it and z-index decreases with depth. This is also why
+  spacing is a `gap` rather than a margin (a margin offsets where a sticky header pins), why a header
+  bleeds out of its container's horizontal padding (inset by it, a pinned header reads as a floating
+  bar with the page down either side), why the grid's padding moved to a wrapper *inside* the scroll
+  container (padding on the scrollport itself holds a pinned header off the top), and why an expanded
+  card cannot carry `overflow-hidden` (it would become the scrollport of its own headers).
+- **Child buckets extend the section list.** §5 places a child "in the section its date falls into",
+  but §2 derives sections from direct photos — a child dated in a month T has no photos in would have
+  nowhere to go. `mergeSections` adds an empty section for each such bucket, in sort order. Date
+  bucket keys are zero-padded so key order *is* chronological order.
+- **Off-screen sections are not released.** §5/§8 want a scrolled-away section to release its pages
+  and keep only its registration. Unmounting the query would churn the flattened order, so expanded
+  children simply mount lazily and stay; the visibility gate already keeps a deep expand-all from
+  firing every request at once. Revisit if a very deep tree gets heavy.
+- **The root never auto-expands.** §5 auto-expands children when `exact_count === 0`, but the root
+  entry always comes back with zero counts (34 §16), so reading it would expand every namespace on
+  first paint.
+- **One rendering path, including the flat view.** `all` + no grouping is the degenerate case of the
+  same recursion, so `PhotoGrid` has no separate flat branch — only hierarchy browse (§10.9) keeps
+  its own, and it registers as a single section so selection and the lightbox stay uniform.
+- **`children_order` gained explicit controls.** 34 §7 only ever switched it to `manual` on entering
+  reorder mode. A *Sort subtags by* submenu (custom / display name / tag name / start date / end
+  date) now writes it directly — the stored values existed, nothing surfaced them.
+- **The cover picker shipped here** rather than staying deferred (34 §16.1): subtag blocks are the
+  first thing that renders a cover, so "clear only" would have been visible as a missing feature.

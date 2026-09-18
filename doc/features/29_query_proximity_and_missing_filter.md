@@ -168,6 +168,9 @@ badge and the ordering never disagree). `None` off a geo sort and for ungeotagge
 already knows `near_time` + each row's `captured_at` (so a *time* delta is client-derivable), but the
 list item never exposes raw GPS coordinates, so the geo distance can only come from the server.
 
+`distance_m` now has a second consumer: feature 35 §4 buckets it into the `geo_near` grouping ladder
+(<10 m … >1000 km), for the same reason — the client cannot derive it.
+
 ## 7. Selection threading
 
 `PictureFilter` (`services/selection.rs`) gains `gps`/`capture_date`/`missing_any` so a

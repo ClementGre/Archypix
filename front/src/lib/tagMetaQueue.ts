@@ -34,6 +34,12 @@ export function pendingTagMeta(path: string): TagMetaPatch | undefined {
     return pending.get(path)
 }
 
+/** Every unflushed write. The tag payload is overlaid with these so a refetch — which the tree
+ *  fires on most interactions — cannot revert a change the user just made (§4.1). */
+export function allPendingTagMeta(): TagMetaPatch[] {
+    return [...pending.values()]
+}
+
 export function onTagMetaQueueChange(listener: Listener): () => void {
     listeners.add(listener)
     return () => listeners.delete(listener)

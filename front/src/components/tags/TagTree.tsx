@@ -7,7 +7,6 @@ import {
     ChevronDown,
     ChevronRight,
     ChevronUp,
-    Equal,
     Hash,
     Images,
     Link2,
@@ -21,7 +20,12 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
     DropdownMenuSeparator,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {useBatchEditTags, useTagTree, useWriteTagMeta} from '@/hooks/useTags'
@@ -34,7 +38,8 @@ import {PublicShareDialog} from '@/components/shares/PublicShareDialog'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {queryKeys} from '@/lib/constants'
-import {collidingNames, countsFor, reorderWrites, type TagNode, type TrashView} from '@/lib/tagTree'
+import {collidingNames, countsFor, initialOrderWrites, reorderWrites, type TagNode, type TrashView} from '@/lib/tagTree'
+import type {TagOrder} from '@/lib/types'
 import {flushTagMetaFor} from '@/lib/tagMetaQueue'
 import {areSiblings, useTagDragStore} from '@/stores/tagDrag'
 import {cn, TagPath} from '@/lib/utils'
@@ -43,9 +48,17 @@ import {toast} from 'sonner'
 /** Membership of a tag in the current compound filter. */
 interface TagState {
     included: boolean
-    exact: boolean
     excluded: boolean
 }
+
+/** How a parent's children sort (34 §7). Manual and alphabetical coincide until the first drag. */
+const ORDERS: { value: TagOrder; label: string }[] = [
+    {value: 'manual', label: 'Custom order'},
+    {value: 'display_name', label: 'Display name'},
+    {value: 'path', label: 'Tag name'},
+    {value: 'date_from', label: 'Start date'},
+    {value: 'date_to', label: 'End date'},
+]
 
 function ancestorsOf(path: string | null): Set<string> {
     const set = new Set<string>()
@@ -62,43 +75,90 @@ interface TagActions {
     pick: (path: string) => void
     quickToggleInclude: (path: string) => void
     toggleInclude: (path: string) => void
-    toggleExact: (path: string) => void
     toggleExclude: (path: string) => void
     remove: (path: string) => void
     edit: (path: string) => void
     newChild: (path: string | null) => void
     reorder: (path: string | null) => void
+    setOrder: (path: string | null, order: TagOrder) => void
     share: (path: string) => void
     publicShare: (path: string) => void
     drop: (target: TagNode) => void
     move: (siblings: TagNode[], index: number, delta: number) => void
 }
 
-/** Per-tag filter toggles plus the structural actions, in a `…` menu. */
-function TagMenu({state, actions, node}: { state: TagState; actions: TagActions; node: TagNode }) {
+/** The order choices themselves; `manual` additionally offers the explicit reorder mode (34 §7). */
+function OrderChoices({path, current, actions}: {
+    path: string | null
+    current: TagOrder
+    actions: TagActions
+}) {
+    return (
+        <>
+            <DropdownMenuRadioGroup value={current} onValueChange={(v) => actions.setOrder(path, v as TagOrder)}>
+                {ORDERS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>
+                ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator/>
+            <DropdownMenuItem onClick={() => actions.reorder(path)}>
+                <ArrowDownUp className="mr-2 h-3.5 w-3.5"/>
+                Reorder manually…
+            </DropdownMenuItem>
+        </>
+    )
+}
+
+/** The same choices as a submenu, for a node's `…` menu. */
+function OrderSubmenu(props: { path: string | null; current: TagOrder; actions: TagActions }) {
+    return (
+        <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+                <ArrowDownUp className="mr-2 h-3.5 w-3.5"/>
+                Sort subtags by
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+                <OrderChoices {...props} />
+            </DropdownMenuSubContent>
+        </DropdownMenuSub>
+    )
+}
+
+/** Per-tag filter toggles plus the structural actions, in a `…` menu. Replaces by the pictures count when not hovered/small screen */
+function TagMenu({count, state, actions, node}: { count: number, state: TagState; actions: TagActions; node: TagNode }) {
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
                 <button
                     onClick={(e) => e.stopPropagation()}
-                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                    // `min-w-5` so a wide count is not clipped by the icon's footprint; the group is
+                    // what lets the two swap while the menu is open.
+                    className="group/menu flex h-5 min-w-5 shrink-0 items-center justify-center rounded px-0.5 text-muted-foreground/60 hover:bg-muted hover:text-foreground"
                     aria-label="Tag options"
                 >
-                    <MoreHorizontal className="h-3.5 w-3.5"/>
+                    <span className="hidden text-[11px] tabular-nums text-muted-foreground md:inline md:group-hover:hidden group-data-[state=open]/menu:md:hidden">
+                        {count}
+                    </span>
+                    {/* Always visible on touch, where there is no hover to reveal it. */}
+                    <MoreHorizontal className="h-3.5 w-3.5 md:hidden md:group-hover:block group-data-[state=open]/menu:md:block"/>
                 </button>
             </DropdownMenuTrigger>
             {/* The content is portaled but stays in the React tree under the row's onClick, so item
                 clicks would otherwise bubble to `pick` and reset the filter — stop them here. */}
-            <DropdownMenuContent align="start" className="w-52" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuContent align="start" className="w-56" onClick={(e) => e.stopPropagation()}>
+                {/* The row shows only the display name, so this is where the ltree path stays
+                    visible — the rule is that it is never hidden on a surface that writes it (§5). */}
+                <div className="border-b border-border px-2 pb-1.5">
+                    <p className="truncate text-xs font-medium">{node.name}</p>
+                    <p className="truncate font-mono text-[10px] text-muted-foreground"
+                       title={TagPath.toDisplay(node.path)}>
+                        {TagPath.toDisplay(node.path)}
+                    </p>
+                </div>
                 <DropdownMenuItem onClick={() => actions.toggleInclude(node.path)}>
                     <Plus className="mr-2 h-3.5 w-3.5"/>
                     {state.included ? 'Remove include' : 'Include'}
                     {state.included && <Check className="ml-auto h-3.5 w-3.5"/>}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => actions.toggleExact(node.path)}>
-                    <Equal className="mr-2 h-3.5 w-3.5"/>
-                    {state.exact ? 'Remove exact' : 'Include exactly'}
-                    {state.exact && <Check className="ml-auto h-3.5 w-3.5"/>}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => actions.toggleExclude(node.path)}>
                     <Ban className="mr-2 h-3.5 w-3.5"/>
@@ -110,10 +170,7 @@ function TagMenu({state, actions, node}: { state: TagState; actions: TagActions;
                     <Plus className="mr-2 h-3.5 w-3.5"/>
                     New subtag…
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => actions.reorder(node.path)}>
-                    <ArrowDownUp className="mr-2 h-3.5 w-3.5"/>
-                    Reorder subtags
-                </DropdownMenuItem>
+                <OrderSubmenu path={node.path} current={node.meta?.children_order ?? 'manual'} actions={actions}/>
                 <DropdownMenuItem onClick={() => actions.share(node.path)}>
                     <Share2 className="mr-2 h-3.5 w-3.5"/>
                     Share this tag…
@@ -173,10 +230,9 @@ function TreeRow({
     const reordering = reorderUnder !== null && reorderUnder === parentPath
     // `SharedToMe.*` is structural — photos can never be dropped onto it (§9).
     const droppable = dragging && !TagPath.isProtected(node.path)
-    const empty = countsFor(node, trash).count === 0
-    // A display name that hides the label is shown with the label beside it — and a sibling
-    // collision forces the label visible even when it normally would not be (§5).
-    const showLabel = node.name !== node.label || collisions.has(node.name)
+    const count = countsFor(node, trash).count
+    const empty = count === 0
+    const color = node.meta?.color ?? null
 
     return (
         <div>
@@ -211,16 +267,22 @@ function TreeRow({
                     }
                 }}
                 className={cn(
-                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-1 text-sm',
+                    'group flex cursor-pointer items-center gap-1 rounded-md border-l-2 py-1 pr-1 text-sm',
                     st.excluded
                         ? 'text-destructive/80 line-through'
-                        : st.included || st.exact
+                        : st.included
                             ? 'bg-primary/10 text-primary'
                             : 'text-foreground hover:bg-muted',
                     over && 'ring-2 ring-primary ring-inset',
                     dragging && !droppable && 'cursor-not-allowed opacity-50',
                 )}
-                style={{paddingLeft: depth * 12 + 4}}
+                // The colour reads as a left accent on the row plus a tint on the hash, rather than
+                // a bare dot standing in for the icon.
+                style={{
+                    paddingLeft: depth * 12 + 4,
+                    borderLeftColor: color ?? 'transparent',
+                    ...(color && !st.excluded && !st.included ? {backgroundColor: `${color}14`} : {}),
+                }}
             >
                 <button
                     onClick={(e) => {
@@ -233,26 +295,24 @@ function TreeRow({
                     <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90')}/>
                 </button>
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                    {node.meta?.color ? (
-                        <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{backgroundColor: node.meta.color}}
-                            aria-hidden
-                        />
-                    ) : st.exact ? (
-                        <Equal className="h-3.5 w-3.5 shrink-0 opacity-70" aria-label="exact"/>
-                    ) : st.excluded ? (
+                    {st.excluded ? (
                         <Ban className="h-3.5 w-3.5 shrink-0 opacity-70" aria-label="excluded"/>
                     ) : (
-                        <Hash className="h-3.5 w-3.5 shrink-0 opacity-60"/>
+                        <Hash
+                            className={cn('h-3.5 w-3.5 shrink-0', color ? 'opacity-100' : 'opacity-60')}
+                            style={color ? {color} : undefined}
+                        />
                     )}
                     <span className={cn('truncate', empty && 'text-muted-foreground')}>{node.name}</span>
-                    {showLabel && (
+                    {/* Two identically-named siblings must not be indistinguishable (§5) — that is
+                        the one case where the ltree label still shows on the row. */}
+                    {collisions.has(node.name) && (
                         <span className="shrink-0 truncate text-[10px] text-muted-foreground/70">{node.label}</span>
                     )}
                 </div>
                 <TagShareBadge path={node.path} info={shareInfo(node.path)} onShare={actions.share}/>
-                {reordering ? (
+
+                {reordering && (
                     <span className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
                         <button
                             className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
@@ -271,9 +331,8 @@ function TreeRow({
                             <ChevronDown className="h-3.5 w-3.5"/>
                         </button>
                     </span>
-                ) : (
-                    <TagMenu state={st} actions={actions} node={node}/>
                 )}
+                <TagMenu count={count} state={st} actions={actions} node={node}/>
             </div>
             {hasChildren && isOpen && (
                 <div>
@@ -323,6 +382,19 @@ export function TagTree() {
 
     const nameOf = (path: string) => metaByPath.get(path)?.display_name?.trim() || TagPath.leaf(path)
 
+    /** The sibling set under a parent path; `''` is the root level. */
+    const childrenOf = (parent: string): TagNode[] => {
+        if (!parent) return tree
+        let level = tree
+        for (const anc of ancestorsOf(parent)) {
+            const found = level.find((n) => n.path === anc)
+            if (!found) return []
+            if (anc === parent) return found.children
+            level = found.children
+        }
+        return []
+    }
+
     // The tag list can drift as the pipeline assigns/removes tags in the background; refresh it
     // on interaction so navigating the tree keeps it current.
     const refreshTags = () => void queryClient.invalidateQueries({queryKey: queryKeys.tags()})
@@ -366,15 +438,14 @@ export function TagTree() {
 
     const stateOf = (path: string): TagState => ({
         included: params.tag === path || params.include.includes(path),
-        exact: params.exact.includes(path),
         excluded: params.exclude.includes(path),
     })
 
     const actions: TagActions = {
-        // Plain click filters by this tag alone (replaces any compound filter), exiting hierarchies.
+        // Plain click makes this tag the view root (replaces any compound filter), exiting hierarchies.
         pick: (path) => {
             refreshTags()
-            update({tag: path, include: [], exclude: [], exact: [], hierarchy: null, hpath: ''})
+            update({tag: path, include: [], exclude: [], hierarchy: null, hpath: ''})
         },
         quickToggleInclude: (path) => {
             const {included} = stateOf(path)
@@ -383,23 +454,9 @@ export function TagTree() {
         },
         toggleInclude: (path) => {
             refreshTags()
-            const {included, exact} = stateOf(path)
-            if (included && !exact) return actions.remove(path)
-            // Adopt as an extra include; the primary `tag` stays as-is.
-            if (params.tag === path) return
+            if (stateOf(path).included) return actions.remove(path)
             update({
                 include: [...new Set([...params.include, path])],
-                exact: without(params.exact, path),
-                exclude: without(params.exclude, path),
-            })
-        },
-        toggleExact: (path) => {
-            refreshTags()
-            if (params.exact.includes(path)) return actions.remove(path)
-            update({
-                tag: params.tag === path ? null : params.tag,
-                exact: [...new Set([...params.exact, path])],
-                include: without(params.include, path),
                 exclude: without(params.exclude, path),
             })
         },
@@ -410,7 +467,6 @@ export function TagTree() {
                 tag: params.tag === path ? null : params.tag,
                 exclude: [...new Set([...params.exclude, path])],
                 include: without(params.include, path),
-                exact: without(params.exact, path),
             })
         },
         remove: (path) => {
@@ -419,21 +475,29 @@ export function TagTree() {
                 tag: params.tag === path ? null : params.tag,
                 include: without(params.include, path),
                 exclude: without(params.exclude, path),
-                exact: without(params.exact, path),
             })
         },
         edit: (path) => setEditTarget(path),
         newChild: (path) => setNewTagParent(path),
-        // Dragging under a parent sorted by anything but `manual` is meaningless, so entering
+        setOrder: (path, order) => {
+            const key = path ?? ''
+            write({tag_path: key, children_order: order})
+            if (order !== 'manual' && reorderUnder === key) setReorderUnder(null)
+        },
+        // Moving a row under a parent sorted by anything but `manual` is meaningless, so entering
         // reorder mode switches it and says so (§7).
         reorder: (path) => {
             const key = path ?? ''
+            if (reorderUnder === key) return setReorderUnder(null)
             const order = metaByPath.get(key)?.children_order ?? 'manual'
             if (order !== 'manual') {
                 write({tag_path: key, children_order: 'manual'})
                 toast.info('Subtags now sort manually')
             }
-            setReorderUnder(reorderUnder === key ? null : key)
+            // Start from an explicitly numbered list, or the first move down is a no-op — an unset
+            // `sort_index` sorts last, so the one row that gains an index jumps to the front.
+            for (const w of initialOrderWrites(childrenOf(key))) write(w)
+            setReorderUnder(key)
         },
         share: (path) => setShareTag(path),
         publicShare: (path) => setPublicShareTag(path),
@@ -470,12 +534,14 @@ export function TagTree() {
     }
 
     const rootCollisions = useMemo(() => collidingNames(tree), [tree])
-    const noFilter = !params.tag && !params.include.length && !params.exact.length && !params.exclude.length
+    const noFilter = !params.tag && !params.include.length && !params.exclude.length
+    const reorderName = reorderUnder ? nameOf(reorderUnder) : 'top-level tags'
+    const rootOrder = metaByPath.get('')?.children_order ?? 'manual'
 
     return (
         <div className="flex h-full flex-col">
             <button
-                onClick={() => update({tag: null, include: [], exclude: [], exact: [], hierarchy: null, hpath: ''})}
+                onClick={() => update({tag: null, include: [], exclude: [], hierarchy: null, hpath: ''})}
                 className={cn(
                     'mx-2 mt-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
                     noFilter ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',
@@ -491,12 +557,35 @@ export function TagTree() {
                     <Plus className="h-3 w-3"/>
                     New tag
                 </button>
-                <button className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
-                        onClick={() => actions.reorder(null)}>
-                    <ArrowDownUp className="h-3 w-3"/>
-                    {reorderUnder === '' ? 'Done' : 'Reorder'}
-                </button>
+                {reorderUnder === null && (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger
+                            className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground">
+                            <ArrowDownUp className="h-3 w-3"/>
+                            {ORDERS.find((o) => o.value === rootOrder)?.label ?? 'Order'}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                            <OrderChoices path={null} current={rootOrder} actions={actions}/>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                )}
             </div>
+
+            {/* Reorder mode is entered from a node's `…` menu, which is not where anyone looks to
+                leave it — so it gets one unmissable exit that covers every level. */}
+            {reorderUnder !== null && (
+                <div className="mx-2 mt-1 flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] text-primary">
+                    <ArrowDownUp className="h-3 w-3 shrink-0"/>
+                    <span className="min-w-0 truncate">Reordering {reorderName}</span>
+                    <button
+                        className="ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-medium hover:bg-primary/15"
+                        onClick={() => actions.reorder(reorderUnder || null)}
+                    >
+                        <Check className="h-3 w-3"/>
+                        Done
+                    </button>
+                </div>
+            )}
 
             <div className="mt-1 flex-1 overflow-y-auto px-1 pb-2">
                 {isPending && (
@@ -552,7 +641,7 @@ export function TagTree() {
                 open={shareTag !== null}
                 onOpenChange={(o) => !o && setShareTag(null)}
                 showTrigger={false}
-                initialTag={shareTag ?? undefined}
+                lockedTag={shareTag ?? undefined}
             />
 
             {/* Create a public share link straight from the tag row menu. */}

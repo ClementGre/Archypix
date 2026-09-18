@@ -1,4 +1,4 @@
-import {useEffect, useMemo} from 'react'
+import {useCallback, useEffect, useMemo, useState} from 'react'
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {toast} from 'sonner'
 import {
@@ -13,8 +13,10 @@ import {
 import {queryKeys} from '@/lib/constants'
 import {invalidatePicturesAndTags} from '@/lib/invalidation'
 import {
+    allPendingTagMeta,
     flushTagMeta,
     installTagMetaFlushHandlers,
+    onTagMetaQueueChange,
     queueTagMeta,
     setTagMetaQueueErrorHandler,
 } from '@/lib/tagMetaQueue'
@@ -25,16 +27,34 @@ import type {TagListItem, TagMeta, TagMetaPatch} from '@/lib/types'
  *  — local mutations invalidate immediately (feature 34 §4). */
 const REFETCH_MS = 5 * 60_000
 
+/** Re-render whenever the write queue changes, so the overlay below is re-applied. */
+function usePendingTagMetaVersion(): number {
+    const [version, setVersion] = useState(0)
+    useEffect(() => onTagMetaQueueChange(() => setVersion((n) => n + 1)), [])
+    return version
+}
+
 /**
  * The one app-start payload (§4): every tag with its counts, derived dates and metadata. Expanding,
  * reordering, switching view mode or grouping, and navigating between tags issue no further tag
  * queries.
+ *
+ * Unflushed writes are **overlaid on the served payload** rather than written into the cache: the
+ * queue debounces for 60 s, the tree invalidates this query on most interactions, and a refetch
+ * landing in between would otherwise serve the pre-change row and silently revert the user.
  */
 export function useAllTags() {
+    const version = usePendingTagMetaVersion()
+    const select = useCallback(
+        (items: TagListItem[]) => allPendingTagMeta().reduce(applyPatch, items),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [version],
+    )
     return useQuery({
         queryKey: queryKeys.tags(),
         queryFn: listAllTags,
         refetchInterval: REFETCH_MS,
+        select,
     })
 }
 
@@ -77,21 +97,15 @@ export function useRootTagMeta(): TagMeta | null {
 }
 
 /**
- * Queue a metadata write (§4.1): optimistic locally so the UI never waits on the debounce, then
- * coalesced and flushed as one batch. Pass only the fields that changed.
+ * Queue a metadata write (§4.1): the overlay in `useAllTags` makes it visible at once, so the UI
+ * never waits on the debounce. Pass only the fields that changed.
  */
 export function useWriteTagMeta() {
-    const queryClient = useQueryClient()
-    return (patch: TagMetaPatch) => {
-        queryClient.setQueryData<TagListItem[]>(queryKeys.tags(), (old) =>
-            old ? applyPatchLocally(old, patch) : old,
-        )
-        queueTagMeta(patch)
-    }
+    return (patch: TagMetaPatch) => queueTagMeta(patch)
 }
 
-/** Mirror a queued patch onto the cached payload so the tree re-renders immediately. */
-function applyPatchLocally(items: TagListItem[], patch: TagMetaPatch): TagListItem[] {
+/** Merge one queued patch onto the served payload. */
+function applyPatch(items: TagListItem[], patch: TagMetaPatch): TagListItem[] {
     const {tag_path, ...fields} = patch
     const base: TagMeta = {
         tag_path,

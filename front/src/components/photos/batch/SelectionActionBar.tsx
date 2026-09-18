@@ -2,9 +2,9 @@ import {CheckCheck, FlipHorizontal2, Loader2, SlidersHorizontal, X} from 'lucide
 import {Button} from '@/components/ui/button'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
-import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useSelectionCount} from '@/hooks/useAggregate'
 import {useIsMobile} from '@/hooks/useMediaQuery'
+import type {PictureFilter} from '@/lib/types'
 
 /**
  * Floating selection bar (§7): shown on desktop **and** mobile whenever more than one picture is
@@ -14,7 +14,14 @@ import {useIsMobile} from '@/hooks/useMediaQuery'
  * `onSelectAll`/`onInvert` override the default query-mode behaviour — the token-gated public share
  * page has no `PictureFilter`, so it passes explicit select-all/invert over the loaded ids instead.
  */
-export function SelectionActionBar({onSelectAll, onInvert}: { onSelectAll?: () => void; onInvert?: () => void } = {}) {
+export function SelectionActionBar({selectionFilter, collapsedGroups = 0, onSelectAll, onInvert}: {
+    /** The view's query, for Select-all / Invert; absent on the public page, which overrides both. */
+    selectionFilter?: PictureFilter
+    /** Subtag blocks the query covers but the grid is not showing (feature 35 §7). */
+    collapsedGroups?: number
+    onSelectAll?: () => void
+    onInvert?: () => void
+} = {}) {
     const query = useSelectionStore((s) => s.query)
     const includeIds = useSelectionStore((s) => s.includeIds)
     const excludeIds = useSelectionStore((s) => s.excludeIds)
@@ -28,11 +35,10 @@ export function SelectionActionBar({onSelectAll, onInvert}: { onSelectAll?: () =
     const mobileDrawer = useUIStore((s) => s.mobileDrawer)
     const isMobile = useIsMobile()
 
-    const {selectionFilter} = useGalleryParams()
     const {count, loading} = useSelectionCount()
 
-    const doSelectAll = onSelectAll ?? (() => selectAll(selectionFilter))
-    const doInvert = onInvert ?? (() => invert(selectionFilter))
+    const doSelectAll = onSelectAll ?? (() => selectionFilter && selectAll(selectionFilter))
+    const doInvert = onInvert ?? (() => selectionFilter && invert(selectionFilter))
 
     // Show only for a genuine multi-selection. A single explicit picture uses the detail panel.
     const isSingle = query === null && includeIds.length === 1 && excludeIds.length === 0
@@ -56,6 +62,12 @@ export function SelectionActionBar({onSelectAll, onInvert}: { onSelectAll?: () =
                 <span className="flex items-center gap-1 px-2 text-sm font-medium tabular-nums">
                     {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : count}
                     <span className="hidden font-normal text-muted-foreground sm:inline">selected</span>
+                    {/* The query covers the subtree, not the visible set (feature 35 §7). */}
+                    {query !== null && collapsedGroups > 0 && (
+                        <span className="hidden font-normal text-muted-foreground lg:inline">
+                            — includes {collapsedGroups} collapsed group{collapsedGroups === 1 ? '' : 's'}
+                        </span>
+                    )}
                 </span>
                 <Button variant="ghost" size="sm" className="gap-1.5 rounded-full" onClick={doSelectAll}>
                     <CheckCheck className="h-4 w-4"/> Select all

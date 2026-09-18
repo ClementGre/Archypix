@@ -129,13 +129,14 @@ pub struct PictureListParams {
     /// Flat tag-set filter (§6.3). Comma-separated ltree paths; combined per `match`.
     pub include_tags: Option<String>,
     pub exclude_tags: Option<String>,
-    /// Comma-separated ltree paths matched **exactly** (`tag_path = p`, no descendants) — strict
-    /// tag navigation (feature 15). Combined with `include`/`exclude` per `match`.
+    /// One ltree path matched **exactly** (`tag_path = p`, no descendants) — the timeline's
+    /// per-section scope (feature 35 §7). Combined with `include`/`exclude` per `match`.
     pub exact: Option<String>,
     /// `all` (AND) | `any` (OR) over `include_tags`. Default `all`.
     #[serde(rename = "match")]
     pub match_mode: Option<String>,
-    /// `true` ⇒ pictures with no stored tag of any source (mutually exclusive with include/exclude).
+    /// `true` ⇒ pictures with no stored tag of any source. AND-ed with the tag arms, so the gallery
+    /// can layer its cross-cutting include/exclude sets onto the root view too (feature 35 §7).
     #[serde(default)]
     pub untagged: bool,
     #[serde(default)]
@@ -177,6 +178,9 @@ pub struct PictureListItem {
     pub height: Option<i32>,
     pub captured_at: Option<NaiveDateTime>,
     pub ingested_at: NaiveDateTime,
+    /// Both are `SortField`s, so the timeline buckets them client-side (feature 35 §6).
+    pub updated_at: NaiveDateTime,
+    pub file_size: Option<i64>,
     /// Source file modification time captured at ingest (feature 30 §10). Suggestion-only date source
     /// for the date-fix chip; `None` when unknown (most received / WebDAV rows).
     pub original_file_created_at: Option<NaiveDateTime>,
@@ -1500,13 +1504,12 @@ fn build_flat_predicate(params: &PictureListParams) -> Result<Option<TagPredicat
 
     let include = split_parse(&params.include_tags)?;
     let exclude = split_parse(&params.exclude_tags)?;
-    let exact = split_parse(&params.exact)?;
+    // Single-valued since feature 35 §7 — multi-exact had no surface left.
+    let exact = match params.exact.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => vec![TagPath::parse(s, true).map_err(AppError::BadRequest)?],
+        None => vec![],
+    };
 
-    if params.untagged && (!include.is_empty() || !exclude.is_empty() || !exact.is_empty()) {
-        return Err(AppError::BadRequest(
-            "untagged is mutually exclusive with include_tags/exclude_tags/exact".to_string(),
-        ));
-    }
     if !params.untagged && include.is_empty() && exclude.is_empty() && exact.is_empty() {
         return Ok(None);
     }
@@ -1641,6 +1644,8 @@ pub async fn list_with_filter(
             height: pic.height,
             captured_at: pic.captured_at,
             ingested_at: pic.ingested_at,
+            updated_at: pic.updated_at,
+            file_size: pic.file_size,
             original_file_created_at: pic.original_file_created_at,
             has_gps: pic.gps_lat.is_some() && pic.gps_lng.is_some(),
             distance_m: geo_ref
@@ -1982,4 +1987,83 @@ pub async fn presign_variant_for_picture(
             .await?;
     }
     Ok(Some(url))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> PictureListParams {
+        PictureListParams {
+            page: 1,
+            page_size: 50,
+            sort: Default::default(),
+            order: Default::default(),
+            include_tags: None,
+            exclude_tags: None,
+            exact: None,
+            match_mode: None,
+            untagged: false,
+            owned_only: false,
+            shared_with_me: false,
+            trash: Default::default(),
+            captured_after: None,
+            captured_before: None,
+            gps: Default::default(),
+            capture_date: Default::default(),
+            missing_any: false,
+            near_time: None,
+            near_lat: None,
+            near_lng: None,
+            undated_first: false,
+            thumbnail: None,
+        }
+    }
+
+    /// `exact` is the timeline's per-section scope, one path (feature 35 §7).
+    #[test]
+    fn exact_is_single_valued() {
+        let p = PictureListParams {
+            exact: Some("Era.2026.Vietnam".to_string()),
+            ..params()
+        };
+        let pred = build_flat_predicate(&p).unwrap().unwrap();
+        assert_eq!(pred.exact.len(), 1);
+        assert_eq!(pred.exact[0].to_string(), "Era.2026.Vietnam");
+
+        // A comma is no longer a separator, so a multi-value wire param is a bad path, not two tags.
+        let multi = PictureListParams {
+            exact: Some("Era.2026,Era.2025".to_string()),
+            ..params()
+        };
+        assert!(matches!(
+            build_flat_predicate(&multi),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn blank_exact_is_no_filter() {
+        let p = PictureListParams {
+            exact: Some("  ".to_string()),
+            ..params()
+        };
+        assert!(build_flat_predicate(&p).unwrap().is_none());
+    }
+
+    /// The root's `direct` mode (34 §3.3) is `untagged`, and the gallery layers its cross-cutting
+    /// `inc`/`exc` sets onto every query in the view — including that one (feature 35 §7).
+    #[test]
+    fn untagged_composes_with_tag_arms() {
+        let p = PictureListParams {
+            untagged: true,
+            include_tags: Some("Era".to_string()),
+            exclude_tags: Some("Screenshots".to_string()),
+            ..params()
+        };
+        let pred = build_flat_predicate(&p).unwrap().unwrap();
+        assert!(pred.untagged);
+        assert_eq!(pred.include.len(), 1);
+        assert_eq!(pred.exclude.len(), 1);
+    }
 }

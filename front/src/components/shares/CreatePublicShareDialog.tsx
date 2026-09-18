@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {Link2} from 'lucide-react'
+import {Calendar as CalendarIcon, Link2} from 'lucide-react'
 import {toast} from 'sonner'
 import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
@@ -11,6 +11,7 @@ import {Switch} from '@/components/ui/switch'
 import {Label} from '@/components/ui/label'
 import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger} from '@/components/ui/dialog'
 import {TagPicker} from '@/components/tags/TagPicker'
+import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
 
 export function CreatePublicShareDialog({
                                             initialTag,
@@ -32,7 +33,7 @@ export function CreatePublicShareDialog({
     const [name, setName] = useState('')
     const [message, setMessage] = useState('')
     const [password, setPassword] = useState('')
-    const [expires, setExpires] = useState('')
+    const [expires, setExpires] = useState<string | null>(null)
     const [allowOriginals, setAllowOriginals] = useState(true)
     const [allowUpload, setAllowUpload] = useState(false)
     const [allowShareBack, setAllowShareBack] = useState(false)
@@ -47,7 +48,7 @@ export function CreatePublicShareDialog({
         setName('')
         setMessage('')
         setPassword('')
-        setExpires('')
+        setExpires(null)
         setAllowOriginals(true)
         setAllowUpload(false)
         setAllowShareBack(false)
@@ -66,7 +67,7 @@ export function CreatePublicShareDialog({
                 name: name.trim(),
                 message: message.trim() || null,
                 password: password || null,
-                expires_at: expires ? `${expires}T23:59:59` : null,
+                expires_at: expires,
                 allow_originals: allowOriginals,
                 allow_upload: allowUpload,
                 // ShareBack is forced on when uploads are allowed (backend enforces this too).
@@ -162,7 +163,14 @@ export function CreatePublicShareDialog({
                         </div>
                         <div className="space-y-1.5">
                             <Label>Expires (optional)</Label>
-                            <Input type="date" value={expires} onChange={(e) => setExpires(e.target.value)}/>
+                            <DateTimePickerPopover value={expires} onChange={setExpires} disablePast>
+                                <Button variant="outline" className="w-full justify-start font-normal">
+                                    <CalendarIcon className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground"/>
+                                    <span className={expires ? 'truncate' : 'truncate text-muted-foreground'}>
+                                        {expires ? formatNaive(expires) : 'Never'}
+                                    </span>
+                                </Button>
+                            </DateTimePickerPopover>
                         </div>
                     </div>
 

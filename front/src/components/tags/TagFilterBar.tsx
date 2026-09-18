@@ -1,8 +1,9 @@
-// A breadcrumb-style bar (mirrors the hierarchy breadcrumb) summarising the active flat-gallery tag
-// filter: included / included-exactly / excluded tags, each with inline controls (switch an include
-// to "exactly" and back, remove) plus a clear-all. Rendered at the top of the centre grid.
+// A breadcrumb-style bar (mirrors the hierarchy breadcrumb) summarising the active tag filter: the
+// view root plus the cross-cutting include / exclude sets, each removable, plus a clear-all
+// (feature 35 §7). The include↔exact switch is gone — *Direct only* in the **View** dropdown covers
+// the real use.
 
-import {Ban, Equal, Hash, X} from 'lucide-react'
+import {Ban, Hash, X} from 'lucide-react'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useTagTree} from '@/hooks/useTags'
 import {display} from '@/lib/tagTree'
@@ -12,46 +13,39 @@ import {cn, TagPath} from '@/lib/utils'
 function Chip({
                   path,
                   name,
+                  color,
                   kind,
-                  onSwitch,
-                  switchTo,
                   onRemove,
               }: {
     path: string
     /** Display name; the path stays in the tooltip (feature 34 §5). */
     name: string
-    kind: 'inc' | 'exa' | 'exc'
-    /** Toggle this tag's mode (include ↔ exact); absent for exclude. */
-    onSwitch?: () => void
-    switchTo?: 'inc' | 'exa'
+    /** The tag's own colour, so a chip reads as the same tag as its tree row. */
+    color: string | null
+    kind: 'inc' | 'exc'
     onRemove: () => void
 }) {
-    const Icon = kind === 'exa' ? Equal : kind === 'exc' ? Ban : Hash
+    const Icon = kind === 'exc' ? Ban : Hash
     return (
-        <span
-            className={cn(
-                'flex max-w-[16rem] items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
-                kind === 'exc' ? 'border-destructive/40 text-destructive' : 'border-primary/40 text-primary',
-            )}
-        >
-            <Icon className="h-3 w-3 shrink-0"/>
-            <span className="truncate" title={TagPath.toDisplay(path)}>{name}</span>
-            {onSwitch && (
-                <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                        <button onClick={onSwitch} className="shrink-0 rounded hover:bg-foreground/10" aria-label="Switch match mode">
-                            {switchTo === 'exa' ? <Equal className="h-3 w-3"/> : <Hash className="h-3 w-3"/>}
-                        </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="text-xs">
-                        {switchTo === 'exa' ? 'Match exactly (no sub-tags)' : 'Include sub-tags too'}
-                    </TooltipContent>
-                </Tooltip>
-            )}
-            <button onClick={onRemove} aria-label="Remove filter" className="shrink-0 rounded hover:bg-foreground/10">
-                <X className="h-3 w-3"/>
-            </button>
-        </span>
+        <Tooltip delayDuration={400}>
+            <TooltipTrigger asChild>
+                <span
+                    className={cn(
+                        'flex max-w-[16rem] items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
+                        kind === 'exc' ? 'border-destructive/40 text-destructive' : 'border-primary/40 text-primary',
+                    )}
+                    style={color && kind !== 'exc' ? {borderColor: `${color}99`, color} : undefined}
+                >
+                    <Icon className="h-3 w-3 shrink-0"/>
+                    <span className="truncate">{name}</span>
+                    <button onClick={onRemove} aria-label="Remove filter"
+                            className="shrink-0 rounded hover:bg-foreground/10">
+                        <X className="h-3 w-3"/>
+                    </button>
+                </span>
+            </TooltipTrigger>
+            <TooltipContent className="text-xs">{TagPath.toDisplay(path)}</TooltipContent>
+        </Tooltip>
     )
 }
 
@@ -59,48 +53,35 @@ export function TagFilterBar() {
     const {params, update} = useGalleryParams()
     const {metaByPath} = useTagTree()
     const nameOf = (p: string) => display(p, metaByPath.get(p))
-    const {tag, include, exact, exclude} = params
+    const colorOf = (p: string) => metaByPath.get(p)?.color ?? null
+    const {tag, include, exclude} = params
 
-    const active = !!tag || include.length > 0 || exact.length > 0 || exclude.length > 0
+    const active = !!tag || include.length > 0 || exclude.length > 0
     if (!active) return null
 
     const without = (arr: string[], p: string) => arr.filter((x) => x !== p)
-    // All includes (the primary `tag` plus the extra include set) render as one group.
+    // The view root and the cross-cutting include set render as one group.
     const includes = [...(tag ? [tag] : []), ...include]
 
     const remove = (p: string) =>
         update({
             tag: tag === p ? null : tag,
             include: without(include, p),
-            exact: without(exact, p),
             exclude: without(exclude, p),
         })
-    // Include → exact: drop from tag/include, add to exact.
-    const toExact = (p: string) =>
-        update({
-            tag: tag === p ? null : tag,
-            include: without(include, p),
-            exact: [...new Set([...exact, p])],
-        })
-    // Exact → include: drop from exact, add to the include set.
-    const toInclude = (p: string) =>
-        update({exact: without(exact, p), include: [...new Set([...include, p])]})
-    const clearAll = () => update({tag: null, include: [], exact: [], exclude: []})
+    const clearAll = () => update({tag: null, include: [], exclude: []})
 
-    const tot_length = includes.length + exact.length + exclude.length
+    const tot_length = includes.length + exclude.length
 
     return (
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
             {includes.map((p) => (
-                <Chip key={`inc:${p}`} path={p} name={nameOf(p)} kind="inc" switchTo="exa" onSwitch={() => toExact(p)}
+                <Chip key={`inc:${p}`} path={p} name={nameOf(p)} color={colorOf(p)} kind="inc"
                       onRemove={() => remove(p)}/>
             ))}
-            {exact.map((p) => (
-                <Chip key={`exa:${p}`} path={p} name={nameOf(p)} kind="exa" switchTo="inc"
-                      onSwitch={() => toInclude(p)} onRemove={() => remove(p)}/>
-            ))}
             {exclude.map((p) => (
-                <Chip key={`exc:${p}`} path={p} name={nameOf(p)} kind="exc" onRemove={() => remove(p)}/>
+                <Chip key={`exc:${p}`} path={p} name={nameOf(p)} color={colorOf(p)} kind="exc"
+                      onRemove={() => remove(p)}/>
             ))}
             {tot_length > 1 && (
                 <button

@@ -50,6 +50,9 @@ export interface PictureListItem {
     height: number | null
     captured_at: string | null
     ingested_at: string
+    /** Both are `SortField`s, so the timeline buckets them client-side (feature 35 §6). */
+    updated_at: string
+    file_size: number | null
     /** Source file modification time captured at ingest (feature 30 §10); suggestion-only. */
     original_file_created_at: string | null
     /** Derived GPS presence (feature 29 §3) — owned + received. Drives highlight/scan without a fetch. */
@@ -278,8 +281,10 @@ export interface PictureFilters {
     include?: string[]
     /** Exclude tags (wire form). */
     exclude?: string[]
-    /** Exact (strict, no-descendant) include tags (wire form). */
-    exact?: string[]
+    /** The section's own tag (wire form), matched exactly — internal, never URL state (feature 35 §7). */
+    exact?: string | null
+    /** Root `direct` mode: pictures carrying no tag at all (feature 35 §3). */
+    untagged?: boolean
     scope?: 'all' | 'owned' | 'shared'
     /** Trash-membership state; `exclude` (default) hides trashed pictures. */
     trash?: TrashFilter

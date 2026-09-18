@@ -47,6 +47,14 @@ it reveals a two-option sub-segment **GPS · Date** and swaps the right panel fo
 fix surface. Mode state lives in a URL param (`fix=gps|date`) via `useGalleryParams`, so it
 is shareable/back-navigable like `trash`/`sort`.
 
+**Exclusive with the structured view (feature 35 §9).** While `fix` is set the grid is pinned flat:
+grouping forced to `none` **and** `view_mode` forced to `all`. Forcing the content mode matters as
+much as forcing grouping — feature 35's default is `subtag`, which holds only direct photos, so
+leaving it alone would quietly strip `useFixAnchors` of most of its grid-local neighbours. With both
+pinned, `useGridItems` keeps seeing exactly the flat array §5.2 assumes. Both overrides are stated in
+a header strip with their reason, both restore on leaving fix mode, and neither is written to
+`tag_metadata`; the View control and the Sort menu's bucket column are disabled meanwhile.
+
 ## 4. Grid presentation
 
 - **GPS mode → normal chronological sort, highlight only.** Missing-GPS pictures still have

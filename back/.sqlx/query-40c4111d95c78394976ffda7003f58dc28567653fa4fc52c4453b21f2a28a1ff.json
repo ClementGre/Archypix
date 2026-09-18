@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET deleted_at = now() AT TIME ZONE 'utc' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "40c4111d95c78394976ffda7003f58dc28567653fa4fc52c4453b21f2a28a1ff"
+}

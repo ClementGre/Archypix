@@ -1,33 +1,35 @@
-import {Fragment, type MouseEvent, useCallback, useEffect, useMemo, useRef} from 'react'
+import {Fragment, useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import {useQuery} from '@tanstack/react-query'
-import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
-import {usePictures} from '@/hooks/usePictures'
-import {getPicture} from '@/api/pictures'
-import {queryKeys} from '@/lib/constants'
+import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2, Wrench} from 'lucide-react'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
-import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
-import {isMemberSelected, toApiSelection, useSelectionStore} from '@/stores/selection'
-import {useTagDragStore} from '@/stores/tagDrag'
+import {useTimelineView} from '@/hooks/useTimelineView'
+import {useBatchEditTags, useTagTree} from '@/hooks/useTags'
+import {useSelectionStore} from '@/stores/selection'
+import {areSiblings, useTagDragStore} from '@/stores/tagDrag'
 import {useFixReference} from '@/stores/fixReference'
-import {useFixHighlight} from '@/stores/fixHighlight'
 import {useGridItems} from '@/stores/gridItems'
-import {useUIStore} from '@/stores/ui'
-import {useIsMobile} from '@/hooks/useMediaQuery'
+import {useTimelineExpansion} from '@/stores/timelineExpansion'
 import {apiErrorMessage} from '@/api/client'
-import {cn, variantForSize} from '@/lib/utils'
+import {cn} from '@/lib/utils'
+import {display, type TagNode, type TrashView} from '@/lib/tagTree'
+import {NO_GROUPING} from '@/lib/grouping'
+import type {PictureFilters} from '@/lib/types'
 import {TagFilterBar} from '@/components/tags/TagFilterBar'
-import {PhotoCard} from './PhotoCard'
+import {TagDropDialog, type TagDrop, undoAction} from '@/components/tags/TagDropDialog'
+import {GroupedGridProvider, useGroupedGrid, useRegisterSection} from './grouped/GroupedGridContext'
+import {PhotoCards, useGridVariant} from './grouped/PhotoCards'
+import {TagStream} from './grouped/TagStream'
 import {Lightbox} from './Lightbox'
 import {TrashToggle} from './TrashToggle'
 import {IssuesFilter} from './IssuesFilter'
 import {ScopeToggle} from './ScopeToggle'
 import {SortMenu} from './SortMenu'
+import {ViewMenu} from './ViewMenu'
 import {DateFilter} from './DateFilter'
 import {SelectionActionBar} from './batch/SelectionActionBar'
 import {ReferenceBar} from './fix/ReferenceBar'
-import {toast} from "sonner";
+import {toast} from 'sonner'
 
 /** Breadcrumb for the active hierarchy directory; segments are clickable. */
 function HierarchyBreadcrumb() {
@@ -64,82 +66,92 @@ function HierarchyBreadcrumb() {
     )
 }
 
-export function PhotoGrid() {
-    const {filters, params, selectionFilter} = useGalleryParams()
-    const isBrowsing = !!params.hierarchy
-    const trashOnly = params.trash === 'only'
-    const {data: settings} = useSettings()
-    const retentionDays = settings?.trash_retention_days ?? 30
-    const rowHeight = useUIStore((s) => s.rowHeight)
-    const openMobileDrawer = useUIStore((s) => s.openMobileDrawer)
-    const isMobile = useIsMobile()
-    const [, setSp] = useSearchParams()
-
-    // Fix-mode state: highlight props for the cards, and the reference-picking phase overrides card
-    // selection to build the reference set (persistent across tag navigation, §7).
-    const referenceActive = useFixReference((s) => s.active)
-    const refIds = useFixReference((s) => s.refIds)
-    const toggleRef = useFixReference((s) => s.toggleRef)
-    const fixTargetIds = useFixReference((s) => s.targetIds)
-    const anchorIds = useFixHighlight((s) => s.anchorIds)
-
-    const query = useSelectionStore((s) => s.query)
-    const includeIds = useSelectionStore((s) => s.includeIds)
-    const excludeIds = useSelectionStore((s) => s.excludeIds)
-
-    // The picture being fixed (selected single, or the stashed reference target). Its detail drives the
-    // grid distance overlays: time proximity in GPS mode (client-side) and geo distance in date mode
-    // (§3, requested from the server via `geoRef` so the grid isn't reordered).
-    const fixTargetId = params.fix
-        ? referenceActive
-            ? fixTargetIds[0] ?? null
-            : query === null && includeIds.length === 1 ? includeIds[0] : null
-        : null
-    const fixTargetDetail = useQuery({
-        queryKey: queryKeys.picture(fixTargetId ?? ''),
-        enabled: !!fixTargetId,
-        queryFn: () => getPicture(fixTargetId!),
-    }).data
-    const fixRefTime = params.fix === 'gps' ? fixTargetDetail?.captured_at ?? null : null
-    const fixGeoRef = params.fix === 'date' && fixTargetDetail?.gps_lat != null && fixTargetDetail?.gps_lng != null
-        ? {lat: fixTargetDetail.gps_lat, lng: fixTargetDetail.gps_lng}
-        : null
-
-    // Request a thumbnail variant sized to the current zoom (row height).
-    const variant = variantForSize(rowHeight)
-    const picturesQ = usePictures(filters, {enabled: !isBrowsing, variant, geoRef: fixGeoRef})
-    const browseQ = useHierarchyBrowse(params.hierarchy, params.hpath, filters, {enabled: isBrowsing, variant})
-    const active = isBrowsing ? browseQ : picturesQ
-    const {data, isPending, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage, isPlaceholderData} = active
-
-    // Dedup by id: as new pictures shift pagination, consecutive pages can overlap and re-emit an
-    // already-seen item, which would render a duplicate card (and, if selected, look doubly selected).
+/** Hierarchy browse keeps today's flat rendering — it has its own directory structure (§10.9). It
+ *  registers as a single section so selection, the lightbox and paging stay on one code path. */
+function HierarchyStream({filters}: { filters: PictureFilters }) {
+    const {params} = useGalleryParams()
+    const variant = useGridVariant()
+    const q = useHierarchyBrowse(params.hierarchy, params.hpath, filters, {enabled: true, variant})
     const items = useMemo(() => {
-        const flat = data?.pages.flatMap((p) => p.items) ?? []
+        const flat = q.data?.pages.flatMap((p) => p.items) ?? []
         const seen = new Set<string>()
         return flat.filter((it) => (seen.has(it.id) ? false : (seen.add(it.id), true)))
-    }, [data])
+    }, [q.data])
 
-    const orderedIds = useMemo(() => items.map((i) => i.id), [items])
+    useRegisterSection('hierarchy', {
+        order: [0],
+        items,
+        fetchNextPage: q.fetchNextPage,
+        hasNextPage: !!q.hasNextPage,
+    })
 
-    // Publish the loaded, sorted grid so the fix panels can scan for grid-local anchors (feature 30 §5.2).
-    const setGridItems = useGridItems((s) => s.setItems)
-    useEffect(() => setGridItems(items), [items, setGridItems])
+    const sentinel = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        const el = sentinel.current
+        if (!el) return
+        const io = new IntersectionObserver((entries) => {
+            if (entries[0]?.isIntersecting && q.hasNextPage && !q.isFetchingNextPage) q.fetchNextPage()
+        })
+        io.observe(el)
+        return () => io.disconnect()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [q.hasNextPage, q.isFetchingNextPage])
 
-    const multiSelect = useSelectionStore((s) => s.multiSelect)
-    const select = useSelectionStore((s) => s.select)
-    const toggle = useSelectionStore((s) => s.toggle)
-    const selectTo = useSelectionStore((s) => s.selectTo)
-    const enterMultiSelect = useSelectionStore((s) => s.enterMultiSelect)
-    const selectAll = useSelectionStore((s) => s.selectAll)
+    if (q.isError) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
+                <AlertCircle className="h-8 w-8"/>
+                <p>Could not load photos.</p>
+                <p className="text-xs">{apiErrorMessage(q.error)}</p>
+            </div>
+        )
+    }
+    if (!q.isPending && !items.length) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
+                <ImageOff className="h-8 w-8"/>
+                <p>This directory has no photos.</p>
+            </div>
+        )
+    }
+
+    return (
+        <>
+            <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0 select-none">
+                <PhotoCards items={items} sourceTag={null}/>
+                <li aria-hidden className="h-0" style={{flexGrow: 1e7, flexBasis: 0}}/>
+            </ul>
+            <div ref={sentinel} className="flex h-12 items-center justify-center">
+                {q.isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground"/>}
+            </div>
+        </>
+    )
+}
+
+/**
+ * Selection plumbing shared by every stream: it reads the **flattened** visible order from the
+ * context rather than any one section's slice (§8), so shift-click spans groups and the lightbox
+ * continues from the end of one group into the next.
+ */
+function GridPlumbing() {
+    const {params} = useGalleryParams()
+    const [sp] = useSearchParams()
+    const {selectionFilter} = useTimelineView()
+    const {items, loadMore} = useGroupedGrid()
+    const variant = useGridVariant()
+    const referenceActive = useFixReference((s) => s.active)
+
     const setSelection = useSelectionStore((s) => s.setSelection)
+    const selectAll = useSelectionStore((s) => s.selectAll)
     const queueLand = useSelectionStore((s) => s.queueLand)
     const pendingLand = useSelectionStore((s) => s.pendingLand)
     const clear = useSelectionStore((s) => s.clear)
-    const startTagDrag = useTagDragStore((s) => s.start)
-    const endTagDrag = useTagDragStore((s) => s.end)
 
-    // ⌘/Ctrl+A selects everything matching the current view (§2.1), unless focus is in a field.
+    // Publish the loaded, sorted grid so the fix panels can scan for grid-local anchors (30 §5.2).
+    const setGridItems = useGridItems((s) => s.setItems)
+    useEffect(() => setGridItems(items), [items, setGridItems])
+
+    // ⌘/Ctrl+A selects everything matching the current view, unless focus is in a field.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return
@@ -155,12 +167,10 @@ export function PhotoGrid() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectionFilter])
 
-    // Any view change (tag / scope / sort / hierarchy dir) clears the selection: a select-all's
-    // membership would no longer match, and keeping an explicit selection across an unrelated view
-    // is inconsistent. The cleared-on-mount run is a harmless no-op (selection already empty).
-    // Exception: the fix tools queued a "land here" intent (Apply/Skip restoring the pre-reference
-    // view) — keep it through the clear; the consume effect below resolves it once the restored grid
-    // has loaded. This effect is declared first so it runs before that one.
+    // Any view change clears the selection: a select-all's membership would no longer match. Toggling
+    // `subtag` ↔ `all` shares a filter, so it correctly preserves the selection (§7).
+    // Exception: the fix tools queued a "land here" intent — keep it through the clear; the consume
+    // effect below resolves it once the restored grid has loaded.
     const filterSig = JSON.stringify(selectionFilter)
     useEffect(() => {
         if (useSelectionStore.getState().pendingLand !== null) return
@@ -174,206 +184,158 @@ export function PhotoGrid() {
     // update) but restores the URL through React Router — these land in **separate commits**. So in
     // the first commit `referenceActive` is already false while the view is still the reference grid;
     // resolving then would pick against the wrong grid and, worse, null `pendingLand` so the *next*
-    // commit's view-change clear wipes the fresh selection (the empty sidebar). We therefore wait
-    // until the on-screen view actually matches the intent's `destSig` (the signature of the view
-    // captured when picking began). `destSig === null` means no restore is pending (a plain apply
-    // without reference picking), so resolve in place. Only advancing also needs the restored grid's
-    // real data (`!isPlaceholderData`) to find the next still-missing picture.
+    // commit's view-change clear wipes the fresh selection. We therefore wait until the on-screen
+    // view actually matches the intent's `destSig`. `destSig === null` means no restore is pending.
     useEffect(() => {
         if (!pendingLand || referenceActive) return
         const {anchorId, advance, destSig} = pendingLand
         if (destSig != null && destSig !== filterSig) return
         if (advance && params.fix) {
-            if (isPlaceholderData) return
+            if (!items.length) return
             const idx = items.findIndex((i) => i.id === anchorId)
             const rest = idx === -1 ? items : items.slice(idx + 1)
             const next = rest.find((i) => !i.deleted_at && (params.fix === 'gps' ? !i.has_gps : !i.captured_at))
-            if (!next) {
-                toast.info('No more pictures to land on.')
-            }
+            if (!next) toast.info('No more pictures to land on.')
             setSelection([next ? next.id : anchorId])
         } else {
             setSelection([anchorId])
         }
         queueLand(null)
-    }, [pendingLand, referenceActive, filterSig, isPlaceholderData, items, params.fix, setSelection, queueLand])
+    }, [pendingLand, referenceActive, filterSig, items, params.fix, setSelection, queueLand])
 
-    const handleSelect = (id: string) => (e: MouseEvent) => {
-        e.stopPropagation()
-        if (e.metaKey || e.ctrlKey) toggle(id)
-        else if (e.shiftKey) selectTo(id, orderedIds)
-        else if (multiSelect) toggle(id)
-        else if (query === null && includeIds.length === 1 && includeIds[0] === id) clear()
-        else {
-            select(id)
-            // On mobile a single tap surfaces the details/selection drawer.
-            if (isMobile) openMobileDrawer('right')
-        }
-    }
+    // Page the section the viewer is standing in, not whichever is unfinished first (§8).
+    const viewId = sp.get('view')
+    return <Lightbox items={items} gridVariant={variant} loadMore={() => loadMore(viewId)}/>
+}
 
-    // Long-press (touch): start multi-select, or extend it if already active.
-    const handleLongPress = (id: string) => () => {
-        if (multiSelect) toggle(id)
-        else enterMultiSelect(id)
-    }
+export function PhotoGrid() {
+    const {filters, params} = useGalleryParams()
+    const view = useTimelineView()
+    const {tree, metaByPath} = useTagTree(params.trash as TrashView)
+    const isBrowsing = !!params.hierarchy
+    const referenceActive = useFixReference((s) => s.active)
+    const clear = useSelectionStore((s) => s.clear)
+    const drag = useTagDragStore()
+    const edit = useBatchEditTags()
+    const [drop, setDrop] = useState<TagDrop | null>(null)
 
-    // Drag-to-tag (feature 34 §9): a dragged card that is in the current selection drags the whole
-    // selection; otherwise it is selected and dragged alone.
-    const handleDragStart = (id: string) => () => {
-        const inSelection = isMemberSelected(query, includeIds, excludeIds, id)
-        if (!inSelection) select(id)
-        const s = useSelectionStore.getState()
-        startTagDrag({
-            selection: inSelection ? toApiSelection(s) : {include_ids: [id]},
-            // 0 means "unknown" — a select-all over a query; the drop dialog uses the dry run.
-            count: inSelection ? (s.query === null ? s.includeIds.length : 0) : 1,
-            // "Sibling" is only defined when the drag starts inside a subtag block; the flat grid
-            // has no source tag (§9).
-            sourceTag: null,
-        })
-    }
+    // Counts come from the unfiltered tag payload, so a cross-cutting filter makes them wrong (§5).
+    const hideCounts = params.include.length > 0 || params.exclude.length > 0
 
-    // Let the Lightbox page in more items as it nears the end of what's loaded (large libraries).
-    const loadMore = useCallback(() => {
-        if (hasNextPage && !isFetchingNextPage) fetchNextPage()
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    const rootNode = useMemo(
+        () => (view.root ? findNode(tree, view.root) : null),
+        [tree, view.root],
+    )
 
-    const openViewer = (id: string) =>
-        setSp((prev) => {
-            const next = new URLSearchParams(prev)
-            next.set('view', id)
-            return next
-        })
+    // ⌘A selects the subtree, not the visible set (§7) — `include: [T]` covers photos inside blocks
+    // that are not on screen, so the selection bar says how many groups that is.
+    const overrides = useTimelineExpansion((s) => s.overrides)
+    const collapsedGroups =
+        view.mode === 'subtag'
+            ? (rootNode ? rootNode.children : tree).filter((c) => !overrides[c.path]).length
+            : 0
 
-    const sentinel = useRef<HTMLDivElement>(null)
-    useEffect(() => {
-        const el = sentinel.current
-        if (!el) return
-        const io = new IntersectionObserver((entries) => {
-            if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) fetchNextPage()
-        })
-        io.observe(el)
-        return () => io.disconnect()
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    // Dropping photos on a subtag block is the same action as dropping on a tree row (34 §9) — but
+    // here the drag started *inside* a tag, so "sibling" is defined and the dialog can offer to
+    // remove the source tag.
+    const onDropOnTag = useCallback(
+        (target: TagNode) => {
+            if (!drag.selection) return
+            const payload: TagDrop = {
+                selection: drag.selection,
+                count: drag.count,
+                sourceTag: drag.sourceTag,
+                targetTag: target.path,
+                targetName: target.name,
+                sourceName: drag.sourceTag ? display(drag.sourceTag, metaByPath.get(drag.sourceTag)) : null,
+            }
+            drag.end()
+            const silent =
+                payload.count === 1 &&
+                !(payload.sourceTag && areSiblings(payload.sourceTag, payload.targetTag))
+            if (!silent) return setDrop(payload)
+            edit.mutate(
+                {selection: payload.selection, add_tags: [payload.targetTag]},
+                {
+                    onSuccess: () => toast.success(`Added to ${payload.targetName}`, undoAction(payload, null, edit)),
+                    onError: (e) => toast.error(apiErrorMessage(e)),
+                },
+            )
+        },
+        [drag, edit, metaByPath],
+    )
 
-    let body
-    if (isPending) {
-        body = (
-            <div className="flex flex-wrap content-start gap-1.5 p-3">
-                {Array.from({length: 18}).map((_, i) => (
-                    <div
-                        key={i}
-                        className="animate-pulse rounded-[3px] bg-muted"
-                        style={{height: rowHeight, flexBasis: `${rowHeight * 1.4}px`, flexGrow: rowHeight * 1.4}}
+    // The padding is *inside* the scroll container, not on it: a sticky header offset from the top of a
+    // padded scrollport leaves a strip of scrolling photos above it. Here the padding scrolls away
+    // instead, and headers bleed back out of it horizontally (`PAD_ROOT`). `min-h-full` keeps the
+    // click-to-clear target covering the whole viewport even when the grid is short.
+    const body = (
+        <div className="md:h-full md:overflow-y-auto">
+            <div className="min-h-full p-3" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
+                {isBrowsing ? (
+                    <HierarchyStream filters={filters}/>
+                ) : (
+                    <TagStream
+                        path={view.root}
+                        node={rootNode}
+                        order={[0]}
+                        trash={params.trash as TrashView}
+                        bucketCtx={view.bucketCtx}
+                        base={filters}
+                        hideCounts={hideCounts}
+                        onDropOnTag={onDropOnTag}
+                        modeOverride={view.pinned ? 'all' : undefined}
+                        groupingOverride={view.pinned ? NO_GROUPING : undefined}
                     />
-                ))}
+                )}
             </div>
-        )
-    } else if (isError) {
-        body = (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
-                <AlertCircle className="h-8 w-8"/>
-                <p>Could not load photos.</p>
-                <p className="text-xs">{apiErrorMessage(error)}</p>
-            </div>
-        )
-    } else if (!items.length) {
-        body = (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
-                <ImageOff className="h-8 w-8"/>
-                <p>{isBrowsing ? 'This directory has no photos.' : 'No photos match this view.'}</p>
-            </div>
-        )
-    } else {
-        body = (
-            <div className="p-3 md:h-full md:overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
-                {/* select-none: shift-click range selection otherwise highlights the cards as text. */}
-                <ul className="m-0 flex list-none flex-wrap content-start gap-1.5 p-0 select-none">
-                    {items.map((it) => {
-                        // While picking references, only photos that HAVE the field being interpolated
-                        // can be a reference; the rest are dimmed + inert.
-                        const canRef = params.fix === 'gps' ? it.has_gps : params.fix === 'date' ? !!it.captured_at : false
-                        const refDisabled = referenceActive && !canRef
-                        return (
-                            <PhotoCard
-                                key={it.id}
-                                item={it}
-                                rowHeight={rowHeight}
-                                // In the reference phase a picked reference gets the interpolation-source
-                                // (sky ring + blue check) style, the same as an automatic anchor — not the
-                                // primary selection ring; a click toggles it (§7).
-                                selected={referenceActive ? false : isMemberSelected(query, includeIds, excludeIds, it.id)}
-                                multiSelect={multiSelect}
-                                showPurgeCountdown={trashOnly}
-                                retentionDays={retentionDays}
-                                proximityRefTime={params.sort === 'time_near' ? params.nearTime : fixRefTime}
-                                // No "missing" highlight while picking references — the context is choosing
-                                // sources, not fixing; non-eligible photos are dimmed instead.
-                                fixMode={referenceActive ? null : params.fix}
-                                dimmed={refDisabled}
-                                anchorRole={
-                                    referenceActive
-                                        ? refIds.includes(it.id) ? params.fix : null
-                                        : params.fix === 'gps' && anchorIds.includes(it.id) ? 'gps' : null
-                                }
-                                onSelect={
-                                    referenceActive
-                                        ? (e) => {
-                                            e.stopPropagation();
-                                            if (canRef) toggleRef(it.id)
-                                        }
-                                        : handleSelect(it.id)
-                                }
-                                onLongPress={referenceActive ? () => {
-                                    if (canRef) toggleRef(it.id)
-                                } : handleLongPress(it.id)}
-                                onDragStart={referenceActive ? undefined : handleDragStart(it.id)}
-                                onDragEnd={endTagDrag}
-                                onOpen={() => openViewer(it.id)}
-                            />
-                        )
-                    })}
-                    {/* Absorbs trailing space so the last row keeps natural sizing. */}
-                    <li aria-hidden className="h-0" style={{flexGrow: 1e7, flexBasis: 0}}/>
-                </ul>
-                <div ref={sentinel} className="flex h-12 items-center justify-center">
-                    {isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground"/>}
-                </div>
-
-                <Lightbox items={items} gridVariant={variant} loadMore={loadMore}/>
-            </div>
-        )
-    }
-
-    // A single header row tops the grid: on the left the active hierarchy breadcrumb, or (flat view)
-    // the tag-filter breadcrumb of active include/exact/exclude chips (empty when none); on the right
-    // the three-state trash toggle — the trash is a filter over this view, not a separate page.
-    const content = (
-        <div className="flex h-full min-h-0 flex-col">
-            {/* Unified filter/sort toolbar. `mr-auto` on the breadcrumb (content-sized, not flex-1)
-                pushes the control cluster right and — crucially — lets it wrap to the next line when a
-                long breadcrumb leaves no room, instead of the cluster overflowing. The breadcrumb keeps
-                `min-w-0` so its own chips wrap rather than forcing horizontal overflow. */}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-1.5">
-                <div className="mr-auto min-w-0 max-w-full">
-                    {isBrowsing ? <HierarchyBreadcrumb/> : <TagFilterBar/>}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                    <DateFilter/>
-                    <IssuesFilter/>
-                    <ScopeToggle/>
-                    <TrashToggle/>
-                    <SortMenu/>
-                </div>
-            </div>
-            <div className="min-h-0 flex-1">{body}</div>
+            <GridPlumbing/>
         </div>
     )
 
+    // A single header row tops the grid: on the left the active hierarchy breadcrumb, or (flat view)
+    // the tag-filter breadcrumb of active include/exclude chips; on the right the view controls.
     return (
         <>
-            {content}
-            {referenceActive ? <ReferenceBar/> : <SelectionActionBar/>}
+            <div className="flex h-full min-h-0 flex-col">
+                {/* `mr-auto` on the breadcrumb (content-sized, not flex-1) pushes the control cluster
+                    right and lets it wrap to the next line when a long breadcrumb leaves no room. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-1.5">
+                    <div className="mr-auto min-w-0 max-w-full">
+                        {isBrowsing ? <HierarchyBreadcrumb/> : <TagFilterBar/>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <DateFilter/>
+                        <IssuesFilter/>
+                        <ScopeToggle/>
+                        <TrashToggle/>
+                        <ViewMenu/>
+                        <SortMenu/>
+                    </div>
+                </div>
+                {/* Both overrides are stated with their reason and restore on leaving fix mode —
+                    neither is written to `tag_metadata` (§9). */}
+                {view.pinned && (
+                    <p className="flex items-center gap-1.5 border-b border-border bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
+                        <Wrench className="h-3 w-3 shrink-0"/>
+                        Fix mode needs a flat stream to find temporal and spatial neighbours, so grouping and
+                        subtag blocks are off. Both come back when you leave it.
+                    </p>
+                )}
+                <div className="min-h-0 flex-1">
+                    <GroupedGridProvider>{body}</GroupedGridProvider>
+                </div>
+            </div>
+            <TagDropDialog drop={drop} onClose={() => setDrop(null)}/>
+            {referenceActive ? <ReferenceBar/> : <SelectionActionBar selectionFilter={view.selectionFilter} collapsedGroups={collapsedGroups}/>}
         </>
     )
+}
+
+function findNode(nodes: TagNode[], path: string): TagNode | null {
+    for (const n of nodes) {
+        if (n.path === path) return n
+        if (path.startsWith(`${n.path}.`)) return findNode(n.children, path)
+    }
+    return null
 }

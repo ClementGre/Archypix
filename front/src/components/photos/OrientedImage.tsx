@@ -104,6 +104,36 @@ export function OrientedImage({src, alt, orientation, width, height, className, 
     )
 }
 
+/**
+ * A raw thumbnail covering a parent of *arbitrary* aspect ratio — unlike `OrientedImage`, whose box
+ * must already carry the display ratio. A rotated image can only be guaranteed to cover such a box
+ * by filling the smallest square that contains it, since a square is rotation-invariant.
+ */
+export function OrientedFillImage({src, alt, orientation, className, loading = 'lazy'}: {
+    src: string
+    alt: string
+    orientation?: number | null
+    className?: string
+    loading?: 'lazy' | 'eager'
+}) {
+    const {rotation, swap} = orientationTransform(orientation)
+    const img = (
+        <img
+            src={src}
+            alt={alt}
+            loading={loading}
+            className={cn('h-full w-full max-w-none object-cover', className)}
+            style={rotation ? {transform: `rotate(${rotation}deg)`} : undefined}
+        />
+    )
+    if (!swap) return <span className="absolute inset-0">{img}</span>
+    return (
+        <span className="absolute left-1/2 top-1/2 aspect-square min-h-full min-w-full -translate-x-1/2 -translate-y-1/2">
+            {img}
+        </span>
+    )
+}
+
 interface OrientedContainImageProps {
     /** The image to show. Omit while the URL is still resolving — the `blurhash` placeholder shows. */
     src?: string

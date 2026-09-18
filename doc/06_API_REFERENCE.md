@@ -520,9 +520,9 @@ and rows **missing the sort field are excluded** (undated for `time_near`, ungeo
 | `order` | `"asc" \| "desc"` | `"desc"` | Sort direction (ignored for proximity sorts) |
 | `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match`. For a single tag, pass one entry |
 | `exclude_tags` | `string` | — | Comma-separated ltree paths; reject the picture if it has any (inclusive) |
-| `exact` | `string` | — | Comma-separated ltree paths matched **exactly** (`tag_path = p`, no descendants) — strict tag navigation; combined with `include`/`exclude` per `match` |
+| `exact` | `string` | — | **One** ltree path matched **exactly** (`tag_path = p`, no descendants) — the timeline's per-section scope (feature 35 §7); combined with `include`/`exclude` per `match`. Single-valued: a comma is part of the path and therefore a `400` |
 | `match` | `"all" \| "any"` | `"all"` | Combinator over `include_tags`/`exact` (`all` = AND, `any` = OR) |
-| `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. Mutually exclusive with `include_tags`/`exclude_tags`/`exact` |
+| `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. **AND-ed** with the tag arms (so the root view can still carry cross-cutting `include_tags`/`exclude_tags`, feature 35 §7); an include alongside it is simply an empty result |
 | `owned_only` | `boolean` | `false` | Only show pictures owned by this user |
 | `shared_with_me` | `boolean` | `false` | Only show pictures received via incoming shares |
 | `trash` | `"exclude" \| "include" \| "only"` | `"exclude"` | Trash membership: `exclude` = live only (default), `include` = live + trashed, `only` =
@@ -560,6 +560,8 @@ interface PictureListItem {
     height: number | null;
     captured_at: string | null;
     ingested_at: string;
+    updated_at: string;            // both are SortFields, so the timeline buckets them client-side (feature 35 §6)
+    file_size: number | null;      // bytes
     original_file_created_at: string | null; // source file creation time at ingest (feature 30 §10); suggestion-only
     has_gps: boolean;              // derived gps_lat & gps_lng presence (owned + received) — feature 29 §3
     distance_m?: number;           // great-circle metres from near_lat/near_lng; present whenever a

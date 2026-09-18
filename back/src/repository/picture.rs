@@ -1275,12 +1275,16 @@ impl PictureRepository {
     /// membership semantics.
     fn render_predicate(q: &mut sqlx::QueryBuilder<Postgres>, pred: &TagPredicate) {
         q.push("(");
+        // `untagged` is a conjunct, not a branch: the gallery layers its cross-cutting include /
+        // exclude sets onto every query, root included (feature 35 §7).
+        let has_positive = !pred.include.is_empty() || !pred.exact.is_empty();
         if pred.untagged {
             q.push("NOT EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id)");
-        } else if pred.include.is_empty() && pred.exact.is_empty() {
-            // No positive arms ⇒ membership is vacuously true (all pictures).
-            q.push("TRUE");
-        } else {
+            if has_positive {
+                q.push(" AND ");
+            }
+        }
+        if has_positive {
             let joiner = if pred.match_all { " AND " } else { " OR " };
             q.push("(");
             let mut first = true;
@@ -1303,6 +1307,9 @@ impl PictureRepository {
                     .push("::ltree)");
             }
             q.push(")");
+        } else if !pred.untagged {
+            // No positive arms ⇒ membership is vacuously true (all pictures).
+            q.push("TRUE");
         }
         for ex in &pred.exclude {
             q.push(" AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ ")

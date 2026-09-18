@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET captured_at = $2::text::timestamp WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b1daa3be381d5695002711ea54ad84afc466c0effc6a3c45f2ca16e85092c94"
+}

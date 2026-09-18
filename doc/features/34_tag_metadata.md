@@ -294,11 +294,11 @@ if the surfaces are enumerated:
 
 | Surface | Shows |
 |---|---|
-| Tag tree | display name; ltree *leaf label* muted beside it when overridden; full path on hover |
-| Tag picker / autocomplete | display name + muted path; **search matches both** |
+| Tag tree | display name; full path on hover and in the row's `…` menu header; the ltree *leaf label* shows beside the name **only** on a sibling-name collision |
+| Tag picker / autocomplete | the **whole** path with display names substituted (`displayPath`), with the raw ltree path muted on a second line when it differs; **search matches both**. A picker writes the path, so a display name renames a segment here — it never hides where the tag lives |
 | Filter chips (`TagFilterBar`), breadcrumbs, group headers | display name; path in tooltip |
 | Timeline subtag blocks (feature 35) | display name; path in tooltip |
-| `SelectionPanel` tag chips (single selection) | display name; path in tooltip |
+| `SelectionPanel` tag chips (single selection) | the **whole** path with each segment's display name substituted (`displayPath`); raw ltree path in tooltip — a flat chip list has no tree to place a bare leaf in |
 | `MultiSelectionPanel` tristate tags (feature 14) | display name; path in tooltip |
 | "Shared with you" / "Shared by you" sections | display name of the shared subpath, sender handle raw |
 | Lightbox tag overlay | display name |
@@ -359,6 +359,12 @@ kind**. The server never sorts tags; it returns the set and its metadata.
 Client-side, manual order is `sort_index` ascending with unset last, tie-broken by
 `display_name ?? label`, so **manual and alphabetical coincide until the first drag** — reordering
 needs no mode switch and an unconfigured tree is alphabetical, as expected.
+
+**Entering reorder mode numbers the list.** A sibling with no stored `sort_index` sorts *last*, so in
+an unconfigured list the first single-row write makes that row jump to the front instead of moving —
+a move down was simply impossible. `initialOrderWrites` materialises the resolved order as explicit
+indices on entry (one coalesced batch), and `reorderWrites` falls back to a full renumber whenever any
+sibling is still unnumbered.
 
 **A drag is an ordinary metadata write.** There is no reorder endpoint. The client knows the resolved
 order, so it computes the moved node's new `sort_index` as the midpoint of its new neighbours'
@@ -652,12 +658,14 @@ not imply the user wants their mounted folder renamed.
 
 ### 16.1 Deferred (stored and served, no UI yet)
 
-- **Cover picker** (§6). `cover_picture_id` is validated, stored, rewritten on picture delete,
-  carried across a share and resolved through `remote_picture_id`; the edit dialog can only *clear*
-  it. Nothing renders a cover until feature 35's timeline blocks, so a picker would be dead UI.
-- **`view_mode`, `grouping`, `subtag_placement`, `children_order`** are stored, validated and served,
-  but only `children_order` has a control (entering reorder mode switches it to `manual`). The rest
-  are feature 35's view surfaces.
+- ~~**Cover picker** (§6)~~ — shipped with feature 35, whose subtag blocks are the first surface that
+  renders a cover. Not a picker in the end: a second picture browser nested in the tag dialog was the
+  wrong shape, so the cover is **set from the photo** — the selection panel's `⋯` → *Set as thumbnail
+  for &lt;tag&gt;*, offered for the view root when the picture is owned — and the dialog shows a
+  preview + Clear (`components/tags/CoverPicker.tsx`).
+- ~~**`view_mode`, `grouping`, `subtag_placement`, `children_order`**~~ — all four now have controls:
+  the grid's **View** dropdown and merged Sort + Group by menu (feature 35 §4), and a *Sort subtags
+  by* submenu on the tag tree for `children_order`.
 - **Share popover: unmap a share-mapping target** (§10) — the popover covers recipients, status,
   revoke, public links and "share with someone else", but not the `tagging_services` JSONB
   containment lookup that finds a mapping's sender.

@@ -1,9 +1,7 @@
 import {useMemo, useState} from 'react'
-import {Ban, Link2, Loader2, Send, Share2} from 'lucide-react'
-import {toast} from 'sonner'
+import {Link2, Loader2, Send, Share2} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Section} from '@/components/photos/detail/Section'
-import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {useIncomingShares, useOutgoingShares, useShareMutations} from '@/hooks/useShares'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
@@ -12,36 +10,12 @@ import type {IncomingShareResponse, ShareResponse} from '@/lib/types'
 import {CreateShareDialog} from './CreateShareDialog'
 import {PublicLinksManager} from './PublicLinksManager'
 import {PublicShareDialog} from './PublicShareDialog'
-import {type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
+import {outgoingEntry, type ShareInfoEntry, ShareInfoPopover, summarizeNames} from './ShareInfoPopover'
+import {RevokeShareButton} from './RevokeControls'
 import {usePublicShares} from "@/hooks/usePublicShares.ts";
 
-const REVOCABLE = new Set(['pending', 'pending_first_announcement', 'active', 'errored'])
 const PENDING = new Set(['pending'])
 const CLOSED = new Set(['revoked', 'tombstoned'])
-
-function RevokeButton({share, disabled, onRevoke}: { share: ShareResponse; disabled: boolean; onRevoke: () => void }) {
-    if (!REVOCABLE.has(share.status)) return null
-    return (
-        <ConfirmDialog
-            title="Revoke this share?"
-            description={`Stop sharing with @${share.recipient_username}:${share.recipient_instance}. Their access and the shared pictures are removed immediately.`}
-            confirmLabel="Revoke"
-            destructive
-            onConfirm={onRevoke}
-            trigger={
-                <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                    title="Revoke"
-                    disabled={disabled}
-                >
-                    <Ban className="h-3.5 w-3.5"/>
-                </Button>
-            }
-        />
-    )
-}
 
 /** A tag and the shares (recipients) that target it, rendered as one card.
  *  Reused across the active / pending / closed sections. */
@@ -51,31 +25,15 @@ function GroupedShareRow({
                              revoking,
                              sharebackLabel,
                              onFilterTag,
-                             onRevoke,
                          }: {
     tag: string
     shares: ShareResponse[]
     revoking: boolean
     sharebackLabel: (share: ShareResponse) => string | null
     onFilterTag: (tag: string) => void
-    onRevoke: (id: string) => void
 }) {
     const nameLabel = summarizeNames(shares.map((s) => s.name))
-    const entries: ShareInfoEntry[] = shares.map((s) => ({
-        label: `→ @${s.recipient_username}:${s.recipient_instance}`,
-        name: s.name,
-        message: s.message,
-        status: s.status,
-        allowShareBack: s.allow_share_back,
-        allowExifEdit: s.allow_exif_edit,
-        future: s.future,
-        sharedTag: s.tag_path,
-        createdAt: s.created_at,
-        lastErrorAt: s.last_error_at,
-        nextRetryAt: s.next_retry_at,
-        closedAt: s.revoked_at,
-        sharebackOf: sharebackLabel(s),
-    }))
+    const entries: ShareInfoEntry[] = shares.map((s) => outgoingEntry(s, sharebackLabel))
 
     return (
         <div className="rounded-md border border-border px-2 py-1.5">
@@ -102,7 +60,7 @@ function GroupedShareRow({
                             → @{share.recipient_username}:{share.recipient_instance}
                         </span>
                         <div className="flex shrink-0 items-center gap-1">
-                            <RevokeButton share={share} disabled={revoking} onRevoke={() => onRevoke(share.id)}/>
+                            <RevokeShareButton share={share} disabled={revoking}/>
                         </div>
                     </div>
                 ))}
@@ -131,7 +89,6 @@ export function OutgoingSharesList() {
     const [shareOpen, setShareOpen] = useState(false)
     const [publicOpen, setPublicOpen] = useState(false)
 
-    const onRevoke = (id: string) => revoke.mutate(id, {onError: (e) => toast.error(apiErrorMessage(e))})
     const onFilterTag = (tag: string) => update({tag})
 
     // outgoing.shareback_of references the original outgoing share, which is the user's incoming
@@ -213,7 +170,6 @@ export function OutgoingSharesList() {
                 revoking={revoke.isPending}
                 sharebackLabel={sharebackLabel}
                 onFilterTag={onFilterTag}
-                onRevoke={onRevoke}
             />
         ))
 

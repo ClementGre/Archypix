@@ -32,6 +32,22 @@ export function display(path: string, meta?: TagMeta | null): string {
     return meta?.display_name?.trim() || TagPath.leaf(path)
 }
 
+/**
+ * The whole path, each segment resolved through `display()` (§5). A flat chip list has no tree to
+ * place a tag in, so the leaf alone ("Vietnam") does not say *which* Vietnam — those surfaces show
+ * the full path, with display names substituted rather than hidden.
+ */
+export function displayPath(path: string, metaByPath: Map<string, TagMeta>): string {
+    if (!path) return ''
+    const out: string[] = []
+    let prefix = ''
+    for (const segment of path.split('.')) {
+        prefix = prefix ? `${prefix}.${segment}` : segment
+        out.push(display(prefix, metaByPath.get(prefix)))
+    }
+    return `/${out.join('/')}`
+}
+
 /** Which trash filter a view is under; picks the count/date half to sort and show by (§4). */
 export type TrashView = 'exclude' | 'include' | 'only'
 
@@ -192,6 +208,11 @@ export function reorderWrites(
     toIndex: number,
 ): Array<{ tag_path: string; sort_index: number }> {
     if (fromIndex === toIndex) return []
+    // A partially-numbered list cannot be nudged one row at a time: unset indices sort *last*, so
+    // the single row that gains one jumps to the front instead of moving. Number the list first.
+    if (siblings.some((n) => n.meta?.sort_index == null)) {
+        return renumber(siblings, fromIndex, toIndex)
+    }
     const effective = siblings.map((n, i) => n.meta?.sort_index ?? i * SORT_STEP)
     const moved = siblings[fromIndex]
     const rest = effective.filter((_, i) => i !== fromIndex)
@@ -204,9 +225,28 @@ export function reorderWrites(
     if (slot > lo && slot < hi) return [{tag_path: moved.path, sort_index: slot}]
 
     // No integer left between the neighbours — renumber this one sibling list.
+    return renumber(siblings, fromIndex, toIndex)
+}
+
+/** Write a sparse index for every sibling, optionally moving one of them first. */
+function renumber(
+    siblings: TagNode[],
+    fromIndex?: number,
+    toIndex?: number,
+): Array<{ tag_path: string; sort_index: number }> {
     const order = [...siblings]
-    order.splice(toIndex, 0, ...order.splice(fromIndex, 1))
+    if (fromIndex != null && toIndex != null) order.splice(toIndex, 0, ...order.splice(fromIndex, 1))
     return order.map((n, i) => ({tag_path: n.path, sort_index: i * SORT_STEP}))
+}
+
+/**
+ * Materialise the current resolved order as explicit indices (§7). Entering reorder mode calls this
+ * so the list starts numbered — otherwise the first move is a no-op (see `reorderWrites`). Returns
+ * nothing when every sibling already has one.
+ */
+export function initialOrderWrites(siblings: TagNode[]): Array<{ tag_path: string; sort_index: number }> {
+    if (!siblings.some((n) => n.meta?.sort_index == null)) return []
+    return renumber(siblings)
 }
 
 /** Sibling display-name collisions are allowed and warned, but must not be indistinguishable in a

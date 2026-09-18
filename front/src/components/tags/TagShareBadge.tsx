@@ -3,9 +3,13 @@ import {Copy, Link2, Share2, Users, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Button} from '@/components/ui/button'
-import {useOutgoingShares, useShareMutations} from '@/hooks/useShares'
-import {usePublicShares, usePublicShareMutations} from '@/hooks/usePublicShares'
+import {RevokePublicLinkButton, RevokeShareButton} from '@/components/shares/RevokeControls'
+import {useOutgoingShares} from '@/hooks/useShares'
+import {usePublicShares} from '@/hooks/usePublicShares'
 import {publicShareUrl} from '@/api/publicShares'
+import {outgoingEntry, ShareInfoPopover} from '@/components/shares/ShareInfoPopover'
+import {PublicShareInfoPopover} from '@/components/shares/PublicShareInfoPopover'
+import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
 import {useAuthStore} from '@/stores/auth'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {cn, TagPath} from '@/lib/utils'
@@ -50,6 +54,15 @@ function initials(username: string): string {
     return username.slice(0, 2).toUpperCase()
 }
 
+/** The popover rows are one line tall, so the shared revoke controls get a bare `X` here. */
+function CompactRevoke() {
+    return (
+        <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive" title="Revoke">
+            <X className="h-3.5 w-3.5"/>
+        </button>
+    )
+}
+
 /**
  * The badge on a tag row: an avatar stack (≤3) or `Share2` + count for outgoing, `Link2` for public
  * links, and a fainter inherited marker for descendants of a shared tag. Clicking opens the
@@ -64,8 +77,6 @@ export function TagShareBadge({
     info: TagShareInfo
     onShare: (path: string) => void
 }) {
-    const {revoke} = useShareMutations()
-    const {revoke: revokeLink} = usePublicShareMutations()
     const username = useAuthStore((s) => s.user?.username ?? '')
     const domain = useAuthStore((s) => s.instance) || GLOBAL_DOMAIN
     const hasOwn = info.own.length > 0 || info.links.length > 0
@@ -109,36 +120,30 @@ export function TagShareBadge({
                     {info.links.length > 0 && <Link2 className="h-3 w-3"/>}
                 </button>
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-72 p-2" onClick={(e) => e.stopPropagation()}>
+            <PopoverContent align="start" className="w-80 p-2" onClick={(e) => e.stopPropagation()}>
                 <p className="px-1 pb-1 text-[11px] text-muted-foreground">
                     Sharing <span className="font-mono">{TagPath.toDisplay(path)}</span>
                 </p>
 
+                {/* Each row's full detail reuses the shares tabs' own `(i)` popup as a sub-popover,
+                    rather than cramming status, flags and timestamps onto the row. */}
                 {info.own.map((s) => (
-                    <div key={s.id} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted">
+                    <div key={s.id} className="flex items-center gap-1 rounded px-1 py-1 text-xs hover:bg-muted">
                         <Users className="h-3.5 w-3.5 shrink-0 opacity-60"/>
                         <span className="min-w-0 flex-1 truncate">
                             {s.recipient_username}@{s.recipient_instance}
-                            <span className="ml-1 text-[10px] text-muted-foreground">
-                                {s.status}
-                                {s.future && ' · future'}
-                                {s.allow_exif_edit && ' · EXIF'}
-                            </span>
                         </span>
-                        <button
-                            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-                            title="Revoke"
-                            onClick={() => revoke.mutate(s.id, {onSuccess: () => toast.success('Share revoked')})}
-                        >
-                            <X className="h-3.5 w-3.5"/>
-                        </button>
+                        <ShareStatusBadge status={s.status}/>
+                        <ShareInfoPopover entries={[outgoingEntry(s)]}/>
+                        <RevokeShareButton share={s} trigger={<CompactRevoke/>}/>
                     </div>
                 ))}
 
                 {info.links.map((l) => (
-                    <div key={l.id} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted">
+                    <div key={l.id} className="flex items-center gap-1 rounded px-1 py-1 text-xs hover:bg-muted">
                         <Link2 className="h-3.5 w-3.5 shrink-0 opacity-60"/>
                         <span className="min-w-0 flex-1 truncate">{l.name}</span>
+                        <PublicShareInfoPopover share={l}/>
                         <button
                             className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
                             title="Copy link"
@@ -149,18 +154,7 @@ export function TagShareBadge({
                         >
                             <Copy className="h-3.5 w-3.5"/>
                         </button>
-                        <button
-                            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-                            title="Revoke"
-                            onClick={() =>
-                                revokeLink.mutate(
-                                    {id: l.id, cascade: false, trash: false},
-                                    {onSuccess: () => toast.success('Link revoked')},
-                                )
-                            }
-                        >
-                            <X className="h-3.5 w-3.5"/>
-                        </button>
+                        <RevokePublicLinkButton share={l} trigger={<CompactRevoke/>}/>
                     </div>
                 ))}
 

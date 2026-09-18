@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {AlertCircle, Check, Loader2, Plus, RotateCw, X} from 'lucide-react'
+import {AlertCircle, Check, Loader2, Plus, Reply, RotateCw, X} from 'lucide-react'
 import {toast} from 'sonner'
 import {useQueryClient} from '@tanstack/react-query'
 import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger} from '@/components/ui/dialog'
@@ -58,6 +58,11 @@ export interface CreateShareDialogProps {
     initialShareback?: IncomingShareResponse | null
     /** Pre-fill the tag (wire form) — e.g. the local tag the ShareBack source is mapped to. Stays editable. */
     initialTag?: string
+    /**
+     * Open **for** this tag: it is what the user picked, so the tag picker and the ShareBack
+     * selector both go away. Only the Shares tab, where there is no context to inherit, shows them.
+     */
+    lockedTag?: string
 }
 
 export function CreateShareDialog({
@@ -66,6 +71,7 @@ export function CreateShareDialog({
                                       showTrigger = true,
                                       initialShareback,
                                       initialTag,
+                                      lockedTag,
                                   }: CreateShareDialogProps = {}) {
     const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
     const open = controlledOpen ?? uncontrolledOpen
@@ -120,11 +126,12 @@ export function CreateShareDialog({
             const seed = initialShareback ?? null
             setSharebackOfId(seed?.id ?? '')
             setRecipients(seed ? [recipientFor(seed)] : [newRecipient()])
-            setTag(initialTag ?? '')
+            setTag(lockedTag ?? initialTag ?? '')
             // Reuse the original share's name so the owner recognises the ShareBack; otherwise
             // prefill from the tag's display name (feature 34 §10.1). Still editable — a share can
             // be labelled differently from the subject it covers.
-            setName(seed?.name ?? (initialTag ? tagMetaByPath.get(initialTag)?.display_name ?? '' : ''))
+            const seedTag = lockedTag ?? initialTag
+            setName(seed?.name ?? (seedTag ? tagMetaByPath.get(seedTag)?.display_name ?? '' : ''))
         } else {
             setName('')
             setMessage('')
@@ -254,35 +261,47 @@ export function CreateShareDialog({
                     <DialogTitle>{isShareBack ? 'Create ShareBack' : 'Create outgoing share'}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="min-w-0 space-y-4">
-                    {/* Share back of */}
-                    <div className="space-y-1.5">
-                        <Label>Share back of <span className="text-muted-foreground">(optional)</span></Label>
-                        <Select
-                            value={sharebackOfId || NONE}
-                            onValueChange={onSelectShareback}
-                            disabled={submitting}
-                        >
-                            <SelectTrigger>
-                                <SelectValue placeholder="Not a ShareBack"/>
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value={NONE}>Not a ShareBack</SelectItem>
-                                {sharebackOptions.map((s) => (
-                                    <SelectItem key={s.id} value={s.id}>
-                                        {s.name} — @{s.sender_username}:{s.sender_instance}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        {isShareBack && (
-                            <p className="text-[11px] text-muted-foreground">
-                                Shared back to @{selectedIncoming!.sender_username}:{selectedIncoming!.sender_instance}.
-                                {selectedIncoming!.allow_share_back
-                                    ? ' Auto-accepted (the sender allows ShareBack).'
-                                    : ' The sender must accept it manually.'}
-                            </p>
-                        )}
-                    </div>
+                    {/* Share back of — a fixed, stated fact when the dialog was opened *as* a
+                        ShareBack, a chooser only on the Shares tab where nothing is implied. */}
+                    {isShareBack ? (
+                        <div className="flex items-start gap-2 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-2 text-primary">
+                            <Reply className="mt-0.5 h-4 w-4 shrink-0"/>
+                            <div className="min-w-0 text-xs">
+                                <p className="font-medium">
+                                    ShareBack of “{selectedIncoming!.name}”
+                                </p>
+                                <p className="text-[11px] opacity-80">
+                                    Shared back to @{selectedIncoming!.sender_username}:{selectedIncoming!.sender_instance}.
+                                    {selectedIncoming!.allow_share_back
+                                        ? ' Auto-accepted (the sender allows ShareBack).'
+                                        : ' The sender must accept it manually.'}
+                                </p>
+                            </div>
+                        </div>
+                    ) : (
+                        !lockedTag && (
+                            <div className="space-y-1.5">
+                                <Label>Share back of <span className="text-muted-foreground">(optional)</span></Label>
+                                <Select
+                                    value={sharebackOfId || NONE}
+                                    onValueChange={onSelectShareback}
+                                    disabled={submitting}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Not a ShareBack"/>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value={NONE}>Not a ShareBack</SelectItem>
+                                        {sharebackOptions.map((s) => (
+                                            <SelectItem key={s.id} value={s.id}>
+                                                {s.name} — @{s.sender_username}:{s.sender_instance}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )
+                    )}
 
                     {/* Name */}
                     <div className="space-y-1.5">
@@ -321,20 +340,28 @@ export function CreateShareDialog({
                         />
                     </div>
 
-                    {/* Tag */}
+                    {/* Tag — the user already picked it when the dialog opens from a tag's own menu,
+                        so it is stated rather than offered again. */}
                     <div className="space-y-1.5">
                         <Label>Tag</Label>
-                        <div className="flex min-w-0 items-center gap-2">
-                            <TagPicker
-                                onSelect={setTag}
-                                triggerLabel={tag ? 'Change tag' : 'Choose tag'}
-                                allowCreate={false}
-                                allowProtected
-                            />
-                            {tag && (
-                                <span className="min-w-0 truncate text-sm text-muted-foreground">{TagPath.toDisplay(tag)}</span>
-                            )}
-                        </div>
+                        {lockedTag ? (
+                            <p className="min-w-0 truncate rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
+                               title={TagPath.toDisplay(lockedTag)}>
+                                {TagPath.toDisplay(lockedTag)}
+                            </p>
+                        ) : (
+                            <div className="flex min-w-0 items-center gap-2">
+                                <TagPicker
+                                    onSelect={setTag}
+                                    triggerLabel={tag ? 'Change tag' : 'Choose tag'}
+                                    allowCreate={false}
+                                    allowProtected
+                                />
+                                {tag && (
+                                    <span className="min-w-0 truncate text-sm text-muted-foreground">{TagPath.toDisplay(tag)}</span>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Recipients */}

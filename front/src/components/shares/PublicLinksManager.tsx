@@ -1,19 +1,16 @@
 import {useState} from 'react'
-import {Ban, Check, Copy, Loader2, Pencil, Trash2} from 'lucide-react'
+import {Ban, Check, Copy, Loader2, Pencil} from 'lucide-react'
 import {toast} from 'sonner'
 import type {PublicShareSummary} from '@/api/publicShares'
 import {publicShareUrl} from '@/api/publicShares'
-import {apiErrorMessage} from '@/api/client'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {TagPath} from '@/lib/utils'
 import {useAuthStore} from '@/stores/auth'
-import {usePublicShareMutations} from '@/hooks/usePublicShares'
 import {Button} from '@/components/ui/button'
-import {Switch} from '@/components/ui/switch'
 import {Section} from '@/components/photos/detail/Section'
-import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle} from '@/components/ui/dialog'
 import {PublicShareDialog} from './PublicShareDialog'
 import {PublicShareInfoPopover} from './PublicShareInfoPopover'
+import {RevokePublicLinkDialog} from './RevokeControls'
 
 type PublicLinksManagerProps = {
     shares?: PublicShareSummary[]
@@ -98,7 +95,7 @@ function PublicLinkRow({share}: { share: PublicShareSummary }) {
                 )}
             </div>
             <PublicShareDialog share={share} open={editOpen} onOpenChange={setEditOpen} showTrigger={false}/>
-            <RevokeDialog share={share} open={revokeOpen} onOpenChange={setRevokeOpen}/>
+            <RevokePublicLinkDialog share={share} open={revokeOpen} onOpenChange={setRevokeOpen}/>
         </li>
     )
 }
@@ -112,61 +109,3 @@ function Flag({on, label}: { on: boolean; label: string }) {
     )
 }
 
-function RevokeDialog({
-                          share,
-                          open,
-                          onOpenChange,
-                      }: {
-    share: PublicShareSummary
-    open: boolean
-    onOpenChange: (v: boolean) => void
-}) {
-    const {revoke} = usePublicShareMutations()
-    const [cascade, setCascade] = useState(false)
-    const [trash, setTrash] = useState(false)
-
-    const submit = async () => {
-        try {
-            await revoke.mutateAsync({id: share.id, cascade, trash})
-            toast.success('Public share link revoked.')
-            onOpenChange(false)
-        } catch (e) {
-            toast.error(apiErrorMessage(e))
-        }
-    }
-
-    return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-md">
-                <DialogHeader>
-                    <DialogTitle>Revoke "{share.name}"?</DialogTitle>
-                </DialogHeader>
-                <p className="text-sm text-muted-foreground">
-                    The link stops working immediately. This does not delete the pictures.
-                </p>
-                {share.derived_share_count > 0 && (
-                    <label className="flex items-center justify-between gap-3 text-sm">
-                        <span>Also revoke the {share.derived_share_count} derived private share(s)</span>
-                        <Switch checked={cascade} onCheckedChange={setCascade}/>
-                    </label>
-                )}
-                {share.contribution_count > 0 && (
-                    <label className="flex items-center justify-between gap-3 text-sm">
-                        <span className="inline-flex items-center gap-1.5">
-                            <Trash2 className="h-4 w-4"/> Move the {share.contribution_count} contribution(s) to trash
-                        </span>
-                        <Switch checked={trash} onCheckedChange={setTrash}/>
-                    </label>
-                )}
-                <DialogFooter>
-                    <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                        Cancel
-                    </Button>
-                    <Button variant="destructive" onClick={submit} disabled={revoke.isPending}>
-                        Revoke
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    )
-}

@@ -134,8 +134,8 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 
 | Param                  | Meaning                                                                                                                                                                         |
 |------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `tag`                  | active (primary) tag filter (wire form) — set by a plain tag click                                                                                                              |
-| `inc` / `exc` / `exa`  | extra compound-filter tag sets (comma wire paths): include / exclude / exact (strict) — built from the tag sidebar `…` menu                                                     |
+| `tag`                  | the **view root** (wire form): the tag whose subtree structures the view (feature 35 §7) — set by a plain tag click; absent ⇒ the root tag `''`                                 |
+| `inc` / `exc`          | cross-cutting AND / NOT tag sets (comma wire paths) applied to **every** query in the view — built from the tag sidebar `…` menu. There is no `exa`: per-section `exact` scoping is internal, never URL state |
 | `scope`                | `all` \| `owned` \| `shared`                                                                                                                                                    |
 | `trash`                | trash membership: `exclude` (default, omitted) \| `include` \| `only` (trash view) — a filter over the main view, set by the grid-header `TrashToggle`                          |
 | `sort`                 | `captured_at` (default) \| `ingested_at` \| `updated_at` \| `file_size` \| `filename` \| `time_near` \| `geo_near` (proximity, feature 29 §6)                                   |
@@ -207,8 +207,14 @@ picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row 
 **Gallery toolbar (grid header).** All view controls live in one wrapping row at the top of the centre grid (no longer in the `TopBar`): the
 breadcrumb/tag-chips on the left (content-sized `flex-1`, wraps internally) and a control cluster on the right that **drops to the next line when
 there
-is no room** — a plain `flex-wrap`, no hardcoded breakpoint. The cluster: `SortMenu` (field Date taken/added/modified · File size · Name + direction;
-also surfaces an active proximity sort with a one-click clear), `ScopeToggle` (**Ownership** dropdown — All / Mine / **Received** (shared-to-me),
+is no room** — a plain `flex-wrap`, no hardcoded breakpoint. The cluster: `ViewMenu` (**View** — the view root's recursive
+view mode, feature 35 §4: *Direct only* / *Subtags* (default) / *Everything*; the setting is sticky and invisible in the URL, so a
+non-default mode is named on the trigger with a one-click reset beside it, and the whole control is disabled with its reason while
+a fix mode pins the view), `SortMenu` (**one two-column Sort + Group by dropdown** — the left column picks the sort field
+(Date taken/added/modified · File size · Name), the right the bucketing **for that field** (none · year/quarter/season/month for
+dates, name prefix with an N input for `filename`, magnitude for the rest); they merge because a bucket must be a contiguous run in
+the sorted order. Buckets are remembered per sort field, the columns stack on mobile, and the menu also surfaces an active
+proximity sort with a one-click clear), `ScopeToggle` (**Ownership** dropdown — All / Mine / **Received** (shared-to-me),
 `scope`), `DateFilter`
 (dropdown wrapping the shared `DateRangePicker`, `capturedAfter`/`capturedBefore`), `IssuesFilter` (feature 29 §8 — a dropdown where **GPS** and
 **capture date** are each an independent three-state **Any / Present / Missing** writing `gps`/`cdate`, plus an **Any issue** toggle for the
@@ -218,8 +224,8 @@ look (`Button` outline `sm`, `text-xs font-normal`): **muted/grayed at their def
 than a value, then **coloured** (primary, or destructive for Trashed) and showing the active value once a non-default is picked. Proximity sorts are
 set from `SelectionPanel`'s overflow (`⋯`) menu **Find nearby in time / place** (`time_near`/`geo_near` + `near_*`, clearing tag/hierarchy **and**
 presence filters); under `geo_near` each `PhotoCard` shows a `distance_m` badge, under `time_near` a client-computed time-delta badge.
-`TagFilterBar` (`components/tags/`, the breadcrumb-style bar of active include / `=`-exact / `⦸`-exclude tag chips,
-each with a switch-include↔exact control + remove, plus Clear; occupies the toolbar's left, the hierarchy
+`TagFilterBar` (`components/tags/`, the breadcrumb-style bar of the view root + the cross-cutting include / `⦸`-exclude tag
+chips, each tinted with the tag's own colour and removable, plus Clear; occupies the toolbar's left, the hierarchy
 breadcrumb replacing it when browsing), `Lightbox` (full-screen viewer driven by the `view` param;
 ←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
@@ -343,14 +349,18 @@ name = coordinates).
 **`tags/`** — `TagTree` (recursive hierarchy built by `lib/tagTree.ts` from the one enriched `useAllTags`
 payload — see feature 34; a plain click sets the `tag` filter as the sole include and **clears any compound
 filter + active `hierarchy`/`hpath`**; auto-expands ancestors of the active tag and scrolls it into view when it changes externally. Rows show the
-tag's **display name** with the ltree label muted beside it when overridden (forced visible on a sibling-name collision) and the full path on hover,
-plus a colour dot, a **share badge** (avatar stack ≤3 / `Share2` + count for outgoing, `Link2` for public links, a fainter marker on descendants of a
+tag's **display name** alone — the ltree label appears beside it only on a sibling-name collision (§5) — with the full path on hover and in the `…`
+menu's header,
+plus a **share badge** (avatar stack ≤3 / `Share2` + count for outgoing, `Link2` for public links, a fainter marker on descendants of a
 shared tag — all computed client-side by prefix from the already-fetched share lists) opening a popover with recipients, status, revoke, copy-link and
-"Share with someone else…". Each row has a
-**`…` menu** with toggle actions **Include / Include exactly / Exclude** (writing the `inc`/`exa`/`exc` params), plus **New subtag…**, **Reorder
-subtags**, **Share this tag…** (opens a pre-filled `CreateShareDialog`), **New public share link…** and **Edit tag…**, and **⌘/Ctrl-click** quick-toggles a
-tag in the include set to build "X and Y" fast; "Include exactly" is the strict/no-descendant mode (backend `exact`). The tree only **highlights**
-rows by state — emerald (included/exact, `=` icon) or struck-through red (excluded, `⦸` icon); the active filter itself is surfaced in the centre
+"Share with someone else…". The row's trailing slot carries the **picture count**, which the `…` trigger *replaces* on hover (and permanently on
+touch, where there is no hover) so neither costs the other any width. Each row has a
+**`…` menu** with toggle actions **Include / Exclude** (writing the `inc`/`exc` params), plus **New subtag…**, a **Sort subtags by**
+submenu (Custom order / Display name / Tag name / Start date / End date, writing `children_order`, with *Reorder manually…* at its foot),
+**Share this tag…** (opens a pre-filled `CreateShareDialog`), **New public share link…** and **Edit tag…**; **⌘/Ctrl-click** quick-toggles a
+tag in the include set to build "X and Y" fast. There is no per-row exact toggle — *Direct only* in the grid's **View** dropdown replaced it
+(feature 35 §4). The tree only **highlights** rows by state — emerald (included) or struck-through red (excluded, `⦸` icon); a tag's colour
+is a left accent bar on the row plus a tint on its `#`, not a substitute icon. The active filter itself is surfaced in the centre
 `TagFilterBar` breadcrumb (not in the tree). Rows are also **drop targets** for photos dragged from the grid (§9 below), and reorder mode swaps the `…`
 menu for up/down buttons — each move is an ordinary `sort_index` write through the queue, not a reorder endpoint),
 `EditTagDialog` (the one tag dialog, absorbing the old `RenameTagDialog`: display name, description, colour palette + custom picker, date-range
@@ -411,9 +421,13 @@ locks the recipient to its sender), common `name` (≤ 64) / `message` (≤ 1000
 the global domain; a button adds rows); on submit it fires one request per recipient sequentially with per-recipient progress icons (mirrors
 `UploadDialog`). **A failed recipient stays editable and gets a per-row Retry** (and the footer button re-runs all not-yet-done rows), so a single bad
 handle doesn't force re-entering the others. It supports a controlled `open`/`onOpenChange` (with `showTrigger=false`) and
-an
-`initialTag` prop so the ShareBack button **and the tag tree's `…` → "Share this tag…"** can drive it pre-filled. `ShareStatusBadge` maps status →
-coloured pill (used inside the popover). **Public share links (feature 27):** the Outgoing panel header is a
+**adapts its chrome to where it was opened from**: `initialTag` pre-fills an editable tag (the ShareBack button); `lockedTag` (the tag tree's `…` →
+"Share this tag…") states the tag read-only *and* drops the ShareBack combobox, since neither is a choice the user came to make; and when it opens
+*as* a ShareBack the combobox is replaced by a coloured, non-interactive banner naming the original share — a fact, not an input inviting a change.
+`ShareStatusBadge` maps status →
+coloured pill (used inside the popover). **Revoking** an outgoing share or a public link is one place —
+`shares/RevokeControls.tsx` (`RevokeShareButton`, `RevokePublicLinkDialog`/`Button`) owns the confirmation wording and the mutation, so the Shares
+tabs, `PublicLinksManager` and the tag tree's share popover all gate it identically; a caller only overrides the trigger. **Public share links (feature 27):** the Outgoing panel header is a
 single row of two equal-width compact buttons — **Share tag** (`CreateShareDialog`) and **Public share**
 (`PublicShareDialog`), both driven controlled from the header (no "Outgoing" label). `PublicShareDialog` is **create-or-edit** (`share` prop
 prefills + switches to
@@ -536,6 +550,45 @@ mobile) and shown only when its `ui` store toggle is on:
   is active it browses that directory (via `useHierarchyBrowse`) with a clickable path breadcrumb instead of the flat picture list; when `hedit` is
   set
   the `HierarchyEditor` takes over the center (the right selection panel is suppressed while editing).
+
+### Structured browse (feature 35)
+
+The grid is no longer a flat list: `components/photos/grouped/TagStream` renders **one rule** recursively — at the view root T, T's *direct*
+photos partitioned into grouping sections, plus one collapsed `SubtagBlock` per child tag; expanding a block opens a full-width inline section
+that applies the same rule at that child using **that child's own** `view_mode` / `grouping` / `subtag_placement`. The flat view is the
+degenerate case (`Everything` + no grouping), so there is a single rendering path — including at the root, which is just the tag `''` where
+*direct* means untagged.
+
+- `hooks/useTimelineView` resolves the view root's mode, grouping (per sort field), block placement and `selectionFilter`; `lib/timeline.ts`
+  holds the resolution rules and `lib/grouping.ts` the bucketers (date year/quarter/season/month, `filename` prefix, and a `magnitude` ladder per
+  numeric field), each with a terminal null bucket. Sections are cut by walking the **sorted** items and starting a new one when the bucket key
+  changes, so a section is always a contiguous run.
+- **Blocks** sit at the top of the section their sort-leading endpoint falls into (`in_sections`) or once before the first section (`top`);
+  undated children flush at the end. A block shows cover (oriented — thumbnails are stored in raw pixel orientation) / display name / date range /
+  count, is a photo **drop target**, and hides its count under `inc`/`exc` (counts come from the unfiltered tag payload). Blocks lay out on their
+  own `auto-fill` **grid** rather than the photos' justified flex rows: a tag has no aspect ratio, so every tile takes one track and a short last
+  row keeps the size of a full one. Covers use `OrientedFillImage`, which fills the smallest containing square for 90°/270° thumbnails — the tile
+  has no display ratio to transpose against. A corner **↗** makes the tag the view root (browsing *into* it) as opposed to expanding it in place.
+  Children auto-expand when their parent has no direct photos.
+- **Expanding removes the tile from the row** and renders the same card full-width, with the child's stream inside it — rather than leaving the tile
+  in place and splicing its content underneath, which read as two loosely related things.
+- **Sticky headers stack.** Section headers and expanded-block headers are one fixed height, and each level of the recursion is handed the
+  accumulated offset of the levels above it, so a nested date header pins directly under its tag's header instead of over it (z-index decreases
+  with depth so a deeper one slides *under*). Three separate things let the page show through around a pinned header, and all three are handled:
+  spacing between sections is a flex `gap`, never a margin (a margin offsets where a sticky element pins); every header is opaque; and each header
+  **bleeds** out of the horizontal padding it sits in — the grid's `p-3`, or an expanded card's `p-1.5` for the stream nested in it — by negative
+  inline margins, so the background spans edge to edge while the text stays aligned with the rows below. That padding is a wrapper *inside* the scroll
+  container rather than on it, so the vertical half scrolls away under a pinned header instead of holding it off the top. An expanded card carries no
+  `overflow-hidden`, which would make it the scrollport of its own sticky headers; it rounds the header's top corners instead. Block headers are
+  tinted with the tag's own colour over an opaque base, so the tint says which tag the rows below belong to.
+- **Laziness:** a collapsed block costs zero requests; an expanded child mounts its own infinite query only once `useInView` says it is near the
+  viewport, and each stream carries its own pagination sentinel so a nested section advances its own query.
+- `grouped/GroupedGridContext` is what keeps selection coherent across all that: every mounted section registers
+  `(order, items, fetchNextPage, hasNextPage)` and the context exposes the flattened **visible render order**, which feeds `selectTo`
+  (shift-click spans groups), `useGridItems` (feature 30's anchor scan) and the `Lightbox`'s items + `loadMore` (paging out of one group
+  continues into the next). It is split into an API context and a data context so registering one section does not re-render the others.
+- **Fix mode pins the view** (§9 of the feature): `view_mode` → `Everything`, grouping → none, both announced in a header strip and both
+  restored on exit — neither is written to `tag_metadata`. The View control and the bucket column are disabled while it is on.
 - **Right** (`SelectionPanel`): **presence follows only the `rightSidebarOpen` toggle** (default open), decoupled from the selection so the grid never
   shifts; with nothing selected it shows an unobtrusive **empty placeholder** ("No photo selected"). Selecting a photo no longer force-opens the panel
   on desktop (on mobile a tap still opens the right drawer). For a single selection: borderless thumbnail (click opens lightbox; received pictures get an `@owner:instance` label

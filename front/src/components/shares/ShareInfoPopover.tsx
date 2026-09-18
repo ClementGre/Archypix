@@ -3,7 +3,7 @@ import {Check, Info, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {cn, formatDateTime, TagPath} from '@/lib/utils'
-import type {ShareStatus} from '@/lib/types'
+import type {ShareResponse, ShareStatus} from '@/lib/types'
 import {ShareStatusBadge} from './ShareStatusBadge'
 
 export interface ShareInfoEntry {
@@ -146,6 +146,28 @@ export function ShareInfoPopover({entries, footer}: { entries: ShareInfoEntry[];
             </PopoverContent>
         </Popover>
     )
+}
+
+/** One outgoing share as an entry, so every surface that lists shares shows the same details. */
+export function outgoingEntry(
+    s: ShareResponse,
+    sharebackLabel?: (share: ShareResponse) => string | null,
+): ShareInfoEntry {
+    return {
+        label: `→ @${s.recipient_username}:${s.recipient_instance}`,
+        name: s.name,
+        message: s.message,
+        status: s.status,
+        allowShareBack: s.allow_share_back,
+        allowExifEdit: s.allow_exif_edit,
+        future: s.future,
+        sharedTag: s.tag_path,
+        createdAt: s.created_at,
+        lastErrorAt: s.last_error_at,
+        nextRetryAt: s.next_retry_at,
+        closedAt: s.revoked_at,
+        sharebackOf: sharebackLabel?.(s) ?? null,
+    }
 }
 
 /** The most common `name` among a set of shares, with a "(and N others)" suffix

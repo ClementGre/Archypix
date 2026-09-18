@@ -133,12 +133,6 @@ fn flat_to_filter(f: &FlatFilter) -> Result<PictureListFilter, AppError> {
         .map(|s| parse_path(s))
         .collect::<Result<_, _>>()?;
 
-    if f.untagged && (!include.is_empty() || !exclude.is_empty() || !exact.is_empty()) {
-        return Err(AppError::BadRequest(
-            "untagged is mutually exclusive with include_tags/exclude_tags/exact".to_string(),
-        ));
-    }
-
     // No tag arms and not untagged ⇒ a pure scope filter (still a real predicate so the scope
     // flags below are honoured). The predicate renders to TRUE; scope filtering happens via the
     // dedicated filter columns.

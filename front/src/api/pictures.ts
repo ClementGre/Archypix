@@ -65,7 +65,7 @@ export interface ListPicturesParams {
     /** Comma-separated ltree paths (inclusive), combined per `match`. */
     include_tags?: string
     exclude_tags?: string
-    /** Comma-separated ltree paths matched exactly (strict tag navigation). */
+    /** One ltree path matched exactly — the timeline's per-section scope (feature 35 §7). */
     exact?: string
     match?: 'all' | 'any'
     untagged?: boolean

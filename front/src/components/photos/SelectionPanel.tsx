@@ -27,8 +27,8 @@ import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {downloadOriginal, getPicture, getPictureUrl} from '@/api/pictures'
 import {listPictureTagsWithSources} from '@/api/tags'
 import {apiErrorMessage} from '@/api/client'
-import {useBatchEditTags, usePictureTags, useTagTree} from '@/hooks/useTags'
-import {display as tagDisplay} from '@/lib/tagTree'
+import {useBatchEditTags, usePictureTags, useTagTree, useWriteTagMeta} from '@/hooks/useTags'
+import {display as tagDisplay, displayPath} from '@/lib/tagTree'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
 import {useSettings} from '@/hooks/useSettings'
@@ -103,7 +103,8 @@ const SOURCE_COLOR: Record<TagSource, string> = {
 
 // ── Tag components ────────────────────────────────────────────────────────────
 
-/** Display name on the chip, full path in the tooltip (feature 34 §5). */
+/** The **whole** path, display names substituted; the raw ltree path in the tooltip (feature 34 §5).
+ *  This is a flat list with no tree around it, so a leaf on its own says nothing about which tag. */
 function TagChip({wire, onRemove, onTagClick}: { wire: string; onRemove?: () => void; onTagClick: () => void }) {
     const {metaByPath} = useTagTree()
     const path = TagPath.toDisplay(wire)
@@ -112,7 +113,7 @@ function TagChip({wire, onRemove, onTagClick}: { wire: string; onRemove?: () => 
             <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                     <button onClick={onTagClick} className="truncate hover:text-primary">
-                        {tagDisplay(wire, metaByPath.get(wire))}
+                        {displayPath(wire, metaByPath)}
                     </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-[16rem] break-all text-xs">{path}</TooltipContent>
@@ -206,7 +207,14 @@ function SinglePicture({id}: { id: string }) {
 function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const navigate = useNavigate()
     const [, setSp] = useSearchParams()
-    const {update} = useGalleryParams()
+    const {params, update} = useGalleryParams()
+    const {metaByPath: allTagMeta} = useTagTree()
+    const writeTagMeta = useWriteTagMeta()
+
+    // The tag whose view you are standing in — a cover only makes sense for that one, and only for
+    // an owned picture (`cover_picture_id` is validated against the caller).
+    const coverTag = picture.owner_username == null ? params.tag : null
+    const coverTagName = coverTag ? tagDisplay(coverTag, allTagMeta.get(coverTag)) : ''
 
     const isVideo = isVideoMime(picture.mime_type)
     const isAudio = isAudioMime(picture.mime_type)
@@ -312,7 +320,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // Clicking a tag filters by it and reveals it in the Tags tree (opens the left panel + tab).
     const onTagClick = (wire: string) => {
         revealLeftPanel()
-        update({tag: wire, include: [], exclude: [], exact: [], panel: 'tags'})
+        update({tag: wire, include: [], exclude: [], panel: 'tags'})
     }
     const onSourceClick = (source: TagSource, sourceId: string | null) => {
         if (!sourceId) return
@@ -323,7 +331,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     }
     const onSharedTagClick = (wire: string) => {
         revealLeftPanel()
-        update({tag: wire, include: [], exclude: [], exact: [], panel: 'incoming', share: incomingShareIdForTag(wire, incoming ?? [])})
+        update({tag: wire, include: [], exclude: [], panel: 'incoming', share: incomingShareIdForTag(wire, incoming ?? [])})
     }
 
     const openLightbox = () =>
@@ -511,6 +519,23 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                 <Download className="h-4 w-4"/>
                                 Download original
                             </DropdownMenuItem>
+                            {/* Setting a tag's cover from the picture you are looking at, rather than
+                                from a second picture browser inside the tag dialog (34 §6). */}
+                            {coverTag && (
+                                <>
+                                    <DropdownMenuSeparator/>
+                                    <DropdownMenuItem
+                                        className="gap-2"
+                                        onSelect={() => {
+                                            writeTagMeta({tag_path: coverTag, cover_picture_id: id})
+                                            toast.success(`Thumbnail set for ${coverTagName}`)
+                                        }}
+                                    >
+                                        <ImageIcon className="h-4 w-4"/>
+                                        <span className="min-w-0 truncate">Set as thumbnail for {coverTagName}</span>
+                                    </DropdownMenuItem>
+                                </>
+                            )}
                             {(picture.captured_at || (picture.gps_lat != null && picture.gps_lng != null)) && (
                                 <DropdownMenuSeparator/>
                             )}
@@ -529,7 +554,6 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                             tag: null,
                                             include: [],
                                             exclude: [],
-                                            exact: [],
                                             hierarchy: null,
                                             hpath: '',
                                         })
@@ -554,7 +578,6 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                             tag: null,
                                             include: [],
                                             exclude: [],
-                                            exact: [],
                                             hierarchy: null,
                                             hpath: '',
                                         })
@@ -753,7 +776,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                     key={s.id}
                                     onClick={() => {
                                         revealLeftPanel()
-                                        update({tag: s.tag_path, include: [], exclude: [], exact: [], panel: 'outgoing'})
+                                        update({tag: s.tag_path, include: [], exclude: [], panel: 'outgoing'})
                                     }}
                                     className="flex w-full items-center justify-between gap-2 text-xs hover:text-primary"
                                 >

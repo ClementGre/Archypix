@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {AlertTriangle, ArrowRight, Check, ImageIcon, Pencil, RotateCcw, Trash2} from 'lucide-react'
+import {AlertTriangle, ArrowRight, Calendar as CalendarIcon, Check, Pencil, RotateCcw, Trash2} from 'lucide-react'
 import {toast} from 'sonner'
 import {
     Dialog,
@@ -16,6 +16,8 @@ import {Switch} from '@/components/ui/switch'
 import {Textarea} from '@/components/ui/textarea'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {TagPicker} from '@/components/tags/TagPicker'
+import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
+import {CoverPicker} from '@/components/tags/CoverPicker'
 import {
     useAllTagsWithSources,
     useRenameTag,
@@ -34,13 +36,39 @@ const PALETTE = [
     '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899',
 ]
 
-/** `datetime-local` wants `YYYY-MM-DDTHH:mm`; the API speaks naive-UTC timestamps. */
-function toLocalInput(iso: string | null | undefined): string {
-    return iso ? iso.replace(' ', 'T').slice(0, 16) : ''
+/** The API speaks naive timestamps; the picker wants `YYYY-MM-DDTHH:MM:SS`. */
+function toNaive(iso: string | null | undefined): string | null {
+    return iso ? `${iso.replace(' ', 'T').slice(0, 19)}` : null
 }
 
-function fromLocalInput(value: string): string | null {
-    return value ? `${value}:00` : null
+/** One side of the date range: the custom picker, with the derived value as the reset target (§4). */
+function DateOverrideField({label, value, derived, onChange}: {
+    label: string
+    value: string | null
+    derived: string | null
+    onChange: (value: string | null) => void
+}) {
+    return (
+        <div className="space-y-1.5">
+            <Label>{label}</Label>
+            <DateTimePickerPopover value={value} onChange={onChange}>
+                <Button variant="outline" className="w-full justify-start font-normal">
+                    <CalendarIcon className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground"/>
+                    <span className={cn('truncate', !value && 'text-muted-foreground')}>
+                        {value ? formatNaive(value) : formatNaive(derived) || 'Not set'}
+                    </span>
+                </Button>
+            </DateTimePickerPopover>
+            <button
+                type="button"
+                onClick={() => onChange(null)}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+                <RotateCcw className="h-3 w-3"/>
+                Derived: {formatNaive(derived) || '—'}
+            </button>
+        </div>
+    )
 }
 
 /**
@@ -70,10 +98,11 @@ export function EditTagDialog({
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [color, setColor] = useState('')
-    const [dateFrom, setDateFrom] = useState('')
-    const [dateTo, setDateTo] = useState('')
+    const [dateFrom, setDateFrom] = useState<string | null>(null)
+    const [dateTo, setDateTo] = useState<string | null>(null)
     const [showWhenEmpty, setShowWhenEmpty] = useState(false)
     const [webdavDirName, setWebdavDirName] = useState('')
+    const [cover, setCover] = useState<string | null>(null)
     const [newTag, setNewTag] = useState('')
 
     // Re-seed the form from the stored row whenever the dialog opens for a tag.
@@ -82,10 +111,11 @@ export function EditTagDialog({
         setName(meta?.display_name ?? '')
         setDescription(meta?.description ?? '')
         setColor(meta?.color ?? '')
-        setDateFrom(toLocalInput(meta?.date_from))
-        setDateTo(toLocalInput(meta?.date_to))
+        setDateFrom(toNaive(meta?.date_from))
+        setDateTo(toNaive(meta?.date_to))
         setShowWhenEmpty(meta?.show_when_empty ?? false)
         setWebdavDirName(meta?.webdav_dir_name ?? '')
+        setCover(meta?.cover_picture_id ?? null)
         setNewTag('')
         // The stored row is the source of truth on open; later keystrokes are local state.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,9 +136,10 @@ export function EditTagDialog({
             display_name: name.trim() || null,
             description: description.trim() || null,
             color: color || null,
-            date_from: fromLocalInput(dateFrom),
-            date_to: fromLocalInput(dateTo),
+            date_from: dateFrom,
+            date_to: dateTo,
             show_when_empty: showWhenEmpty,
+            cover_picture_id: cover,
             webdav_dir_name: webdavDirName.trim() || null,
         }
         write(patch)
@@ -220,44 +251,14 @@ export function EditTagDialog({
                         </div>
                     </div>
 
-                    {/* Placeholders show the derived range; clearing a side resets it to derived (§4). */}
+                    <CoverPicker value={cover} onChange={setCover}/>
+
+                    {/* An unset side shows the derived value; resetting a side clears the override (§4). */}
                     <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                            <Label htmlFor="tag-date-from">From</Label>
-                            <Input
-                                id="tag-date-from"
-                                type="datetime-local"
-                                value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
-                                placeholder={toLocalInput(item?.date_from)}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setDateFrom('')}
-                                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                            >
-                                <RotateCcw className="h-3 w-3"/>
-                                Derived: {toLocalInput(item?.date_from) || '—'}
-                            </button>
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="tag-date-to">To</Label>
-                            <Input
-                                id="tag-date-to"
-                                type="datetime-local"
-                                value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
-                                placeholder={toLocalInput(item?.date_to)}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setDateTo('')}
-                                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                            >
-                                <RotateCcw className="h-3 w-3"/>
-                                Derived: {toLocalInput(item?.date_to) || '—'}
-                            </button>
-                        </div>
+                        <DateOverrideField label="From" value={dateFrom} derived={toNaive(item?.date_from)}
+                                           onChange={setDateFrom}/>
+                        <DateOverrideField label="To" value={dateTo} derived={toNaive(item?.date_to)}
+                                           onChange={setDateTo}/>
                     </div>
 
                     <div className="flex items-center justify-between gap-3">
@@ -296,8 +297,8 @@ export function EditTagDialog({
                     </div>
 
                     {/* The rename control — the path is the identity, so this is the async cascade. */}
-                    <div className="space-y-1.5 rounded-md border p-3">
-                        <Label>Path</Label>
+                    <div className="space-y-1.5">
+                        <Label>Rename tag path</Label>
                         <div className="flex items-center gap-2 text-sm">
                             <span className="truncate rounded bg-muted px-2 py-1 font-mono text-xs">
                                 {TagPath.toDisplay(tagPath)}
@@ -324,19 +325,6 @@ export function EditTagDialog({
                         </p>
                     </div>
 
-                    {!!meta?.cover_picture_id && (
-                        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                            <ImageIcon className="h-3 w-3"/>
-                            A cover photo is set.
-                            <button
-                                type="button"
-                                className="underline"
-                                onClick={() => write({tag_path: tagPath, cover_picture_id: null})}
-                            >
-                                Clear
-                            </button>
-                        </p>
-                    )}
                 </div>
 
                 <DialogFooter className="sm:justify-between">

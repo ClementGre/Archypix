@@ -1,7 +1,7 @@
 import {useCallback} from 'react'
 import {useSearchParams} from 'react-router-dom'
 import {useFixReference} from '@/stores/fixReference'
-import {useGalleryParams} from '@/hooks/useGalleryParams'
+import {useTimelineView} from '@/hooks/useTimelineView'
 import {useUIStore} from '@/stores/ui'
 import type {FixMode} from '@/lib/types'
 
@@ -12,7 +12,7 @@ import type {FixMode} from '@/lib/types'
  */
 export function useReferencePhase() {
     const [sp, setSp] = useSearchParams()
-    const {selectionFilter} = useGalleryParams()
+    const {selectionFilter} = useTimelineView()
     const enter = useFixReference((s) => s.enter)
     const cancel = useFixReference((s) => s.cancel)
     const closeMobileDrawer = useUIStore((s) => s.closeMobileDrawer)
