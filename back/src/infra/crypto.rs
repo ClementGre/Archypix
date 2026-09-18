@@ -62,7 +62,7 @@ pub fn hash_refresh_token(token: &str) -> String {
 // blob is `nonce(12) ‖ ciphertext ‖ tag(16)`. See doc/features/06_webdav.md §3.
 
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 
 const WEBDAV_KEY_LABEL: &[u8] = b"archypix-webdav-token-enc-v1";
 
@@ -78,8 +78,8 @@ fn webdav_cipher(jwt_secret: &str) -> Aes256Gcm {
     hasher.update(WEBDAV_KEY_LABEL);
     hasher.update(jwt_secret.as_bytes());
     let key_bytes = hasher.finalize();
-    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
-    Aes256Gcm::new(key)
+    // Only fails on a wrong key length, and a SHA-256 digest is exactly the 32 bytes AES-256 wants.
+    Aes256Gcm::new_from_slice(&key_bytes).expect("sha256 digest is a 32-byte AES-256 key")
 }
 
 /// Encrypt a WebDAV token for storage. Returns `nonce ‖ ciphertext ‖ tag`.
@@ -87,9 +87,9 @@ pub fn encrypt_webdav_token(jwt_secret: &str, token: &str) -> Result<Vec<u8>, Ap
     let cipher = webdav_cipher(jwt_secret);
     let mut nonce_bytes = [0u8; 12];
     rand::rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
     let ciphertext = cipher
-        .encrypt(nonce, token.as_bytes())
+        .encrypt(&nonce, token.as_bytes())
         .map_err(|_| AppError::InternalServerError("webdav token encryption failed".into()))?;
     let mut blob = Vec::with_capacity(12 + ciphertext.len());
     blob.extend_from_slice(&nonce_bytes);
@@ -105,9 +105,10 @@ pub fn decrypt_webdav_token(jwt_secret: &str, blob: &[u8]) -> Result<String, App
         ));
     }
     let (nonce_bytes, ciphertext) = blob.split_at(12);
+    let nonce: [u8; 12] = nonce_bytes.try_into().expect("split_at(12) yields 12 bytes");
     let cipher = webdav_cipher(jwt_secret);
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+        .decrypt(&Nonce::from(nonce), ciphertext)
         .map_err(|_| AppError::InternalServerError("webdav token decryption failed".into()))?;
     String::from_utf8(plaintext)
         .map_err(|_| AppError::InternalServerError("webdav token not utf-8".into()))

@@ -24,13 +24,6 @@ pub enum PictureSortField {
     GeoNear,
 }
 
-impl PictureSortField {
-    /// Whether this is a reference-point proximity sort (nearest-first, order-agnostic).
-    fn is_proximity(&self) -> bool {
-        matches!(self, Self::TimeNear | Self::GeoNear)
-    }
-}
-
 /// Per-field metadata-presence filter (feature 29 §4). AND-composed with every other list arm.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]

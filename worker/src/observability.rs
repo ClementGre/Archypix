@@ -112,17 +112,6 @@ impl Extractor for HashMapExtractor<'_> {
     }
 }
 
-/// Inject the current tracing span's OTel context into a `HashMap` carrier.
-pub fn inject_context() -> HashMap<String, String> {
-    use tracing_opentelemetry::OpenTelemetrySpanExt;
-    let mut map = HashMap::new();
-    let cx = tracing::Span::current().context();
-    opentelemetry::global::get_text_map_propagator(|p| {
-        p.inject_context(&cx, &mut HashMapInjector(&mut map));
-    });
-    map
-}
-
 /// Extract an OTel `Context` from a `HashMap` carrier.
 pub fn extract_context(map: &HashMap<String, String>) -> opentelemetry::Context {
     opentelemetry::global::get_text_map_propagator(|p| p.extract(&HashMapExtractor(map)))

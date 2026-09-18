@@ -253,8 +253,9 @@ token is `404` (no oracle). The frontend reaches these after resolving the owner
   coverage proxy to the real owner.
 - `POST /api/public/shares/{token}/aggregate` `{ include_ids, sections? }` → EXIF/summary aggregation over
   the coverage-intersected explicit selection (view-only drops the EXIF section).
-- `POST /api/public/shares/{token}/uploads` `{ contributor_name, files: [{ filename, file_hash?, size? }] }`
+- `POST /api/public/shares/{token}/uploads` `{ files: [{ filename, file_hash?, size? }] }`
   → per-file `{ picture_id, presigned_url|null, rejected }` (`rejected` = a dedup hit; not stored).
+  The contributor's name is carried by `complete`, not here.
   Gated by `allow_upload`; enforces the owner's quota, size/count caps, and a per-IP+share rate limit.
 - `POST /api/public/shares/{token}/uploads/{id}/complete` `{ contributor_name, mime_type, file_size?,
   file_hash?, width?, height? }` → `{ id }`. MIME allowlist = the ingestable image/video set; the album

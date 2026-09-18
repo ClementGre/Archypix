@@ -5,7 +5,6 @@ use archypix_common::job::EditPictureConfig;
 use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 /// Handle an `edit_picture` job.
 ///

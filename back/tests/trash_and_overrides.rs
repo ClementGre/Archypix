@@ -342,7 +342,7 @@ async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
 async fn recipient_local_trash_does_not_drop_share_coverage(db: PgPool) {
     // A relayer's local trash of a received picture must not remove it from share coverage
     // (coverage is by tag membership, not local deleted_at). 09 §7.
-    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let _alice_id = common::seed_user(&db, "alice", "pass").await;
     let bob_id = common::seed_user(&db, "bob", "pass").await;
     // Bob "received" a picture (simulate by an owned-by-Bob picture under a tag he re-shares).
     let pic = common::seed_picture_with_tag(&db, bob_id, "SharedToMe.alice.vacation").await;

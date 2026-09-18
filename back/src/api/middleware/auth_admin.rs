@@ -17,13 +17,6 @@ pub struct AuthAdmin {
     pub claims: JwtClaims,
 }
 
-impl AuthAdmin {
-    /// True when the request came through the resolver proxy rather than a direct user login.
-    pub fn is_delegated(&self) -> bool {
-        self.claims.token_type == TokenType::ResolverDelegation
-    }
-}
-
 impl FromRequestParts<AppState> for AuthAdmin {
     type Rejection = AppError;
 

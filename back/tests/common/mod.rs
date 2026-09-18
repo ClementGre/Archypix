@@ -1,3 +1,9 @@
+//! Helpers shared by the integration-test binaries.
+//!
+//! Every binary compiles this module whole but uses only the part it needs, so unused-item
+//! warnings here say nothing about the helper being dead.
+#![allow(dead_code)]
+
 pub mod federation;
 
 use archypix_back::clients::federation::FederationClient;

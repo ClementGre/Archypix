@@ -157,7 +157,7 @@ Authorization = the token (+ optional password JWT + optional `expires_at`), re-
 
 ## 7. Flow — anonymous contribution (`allow_upload`)
 
-- `POST /api/public/shares/{token}/uploads { contributor_name, files: [...] }` → presign staging.
+- `POST /api/public/shares/{token}/uploads { files: [...] }` → presign staging.
   Enforces the creator's **storage quota** (`services::storage`, charged to the owner), size/count/MIME
   caps, and per-IP + per-share **rate limits** (`infra::ratelimit`). Runs the existing **upload-time
   dedup** (`begin_upload_batch`): a hash match against the owner's live **or trashed** pictures is

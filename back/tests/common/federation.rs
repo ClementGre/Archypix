@@ -7,6 +7,7 @@
 //! - [`seed_backend_url`]            — bypass resolution by pre-seeding the cache
 //! - [`federation_jwt`]              — forge a federation JWT for a given server
 //! - [`user_jwt`]                    — forge a user access JWT for a given server
+#![allow(dead_code)]
 
 use super::InMemoryCache;
 use archypix_back::clients::federation::FederationClient;
@@ -52,7 +53,7 @@ pub fn settings_b() -> Arc<Settings> {
 /// bypassed without a real resolver.
 pub async fn spawn_backend(
     db: PgPool,
-    mut settings: Arc<Settings>,
+    settings: Arc<Settings>,
 ) -> (SocketAddr, Arc<InMemoryCache>, Arc<Settings>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

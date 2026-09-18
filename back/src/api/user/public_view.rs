@@ -200,8 +200,6 @@ pub async fn aggregate(
 
 #[derive(Debug, Deserialize)]
 pub struct UploadsBody {
-    #[serde(default)]
-    pub contributor_name: String,
     pub files: Vec<BatchUploadFile>,
 }
 
