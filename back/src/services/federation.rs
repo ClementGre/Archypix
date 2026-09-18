@@ -2,6 +2,7 @@ use crate::clients::federation::FederationClient;
 use crate::clients::federation::models::AnnouncedPicture;
 use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
+use crate::domain::tag_metadata::SharedTagMeta;
 use crate::infra::redis::Cache;
 use crate::infra::routine;
 use crate::infra::routine::RoutineHandle;
@@ -25,29 +26,13 @@ pub struct PresignTokenItem {
     pub variant: Option<String>,
 }
 
-/// Normalise an inbound tag decoration, dropping any field the local validators reject rather than
-/// failing the whole announcement over cosmetics (feature 34 §10.1).
-fn validate_shared_tag_meta(
-    meta: crate::clients::federation::models::SharedTagMeta,
-) -> Result<crate::clients::federation::models::SharedTagMeta, AppError> {
-    use crate::domain::tag_metadata::{validate_color, validate_description, validate_display_name};
-    Ok(crate::clients::federation::models::SharedTagMeta {
-        display_name: meta
-            .display_name
-            .and_then(|s| validate_display_name(&s).ok()),
-        description: meta.description.and_then(|s| validate_description(&s).ok()),
-        color: meta.color.and_then(|s| validate_color(&s).ok()),
-        cover_remote_picture_id: meta.cover_remote_picture_id,
-    })
-}
-
 /// Validate and record an inbound share announcement from a remote instance.
 /// Returns incoming share ID and a boolean indicating if the share was automatically accepted.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(db, cache, settings, pipeline_waker), fields(outgoing_share_id = %outgoing_share_id))]
 pub async fn receive_share_announcement(
     db: &PgPool,
-    cache: &dyn crate::infra::redis::Cache,
+    cache: &dyn Cache,
     settings: &Settings,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
@@ -63,7 +48,7 @@ pub async fn receive_share_announcement(
     allow_exif_edit: bool,
     future: bool,
     shareback_of: Option<Uuid>,
-    tag_meta: Option<crate::clients::federation::models::SharedTagMeta>,
+    tag_meta: Option<SharedTagMeta>,
 ) -> Result<(Uuid, bool), AppError> {
     if recipient_instance != settings.get(keys::GLOBAL_DOMAIN) {
         warn!(
@@ -134,8 +119,7 @@ pub async fn receive_share_announcement(
     // Park the sender's decoration until accept seeds it (feature 34 §10.1). Validated like the
     // name/message above — it comes from a remote instance.
     if let Some(meta) = tag_meta.filter(|m| !m.is_empty()) {
-        let meta = validate_shared_tag_meta(meta)?;
-        let value = serde_json::to_value(&meta)
+        let value = serde_json::to_value(meta.sanitized())
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         IncomingShareRepository::set_sender_tag_meta(db, incoming.id, &value).await?;
     }
@@ -401,9 +385,10 @@ pub async fn receive_pictures_unannouncement(
 /// requester). Used by both the cross-instance federation handler and the same-backend short-circuit
 /// in `services::pictures::propose_received_exif`.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(db, waker, set, clear), fields(picture_id))]
+#[tracing::instrument(skip(db, cache, waker, set, clear), fields(picture_id))]
 pub async fn receive_picture_edit_request(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     picture_id: &str,
     requester_username: &str,
@@ -450,6 +435,7 @@ pub async fn receive_picture_edit_request(
     // the still-processing 409 guard, MIME preflight, the §5 in-flight rule, and the re-announce wake.
     crate::services::jobs::edit_pictures_exif(
         db,
+        cache,
         waker,
         picture.local_user_id,
         &[picture_id],

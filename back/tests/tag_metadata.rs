@@ -3,8 +3,7 @@
 
 mod common;
 
-use archypix_back::clients::federation::models::SharedTagMeta;
-use archypix_back::domain::tag_metadata::{TagMetadata, TagMetadataPatch};
+use archypix_back::domain::tag_metadata::{SharedTagMeta, TagMetadata, TagMetadataPatch};
 use archypix_back::repository::tag_metadata::TagMetadataRepository;
 use archypix_back::services::tag_metadata;
 use archypix_common::error::AppError;
@@ -106,6 +105,57 @@ async fn upsert_merges_onto_the_stored_row(db: PgPool) {
     assert_eq!(rows[0].display_name.as_deref(), Some("Vietnam 🇻🇳"));
     assert_eq!(rows[0].color.as_deref(), Some("#a1b2c3"));
     assert_eq!(rows[0].sort_index, Some(300));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_batch_repeating_one_tag_coalesces_instead_of_failing(db: PgPool) {
+    // The queue coalesces per tag, but a client bug must not reach the upsert as a duplicate key.
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let cache = common::InMemoryCache::new();
+
+    let written = tag_metadata::upsert(
+        &db,
+        &cache,
+        user,
+        vec![
+            patch(serde_json::json!({ "tag_path": "Era.2026", "display_name": "first" })),
+            patch(serde_json::json!({ "tag_path": "Era.2026", "color": "#a1b2c3" })),
+            patch(serde_json::json!({ "tag_path": "Era.2026", "display_name": "second" })),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(written.len(), 1, "one row per tag, last value wins per field");
+    let rows = TagMetadataRepository::list_for_user(&db, user).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].display_name.as_deref(), Some("second"));
+    assert_eq!(rows[0].color.as_deref(), Some("#a1b2c3"));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_repeated_tag_ending_all_default_is_pruned_not_written(db: PgPool) {
+    // The coalesced result decides: a path must never land in both the delete and the upsert.
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let cache = common::InMemoryCache::new();
+
+    let written = tag_metadata::upsert(
+        &db,
+        &cache,
+        user,
+        vec![
+            patch(serde_json::json!({ "tag_path": "Era.2026", "display_name": "gone" })),
+            patch(serde_json::json!({ "tag_path": "Era.2026", "display_name": null })),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert!(written.is_empty());
+    assert!(
+        TagMetadataRepository::list_for_user(&db, user).await.unwrap().is_empty(),
+        "the last patch prunes the row, so nothing may be written back"
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

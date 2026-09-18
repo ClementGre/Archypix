@@ -162,9 +162,10 @@ pub struct ExifEditOutcome {
 /// then in a single transaction applies the `set`/`clear` delta to every row, bumps `updated_at`,
 /// resets `last_pipeline_run_at`, sets `exif_sync_status`, and enqueues a reconcile job per the §5
 /// concurrency rule. The pipeline is woken once after commit.
-#[tracing::instrument(skip(db, waker, set, clear), fields(user_id = %user_id))]
+#[tracing::instrument(skip(db, cache, waker, set, clear), fields(user_id = %user_id))]
 pub async fn edit_pictures_exif(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_ids: &[Uuid],
@@ -254,6 +255,8 @@ pub async fn edit_pictures_exif(
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
+    // An edit to `captured_at` moves every covering tag's derived range (feature 34 §4).
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     // A metadata change re-dirties the picture (date/GPS rules, segments, announcements). Debounced:
     // an EXIF edit reconciles via a worker, and a batch edit produces a per-picture wake burst that
     // should collapse into one pipeline run.
@@ -440,9 +443,10 @@ pub async fn recheck_exif_batch(
 
 /// Reset a picture's DB EXIF to its persisted physical-file snapshot (`file_exif`), the user's way
 /// out of a `write_failed` divergence (feature 31 §4). Returns the updated row.
-#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn revert_picture_exif_to_file(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
@@ -469,6 +473,7 @@ pub async fn revert_picture_exif_to_file(
     }
     PictureRepository::write_exif_snapshot(db, picture_id, &file_exif.0, ExifSyncStatus::Synced)
         .await?;
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     waker.trigger_debounced(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -623,6 +628,7 @@ pub async fn batch_edit_exif_selection(
                 } else {
                     crate::services::pictures::override_received_exif(
                         db,
+                        cache,
                         pipeline_waker,
                         user_id,
                         pic_id,
@@ -637,6 +643,7 @@ pub async fn batch_edit_exif_selection(
         }
     }
 
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     // A metadata change re-dirties the pictures (date/GPS rules, segments, announcements). Owned and
     // received-local set-based paths reset `last_pipeline_run_at`; the per-picture received paths
     // wake on their own. Debounced: a batch produces a burst that should collapse into one run.

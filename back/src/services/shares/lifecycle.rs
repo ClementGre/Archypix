@@ -153,6 +153,9 @@ pub async fn cleanup_incoming_share(
         }
     }
 
+    // The recipient just lost a whole `SharedToMe.*` subtree — every route into a revoke, reject
+    // or tombstone lands here, so this is the one place their tree has to be busted (feature 34 §4).
+    crate::services::tag_metadata::bust_cache(cache, share.recipient_id).await;
     pipeline_waker.trigger(share.recipient_id);
     Ok(deleted)
 }
@@ -502,6 +505,7 @@ pub async fn accept_incoming_share(
     }
 
     seed_shared_tag_metadata(db, cache, &incoming).await?;
+    crate::services::tag_metadata::bust_cache(cache, acceptor_id).await;
 
     let sender_local_id = find_local_user_id(
         cache,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT tag_path::text as \"tag_path!\", display_name, description, cover_picture_id,\n                      color, date_from, date_to, show_when_empty, sort_index,\n                      children_order as \"children_order!: TagOrder\",\n                      view_mode as \"view_mode!: TagViewMode\",\n                      subtag_placement as \"subtag_placement?: TagSubtagPlacement\",\n                      grouping, webdav_dir_name\n               FROM tag_metadata\n               WHERE user_id = $1 AND tag_path = ANY($2::text[]::ltree[])",
+  "query": "SELECT tag_path::text as \"tag_path!\", display_name, description, cover_picture_id,\n                      color, date_from, date_to, show_when_empty, sort_index,\n                      children_order as \"children_order!: TagOrder\",\n                      view_mode as \"view_mode!: TagViewMode\",\n                      subtag_placement as \"subtag_placement?: TagSubtagPlacement\",\n                      grouping, webdav_dir_name\n               FROM tag_metadata\n               WHERE user_id = $1\n                 AND ($2::text[] IS NULL OR tag_path = ANY($2::text[]::ltree[]))",
   "describe": {
     "columns": [
       {
@@ -210,5 +210,5 @@
       true
     ]
   },
-  "hash": "e1ef6ee2b15ebd6935779e4318369e779ee4eb3318ba9c38e228d4a52ad692e5"
+  "hash": "6385fc1c2b895bc0f66ea00e42828db183a433dfe1721e720369872018041140"
 }

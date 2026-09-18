@@ -516,9 +516,11 @@ support). It deviates from the design above in a few deliberate MVP simplificati
   (`SharedToMe`) prefix still `409`s. `MKCOL` under a mirror now mints a **`show_when_empty`
   tag-metadata row** (feature 34 §8.1) instead of the old Redis pending-dir marker: the folder's
   *original* name is kept as `webdav_dir_name` (and as the display name), so the empty directory
-  persists across sessions and lists under the name the client chose. `DELETE` on the still-empty
-  directory drops the row; `MOVE` on a collection is out of scope and returns `405`, so Finder's
-  create→rename flow keeps the original name rather than renaming. `MKCOL` outside a mirror or on an
+  persists across sessions and lists under the name the client chose. `DELETE` drops the row only
+  when `show_when_empty` is what made the directory exist and the tag carries no picture (trashed
+  included) — a directory emptied by a foreign `exclude` (18 §7.3) keeps its tag's decoration.
+  `MOVE` on a collection is `405` except for an in-place rename of such a still-empty directory,
+  which is Finder's create→rename flow (34 §8). `MKCOL` outside a mirror or on an
   existing path (label **or** custom name) is rejected (`403`/`409`). `ResolvedDir` carries
   `mirror_tag` to drive this.
 - **Case-insensitive write-side tag reuse (§10c) is implemented** — on write, each assigned tag

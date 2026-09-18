@@ -156,6 +156,47 @@ impl TagMetadata {
         *self == d
     }
 
+    /// The subset that leaves the instance (§10.1).
+    pub fn shared(&self) -> SharedTagMeta {
+        SharedTagMeta {
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            color: self.color.clone(),
+            cover_remote_picture_id: self.cover_picture_id,
+        }
+    }
+}
+
+/// The decoration that leaves the owner's instance: carried on the share announcement (§10.1) and
+/// rendered by the public landing page (feature 27 §15). Not `webdav_dir_name` (the recipient's
+/// mount is theirs), not ordering, not view preferences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SharedTagMeta {
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub color: Option<String>,
+    /// The **owner's** picture id; the recipient resolves it through `pictures.remote_picture_id`.
+    pub cover_remote_picture_id: Option<Uuid>,
+}
+
+impl SharedTagMeta {
+    pub fn is_empty(&self) -> bool {
+        self.display_name.is_none()
+            && self.description.is_none()
+            && self.color.is_none()
+            && self.cover_remote_picture_id.is_none()
+    }
+
+    /// Drop any field the local validators reject rather than failing a whole announcement over
+    /// cosmetics (§10.1) — inbound decoration comes from a remote instance.
+    pub fn sanitized(self) -> Self {
+        Self {
+            display_name: self.display_name.and_then(|s| validate_display_name(&s).ok()),
+            description: self.description.and_then(|s| validate_description(&s).ok()),
+            color: self.color.and_then(|s| validate_color(&s).ok()),
+            cover_remote_picture_id: self.cover_remote_picture_id,
+        }
+    }
 }
 
 // ── The wire patch ────────────────────────────────────────────────────────────

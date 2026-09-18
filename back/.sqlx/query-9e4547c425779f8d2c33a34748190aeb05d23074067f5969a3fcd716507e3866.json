@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                 SELECT 1 FROM tags t\n                 JOIN pictures p ON p.id = t.picture_id\n                 WHERE p.local_user_id = $1\n                   AND t.tag_path <@ $2::text::ltree\n                   AND ($3 OR p.deleted_at IS NULL)\n               ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9e4547c425779f8d2c33a34748190aeb05d23074067f5969a3fcd716507e3866"
+}

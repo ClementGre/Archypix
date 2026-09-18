@@ -5,7 +5,9 @@
 //! exception ([`crate::services::vfs`], §8).
 
 use crate::domain::tag::TagSource;
-use crate::domain::tag_metadata::{TagMetadata, TagMetadataPatch, validate_metadata_path};
+use crate::domain::tag_metadata::{
+    SharedTagMeta, TagMetadata, TagMetadataPatch, validate_metadata_path,
+};
 use crate::infra::redis::{Cache, RedisKey, cache_get_json, cache_set_json_ex};
 use crate::repository::picture::PictureRepository;
 use crate::repository::tag::{TagCounts, TagRepository};
@@ -13,7 +15,7 @@ use crate::repository::tag_metadata::TagMetadataRepository;
 use archypix_common::error::{AppError, map_sqlx_error};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 /// The tag tree is *already* eventually consistent — the pipeline is async, so users experience
@@ -174,8 +176,6 @@ pub async fn upsert(
         p.tag_path = validate_metadata_path(&p.tag_path).map_err(AppError::BadRequest)?;
         normalized.push(p);
     }
-    // A coalesced flush should not carry the same tag twice, but a client bug must not make the
-    // upsert order-dependent.
     let mut paths: Vec<String> = normalized.iter().map(|p| p.tag_path.clone()).collect();
     paths.sort();
     paths.dedup();
@@ -199,20 +199,22 @@ pub async fn upsert(
             .map(|m| (m.tag_path.clone(), m))
             .collect();
 
-    let (mut writes, mut prunes) = (Vec::new(), Vec::new());
+    // A coalesced flush should not carry the same tag twice, but a client bug must not turn into a
+    // duplicate-key upsert: fold repeats onto each other, last value wins per field.
+    let mut merged: BTreeMap<String, TagMetadata> = BTreeMap::new();
     for patch in normalized {
         let path = patch.tag_path.clone();
-        let base = stored
+        let base = merged
             .remove(&path)
+            .or_else(|| stored.remove(&path))
             .unwrap_or_else(|| TagMetadata::new(path.clone()));
-        let merged = patch.apply(base).map_err(AppError::BadRequest)?;
-        if merged.is_all_default() {
-            prunes.push(path);
-        } else {
-            stored.insert(path, merged.clone());
-            writes.push(merged);
-        }
+        merged.insert(path, patch.apply(base).map_err(AppError::BadRequest)?);
     }
+    let (writes, pruned): (Vec<_>, Vec<_>) = merged
+        .into_values()
+        .partition(|m| !m.is_all_default());
+    let prunes: Vec<String> = pruned.into_iter().map(|m| m.tag_path).collect();
+
     TagMetadataRepository::delete_many(&mut *tx, user_id, &prunes).await?;
     TagMetadataRepository::upsert_many(&mut *tx, user_id, &writes).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
@@ -238,32 +240,19 @@ pub async fn delete(
     Ok(deleted)
 }
 
-/// The sender's decoration for a shared tag, as it travels (§10.1).
-pub use crate::clients::federation::models::SharedTagMeta;
-
-/// Read a recipient's decoration for one tag so the sender can announce it (§10.1). Only the four
-/// travelling fields: not `webdav_dir_name` (the recipient's mount is theirs), not ordering, not
-/// view preferences.
+/// Read an owner's decoration for one tag so it can be announced or rendered on a landing page
+/// (§10.1) — [`TagMetadata::shared`] picks the travelling subset.
 #[tracing::instrument(skip(db), fields(user_id = %user_id, tag_path))]
 pub async fn shared_meta_for(
     db: &PgPool,
     user_id: Uuid,
     tag_path: &str,
 ) -> Result<Option<SharedTagMeta>, AppError> {
-    let Some(m) = TagMetadataRepository::find_many(db, user_id, &[tag_path.to_string()])
+    let meta = TagMetadataRepository::find_many(db, user_id, &[tag_path.to_string()])
         .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(None);
-    };
-    let meta = SharedTagMeta {
-        display_name: m.display_name,
-        description: m.description,
-        color: m.color,
-        cover_remote_picture_id: m.cover_picture_id,
-    };
-    Ok((!meta.is_empty()).then_some(meta))
+        .first()
+        .map(TagMetadata::shared);
+    Ok(meta.filter(|m| !m.is_empty()))
 }
 
 /// Seed a recipient's `SharedToMe.<sender>.<subpath>` row from the sender's announced decoration

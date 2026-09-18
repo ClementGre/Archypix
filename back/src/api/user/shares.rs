@@ -196,7 +196,6 @@ pub async fn accept_incoming(
         share_id,
     )
     .await?;
-    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     // Pictures are announced asynchronously: the sender's OutgoingShare moves to
     // `pending_first_announcement` and the pipeline announces + activates it.
     Ok(Json(serde_json::json!({ "accepted": true })))
@@ -221,7 +220,6 @@ pub async fn revoke_outgoing(
         share_id,
     )
     .await?;
-    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
@@ -244,6 +242,5 @@ pub async fn reject_incoming(
         share_id,
     )
     .await?;
-    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     Ok(Json(serde_json::json!({ "rejected": true })))
 }

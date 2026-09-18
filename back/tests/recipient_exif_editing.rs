@@ -219,6 +219,7 @@ async fn escalate_clears_local_override(db: PgPool) {
     // Bob first overrides gps_lat locally (private).
     pictures::override_received_exif(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
@@ -294,6 +295,7 @@ async fn owner_rejects_when_grant_revoked_in_flight(db: PgPool) {
     // The owner-side handler re-verifies the grant (never trusts the wire) → 403.
     let err = federation::receive_picture_edit_request(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         &alice_pic.to_string(),
         "bob",
@@ -319,6 +321,7 @@ async fn owner_rejects_edit_for_uncovered_recipient(db: PgPool) {
         editable_share(&db, "vacation", true).await;
     let err = federation::receive_picture_edit_request(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         &alice_pic.to_string(),
         "mallory",

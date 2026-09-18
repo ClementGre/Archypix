@@ -423,7 +423,7 @@ async fn batch_trash_then_restore(db: PgPool) {
     let p2 = common::seed_picture(&db, user).await;
     let sel = ResolvedSelection::explicit(vec![p1, p2]);
 
-    let out = pictures::batch_set_trashed_selection(&db, &waker, user, &sel, true, false)
+    let out = pictures::batch_set_trashed_selection(&db, &common::InMemoryCache::new(), &waker, user, &sel, true, false)
         .await
         .unwrap();
     assert!(matches!(out, TrashBatchOutcome::Applied { affected: 2 }));
@@ -434,7 +434,7 @@ async fn batch_trash_then_restore(db: PgPool) {
     assert!(pic.deleted_at.is_some());
 
     // Restore must include trashed rows (explicit ids bypass the deleted filter).
-    let out = pictures::batch_set_trashed_selection(&db, &waker, user, &sel, false, false)
+    let out = pictures::batch_set_trashed_selection(&db, &common::InMemoryCache::new(), &waker, user, &sel, false, false)
         .await
         .unwrap();
     assert!(matches!(out, TrashBatchOutcome::Applied { affected: 2 }));

@@ -964,26 +964,28 @@ pub async fn snapshot_version_on_overwrite(
 /// it to recipients carrying the owner-deletion lifecycle flag (it stays in share coverage until the
 /// purge sweep removes it); for a **received** picture the delete is purely local (never announced,
 /// never affects downstream relay). Returns the updated picture.
-#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn trash_picture(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
-    set_trashed(db, waker, user_id, picture_id, true).await
+    set_trashed(db, cache, waker, user_id, picture_id, true).await
 }
 
 /// Restore a soft-deleted picture (clear `deleted_at`/`deleted_reason`). For an owned picture this
 /// re-announces with the lifecycle flag cleared (09 §5.1). Returns the updated picture.
-#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, waker), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn restore_picture(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
 ) -> Result<Picture, AppError> {
-    set_trashed(db, waker, user_id, picture_id, false).await
+    set_trashed(db, cache, waker, user_id, picture_id, false).await
 }
 
 /// Result of a batch trash/restore: the dry-run count, or the applied count.
@@ -995,9 +997,10 @@ pub enum TrashBatchOutcome {
 /// Batch soft-delete / restore over a [`ResolvedSelection`] (feature 14 §6) — a single set-based
 /// UPDATE (no per-picture loop). With `dry_run` returns the affected count without mutating.
 /// Re-dirties + wakes the pipeline so owned pictures re-announce their owner-deletion lifecycle.
-#[tracing::instrument(skip(db, waker, sel), fields(user_id = %user_id, deleted, dry_run))]
+#[tracing::instrument(skip(db, cache, waker, sel), fields(user_id = %user_id, deleted, dry_run))]
 pub async fn batch_set_trashed_selection(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     sel: &crate::repository::picture::ResolvedSelection,
@@ -1027,15 +1030,18 @@ pub async fn batch_set_trashed_selection(
         DedupRepository::dedupe_boomerang_in_live_groups(&mut *tx, user_id).await?;
     }
     tx.commit().await.map_err(map_sqlx_error)?;
+    // The trashed half of the tag tree is a separate set of counts and dates (feature 34 §4).
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     waker.trigger(user_id);
     Ok(TrashBatchOutcome::Applied {
         affected: affected as i64,
     })
 }
 
-#[tracing::instrument(skip(db, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
+#[tracing::instrument(skip(db, cache, waker), fields(user_id = %user_id, picture_id = %picture_id, deleted))]
 async fn set_trashed(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
@@ -1061,6 +1067,8 @@ async fn set_trashed(
     // re-evaluates; harmless for received rows.
     PipelineRepository::invalidate(&mut *tx, &[picture_id]).await?;
     tx.commit().await.map_err(map_sqlx_error)?;
+    // The trashed half of the tag tree is a separate set of counts and dates (feature 34 §4).
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     waker.trigger(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -1073,9 +1081,10 @@ async fn set_trashed(
 /// only — no `edit_picture` job, no file reconcile (the recipient does not own the file). `set`
 /// fields claim the override; `empty` fields claim it as empty/`null` (10 §6.3); `clear` fields drop
 /// the override (the owner's value flows through again). Returns the updated picture.
-#[tracing::instrument(skip(db, waker, set, empty, clear), fields(user_id = %user_id, picture_id = %picture_id))]
+#[tracing::instrument(skip(db, cache, waker, set, empty, clear), fields(user_id = %user_id, picture_id = %picture_id))]
 pub async fn override_received_exif(
     db: &PgPool,
+    cache: &dyn Cache,
     waker: &RoutineHandle<Uuid>,
     user_id: Uuid,
     picture_id: Uuid,
@@ -1113,6 +1122,8 @@ pub async fn override_received_exif(
     )
     .await?;
 
+    // A local `captured_at` override moves every covering tag's derived range (feature 34 §4).
+    crate::services::tag_metadata::bust_cache(cache, user_id).await;
     waker.trigger(user_id);
     PictureRepository::find_by_id(db, picture_id)
         .await?
@@ -1323,6 +1334,7 @@ pub async fn propose_received_exif(
     {
         crate::services::federation::receive_picture_edit_request(
             db,
+            cache,
             waker,
             &remote_id,
             requester_username,

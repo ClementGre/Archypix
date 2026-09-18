@@ -211,7 +211,7 @@ async fn deleting_service_promotes_its_tags_to_manual(db: PgPool) {
 
     run_pipeline(&db, user).await;
 
-    let deleted = services::tagging::delete_service(&db, user, svc, true)
+    let deleted = services::tagging::delete_service(&db, &common::InMemoryCache::new(), user, svc, true)
         .await
         .unwrap();
     assert!(deleted);

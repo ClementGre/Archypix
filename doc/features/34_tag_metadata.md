@@ -403,8 +403,16 @@ folding (06_webdav.md §10c, `VirtualFs::fold_case`) applies to custom names too
 that differs only by case from a sibling's effective name is treated as a collision and falls back the
 same way, so a case-insensitive client never sees two directories it cannot tell apart.
 
-`MOVE` on a collection is still out of scope (99_ROADMAP "Advanced WebDAV"), so renaming a directory
-in Finder does not write `webdav_dir_name`.
+`MOVE` on a collection is out of scope (99_ROADMAP "Advanced WebDAV") with **one** exception: a
+still-empty `show_when_empty` directory, renamed in place under the same parent. That is Finder's
+create-then-rename flow — it mints `untitled folder` with `MKCOL` and immediately `MOVE`s it to the
+typed name — and without it every folder created in Finder keeps its placeholder name.
+
+The rename is a `tag_metadata` prefix swap (§12), *not* a tag rename, so it is only taken when the
+old subtree carries no picture **at all, trashed included**: a trashed picture still holds the old
+path, and re-filing those belongs to the `tag_rename` cascade. When one does, the destination gets a
+fresh empty tag and the source keeps its row with `show_when_empty` cleared — the decoration
+survives for when the pictures come back (§13.9). Reparenting and a non-empty directory stay `405`.
 
 ### 8.1 `MKCOL` on a mirror node
 
@@ -421,7 +429,11 @@ conflict check at the top of `VirtualFs::mkcol` must now consider custom names a
 **other** sidecars are untouched: the dotfile / OS-junk store (06_webdav.md §11) and the Preview
 temp-file behaviour (features/08) stay exactly as they are.
 
-Deleting the directory deletes the metadata row (and untags, per the hierarchy's `safeDeleteMode`).
+Deleting the directory deletes the metadata row — but only when `show_when_empty` is what made the
+directory exist and the tag carries no picture, live or trashed. A directory can also be empty
+because a foreign `exclude` (18 §7.3) cut every one of its pictures, and wiping a live tag's
+decoration for that would be silent, undoable loss. Nothing is untagged either way: a DELETE on a
+directory whose contents the client cannot see must not mutate them.
 An empty tag appears in *every* mirror hierarchy whose prefix covers it, which is the same rule a
 non-empty tag already follows.
 

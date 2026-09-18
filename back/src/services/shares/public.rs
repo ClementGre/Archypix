@@ -91,7 +91,7 @@ pub struct PublicShareMeta {
     pub view_only: bool,
     /// The owner's decoration for the covered tag (feature 34 §10.1) — a purely local read, no
     /// protocol involved, so the landing page renders a name instead of a bare slug.
-    pub tag_meta: Option<crate::clients::federation::models::SharedTagMeta>,
+    pub tag_meta: Option<crate::domain::tag_metadata::SharedTagMeta>,
 }
 
 /// Public metadata for the share landing page. Returned even for a locked share (so the frontend
@@ -780,7 +780,7 @@ pub async fn revoke_public_share(
     }
 
     let contributions_trashed = if trash_contributions_flag {
-        trash_contributions(db, pipeline_waker, owner_id, &share.tag_path, None).await?
+        trash_contributions(db, cache, pipeline_waker, owner_id, &share.tag_path, None).await?
     } else {
         0
     };
@@ -794,9 +794,10 @@ pub async fn revoke_public_share(
 
 /// Trash the owner's `#`-contributions under a tag (optionally a single contributor's, §9). Returns
 /// the number trashed.
-#[tracing::instrument(skip(db, pipeline_waker), fields(owner_id = %owner_id))]
+#[tracing::instrument(skip(db, cache, pipeline_waker), fields(owner_id = %owner_id))]
 pub async fn trash_contributions(
     db: &PgPool,
+    cache: &dyn Cache,
     pipeline_waker: &RoutineHandle<Uuid>,
     owner_id: Uuid,
     tag_path: &str,
@@ -808,7 +809,8 @@ pub async fn trash_contributions(
     }
     let n = ids.len() as u64;
     let sel = ResolvedSelection::explicit(ids);
-    pictures::batch_set_trashed_selection(db, pipeline_waker, owner_id, &sel, true, false).await?;
+    pictures::batch_set_trashed_selection(db, cache, pipeline_waker, owner_id, &sel, true, false)
+        .await?;
     Ok(n)
 }
 

@@ -239,6 +239,7 @@ pub async fn message(
             }
             fed::receive_picture_edit_request(
                 &state.db,
+                state.cache.as_ref(),
                 &state.routines.pipeline,
                 &p.picture_id,
                 &p.requester_username,

@@ -81,7 +81,7 @@ async fn enqueue_edit_rejects_received_picture(db: PgPool) {
     .unwrap();
 
     let (set, clear) = gps_edit();
-    let result = jobs::edit_pictures_exif(&db, &waker, bob_id, &[received.id], set, clear).await;
+    let result = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, bob_id, &[received.id], set, clear).await;
     assert!(
         matches!(result, Err(AppError::BadRequest(_))),
         "editing a received picture must return BadRequest"
@@ -97,7 +97,7 @@ async fn enqueue_edit_rejects_picture_not_owned_by_user(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let result = jobs::edit_pictures_exif(&db, &waker, bob_id, &[alice_pic_id], set, clear).await;
+    let result = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, bob_id, &[alice_pic_id], set, clear).await;
     assert!(
         matches!(result, Err(AppError::NotFound)),
         "bob must not enqueue edit for alice's picture"
@@ -116,7 +116,7 @@ async fn enqueue_edit_rejects_still_processing_picture(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let result = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear).await;
+    let result = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear).await;
     assert!(
         matches!(result, Err(AppError::Conflict(_))),
         "editing a still-extracting picture must return Conflict (409)"
@@ -131,7 +131,7 @@ async fn edit_for_owned_picture_creates_job_and_marks_pending(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    let outcome = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
@@ -172,7 +172,7 @@ async fn edit_unsupported_format_is_db_only_no_job(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    let outcome = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
@@ -216,7 +216,7 @@ async fn edit_of_unknown_mime_is_attempted_not_pre_judged(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    let outcome = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
@@ -255,7 +255,7 @@ async fn edit_of_worker_marked_unsupported_enqueues_no_job(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    let outcome = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
@@ -291,7 +291,7 @@ async fn edit_unsupported_format_without_thumbnails_is_allowed(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    let outcome = jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    let outcome = jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
@@ -324,6 +324,7 @@ async fn set_and_clear_conflict_is_rejected(db: PgPool) {
     // Clearing GPS expands to lat+lng+alt, colliding with the set above.
     let result = jobs::edit_pictures_exif(
         &db,
+        &common::InMemoryCache::new(),
         &waker,
         alice_id,
         &[pic_id],
@@ -366,7 +367,7 @@ async fn revert_to_file_restores_the_snapshot_and_syncs(db: PgPool) {
 
     // The DB has moved on (a failed write left it diverged from the file).
     let (set, clear) = gps_edit();
-    jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
     PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::WriteFailed)
@@ -381,7 +382,7 @@ async fn revert_to_file_restores_the_snapshot_and_syncs(db: PgPool) {
     .await
     .unwrap();
 
-    let reverted = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id)
+    let reverted = jobs::revert_picture_exif_to_file(&db, &common::InMemoryCache::new(), &waker, alice_id, pic_id)
         .await
         .unwrap();
 
@@ -412,7 +413,7 @@ async fn revert_without_a_file_snapshot_conflicts(db: PgPool) {
     make_editable(&db, pic_id).await;
     let waker = RoutineHandle::<Uuid>::disconnected();
 
-    let result = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id).await;
+    let result = jobs::revert_picture_exif_to_file(&db, &common::InMemoryCache::new(), &waker, alice_id, pic_id).await;
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
 
@@ -426,11 +427,11 @@ async fn revert_while_a_reconcile_is_in_flight_conflicts(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     let (set, clear) = gps_edit();
-    jobs::edit_pictures_exif(&db, &waker, alice_id, &[pic_id], set, clear)
+    jobs::edit_pictures_exif(&db, &common::InMemoryCache::new(), &waker, alice_id, &[pic_id], set, clear)
         .await
         .unwrap();
 
-    let result = jobs::revert_picture_exif_to_file(&db, &waker, alice_id, pic_id).await;
+    let result = jobs::revert_picture_exif_to_file(&db, &common::InMemoryCache::new(), &waker, alice_id, pic_id).await;
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
 
@@ -442,7 +443,7 @@ async fn revert_rejects_a_foreign_picture(db: PgPool) {
     set_file_exif(&db, pic_id, serde_json::json!({"gps_lat": 10.0})).await;
     let waker = RoutineHandle::<Uuid>::disconnected();
 
-    let result = jobs::revert_picture_exif_to_file(&db, &waker, bob_id, pic_id).await;
+    let result = jobs::revert_picture_exif_to_file(&db, &common::InMemoryCache::new(), &waker, bob_id, pic_id).await;
     assert!(matches!(result, Err(AppError::NotFound)));
 }
 

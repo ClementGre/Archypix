@@ -312,6 +312,7 @@ async fn seed_exif_edit(db: &PgPool, user_id: Uuid) -> (Uuid, Uuid) {
     let waker = RoutineHandle::<Uuid>::disconnected();
     let outcome = archypix_back::services::jobs::edit_pictures_exif(
         db,
+        &common::InMemoryCache::new(),
         &waker,
         user_id,
         &[pic_id],
@@ -353,6 +354,7 @@ async fn exif_claim_binds_the_live_target_and_persists_it(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
     archypix_back::services::jobs::edit_pictures_exif(
         &db,
+        &common::InMemoryCache::new(),
         &waker,
         alice_id,
         &[pic_id],
@@ -439,6 +441,7 @@ async fn an_edit_during_processing_is_requeued_for_the_drain(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
     archypix_back::services::jobs::edit_pictures_exif(
         &db,
+        &common::InMemoryCache::new(),
         &waker,
         alice_id,
         &[pic_id],
@@ -695,6 +698,7 @@ async fn exif_write_back_moves_file_modified_at_only_when_the_hash_changes(db: P
     let waker = RoutineHandle::<Uuid>::disconnected();
     let outcome = archypix_back::services::jobs::edit_pictures_exif(
         &db,
+        &common::InMemoryCache::new(),
         &waker,
         alice_id,
         &[pic_id],

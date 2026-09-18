@@ -1045,6 +1045,158 @@ async fn mkcol_creates_a_persistent_empty_directory(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn move_renames_a_bare_empty_mkcol_directory(db: PgPool) {
+    // 34 §8: Finder mints `untitled folder` with MKCOL and immediately MOVEs it to the typed name.
+    use archypix_back::repository::tag_metadata::TagMetadataRepository;
+
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "untitled folder"]))
+        .await
+        .unwrap();
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .move_(
+            &seg(&["Photos", "untitled folder"]),
+            &seg(&["Photos", "Vietnam 2026"]),
+        )
+        .await
+        .unwrap();
+
+    let rows = TagMetadataRepository::list_for_user(&state.db, user).await.unwrap();
+    assert_eq!(rows.len(), 1, "the row moved, it was not duplicated");
+    assert_eq!(rows[0].tag_path, "Photos.Vietnam_2026");
+    assert_eq!(rows[0].webdav_dir_name.as_deref(), Some("Vietnam 2026"));
+    assert!(rows[0].show_when_empty);
+
+    let listed = Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .list_dir(&seg(&["Photos"]))
+        .await
+        .unwrap();
+    assert!(listed.iter().any(|e| e.is_dir && e.name == "Vietnam 2026"));
+    assert!(!listed.iter().any(|e| e.name == "untitled folder"));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn move_of_a_directory_with_trashed_pictures_mints_a_new_tag(db: PgPool) {
+    // §8: the swap is a metadata rename, so it is only safe when nothing at all hangs off the old
+    // path — a trashed picture still carries it and re-filing those is the tag-rename cascade's job.
+    use archypix_back::repository::tag_metadata::TagMetadataRepository;
+
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "Event"]))
+        .await
+        .unwrap();
+    // A picture lands in it, then goes to the trash: the directory looks empty again.
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    put(&vfs, &["Photos", "Event", "p.jpg"], b"eventbytes", Some("image/jpeg"))
+        .await
+        .unwrap();
+    let pic = pic_by_hash(&state.db, user, b"eventbytes").await;
+    sqlx::query!(
+        "UPDATE pictures SET deleted_at = now() AT TIME ZONE 'utc' WHERE id = $1",
+        pic.id
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .move_(&seg(&["Photos", "Event"]), &seg(&["Photos", "Renamed"]))
+        .await
+        .unwrap();
+
+    let mut rows = TagMetadataRepository::list_for_user(&state.db, user).await.unwrap();
+    rows.sort_by(|a, b| a.tag_path.cmp(&b.tag_path));
+    assert_eq!(rows.len(), 2, "a fresh tag at the destination, the source kept");
+    assert_eq!(rows[0].tag_path, "Photos.Event");
+    assert!(!rows[0].show_when_empty, "the source directory is retired");
+    assert_eq!(rows[1].tag_path, "Photos.Renamed");
+    assert!(rows[1].show_when_empty);
+    // The trashed picture keeps the tag it was filed under (`tags_of` hides trashed rows).
+    let still_tagged: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT tag_path::text as "tag_path!" FROM tags WHERE picture_id = $1"#,
+        pic.id
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(still_tagged, vec!["Photos.Event"]);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn move_of_a_non_empty_directory_is_method_not_allowed(db: PgPool) {
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    assert!(matches!(
+        vfs.move_(&seg(&["Photos", "Travel"]), &seg(&["Photos", "Trips"]))
+            .await
+            .unwrap_err(),
+        AppError::MethodNotAllowed(_)
+    ));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mkcol_folds_onto_an_existing_empty_tags_case_variant(db: PgPool) {
+    // §10c: an empty tag carries no picture, so the `tags` query cannot see it — it must still fold
+    // like any other sibling, or a case-folding client ends up with two directories it cannot tell
+    // apart.
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
+
+    Vfs::load(&state, user, h, false)
+        .await
+        .unwrap()
+        .mkcol(&seg(&["Photos", "Vietnam"]))
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        Vfs::load(&state, user, h, false)
+            .await
+            .unwrap()
+            .mkcol(&seg(&["Photos", "vietnam"]))
+            .await
+            .unwrap_err(),
+        AppError::Conflict(_)
+    ));
+    assert_eq!(
+        archypix_back::repository::tag_metadata::TagMetadataRepository::list_for_user(
+            &state.db, user
+        )
+        .await
+        .unwrap()
+        .len(),
+        1,
+        "no second row for the case variant"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn mkcol_keeps_the_requested_name_and_delete_drops_the_row(db: PgPool) {
     // Finder creates "dossier sans titre": the tag is slugified, the folder keeps its own name via
     // `webdav_dir_name` (§8.1). Deleting the empty directory deletes the row again.
@@ -1079,17 +1231,6 @@ async fn mkcol_keeps_the_requested_name_and_delete_drops_the_row(db: PgPool) {
         .expect("the slugified tag carries the row");
     assert!(row.show_when_empty);
     assert_eq!(row.webdav_dir_name.as_deref(), Some("dossier sans titre"));
-
-    // MOVE on a collection is out of scope (§8) — a Finder rename does not write the folder name.
-    assert!(matches!(
-        vfs.move_(
-            &seg(&["Photos", "dossier sans titre"]),
-            &seg(&["Photos", "Mes Vacances"]),
-        )
-        .await
-        .unwrap_err(),
-        AppError::MethodNotAllowed(_)
-    ));
 
     // Dropping a photo in tags it with the slugified path.
     put(
@@ -1143,6 +1284,55 @@ async fn deleting_an_empty_mkcol_directory_drops_its_row(db: PgPool) {
         .is_empty(),
         "the row that *was* the directory is gone"
     );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn deleting_a_directory_emptied_by_an_exclude_keeps_the_tags_metadata(db: PgPool) {
+    // §8.1 drops the row that *is* an empty directory — but a directory can also be empty because a
+    // foreign `exclude` (18 §7.3) cut every one of its pictures, and the tag's decoration must
+    // survive that.
+    use archypix_back::domain::tag_metadata::TagMetadata;
+    use archypix_back::repository::tag_metadata::TagMetadataRepository;
+
+    let (state, _storage) = state_with_storage(db);
+    let user = common::seed_user(&state.db, "alice", "pw").await;
+    let pic = seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"a", "Photos.Travel").await;
+    TagRepository::batch_assign(&state.db, user, &[pic], &["Private".to_string()])
+        .await
+        .unwrap();
+    TagMetadataRepository::upsert_many(
+        &state.db,
+        user,
+        &[TagMetadata {
+            display_name: Some("Travels".into()),
+            ..TagMetadata::new("Photos.Travel".into())
+        }],
+    )
+    .await
+    .unwrap();
+
+    let h = make_hierarchy(
+        &state.db,
+        user,
+        serde_json::json!({
+            "safeDeleteMode": "singleBranch",
+            "nodes": [{"id": "n1", "kind": "mirror", "name": "Photos", "tagRoot": "Photos",
+                       "keepDir": true, "exclude": ["Private"]}]
+        }),
+    )
+    .await;
+
+    let vfs = Vfs::load(&state, user, h, false).await.unwrap();
+    assert!(
+        vfs.list_dir(&seg(&["Photos", "Travel"])).await.unwrap().is_empty(),
+        "the foreign exclude hides the only picture"
+    );
+    vfs.delete(&seg(&["Photos", "Travel"])).await.unwrap();
+
+    let rows = TagMetadataRepository::list_for_user(&state.db, user).await.unwrap();
+    assert_eq!(rows.len(), 1, "the tag still has a picture — keep its row");
+    assert_eq!(rows[0].display_name.as_deref(), Some("Travels"));
+    assert_eq!(tags_of(&state.db, user, pic).await.len(), 2);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

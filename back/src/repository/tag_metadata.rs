@@ -48,31 +48,16 @@ impl From<Row> for TagMetadata {
 pub struct TagMetadataRepository;
 
 impl TagMetadataRepository {
-    #[tracing::instrument(skip(ex), fields(user_id = %user_id))]
+    /// Every row the user has.
     pub async fn list_for_user<'e, E>(ex: E, user_id: Uuid) -> Result<Vec<TagMetadata>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let rows = sqlx::query_as!(
-            Row,
-            r#"SELECT tag_path::text as "tag_path!", display_name, description, cover_picture_id,
-                      color, date_from, date_to, show_when_empty, sort_index,
-                      children_order as "children_order!: TagOrder",
-                      view_mode as "view_mode!: TagViewMode",
-                      subtag_placement as "subtag_placement?: TagSubtagPlacement",
-                      grouping, webdav_dir_name
-               FROM tag_metadata WHERE user_id = $1"#,
-            user_id,
-        )
-        .fetch_all(ex)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(rows.into_iter().map(TagMetadata::from).collect())
+        Self::list(ex, user_id, None).await
     }
 
     /// The rows for a specific set of paths — the read half of a partial upsert, which merges onto
     /// the stored row before writing (§4.1).
-    #[tracing::instrument(skip(ex, paths), fields(user_id = %user_id))]
     pub async fn find_many<'e, E>(
         ex: E,
         user_id: Uuid,
@@ -84,6 +69,19 @@ impl TagMetadataRepository {
         if paths.is_empty() {
             return Ok(vec![]);
         }
+        Self::list(ex, user_id, Some(paths)).await
+    }
+
+    /// `paths = None` reads the whole user; `Some` narrows to those paths.
+    #[tracing::instrument(skip(ex, paths), fields(user_id = %user_id))]
+    async fn list<'e, E>(
+        ex: E,
+        user_id: Uuid,
+        paths: Option<&[String]>,
+    ) -> Result<Vec<TagMetadata>, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
         let rows = sqlx::query_as!(
             Row,
             r#"SELECT tag_path::text as "tag_path!", display_name, description, cover_picture_id,
@@ -93,9 +91,10 @@ impl TagMetadataRepository {
                       subtag_placement as "subtag_placement?: TagSubtagPlacement",
                       grouping, webdav_dir_name
                FROM tag_metadata
-               WHERE user_id = $1 AND tag_path = ANY($2::text[]::ltree[])"#,
+               WHERE user_id = $1
+                 AND ($2::text[] IS NULL OR tag_path = ANY($2::text[]::ltree[]))"#,
             user_id,
-            paths as &[String],
+            paths as Option<&[String]>,
         )
         .fetch_all(ex)
         .await
@@ -129,18 +128,10 @@ impl TagMetadataRepository {
         let date_to: Vec<Option<chrono::NaiveDateTime>> = rows.iter().map(|r| r.date_to).collect();
         let show_when_empty: Vec<bool> = rows.iter().map(|r| r.show_when_empty).collect();
         let sort_index: Vec<Option<i32>> = rows.iter().map(|r| r.sort_index).collect();
-        let children_order: Vec<String> = rows
-            .iter()
-            .map(|r| enum_label(&r.children_order))
-            .collect::<Result<_, _>>()?;
-        let view_mode: Vec<String> = rows
-            .iter()
-            .map(|r| enum_label(&r.view_mode))
-            .collect::<Result<_, _>>()?;
-        let subtag_placement: Vec<Option<String>> = rows
-            .iter()
-            .map(|r| r.subtag_placement.as_ref().map(enum_label).transpose())
-            .collect::<Result<_, _>>()?;
+        let children_order: Vec<TagOrder> = rows.iter().map(|r| r.children_order).collect();
+        let view_mode: Vec<TagViewMode> = rows.iter().map(|r| r.view_mode).collect();
+        let subtag_placement: Vec<Option<TagSubtagPlacement>> =
+            rows.iter().map(|r| r.subtag_placement).collect();
         let grouping: Vec<serde_json::Value> = rows
             .iter()
             .map(|r| serde_json::to_value(&r.grouping))
@@ -156,12 +147,12 @@ impl TagMetadataRepository {
                     subtag_placement, grouping, webdav_dir_name, updated_at)
                SELECT $1, t.path::ltree, t.display_name, t.description, t.cover, t.color,
                       t.date_from, t.date_to, t.show_when_empty, t.sort_index,
-                      t.children_order::tag_order, t.view_mode::tag_view_mode,
-                      t.subtag_placement::tag_subtag_placement, t.grouping, t.webdav_dir_name,
-                      now() AT TIME ZONE 'utc'
+                      t.children_order, t.view_mode, t.subtag_placement, t.grouping,
+                      t.webdav_dir_name, now() AT TIME ZONE 'utc'
                FROM unnest($2::text[], $3::text[], $4::text[], $5::uuid[], $6::text[],
-                           $7::timestamp[], $8::timestamp[], $9::bool[], $10::int[], $11::text[],
-                           $12::text[], $13::text[], $14::jsonb[], $15::text[])
+                           $7::timestamp[], $8::timestamp[], $9::bool[], $10::int[],
+                           $11::tag_order[], $12::tag_view_mode[], $13::tag_subtag_placement[],
+                           $14::jsonb[], $15::text[])
                     AS t(path, display_name, description, cover, color, date_from, date_to,
                          show_when_empty, sort_index, children_order, view_mode, subtag_placement,
                          grouping, webdav_dir_name)
@@ -190,9 +181,9 @@ impl TagMetadataRepository {
             &date_to as &[Option<chrono::NaiveDateTime>],
             &show_when_empty,
             &sort_index as &[Option<i32>],
-            &children_order,
-            &view_mode,
-            &subtag_placement as &[Option<String>],
+            &children_order as &[TagOrder],
+            &view_mode as &[TagViewMode],
+            &subtag_placement as &[Option<TagSubtagPlacement>],
             &grouping,
             &webdav_dir_name as &[Option<String>],
         )
@@ -279,14 +270,6 @@ impl TagMetadataRepository {
         .map_err(map_sqlx_error)?;
         Ok(res.rows_affected())
     }
-}
-
-/// The Postgres enum label for a domain enum, via its serde snake_case name.
-fn enum_label<T: serde::Serialize>(v: &T) -> Result<String, AppError> {
-    serde_json::to_value(v)
-        .ok()
-        .and_then(|j| j.as_str().map(str::to_string))
-        .ok_or_else(|| AppError::InternalServerError("enum is not a string label".to_string()))
 }
 
 #[cfg(test)]

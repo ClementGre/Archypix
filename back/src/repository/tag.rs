@@ -4,6 +4,22 @@ use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
+/// The ancestor-expansion source every tag aggregate groups over: one row per (tag row × prefix),
+/// so a picture stored as `A.B.C` contributes to `A`, `A.B` and `A.B.C`. Callers add their own
+/// `WHERE`, aggregates and `GROUP BY pfx.prefix`.
+///
+/// Only the two `QueryBuilder` aggregates can share it: `sqlx::query!` takes a string literal and
+/// will not expand a macro in that position, so `list_tags_enriched` and `list_sources_by_user`
+/// still spell it out. Keep all four in step.
+macro_rules! tag_prefix_expansion {
+    () => {
+        "FROM tags tg
+         JOIN pictures p ON p.id = tg.picture_id
+         CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix
+                             FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx "
+    };
+}
+
 /// One ancestor-expanded tag aggregate over a selection (feature 14 §4.2). `count` is
 /// ancestor-inclusive (a picture stored as `A.B.C` contributes to `A`, `A.B`, `A.B.C`);
 /// `count == total` ⇒ on every selected picture. `manual_count` counts pictures holding a *manual*
@@ -160,6 +176,35 @@ impl TagRepository {
         .await
         .map_err(map_sqlx_error)
         .map(|rows| rows.into_iter().flatten().collect())
+    }
+
+    /// Whether any of the user's pictures carries `ltree` or a descendant of it. `include_deleted`
+    /// covers the trashed half, which no directory listing and no `list_paths_by_user` ever shows.
+    #[tracing::instrument(skip(ex), fields(user_id = %local_user_id, ltree))]
+    pub async fn subtree_has_pictures<'e, E>(
+        ex: E,
+        local_user_id: Uuid,
+        ltree: &str,
+        include_deleted: bool,
+    ) -> Result<bool, AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                 SELECT 1 FROM tags t
+                 JOIN pictures p ON p.id = t.picture_id
+                 WHERE p.local_user_id = $1
+                   AND t.tag_path <@ $2::text::ltree
+                   AND ($3 OR p.deleted_at IS NULL)
+               ) AS "exists!""#,
+            local_user_id,
+            ltree,
+            include_deleted,
+        )
+        .fetch_one(ex)
+        .await
+        .map_err(map_sqlx_error)
     }
 
     /// List tags for a specific picture owned by the given user.
@@ -745,14 +790,12 @@ impl TagRepository {
         }
 
         // Path → (count, manual_count), ancestor-expanded via a per-tag prefix lateral.
-        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(concat!(
             "SELECT pfx.prefix::text AS path, COUNT(DISTINCT tg.picture_id)::bigint AS cnt, \
-             (COUNT(DISTINCT tg.picture_id) FILTER (WHERE tg.source = 'manual'::tag_source))::bigint AS manual_count \
-             FROM tags tg JOIN pictures p ON p.id = tg.picture_id \
-             CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix \
-                                 FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx \
-             WHERE ",
-        );
+             (COUNT(DISTINCT tg.picture_id) FILTER (WHERE tg.source = 'manual'::tag_source))::bigint AS manual_count ",
+            tag_prefix_expansion!(),
+            "WHERE ",
+        ));
         PictureRepository::push_selection_where(&mut q, local_user_id, sel);
         q.push(" GROUP BY pfx.prefix ORDER BY pfx.prefix");
         let rows = q.build().fetch_all(db).await.map_err(map_sqlx_error)?;
@@ -768,13 +811,11 @@ impl TagRepository {
         }
 
         if provenance {
-            let mut pq = sqlx::QueryBuilder::<Postgres>::new(
-                "SELECT pfx.prefix::text AS path, tg.source AS \"source\", COUNT(DISTINCT tg.picture_id)::bigint AS cnt \
-                 FROM tags tg JOIN pictures p ON p.id = tg.picture_id \
-                 CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix \
-                                     FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx \
-                 WHERE ",
-            );
+            let mut pq = sqlx::QueryBuilder::<Postgres>::new(concat!(
+                "SELECT pfx.prefix::text AS path, tg.source AS \"source\", COUNT(DISTINCT tg.picture_id)::bigint AS cnt ",
+                tag_prefix_expansion!(),
+                "WHERE ",
+            ));
             PictureRepository::push_selection_where(&mut pq, local_user_id, sel);
             pq.push(" GROUP BY pfx.prefix, tg.source");
             let rows = pq.build().fetch_all(db).await.map_err(map_sqlx_error)?;

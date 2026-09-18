@@ -8,7 +8,7 @@
 use crate::domain::hierarchy::{NamingStrategy, SafeDeleteMode, TagOp, TagOpKind};
 use crate::domain::tag::TagPath;
 use crate::domain::tag_metadata::{
-    TagMetadata, validate_display_name, validate_webdav_dir_name,
+    TagMetadataPatch, validate_display_name, validate_webdav_dir_name,
 };
 use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::s3;
@@ -667,7 +667,6 @@ impl<'a> Vfs<'a> {
         // `MKCOL`'d `show_when_empty` tag, whose metadata row *is* the directory (§8.1).
         if let Some(dir) = self.dir(segments) {
             if self.list_dir(segments).await?.is_empty() {
-                trace!("vfs delete: empty directory — drop its metadata row");
                 if let Some(tag) = dir.mirror_tag.clone() {
                     self.delete_tag_metadata(&tag).await?;
                 }
@@ -717,12 +716,8 @@ impl<'a> Vfs<'a> {
         fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, from = %from.join("/"), to = %to.join("/"), picture_id)
     )]
     pub async fn move_(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
-        // MOVE on a collection stays out of scope (99_ROADMAP "Advanced WebDAV"): renaming a
-        // directory in Finder does not write `webdav_dir_name` (34_tag_metadata.md §8).
         if self.dir(from).is_some() {
-            return Err(AppError::MethodNotAllowed(
-                "renaming or moving a directory is not supported — rename the tag instead".into(),
-            ));
+            return self.move_empty_dir(from, to).await;
         }
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
@@ -780,35 +775,16 @@ impl<'a> Vfs<'a> {
     /// `static`/`query` structure is fixed, and an already-existing path is rejected.
     #[tracing::instrument(skip(self), fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/")))]
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
-        // The resolved tree already carries custom names, so this covers both (§8.1).
-        if self.dir(segments).is_some() {
-            return Err(AppError::Conflict("directory already exists".into()));
-        }
+        let (parent, requested) = split_last(segments)?;
         // A drop inbox is a leaf — MKCOL inside it is not allowed (feature 18 §4).
-        if let Some((_, parent)) = segments.split_last() {
-            if self.dir(parent).is_some_and(|d| d.always_visible) {
-                return Err(AppError::MethodNotAllowed(
-                    "cannot create a directory inside a drop inbox".into(),
-                ));
-            }
+        if self.dir(parent).is_some_and(|d| d.always_visible) {
+            return Err(AppError::MethodNotAllowed(
+                "cannot create a directory inside a drop inbox".into(),
+            ));
         }
-        let (_, requested) = split_last(segments)?;
-        match self.resolve_path(segments)? {
-            PathResolution::Existing(_) => {
-                Err(AppError::Conflict("directory already exists".into()))
-            }
-            PathResolution::MirrorExtension { tag } => {
-                // Fold onto an existing case-variant sibling, as the PUT path does (§10c) — a tag
-                // that already exists under a different display name is still a conflict.
-                let tag = self.fold_case(vec![tag]).await?.remove(0);
-                if self.tag_dir_exists(&tag) {
-                    return Err(AppError::Conflict("directory already exists".into()));
-                }
-                trace!(%tag, "vfs mkcol: minting an empty tag");
-                self.create_empty_tag(&tag, &requested).await?;
-                Ok(())
-            }
-        }
+        let tag = self.resolve_new_tag(segments).await?;
+        trace!(%tag, "vfs mkcol: minting an empty tag");
+        self.create_empty_tag(&tag, &requested).await
     }
 
     /// Whether any directory in the resolved tree already maps to `tag` — the slugified label of a
@@ -820,28 +796,126 @@ impl<'a> Vfs<'a> {
         walk(&self.root, tag)
     }
 
+    /// MOVE on a collection is out of scope in general (99_ROADMAP "Advanced WebDAV") — with one
+    /// exception: a still-empty `MKCOL`'d directory, which is Finder's create-then-rename flow
+    /// (it creates `untitled folder` and MOVEs it to the typed name). Anything else is `405`.
+    async fn move_empty_dir(&self, from: &[String], to: &[String]) -> Result<(), AppError> {
+        let unsupported = || {
+            AppError::MethodNotAllowed(
+                "renaming or moving a directory is not supported — rename the tag instead".into(),
+            )
+        };
+        let (from_parent, _) = split_last(from)?;
+        let (to_parent, requested) = split_last(to)?;
+        // Reparenting is a tag rename, not a folder rename.
+        if from_parent != to_parent {
+            return Err(unsupported());
+        }
+        let dir = self.dir(from).ok_or(AppError::NotFound)?;
+        let Some(old_tag) = dir.mirror_tag.clone() else {
+            return Err(unsupported());
+        };
+        if !dir.writable || !self.list_dir(from).await?.is_empty() {
+            return Err(unsupported());
+        }
+        // Only a directory the metadata row itself conjures may be renamed this way (§8.1).
+        if !self.is_show_when_empty(&old_tag).await? {
+            return Err(unsupported());
+        }
+
+        let new_tag = self.resolve_new_tag(to).await?;
+        // A tag rename is only safe when nothing at all hangs off the old path — a *trashed*
+        // picture still carries it and never shows in a listing, and re-filing those belongs to
+        // the tag-rename cascade. Otherwise mint a fresh tag and retire the source directory.
+        if TagRepository::subtree_has_pictures(&self.state.db, self.user_id, &old_tag, true).await?
+        {
+            trace!(%old_tag, %new_tag, "vfs move: source tag is not bare — minting a new one");
+            self.create_empty_tag(&new_tag, &requested).await?;
+            return self
+                .patch_tag_metadata(TagMetadataPatch {
+                    tag_path: old_tag,
+                    show_when_empty: Some(false),
+                    ..Default::default()
+                })
+                .await;
+        }
+        trace!(%old_tag, %new_tag, "vfs move: renaming a bare empty directory");
+        TagMetadataRepository::rename_subtree(&self.state.db, self.user_id, &old_tag, &new_tag)
+            .await?;
+        // The folder keeps the name the client typed (§8).
+        self.patch_tag_metadata(named_empty_dir_patch(&new_tag, &requested))
+            .await
+    }
+
+    /// The tag a not-yet-existing directory path would mint, folded onto an existing case variant
+    /// and rejected if anything already occupies it (§8.1, §10c).
+    async fn resolve_new_tag(&self, segments: &[String]) -> Result<String, AppError> {
+        let conflict = || AppError::Conflict("directory already exists".into());
+        if self.dir(segments).is_some() {
+            return Err(conflict());
+        }
+        let PathResolution::MirrorExtension { tag } = self.resolve_path(segments)? else {
+            return Err(conflict());
+        };
+        // Fold onto an existing case-variant sibling, as the PUT path does (§10c) — a tag that
+        // already exists under a different display name is still a conflict.
+        let tag = self.fold_case(vec![tag]).await?.remove(0);
+        if self.tag_dir_exists(&tag) {
+            return Err(conflict());
+        }
+        Ok(tag)
+    }
+
     /// Mint the `show_when_empty` metadata row that *is* a brand-new empty directory (§8.1).
     async fn create_empty_tag(&self, tag: &str, requested_name: &str) -> Result<(), AppError> {
-        let webdav_dir_name = validate_webdav_dir_name(requested_name)
-            .map_err(AppError::BadRequest)
-            .ok();
-        let row = TagMetadata {
-            display_name: validate_display_name(requested_name).ok(),
-            show_when_empty: true,
-            webdav_dir_name,
-            ..TagMetadata::new(tag.to_string())
-        };
-        TagMetadataRepository::upsert_many(&self.state.db, self.user_id, &[row]).await?;
-        self.bust_tag_tree().await;
+        self.patch_tag_metadata(named_empty_dir_patch(tag, requested_name))
+            .await
+    }
+
+    /// Whether `tag`'s row is what makes its directory exist.
+    async fn is_show_when_empty(&self, tag: &str) -> Result<bool, AppError> {
+        Ok(
+            TagMetadataRepository::find_many(&self.state.db, self.user_id, &[tag.to_string()])
+                .await?
+                .first()
+                .is_some_and(|m| m.show_when_empty),
+        )
+    }
+
+    /// Drop the row behind an empty `MKCOL`'d directory (§8.1) — only when `show_when_empty` is
+    /// what made the directory exist. A directory can also be empty because the hierarchy filtered
+    /// every one of its pictures out (a foreign `exclude`, feature 18 §7.3), and wiping a live
+    /// tag's decoration for that would be silent, undoable data loss.
+    async fn delete_tag_metadata(&self, tag: &str) -> Result<(), AppError> {
+        if !self.is_show_when_empty(tag).await? {
+            trace!(%tag, "vfs delete: empty directory is tag-derived — nothing to drop");
+            return Ok(());
+        }
+        if TagRepository::subtree_has_pictures(&self.state.db, self.user_id, tag, true).await? {
+            trace!(%tag, "vfs delete: tag still has pictures — keeping its metadata");
+            return Ok(());
+        }
+        trace!(%tag, "vfs delete: empty directory — drop its metadata row");
+        crate::services::tag_metadata::delete(
+            &self.state.db,
+            self.state.cache.as_ref(),
+            self.user_id,
+            &[tag.to_string()],
+        )
+        .await?;
         Ok(())
     }
 
-    /// Drop the row behind an empty `MKCOL`'d directory (§8.1). A tag that still has pictures keeps
-    /// its decoration — only `show_when_empty` made the directory exist in the first place.
-    async fn delete_tag_metadata(&self, tag: &str) -> Result<(), AppError> {
-        TagMetadataRepository::delete_many(&self.state.db, self.user_id, &[tag.to_string()])
-            .await?;
-        self.bust_tag_tree().await;
+    /// WebDAV mints tags outside the API, so metadata writes go through the same service as the
+    /// API's — merge-onto-stored, the prune-if-all-default rule and the cache bust included.
+    async fn patch_tag_metadata(&self, patch: TagMetadataPatch) -> Result<(), AppError> {
+        crate::services::tag_metadata::upsert(
+            &self.state.db,
+            self.state.cache.as_ref(),
+            self.user_id,
+            vec![patch],
+        )
+        .await?;
         Ok(())
     }
 
@@ -879,7 +953,11 @@ impl<'a> Vfs<'a> {
         if assigns.is_empty() {
             return Ok(assigns);
         }
-        let existing = TagRepository::list_paths_by_user(&self.state.db, self.user_id).await?;
+        let mut existing = TagRepository::list_paths_by_user(&self.state.db, self.user_id).await?;
+        // That query joins `pictures`, so a `show_when_empty` tag is invisible to it; the resolved
+        // tree already carries them (34 §8.1) and they must fold like any other sibling, or MKCOL
+        // mints a case-variant directory beside one it should have reused.
+        collect_mirror_tags(&self.root, &mut existing);
         Ok(assigns
             .into_iter()
             .map(|p| crate::domain::hierarchy::reuse_existing_case(&p, &existing))
@@ -1315,6 +1393,30 @@ impl<'a> Vfs<'a> {
 /// Join path segments into the Redis-key path component (slash-delimited; `""` for the root).
 fn path_key(segments: &[String]) -> String {
     segments.join("/")
+}
+
+/// The patch that makes `tag` a directory named `requested_name` (§8.1): the name is kept verbatim
+/// as `webdav_dir_name` and as the display name, falling back to the ltree label when a validator
+/// rejects it (an over-long or control-laden folder name still makes a directory).
+fn named_empty_dir_patch(tag: &str, requested_name: &str) -> TagMetadataPatch {
+    TagMetadataPatch {
+        tag_path: tag.to_string(),
+        display_name: Some(validate_display_name(requested_name).ok()),
+        webdav_dir_name: Some(validate_webdav_dir_name(requested_name).ok()),
+        show_when_empty: Some(true),
+        ..Default::default()
+    }
+}
+
+/// Every tag a resolved tree maps a directory to — including the empty ones a `tags` query cannot
+/// see (34 §8.1).
+fn collect_mirror_tags(dir: &ResolvedDir, out: &mut Vec<String>) {
+    if let Some(tag) = &dir.mirror_tag {
+        out.push(tag.clone());
+    }
+    for child in &dir.children {
+        collect_mirror_tags(child, out);
+    }
 }
 
 fn split_ops(ops: &[TagOp]) -> (Vec<String>, Vec<String>) {

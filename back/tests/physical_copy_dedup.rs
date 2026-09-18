@@ -147,7 +147,7 @@ async fn delete_makes_owned_copy_the_trash_representative(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     // The user deletes the content (trashes the survivor — the received one they see).
-    pictures::trash_picture(&db, &waker, user, received)
+    pictures::trash_picture(&db, &common::InMemoryCache::new(), &waker, user, received)
         .await
         .unwrap();
 
@@ -176,7 +176,7 @@ async fn rejected_content_promotes_representative_on_purge(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     // Delete the content → one `manual` representative, the other `boomerang` (neither live).
-    pictures::trash_picture(&db, &waker, user, a).await.unwrap();
+    pictures::trash_picture(&db, &common::InMemoryCache::new(), &waker, user, a).await.unwrap();
     let rep = if reason(&db, a).await.as_deref() == Some("manual") {
         a
     } else {
@@ -213,14 +213,14 @@ async fn restore_lifts_rejection_and_re_enables_rescue(db: PgPool) {
     let waker = RoutineHandle::<Uuid>::disconnected();
 
     // Delete → the owned copy is the manual representative, the received one boomerang.
-    pictures::trash_picture(&db, &waker, user, received)
+    pictures::trash_picture(&db, &common::InMemoryCache::new(), &waker, user, received)
         .await
         .unwrap();
     assert_eq!(reason(&db, owned).await.as_deref(), Some("manual"));
     assert_eq!(reason(&db, received).await.as_deref(), Some("boomerang"));
 
     // Restore the representative: rejection lifted, its boomerang sibling → content_dedupe.
-    pictures::restore_picture(&db, &waker, user, owned)
+    pictures::restore_picture(&db, &common::InMemoryCache::new(), &waker, user, owned)
         .await
         .unwrap();
     assert!(is_live(&db, owned).await);

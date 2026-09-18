@@ -110,6 +110,7 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     // Owner trashes the shared picture → kept in coverage, re-announced with the lifecycle flag.
     pictures::trash_picture(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,
@@ -140,6 +141,7 @@ async fn owner_trash_announces_lifecycle_then_restore_clears(db: PgPool) {
     // Owner restores before purge → re-announce clears the lifecycle flag.
     pictures::restore_picture(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,
@@ -166,6 +168,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob overrides gps_lat locally (DB-only; no edit_picture job).
     pictures::override_received_exif(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
@@ -224,6 +227,7 @@ async fn recipient_override_is_sticky_owner_edit_flows_through(db: PgPool) {
     // Bob clears the override → the owner's value flows through again.
     pictures::override_received_exif(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic,
@@ -261,6 +265,7 @@ async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
     // Bob overrides gps_lat to *empty* (not just un-claim) — the owner still has a value.
     pictures::override_received_exif(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic.id,
@@ -316,6 +321,7 @@ async fn recipient_can_override_a_field_to_empty_and_it_is_sticky(db: PgPool) {
     // Bob clears the empty claim → the owner's value flows through again.
     pictures::override_received_exif(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         bob_id,
         bob_pic.id,
@@ -434,6 +440,7 @@ async fn purge_sweep_removes_owned_row_and_tracking(db: PgPool) {
     // Trash and backdate past retention.
     pictures::trash_picture(
         &db,
+        &common::InMemoryCache::new(),
         &RoutineHandle::<Uuid>::disconnected(),
         alice_id,
         alice_pic,

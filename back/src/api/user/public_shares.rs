@@ -199,6 +199,7 @@ pub async fn trash_contributions(
         .ok_or(AppError::NotFound)?;
     let trashed = public::trash_contributions(
         &state.db,
+        state.cache.as_ref(),
         &state.routines.pipeline,
         owner_id,
         &share.tag_path,

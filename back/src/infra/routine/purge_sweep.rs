@@ -21,7 +21,7 @@ use crate::services::users::find_local_user_id;
 use archypix_common::error::AppError;
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -170,14 +170,12 @@ impl Routine for PurgeSweepRoutine {
             return Ok(());
         }
         let mut purged = 0usize;
-        let mut touched: Vec<Uuid> = Vec::new();
+        let mut touched: HashSet<Uuid> = HashSet::new();
         for (picture_id, user_id) in purgeable {
             match self.purge_one(picture_id, user_id).await {
                 Ok(()) => {
                     purged += 1;
-                    if !touched.contains(&user_id) {
-                        touched.push(user_id);
-                    }
+                    touched.insert(user_id);
                 }
                 Err(e) => {
                     warn!(picture_id = %picture_id, error = ?e, "purge: failed to purge picture")

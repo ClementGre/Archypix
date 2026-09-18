@@ -5,7 +5,6 @@ use crate::domain::tagging::{
     RuleItem, ServiceConfig, ServiceType, SharedMappingConfig, TaggingService,
 };
 use crate::repository::share::IncomingShareRepository;
-use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use crate::services;
 use crate::state::AppState;
@@ -286,8 +285,9 @@ pub async fn update_service(
         .as_deref()
         .map(parse_tags_allowing_protected)
         .transpose()?;
-    let service = TaggingServiceRepository::update(
+    let service = services::tagging::update_service(
         &state.db,
+        state.cache.as_ref(),
         user_id,
         service_id,
         payload.name.as_deref().map(str::trim),
@@ -297,13 +297,6 @@ pub async fn update_service(
     )
     .await?
     .ok_or(AppError::NotFound)?;
-    // Disabling a service makes its tags no longer live — drop them now. Re-enabling and any
-    // other config change re-derives tags on the next pipeline run (via touch_invalidated).
-    if payload.enabled == Some(false) {
-        TagRepository::remove_service_tags(&state.db, service_id).await?;
-        services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
-    }
-    TaggingServiceRepository::touch_invalidated(&state.db, service_id).await?;
     state.routines.pipeline.trigger(user_id);
     Ok(Json(service_to_response(&service)))
 }
@@ -360,14 +353,17 @@ pub async fn delete_service(
     Query(query): Query<DeleteServiceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let user_id = auth.user_id()?;
-    let deleted =
-        services::tagging::delete_service(&state.db, user_id, service_id, query.promote_tags)
-            .await?;
+    let deleted = services::tagging::delete_service(
+        &state.db,
+        state.cache.as_ref(),
+        user_id,
+        service_id,
+        query.promote_tags,
+    )
+    .await?;
     if !deleted {
         return Err(AppError::NotFound);
     }
-    // The service's tags were promoted or removed synchronously (feature 34 §4).
-    services::tag_metadata::bust_cache(state.cache.as_ref(), user_id).await;
     state.routines.pipeline.trigger(user_id);
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
