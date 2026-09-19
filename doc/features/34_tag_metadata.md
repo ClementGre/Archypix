@@ -667,6 +667,26 @@ not imply the user wants their mounted folder renamed.
   paste from a Windows client is not an error.
 - **Reorder mode uses up/down buttons on desktop too**, not the drag handles §7 sketches: the same
   rows are already photo drop targets, and a second drag system on them would be ambiguous.
+- **A new tag is configured where it is created.** §5 and §6 only mint a path and a display name, so
+  colour, dates or a cover meant a second trip through the edit dialog. `NewTagDialog` is now the one
+  create dialog behind both entry points, with the §6 fields behind a *Customize* fold (shared with
+  the edit dialog as `TagMetaFields`) and the tag path editable there — it follows the display name
+  until the user takes it over, and is live-validated by the rule the picker used to apply to its own
+  input, so an unusable character is caught before *Create* rather than silently slugified.
+  `TagPicker`'s create row carries a *Customize* button that opens it and selects the result, so a
+  tag can be dressed before it reaches the photos.
+- **The picker's create field takes free text.** It used to sanitize live (accents stripped,
+  spaces → `_`, `.` → `/`) and refuse anything left over, which contradicted §5: the typed text *is*
+  the display name, and only the slug is the identity. `/` stays the level separator, each segment is
+  slugified at create time, and the row shows the name and the inferred path together. Search gained
+  the raw wire path so a pasted `Era.2026.Vietnam` still resolves now that `.` is an ordinary
+  character.
+- **A coloured tree row keeps its colour when included.** The include highlight replaced the tag's
+  own tint with the primary accent, which read as a different tag; it now deepens the tint, solidifies
+  the left accent, bolds the label and shifts it to a `color-mix` of the tag colour toward
+  `--color-foreground` — so the label changes colour on selection as it does for an uncoloured tag,
+  darkening in the light theme and lightening in the dark one instead of fixing a second palette
+  value per colour. Uncoloured rows keep the primary highlight.
 
 ### 16.1 Deferred (stored and served, no UI yet)
 
