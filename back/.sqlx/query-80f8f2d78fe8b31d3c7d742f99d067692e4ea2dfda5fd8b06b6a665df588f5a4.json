@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT tag_path::text as \"tag_path!\", display_name, description, cover_picture_id,\n                      color, date_from, date_to, show_when_empty, sort_index,\n                      children_order as \"children_order!: TagOrder\",\n                      view_mode as \"view_mode!: TagViewMode\",\n                      subtag_placement as \"subtag_placement?: TagSubtagPlacement\",\n                      grouping, webdav_dir_name\n               FROM tag_metadata\n               WHERE user_id = $1\n                 AND ($2::text[] IS NULL OR tag_path = ANY($2::text[]::ltree[]))",
+  "query": "SELECT tag_path::text as \"tag_path!\", display_name, description, cover_picture_id,\n                      color, date_from, date_to, show_when_empty, sort_index,\n                      children_order as \"children_order!: TagOrder\", children_order_desc,\n                      view_mode as \"view_mode!: TagViewMode\",\n                      subtag_placement as \"subtag_placement?: TagSubtagPlacement\",\n                      grouping, webdav_dir_name\n               FROM tag_metadata\n               WHERE user_id = $1\n                 AND ($2::text[] IS NULL OR tag_path = ANY($2::text[]::ltree[]))",
   "describe": {
     "columns": [
       {
@@ -123,6 +123,17 @@
       },
       {
         "ordinal": 10,
+        "name": "children_order_desc",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "tag_metadata",
+            "name": "children_order_desc"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "view_mode!: TagViewMode",
         "type_info": {
           "Custom": {
@@ -144,7 +155,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "subtag_placement?: TagSubtagPlacement",
         "type_info": {
           "Custom": {
@@ -165,7 +176,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "grouping",
         "type_info": "Jsonb",
         "origin": {
@@ -176,7 +187,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "webdav_dir_name",
         "type_info": "Varchar",
         "origin": {
@@ -205,10 +216,11 @@
       true,
       false,
       false,
+      false,
       true,
       false,
       true
     ]
   },
-  "hash": "6385fc1c2b895bc0f66ea00e42828db183a433dfe1721e720369872018041140"
+  "hash": "80f8f2d78fe8b31d3c7d742f99d067692e4ea2dfda5fd8b06b6a665df588f5a4"
 }

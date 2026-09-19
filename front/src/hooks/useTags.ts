@@ -14,11 +14,11 @@ import {queryKeys} from '@/lib/constants'
 import {invalidatePicturesAndTags} from '@/lib/invalidation'
 import {
     allPendingTagMeta,
+    configureTagMetaQueue,
     flushTagMeta,
     installTagMetaFlushHandlers,
     onTagMetaQueueChange,
     queueTagMeta,
-    setTagMetaQueueErrorHandler,
 } from '@/lib/tagMetaQueue'
 import {buildTagTree, type TagNode, type TrashView} from '@/lib/tagTree'
 import type {TagListItem, TagMeta, TagMetaPatch} from '@/lib/types'
@@ -118,6 +118,7 @@ function applyPatch(items: TagListItem[], patch: TagMetaPatch): TagListItem[] {
         show_when_empty: false,
         sort_index: null,
         children_order: 'manual',
+        children_order_desc: false,
         view_mode: 'subtag',
         subtag_placement: null,
         grouping: {},
@@ -147,12 +148,21 @@ export function useResetTagMeta() {
     })
 }
 
-/** Install the unload/visibility flush triggers and the failed-flush toast once, at app level. */
+/** Install the queue's handlers and the unload/visibility flush triggers once, at app level. */
 export function useTagMetaQueue(): void {
+    const queryClient = useQueryClient()
     useEffect(() => {
-        setTagMetaQueueErrorHandler((message) => toast.error(message))
+        configureTagMetaQueue({
+            // A flush drops the overlay, so the batch has to land in the served payload first —
+            // otherwise the tree reverts to the pre-write rows until the next refetch (§4.1).
+            commit: (items) =>
+                queryClient.setQueryData<TagListItem[]>(queryKeys.tags(), (prev) =>
+                    prev ? items.reduce(applyPatch, prev) : prev,
+                ),
+            error: (message) => toast.error(message),
+        })
         return installTagMetaFlushHandlers()
-    }, [])
+    }, [queryClient])
 }
 
 export function usePictureTags(pictureId: string | null) {

@@ -455,7 +455,8 @@ CREATE TABLE public.tag_metadata (
     "grouping" jsonb DEFAULT '{}'::jsonb NOT NULL,
     webdav_dir_name character varying(255),
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+    updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    children_order_desc boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE public.tagging_services (

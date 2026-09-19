@@ -209,8 +209,8 @@ impl PictureRepository {
     }
 
     /// Render a [`TagPredicate`] to a SQL boolean over `pictures p`. Recursive: `minus_children`
-    /// are negated sub-predicates ("most-specific node wins"). See `TagPredicate` docs for the
-    /// membership semantics.
+    /// are negated sub-predicates (an arbitrary sibling cut, for query nodes). See `TagPredicate`
+    /// docs for the membership semantics.
     fn render_predicate(q: &mut sqlx::QueryBuilder<Postgres>, pred: &TagPredicate) {
         q.push("(");
         // `untagged` is a conjunct, not a branch: the gallery layers its cross-cutting include /
@@ -240,9 +240,17 @@ impl PictureRepository {
                     q.push(joiner);
                 }
                 first = false;
-                q.push("EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path = ")
-                    .push_bind(ex.as_ltree().to_string())
-                    .push("::ltree)");
+                // Deepest-tag, not merely "carries T": a `segment` row at `Year.2026` alongside a
+                // manual `Year.2026.Italy` belongs to Italy alone (feature 35 §2).
+                let path = ex.as_ltree().to_string();
+                q.push("(EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path = ")
+                    .push_bind(path.clone())
+                    .push("::ltree) AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id")
+                    .push(" AND t.tag_path <@ ")
+                    .push_bind(path.clone())
+                    .push("::ltree AND t.tag_path <> ")
+                    .push_bind(path)
+                    .push("::ltree))");
             }
             q.push(")");
         } else if !pred.untagged {

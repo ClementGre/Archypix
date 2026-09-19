@@ -1,0 +1,79 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH per_picture AS (\n                   SELECT pfx.prefix AS prefix, tg.picture_id,\n                          p.deleted_at IS NULL AS live, p.captured_at,\n                          -- Inside a prefix group every row is under-or-equal it, so \"deeper\" is\n                          -- simply \"not equal\" (feature 35 §2).\n                          bool_or(tg.tag_path = pfx.prefix) AS at_path,\n                          bool_or(tg.tag_path <> pfx.prefix) AS below_path\n                   FROM tags tg\n                   JOIN pictures p ON p.id = tg.picture_id\n                   CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix\n                                       FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx\n                   WHERE p.local_user_id = $1\n                   GROUP BY pfx.prefix, tg.picture_id, p.deleted_at, p.captured_at\n               )\n               SELECT prefix::text AS \"path!\",\n                      COUNT(*) FILTER (WHERE live) AS \"count!\",\n                      COUNT(*) FILTER (WHERE live AND at_path AND NOT below_path)\n                          AS \"exact_count!\",\n                      COUNT(*) FILTER (WHERE NOT live) AS \"trashed_count!\",\n                      COUNT(*) FILTER (WHERE NOT live AND at_path AND NOT below_path)\n                          AS \"trashed_exact_count!\",\n                      MIN(captured_at) FILTER (WHERE live) AS date_from,\n                      MAX(captured_at) FILTER (WHERE live) AS date_to,\n                      MIN(captured_at) FILTER (WHERE NOT live) AS trashed_date_from,\n                      MAX(captured_at) FILTER (WHERE NOT live) AS trashed_date_to\n               FROM per_picture\n               GROUP BY prefix\n               ORDER BY prefix",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "path!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "exact_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "trashed_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "trashed_exact_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "date_from",
+        "type_info": "Timestamp",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "date_to",
+        "type_info": "Timestamp",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "trashed_date_from",
+        "type_info": "Timestamp",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "trashed_date_to",
+        "type_info": "Timestamp",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "575b72c284d67a4fed8cf70086861da7738ab46d0ab07d8857634ace7d3d8bea"
+}

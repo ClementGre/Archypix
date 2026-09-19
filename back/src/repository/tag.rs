@@ -34,7 +34,8 @@ pub struct TagAgg {
 }
 
 /// Live-or-trashed halves of one ancestor-expanded tag aggregate (feature 34 §4). `count` is
-/// ancestor-inclusive; `exact_count` counts only pictures stored at exactly this path. The dates are
+/// ancestor-inclusive; `exact_count` counts pictures whose **deepest** tag here is this path — the
+/// same rule the `exact` query predicate applies (feature 35 §2). The dates are
 /// `MIN`/`MAX(captured_at)` and are what a tag's range derives from when it carries no override.
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TagCounts {
@@ -78,29 +79,34 @@ impl TagRepository {
         E: Executor<'e, Database = Postgres>,
     {
         let rows = sqlx::query!(
-            r#"SELECT pfx.prefix::text AS "path!",
-                      COUNT(DISTINCT tg.picture_id) FILTER (WHERE p.deleted_at IS NULL)
-                          AS "count!",
-                      COUNT(DISTINCT tg.picture_id)
-                          FILTER (WHERE p.deleted_at IS NULL AND pfx.prefix = tg.tag_path)
+            r#"WITH per_picture AS (
+                   SELECT pfx.prefix AS prefix, tg.picture_id,
+                          p.deleted_at IS NULL AS live, p.captured_at,
+                          -- Inside a prefix group every row is under-or-equal it, so "deeper" is
+                          -- simply "not equal" (feature 35 §2).
+                          bool_or(tg.tag_path = pfx.prefix) AS at_path,
+                          bool_or(tg.tag_path <> pfx.prefix) AS below_path
+                   FROM tags tg
+                   JOIN pictures p ON p.id = tg.picture_id
+                   CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix
+                                       FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx
+                   WHERE p.local_user_id = $1
+                   GROUP BY pfx.prefix, tg.picture_id, p.deleted_at, p.captured_at
+               )
+               SELECT prefix::text AS "path!",
+                      COUNT(*) FILTER (WHERE live) AS "count!",
+                      COUNT(*) FILTER (WHERE live AND at_path AND NOT below_path)
                           AS "exact_count!",
-                      COUNT(DISTINCT tg.picture_id) FILTER (WHERE p.deleted_at IS NOT NULL)
-                          AS "trashed_count!",
-                      COUNT(DISTINCT tg.picture_id)
-                          FILTER (WHERE p.deleted_at IS NOT NULL AND pfx.prefix = tg.tag_path)
+                      COUNT(*) FILTER (WHERE NOT live) AS "trashed_count!",
+                      COUNT(*) FILTER (WHERE NOT live AND at_path AND NOT below_path)
                           AS "trashed_exact_count!",
-                      MIN(p.captured_at) FILTER (WHERE p.deleted_at IS NULL) AS date_from,
-                      MAX(p.captured_at) FILTER (WHERE p.deleted_at IS NULL) AS date_to,
-                      MIN(p.captured_at) FILTER (WHERE p.deleted_at IS NOT NULL)
-                          AS trashed_date_from,
-                      MAX(p.captured_at) FILTER (WHERE p.deleted_at IS NOT NULL) AS trashed_date_to
-               FROM tags tg
-               JOIN pictures p ON p.id = tg.picture_id
-               CROSS JOIN LATERAL (SELECT subpath(tg.tag_path, 0, gs) AS prefix
-                                   FROM generate_series(1, nlevel(tg.tag_path)) gs) pfx
-               WHERE p.local_user_id = $1
-               GROUP BY pfx.prefix
-               ORDER BY pfx.prefix"#,
+                      MIN(captured_at) FILTER (WHERE live) AS date_from,
+                      MAX(captured_at) FILTER (WHERE live) AS date_to,
+                      MIN(captured_at) FILTER (WHERE NOT live) AS trashed_date_from,
+                      MAX(captured_at) FILTER (WHERE NOT live) AS trashed_date_to
+               FROM per_picture
+               GROUP BY prefix
+               ORDER BY prefix"#,
             local_user_id,
         )
         .fetch_all(ex)

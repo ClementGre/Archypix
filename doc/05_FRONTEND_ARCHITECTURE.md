@@ -356,7 +356,8 @@ shared tag — all computed client-side by prefix from the already-fetched share
 "Share with someone else…". The row's trailing slot carries the **picture count**, which the `…` trigger *replaces* on hover (and permanently on
 touch, where there is no hover) so neither costs the other any width. Each row has a
 **`…` menu** with toggle actions **Include / Exclude** (writing the `inc`/`exc` params), plus **New subtag…**, a **Sort subtags by**
-submenu (Custom order / Display name / Tag name / Start date / End date, writing `children_order`, with *Reorder manually…* at its foot),
+submenu (Custom order / Display name / Tag name / Start date / End date, writing `children_order`, then Ascending / Descending writing
+`children_order_desc`, with *Reorder manually…* at its foot; the tree's own root trigger names the field beside an up/down arrow),
 **Share this tag…** (opens a pre-filled `CreateShareDialog`), **New public share link…** and **Edit tag…**; **⌘/Ctrl-click** quick-toggles a
 tag in the include set to build "X and Y" fast. There is no per-row exact toggle — *Direct only* in the grid's **View** dropdown replaced it
 (feature 35 §4). The tree only **highlights** rows by state — emerald (included) or struck-through red (excluded, `⦸` icon); a tag's colour
@@ -567,7 +568,8 @@ The grid is no longer a flat list: `components/photos/grouped/TagStream` renders
 photos partitioned into grouping sections, plus one collapsed `SubtagBlock` per child tag; expanding a block opens a full-width inline section
 that applies the same rule at that child using **that child's own** `view_mode` / `grouping` / `subtag_placement`. The flat view is the
 degenerate case (`Everything` + no grouping), so there is a single rendering path — including at the root, which is just the tag `''` where
-*direct* means untagged.
+*direct* means untagged. *Direct* is the **deepest-tag** match (feature 35 §2): a picture also carrying a child tag belongs to that child's
+block alone, so it never renders twice.
 
 - `hooks/useTimelineView` resolves the view root's mode, grouping (per sort field), block placement and `selectionFilter`; `lib/timeline.ts`
   holds the resolution rules and `lib/grouping.ts` the bucketers (date year/quarter/season/month, `filename` prefix, and a `magnitude` ladder per
@@ -700,9 +702,10 @@ degenerate case (`Everything` + no grouping), so there is a single rendering pat
   update immediately on refetch; the pipeline list reads service objects fresh from props (keeps only drag order locally) to avoid stale toggles.
   Navigating the **`TagTree`** (picking a tag) also invalidates `['tags']` so the tree keeps up with background tag changes.
 - **Tag metadata writes are debounced (feature 34 §4.1):** every `tag_metadata` write goes through one queue (`lib/tagMetaQueue.ts`) that coalesces
-  per tag (last value wins per field) and flushes as one `PUT /tags/meta` on a 60 s trailing debounce, applying optimistically to the cached payload so
-  the UI never waits. Immediate flushes on `visibilitychange → hidden`, `pagehide`/`beforeunload` (installed once by `AppShell`) and on leaving reorder
-  mode. The unload flush uses `fetch(keepalive)` rather than `navigator.sendBeacon` — auth is a `Bearer` header, which `sendBeacon` cannot set — and
+  per tag (last value wins per field) and flushes as one `PUT /tags/meta` on a 60 s trailing debounce. Unflushed writes are **overlaid** on the served
+  payload so the UI never waits and a refetch cannot revert them, and a leaving batch is **committed into that payload before the queue drops it** —
+  otherwise clearing the overlay reverts the tree to the pre-write rows until the next refetch. Immediate flushes on `visibilitychange → hidden`,
+  `pagehide`/`beforeunload` (installed once by `AppShell`) and on leaving reorder mode. The unload flush uses `fetch(keepalive)` rather than `navigator.sendBeacon` — auth is a `Bearer` header, which `sendBeacon` cannot set — and
   refreshes the access token first when it is within its last minute of validity, because a raw `fetch` escapes the 401 → refresh → retry interceptor.
   Writes carry only the fields that changed, so a stale flush can never clobber a concurrent change from another device; a failed flush re-queues once
   then toasts.

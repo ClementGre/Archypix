@@ -1,7 +1,9 @@
 import {type DragEvent, type MouseEvent, useEffect, useMemo, useRef, useState} from 'react'
 import {useQueryClient} from '@tanstack/react-query'
 import {
+    ArrowDown,
     ArrowDownUp,
+    ArrowUp,
     Ban,
     Check,
     ChevronDown,
@@ -81,24 +83,34 @@ interface TagActions {
     newChild: (path: string | null) => void
     reorder: (path: string | null) => void
     setOrder: (path: string | null, order: TagOrder) => void
+    setOrderDesc: (path: string | null, desc: boolean) => void
     share: (path: string) => void
     publicShare: (path: string) => void
     drop: (target: TagNode) => void
     move: (siblings: TagNode[], index: number, delta: number) => void
 }
 
-/** The order choices themselves; `manual` additionally offers the explicit reorder mode (34 §7). */
-function OrderChoices({path, current, actions}: {
+interface OrderProps {
     path: string | null
     current: TagOrder
+    desc: boolean
     actions: TagActions
-}) {
+}
+
+/** The order choices themselves; `manual` additionally offers the explicit reorder mode (34 §7). */
+function OrderChoices({path, current, desc, actions}: OrderProps) {
     return (
         <>
             <DropdownMenuRadioGroup value={current} onValueChange={(v) => actions.setOrder(path, v as TagOrder)}>
                 {ORDERS.map((o) => (
                     <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>
                 ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator/>
+            <DropdownMenuRadioGroup value={desc ? 'desc' : 'asc'}
+                                    onValueChange={(v) => actions.setOrderDesc(path, v === 'desc')}>
+                <DropdownMenuRadioItem value="asc">Ascending</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="desc">Descending</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator/>
             <DropdownMenuItem onClick={() => actions.reorder(path)}>
@@ -110,7 +122,7 @@ function OrderChoices({path, current, actions}: {
 }
 
 /** The same choices as a submenu, for a node's `…` menu. */
-function OrderSubmenu(props: { path: string | null; current: TagOrder; actions: TagActions }) {
+function OrderSubmenu(props: OrderProps) {
     return (
         <DropdownMenuSub>
             <DropdownMenuSubTrigger>
@@ -170,7 +182,8 @@ function TagMenu({count, state, actions, node}: { count: number, state: TagState
                     <Plus className="mr-2 h-3.5 w-3.5"/>
                     New subtag…
                 </DropdownMenuItem>
-                <OrderSubmenu path={node.path} current={node.meta?.children_order ?? 'manual'} actions={actions}/>
+                <OrderSubmenu path={node.path} current={node.meta?.children_order ?? 'manual'}
+                              desc={node.meta?.children_order_desc ?? false} actions={actions}/>
                 <DropdownMenuItem onClick={() => actions.share(node.path)}>
                     <Share2 className="mr-2 h-3.5 w-3.5"/>
                     Share this tag…
@@ -299,12 +312,12 @@ function TreeRow({
                 <button
                     onClick={(e) => {
                         e.stopPropagation()
-                        if (hasChildren) toggle(node.path)
+                        if (hasChildren && !reordering) toggle(node.path)
                     }}
                     className={cn('flex h-4 w-4 shrink-0 items-center justify-center', !hasChildren && 'invisible')}
                     aria-label={isOpen ? 'Collapse' : 'Expand'}
                 >
-                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90')}/>
+                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90', reordering && 'opacity-20')}/>
                 </button>
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     {st.excluded ? (
@@ -324,7 +337,7 @@ function TreeRow({
                 </div>
                 <TagShareBadge path={node.path} info={shareInfo(node.path)} onShare={actions.share}/>
 
-                {reordering && (
+                {reordering ? (
                     <span className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
                         <button
                             className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
@@ -343,10 +356,10 @@ function TreeRow({
                             <ChevronDown className="h-3.5 w-3.5"/>
                         </button>
                     </span>
-                )}
-                <TagMenu count={count} state={st} actions={actions} node={node}/>
+                ) : <TagMenu count={count} state={st} actions={actions} node={node}/>}
+
             </div>
-            {hasChildren && isOpen && (
+            {hasChildren && isOpen && !reordering && (
                 <div>
                     {node.children.map((child, i) => (
                         <TreeRow
@@ -496,19 +509,27 @@ export function TagTree() {
             write({tag_path: key, children_order: order})
             if (order !== 'manual' && reorderUnder === key) setReorderUnder(null)
         },
-        // Moving a row under a parent sorted by anything but `manual` is meaningless, so entering
-        // reorder mode switches it and says so (§7).
+        setOrderDesc: (path, desc) => {
+            const key = path ?? ''
+            write({tag_path: key, children_order_desc: desc})
+            // Dragging along a list that just reversed would move rows the wrong way.
+            if (reorderUnder === key) setReorderUnder(null)
+        },
+        // Moving a row under a parent sorted by anything but ascending `manual` is meaningless, so
+        // entering reorder mode switches it and says so (§7).
         reorder: (path) => {
             const key = path ?? ''
             if (reorderUnder === key) return setReorderUnder(null)
-            const order = metaByPath.get(key)?.children_order ?? 'manual'
-            if (order !== 'manual') {
-                write({tag_path: key, children_order: 'manual'})
+            const meta = metaByPath.get(key)
+            const order = meta?.children_order ?? 'manual'
+            const desc = meta?.children_order_desc ?? false
+            if (order !== 'manual' || desc) {
+                write({tag_path: key, children_order: 'manual', children_order_desc: false})
                 toast.info('Subtags now sort manually')
             }
             // Start from an explicitly numbered list, or the first move down is a no-op — an unset
             // `sort_index` sorts last, so the one row that gains an index jumps to the front.
-            for (const w of initialOrderWrites(childrenOf(key))) write(w)
+            for (const w of initialOrderWrites(childrenOf(key), desc)) write(w)
             setReorderUnder(key)
         },
         share: (path) => setShareTag(path),
@@ -548,7 +569,9 @@ export function TagTree() {
     const rootCollisions = useMemo(() => collidingNames(tree), [tree])
     const noFilter = !params.tag && !params.include.length && !params.exclude.length
     const reorderName = reorderUnder ? nameOf(reorderUnder) : 'top-level tags'
-    const rootOrder = metaByPath.get('')?.children_order ?? 'manual'
+    const rootMeta = metaByPath.get('')
+    const rootOrder = rootMeta?.children_order ?? 'manual'
+    const rootDesc = rootMeta?.children_order_desc ?? false
 
     return (
         <div className="flex h-full flex-col">
@@ -573,11 +596,11 @@ export function TagTree() {
                     <DropdownMenu>
                         <DropdownMenuTrigger
                             className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground">
-                            <ArrowDownUp className="h-3 w-3"/>
+                            {rootDesc ? <ArrowDown className="h-3 w-3"/> : <ArrowUp className="h-3 w-3"/>}
                             {ORDERS.find((o) => o.value === rootOrder)?.label ?? 'Order'}
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-44">
-                            <OrderChoices path={null} current={rootOrder} actions={actions}/>
+                            <OrderChoices path={null} current={rootOrder} desc={rootDesc} actions={actions}/>
                         </DropdownMenuContent>
                     </DropdownMenu>
                 )}

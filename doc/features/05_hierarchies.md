@@ -265,6 +265,11 @@ direct(D) = P(D) ∧ ⋀ᵢ ¬own(childᵢ)
   (`TagPath::fold_deepest`) drops `Photos.Travel`, so the picture belongs in `France`, not
   directly in `Travel`. The `NOT EXISTS deeper-visible-child` clause enforces exactly this.
 
+  Since feature 35 §2 the `exact T` arm **carries its own deeper-check** (`no tag strictly under
+  T`), because the gallery's *Direct only* view needed the same rule. For a mirror directory the
+  two coincide — every non-excluded, non-collapsed subtag *is* a visible child — so
+  `minus_children` is left in place as the explicit statement of the rule rather than relied on.
+
 **Query directory `D`:**
 
 - `P(D)` = inherited predicate: `own(D) ∧ all ancestors`, where `own(D)` = `match`-combined

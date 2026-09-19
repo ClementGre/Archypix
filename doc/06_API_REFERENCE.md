@@ -521,7 +521,7 @@ and rows **missing the sort field are excluded** (undated for `time_near`, ungeo
 | `order` | `"asc" \| "desc"` | `"desc"` | Sort direction (ignored for proximity sorts) |
 | `include_tags` | `string` | — | Comma-separated ltree paths the picture must match (inclusive `<@`), combined per `match`. For a single tag, pass one entry |
 | `exclude_tags` | `string` | — | Comma-separated ltree paths; reject the picture if it has any (inclusive) |
-| `exact` | `string` | — | **One** ltree path matched **exactly** (`tag_path = p`, no descendants) — the timeline's per-section scope (feature 35 §7); combined with `include`/`exclude` per `match`. Single-valued: a comma is part of the path and therefore a `400` |
+| `exact` | `string` | — | **One** ltree path matched as the picture's **deepest** tag (carries `p` and nothing strictly under it, feature 35 §2) — the timeline's per-section scope; combined with `include`/`exclude` per `match`. Single-valued: a comma is part of the path and therefore a `400` |
 | `match` | `"all" \| "any"` | `"all"` | Combinator over `include_tags`/`exact` (`all` = AND, `any` = OR) |
 | `untagged` | `boolean` | `false` | Only pictures with no stored tag of any source. **AND-ed** with the tag arms (so the root view can still carry cross-cutting `include_tags`/`exclude_tags`, feature 35 §7); an include alongside it is simply an empty result |
 | `owned_only` | `boolean` | `false` | Only show pictures owned by this user |
@@ -1114,7 +1114,7 @@ at app start and on a 5-minute interval.
     tags: Array<{
         path: string;              // ltree path; "" is the root view (feature 34 §3.3)
         count: number;             // ancestor-inclusive, live pictures only
-        exact_count: number;       // pictures stored at exactly this path
+        exact_count: number;       // pictures whose deepest tag here is this path (feature 35 §2)
         date_from: string | null;  // MIN(captured_at) over the subtree
         date_to: string | null;    // MAX(captured_at)
         trashed?: {                // omitted when the tag has no trashed pictures
@@ -1129,7 +1129,8 @@ at app start and on a 5-minute interval.
 
 `TagMeta` mirrors the `tag_metadata` columns: `tag_path`, `display_name`, `description`,
 `cover_picture_id`, `color`, `date_from`, `date_to`, `show_when_empty`, `sort_index`,
-`children_order`, `view_mode`, `subtag_placement`, `grouping`, `webdav_dir_name`.
+`children_order`, `children_order_desc`, `view_mode`, `subtag_placement`, `grouping`,
+`webdav_dir_name`.
 
 Ancestors are expanded server-side. Tags with no live pictures appear iff they carry
 `show_when_empty = true` or have trashed pictures — the client hides the latter unless the trash
@@ -1222,6 +1223,7 @@ carry dots, so they travel in the body rather than a URL segment.
         show_when_empty?: boolean;
         sort_index?: number | null;     // a drag is an ordinary write — there is no reorder endpoint
         children_order?: "manual" | "date_from" | "date_to" | "path" | "display_name";
+        children_order_desc?: boolean;  // direction for the above (feature 34 §7)
         view_mode?: "direct" | "subtag" | "all";
         subtag_placement?: "top" | "in_sections" | null;
         grouping?: Record<GroupingField, GroupingKind>;  // keys and kinds are validated per field

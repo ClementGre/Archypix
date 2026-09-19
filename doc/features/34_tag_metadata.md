@@ -90,6 +90,7 @@ CREATE TABLE public.tag_metadata (
     show_when_empty  boolean       NOT NULL DEFAULT false,
     sort_index       integer,                             -- slot among siblings (§7)
     children_order   tag_order     NOT NULL DEFAULT 'manual',    -- how MY children sort
+    children_order_desc boolean    NOT NULL DEFAULT false,       -- …and which way round (§7)
     view_mode        tag_view_mode NOT NULL DEFAULT 'subtag',    -- feature 35
     subtag_placement tag_subtag_placement,                -- NULL ⇒ derived (§3.4)
     grouping         jsonb         NOT NULL DEFAULT '{}'::jsonb, -- §3.1, feature 35 §4
@@ -212,12 +213,16 @@ new query emits, per ancestor-expanded prefix:
 | Field | SQL |
 |---|---|
 | `count` | `COUNT(DISTINCT picture_id) FILTER (WHERE deleted_at IS NULL)` |
-| `exact_count` | as above, `AND pfx.prefix = tg.tag_path` |
+| `exact_count` | as above, but only where this prefix is the picture's **deepest** tag here (feature 35 §2) |
 | `trashed.count` / `trashed.exact_count` | the same two, `FILTER (WHERE deleted_at IS NOT NULL)` |
 | `date_from` / `date_to` | `MIN/MAX(captured_at) FILTER (WHERE deleted_at IS NULL)` |
 | `trashed.date_from` / `trashed.date_to` | the same, `FILTER (WHERE deleted_at IS NOT NULL)` |
 
-One pass, six extra aggregates, no second query. The trashed half is what lets the trash view keep its
+One pass, six extra aggregates, no second query. "Deepest" needs to know whether a picture also holds
+a row *below* the prefix, which a row-level `FILTER` cannot see, so the expansion first collapses to
+one row per `(prefix, picture)` carrying `bool_or(tag_path = prefix)` and `bool_or(tag_path <>
+prefix)` — inside a prefix group every row is under-or-equal it, so "deeper" is simply "not equal".
+That also removes the `COUNT(DISTINCT)`. The trashed half is what lets the trash view keep its
 structure instead of losing every tag whose pictures are all deleted (feature 35 §10); the client
 picks the pair matching the active trash filter, and the *All* mode takes the min/max of both. A tag
 with `count = 0` and `trashed.count > 0` is **hidden in the default view** and appears only under
@@ -276,7 +281,12 @@ token is within its last minute of validity when a flush is triggered, it refres
 then sends. An expired-token flush is otherwise silently lost.
 
 Optimistic locally, so the UI never waits on the debounce; a failed flush re-queues once and then
-surfaces a toast rather than silently discarding. Because a flush can arrive after the 5-minute
+surfaces a toast rather than silently discarding. **A leaving batch is committed to the served
+payload before the queue drops it.** The overlay is the only thing making a queued change visible,
+so clearing it while the cached payload still holds the pre-write rows reverts the tree — silently,
+a minute after the edit, and until the next refetch. Commit-then-clear closes that window; the
+server's own normalisation (trimming, the prune-if-all-default rule) arrives with the next refetch,
+and differs only in ways that render identically. Because a flush can arrive after the 5-minute
 re-fetch, writes carry only the fields that actually changed (`PUT /tags/meta` is a partial upsert),
 so a stale full-row write can never clobber a concurrent change from another device.
 
@@ -348,11 +358,16 @@ intents; mixing them makes the modal a place people revoke things by accident.
 
 ## 7. Ordering
 
-`children_order` on a tag decides how **its children** sort; `sort_index` is a child's own slot. Root
-ordering is `children_order` on the root row (§3.3).
+`children_order` on a tag decides how **its children** sort and `children_order_desc` which way
+round; `sort_index` is a child's own slot. Root ordering is the pair on the root row (§3.3).
 
-**Ordering is resolved entirely in the frontend.** `children_order`, `sort_index`, `display_name` and
-the derived dates all ship in the one app-start payload (§4), so the client has everything it needs to
+**Direction is a column, not five more enum variants.** It applies to every field including `manual`
+(a reversed custom order), and it is the one part of ordering a user reaches for constantly — newest
+trip first under *Start date*, Z→A under *Display name*. A tag with nothing to sort by stays **last
+in both directions**: reversing the list must not promote the tags that have no date and no slot.
+
+**Ordering is resolved entirely in the frontend.** `children_order`(`_desc`), `sort_index`,
+`display_name` and the derived dates all ship in the one app-start payload (§4), so the client has everything it needs to
 sort any level of the tree — there is **no ordering query, and no per-view or per-tag query of any
 kind**. The server never sorts tags; it returns the set and its metadata.
 
@@ -687,6 +702,15 @@ not imply the user wants their mounted folder renamed.
   `--color-foreground` — so the label changes colour on selection as it does for an uncoloured tag,
   darkening in the light theme and lightening in the dark one instead of fixing a second palette
   value per colour. Uncoloured rows keep the primary highlight.
+
+- **Ordering gained a direction** (`children_order_desc`, §7). Five reversed enum variants would
+  have doubled the list in every menu for one bit that is orthogonal to the field; a boolean applies
+  to all five, `manual` included, and keeps "no value sorts last" independent of it. The *Sort
+  subtags by* menu carries a second radio group under the fields, and the tree's root trigger shows
+  an up/down arrow beside the field name.
+- **`sortSiblings` resolves nulls before the direction flip.** Folding the four comparators into one
+  `byValue(pick)` is what makes that expressible once rather than per field, and it removed the
+  duplicated date/manual tie-break.
 
 ### 16.1 Deferred (stored and served, no UI yet)
 

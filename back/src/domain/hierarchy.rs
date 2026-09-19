@@ -476,14 +476,14 @@ fn validate_write_back(
 /// A predicate over a picture's stored tag set, rendered to SQL by `repository::picture`.
 ///
 /// Membership (`own`) is: `untagged` ⇒ no tag rows; otherwise the OR/AND (per `match_all`) of the
-/// positive arms `include` (inclusive `<@`) and `exact` (non-inclusive `=`). An empty `include`
-/// **and** `exact` with `untagged = false` matches **all** pictures.
+/// positive arms `include` (inclusive `<@`) and `exact` (**deepest**: carries the path and nothing
+/// strictly under it). An empty `include` **and** `exact` with `untagged = false` matches **all**
+/// pictures.
 ///
 /// The full match is `own ∧ (⋀ and_terms) ∧ (none of `exclude`) ∧ (none of `minus_children`)`.
 /// `and_terms` carries inherited ancestor predicates (a query node's effective predicate is
-/// `own ∧ all ancestors`). `minus_children` encodes "most-specific node wins": a picture is a
-/// direct file of a directory only if it does not also belong to one of the directory's visible
-/// children.
+/// `own ∧ all ancestors`). `minus_children` encodes "most-specific node wins" where path depth
+/// cannot: a query node's direct files are those not also matched by one of its child nodes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TagPredicate {
     /// Inclusive (`tag_path <@ p`) positive arms.
@@ -494,7 +494,7 @@ pub struct TagPredicate {
     pub exclude: Vec<TagPath>,
     /// Strict "no stored tag of any source".
     pub untagged: bool,
-    /// Exact (`tag_path = p`, non-inclusive) positive arms — mirror exact-T membership.
+    /// Deepest-tag positive arms: carries `p` and no tag strictly under it.
     pub exact: Vec<TagPath>,
     /// Inherited ancestor predicates, AND-combined into membership (query inheritance).
     pub and_terms: Vec<TagPredicate>,

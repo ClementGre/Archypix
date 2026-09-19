@@ -46,10 +46,16 @@ Depends on: **34** (display names, dates, per-tag view preferences, ordering, th
   wanted at a namespace root whose children are all subtags.
 - **Subtag is the default content mode.** With no children, all three modes render identically, so
   the default is safe everywhere.
-- **`direct` is the plain `exact` predicate**, i.e. "carries T itself" — not "T is its deepest tag".
-  Manual assignment already prunes redundant manual ancestors (`assign_inner`'s cleanup CTE), so the
-  two coincide for hand-tagged pictures. They diverge only across sources (§10.12), which is rare
-  enough not to justify putting `minus_children` on the wire.
+- **`direct` is "T is its deepest tag"**, not "carries T itself". Manual assignment already prunes
+  redundant manual ancestors (`assign_inner`'s cleanup CTE), so the two coincide for hand-tagged
+  pictures and the plain `exact` predicate shipped first. They diverge across *sources* — and once
+  manual events are filed under automatic segmentation (a `segment` `Year.2026` under a manual
+  `Year.2026.ItalyTrip`) that stops being an edge case and every such picture renders twice, once in
+  the parent's direct photos and once inside the child block. Nothing goes on the wire for it:
+  `exact` itself becomes `carries T ∧ no tag strictly under T`, one extra `NOT EXISTS` in
+  `render_predicate`, and `exact_count` follows the same rule so the counts match what is rendered.
+  This is the "most-specific node wins" rule the hierarchy resolver already applied to mirror
+  directories, now applied wherever `exact` is.
 - **View preferences live in `tag_metadata`, not the URL.** They follow the user across devices and
   arrive with the app-start payload. The cost is that view mode is not shareable via a link — accepted,
   since the usual second reader is the same user on another device — so the header states the active
@@ -213,9 +219,9 @@ itself. The URL stays short regardless of how many groups are expanded.
 
 **The backend needs no new predicate capability.** `TagPredicate` already carries `include` / `exact` /
 `exclude` / `match_all` / `untagged`, and `render_predicate` already renders them; every leaf query in
-every view mode is `exact: [X]`, `include: [X]`, or `untagged` at the root. The backend change is
-limited to making the wire `exact` single-valued in `build_flat_predicate`. The rewrite is a frontend
-one.
+every view mode is `exact: [X]`, `include: [X]`, or `untagged` at the root. The backend changes are
+making the wire `exact` single-valued in `build_flat_predicate`, and rendering it as a deepest-tag
+match (§2). The rewrite is a frontend one.
 
 **`selectionFilter` follows the content mode**, always layered with `inc`/`exc`:
 
@@ -310,12 +316,11 @@ and accepting degraded interpolation — is a possible later feature, deliberate
     in §5.
 11. **Expansion state is transient** — a local store, not the URL, and not `tag_metadata`. Five
     expanded groups would bloat a link, and expansion is not a preference.
-12. **A picture in both T's direct photos and a child's block.** Possible when the two tags come from
+12. **A picture carrying both T and one of T's children.** Ordinary when the two rows come from
     different sources — a rule or segmentation service asserting `Era.2026` while the user manually
     tagged `Era.2026.Vietnam`, or one template emitting two levels. `assign_inner` prunes redundant
-    ancestors only within `source = 'manual'`, so both rows survive and `exact: Era.2026` matches.
-    Accepted (§2): the picture shows twice. Suppressing it would mean putting `minus_children` on the
-    wire for a case hand-tagging never produces.
+    ancestors only within `source = 'manual'`, so both rows survive. The picture renders **once**,
+    in the deepest block: `exact` is a deepest-tag match (§2), so T's direct photos exclude it.
 13. **A child block that is empty under the active filters.** Rendered anyway, with *"No photos match
     the current filters"* on expansion (§5). Hiding it would cost one query per collapsed block.
 
@@ -402,6 +407,7 @@ and accepting degraded interpolation — is a possible later feature, deliberate
   its own, and it registers as a single section so selection and the lightbox stay uniform.
 - **`children_order` gained explicit controls.** 34 §7 only ever switched it to `manual` on entering
   reorder mode. A *Sort subtags by* submenu (custom / display name / tag name / start date / end
-  date) now writes it directly — the stored values existed, nothing surfaced them.
+  date, plus ascending/descending — 34 §16) now writes it directly — the stored values existed,
+  nothing surfaced them.
 - **The cover picker shipped here** rather than staying deferred (34 §16.1): subtag blocks are the
   first thing that renders a cover, so "clear only" would have been visible as a missing feature.

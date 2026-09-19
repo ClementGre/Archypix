@@ -26,20 +26,6 @@ async fn pic_with_tags(db: &PgPool, user: Uuid, tags: &[&str]) -> Uuid {
     id
 }
 
-/// Insert a non-manual (e.g. rule) tag directly, bypassing the pipeline.
-async fn add_pipeline_tag(db: &PgPool, pic: Uuid, path: &str) {
-    sqlx::query(
-        "INSERT INTO tags (picture_id, tag_path, source, source_id) \
-         VALUES ($1, $2::text::ltree, 'rule'::tag_source, $3)",
-    )
-    .bind(pic)
-    .bind(path)
-    .bind(Uuid::new_v4())
-    .execute(db)
-    .await
-    .unwrap();
-}
-
 fn browse_params() -> BrowseParams {
     BrowseParams {
         page: 1,
@@ -259,7 +245,7 @@ async fn mirror_multi_source_deepest_wins(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let p = pic_with_tags(&db, user, &["Photos.Travel"]).await;
-    add_pipeline_tag(&db, p, "Photos.Travel.France").await;
+    common::add_pipeline_tag(&db, p, "Photos.Travel.France").await;
 
     let id = create(&db, user, "H", mirror_photos(true)).await;
 
@@ -677,9 +663,9 @@ async fn mirror_exclude_cuts_picture_from_ancestor_dir(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pw").await;
 
     let excluded = pic_with_tags(&db, user, &["Photos.Test"]).await;
-    add_pipeline_tag(&db, excluded, "Photos").await; // exact Photos from a rule
+    common::add_pipeline_tag(&db, excluded, "Photos").await; // exact Photos from a rule
     let sibling = pic_with_tags(&db, user, &["Photos.Other"]).await;
-    add_pipeline_tag(&db, sibling, "Photos").await; // exact Photos, but no excluded tag
+    common::add_pipeline_tag(&db, sibling, "Photos").await; // exact Photos, but no excluded tag
 
     let mirror = serde_json::json!({"nodes": [
         {"id": "m", "kind": "mirror", "name": "Photos", "tagRoot": "Photos", "keepDir": true,

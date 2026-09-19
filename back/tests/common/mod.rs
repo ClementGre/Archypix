@@ -442,6 +442,21 @@ pub async fn seed_picture_with_tag(db: &PgPool, user_id: Uuid, tag: &str) -> Uui
     pic_id
 }
 
+/// Add a pipeline-sourced (`rule`) tag row. Unlike `batch_assign` it keeps a redundant ancestor
+/// alongside a deeper manual tag, which is how the two rows coexist in practice.
+pub async fn add_pipeline_tag(db: &PgPool, picture_id: Uuid, tag: &str) {
+    sqlx::query(
+        "INSERT INTO tags (picture_id, tag_path, source, source_id) \
+         VALUES ($1, $2::text::ltree, 'rule'::tag_source, $3)",
+    )
+    .bind(picture_id)
+    .bind(tag)
+    .bind(Uuid::new_v4())
+    .execute(db)
+    .await
+    .unwrap();
+}
+
 /// Count received (non-owned) picture rows for `user_id`.
 pub async fn count_received_pictures(db: &PgPool, user_id: Uuid) -> i64 {
     sqlx::query_scalar(

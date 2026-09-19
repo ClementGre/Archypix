@@ -135,6 +135,8 @@ pub struct TagMetadata {
     pub show_when_empty: bool,
     pub sort_index: Option<i32>,
     pub children_order: TagOrder,
+    /// Direction for `children_order` — the field says what to sort by, this which way round (§7).
+    pub children_order_desc: bool,
     pub view_mode: TagViewMode,
     pub subtag_placement: Option<TagSubtagPlacement>,
     pub grouping: Grouping,
@@ -223,6 +225,7 @@ pub struct TagMetadataPatch {
     #[serde(default, deserialize_with = "present_field")]
     pub sort_index: Option<Option<i32>>,
     pub children_order: Option<TagOrder>,
+    pub children_order_desc: Option<bool>,
     pub view_mode: Option<TagViewMode>,
     #[serde(default, deserialize_with = "present_field")]
     pub subtag_placement: Option<Option<TagSubtagPlacement>>,
@@ -272,6 +275,9 @@ impl TagMetadataPatch {
         }
         if let Some(v) = self.children_order {
             base.children_order = v;
+        }
+        if let Some(v) = self.children_order_desc {
+            base.children_order_desc = v;
         }
         if let Some(v) = self.view_mode {
             base.view_mode = v;

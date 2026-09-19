@@ -16,6 +16,7 @@ struct Row {
     show_when_empty: bool,
     sort_index: Option<i32>,
     children_order: TagOrder,
+    children_order_desc: bool,
     view_mode: TagViewMode,
     subtag_placement: Option<TagSubtagPlacement>,
     grouping: serde_json::Value,
@@ -35,6 +36,7 @@ impl From<Row> for TagMetadata {
             show_when_empty: r.show_when_empty,
             sort_index: r.sort_index,
             children_order: r.children_order,
+            children_order_desc: r.children_order_desc,
             view_mode: r.view_mode,
             subtag_placement: r.subtag_placement,
             // A row that fails to parse is a schema/version skew, not a user error — fall back to
@@ -86,7 +88,7 @@ impl TagMetadataRepository {
             Row,
             r#"SELECT tag_path::text as "tag_path!", display_name, description, cover_picture_id,
                       color, date_from, date_to, show_when_empty, sort_index,
-                      children_order as "children_order!: TagOrder",
+                      children_order as "children_order!: TagOrder", children_order_desc,
                       view_mode as "view_mode!: TagViewMode",
                       subtag_placement as "subtag_placement?: TagSubtagPlacement",
                       grouping, webdav_dir_name
@@ -129,6 +131,8 @@ impl TagMetadataRepository {
         let show_when_empty: Vec<bool> = rows.iter().map(|r| r.show_when_empty).collect();
         let sort_index: Vec<Option<i32>> = rows.iter().map(|r| r.sort_index).collect();
         let children_order: Vec<TagOrder> = rows.iter().map(|r| r.children_order).collect();
+        let children_order_desc: Vec<bool> =
+            rows.iter().map(|r| r.children_order_desc).collect();
         let view_mode: Vec<TagViewMode> = rows.iter().map(|r| r.view_mode).collect();
         let subtag_placement: Vec<Option<TagSubtagPlacement>> =
             rows.iter().map(|r| r.subtag_placement).collect();
@@ -143,34 +147,36 @@ impl TagMetadataRepository {
         let res = sqlx::query!(
             r#"INSERT INTO tag_metadata
                    (user_id, tag_path, display_name, description, cover_picture_id, color,
-                    date_from, date_to, show_when_empty, sort_index, children_order, view_mode,
-                    subtag_placement, grouping, webdav_dir_name, updated_at)
+                    date_from, date_to, show_when_empty, sort_index, children_order,
+                    children_order_desc, view_mode, subtag_placement, grouping, webdav_dir_name,
+                    updated_at)
                SELECT $1, t.path::ltree, t.display_name, t.description, t.cover, t.color,
                       t.date_from, t.date_to, t.show_when_empty, t.sort_index,
-                      t.children_order, t.view_mode, t.subtag_placement, t.grouping,
-                      t.webdav_dir_name, now() AT TIME ZONE 'utc'
+                      t.children_order, t.children_order_desc, t.view_mode, t.subtag_placement,
+                      t.grouping, t.webdav_dir_name, now() AT TIME ZONE 'utc'
                FROM unnest($2::text[], $3::text[], $4::text[], $5::uuid[], $6::text[],
                            $7::timestamp[], $8::timestamp[], $9::bool[], $10::int[],
-                           $11::tag_order[], $12::tag_view_mode[], $13::tag_subtag_placement[],
-                           $14::jsonb[], $15::text[])
+                           $11::tag_order[], $12::bool[], $13::tag_view_mode[],
+                           $14::tag_subtag_placement[], $15::jsonb[], $16::text[])
                     AS t(path, display_name, description, cover, color, date_from, date_to,
-                         show_when_empty, sort_index, children_order, view_mode, subtag_placement,
-                         grouping, webdav_dir_name)
+                         show_when_empty, sort_index, children_order, children_order_desc,
+                         view_mode, subtag_placement, grouping, webdav_dir_name)
                ON CONFLICT (user_id, tag_path) DO UPDATE SET
-                   display_name     = EXCLUDED.display_name,
-                   description      = EXCLUDED.description,
-                   cover_picture_id = EXCLUDED.cover_picture_id,
-                   color            = EXCLUDED.color,
-                   date_from        = EXCLUDED.date_from,
-                   date_to          = EXCLUDED.date_to,
-                   show_when_empty  = EXCLUDED.show_when_empty,
-                   sort_index       = EXCLUDED.sort_index,
-                   children_order   = EXCLUDED.children_order,
-                   view_mode        = EXCLUDED.view_mode,
-                   subtag_placement = EXCLUDED.subtag_placement,
-                   grouping         = EXCLUDED.grouping,
-                   webdav_dir_name  = EXCLUDED.webdav_dir_name,
-                   updated_at       = EXCLUDED.updated_at"#,
+                   display_name        = EXCLUDED.display_name,
+                   description         = EXCLUDED.description,
+                   cover_picture_id    = EXCLUDED.cover_picture_id,
+                   color               = EXCLUDED.color,
+                   date_from           = EXCLUDED.date_from,
+                   date_to             = EXCLUDED.date_to,
+                   show_when_empty     = EXCLUDED.show_when_empty,
+                   sort_index          = EXCLUDED.sort_index,
+                   children_order      = EXCLUDED.children_order,
+                   children_order_desc = EXCLUDED.children_order_desc,
+                   view_mode           = EXCLUDED.view_mode,
+                   subtag_placement    = EXCLUDED.subtag_placement,
+                   grouping            = EXCLUDED.grouping,
+                   webdav_dir_name     = EXCLUDED.webdav_dir_name,
+                   updated_at          = EXCLUDED.updated_at"#,
             user_id,
             &paths,
             &display_names as &[Option<String>],
@@ -182,6 +188,7 @@ impl TagMetadataRepository {
             &show_when_empty,
             &sort_index as &[Option<i32>],
             &children_order as &[TagOrder],
+            &children_order_desc,
             &view_mode as &[TagViewMode],
             &subtag_placement as &[Option<TagSubtagPlacement>],
             &grouping,

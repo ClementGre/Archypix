@@ -1,9 +1,13 @@
 //! Tag metadata (feature 34): the enriched tag tree, the partial-upsert write path and the
-//! share-boundary seed.
+//! share-boundary seed. Also the deepest-tag `exact` rule the tree's counts share with the
+//! gallery's `direct` view (feature 35 §2).
 
 mod common;
 
+use archypix_back::domain::hierarchy::TagPredicate;
+use archypix_back::domain::tag::TagPath;
 use archypix_back::domain::tag_metadata::{SharedTagMeta, TagMetadata, TagMetadataPatch};
+use archypix_back::repository::picture::{PictureListFilter, PictureRepository};
 use archypix_back::repository::tag_metadata::TagMetadataRepository;
 use archypix_back::services::tag_metadata;
 use archypix_common::error::AppError;
@@ -27,6 +31,21 @@ async fn tag_picture(db: &PgPool, user: Uuid, tag: &str, captured_at: &str) -> U
     .await
     .unwrap();
     pic
+}
+
+/// The ids the gallery's `direct` view returns for `tag` — the `exact` arm of the predicate.
+async fn exact_ids(db: &PgPool, user: Uuid, tag: &str) -> Vec<Uuid> {
+    let filter = PictureListFilter {
+        page: 1,
+        page_size: 200,
+        predicate: Some(TagPredicate {
+            exact: vec![TagPath::from_ltree(tag.to_string())],
+            ..TagPredicate::all()
+        }),
+        ..Default::default()
+    };
+    let (items, _) = PictureRepository::list(db, user, &filter).await.unwrap();
+    items.into_iter().map(|p| p.id).collect()
 }
 
 fn item<'a>(
@@ -257,6 +276,27 @@ async fn tree_carries_counts_exact_counts_and_derived_dates(db: PgPool) {
     assert_eq!((child.live.count, child.live.exact_count), (2, 2));
     assert!(parent.trashed.is_none(), "the trashed half is omitted when zero");
     assert!(item(&items, "").is_some(), "the root is always returned");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn exact_is_the_deepest_tag_not_merely_the_tag(db: PgPool) {
+    // Feature 35 §2: a `segment` row at `Era.2026` alongside a manual `Era.2026.Vietnam` belongs
+    // to Vietnam alone — otherwise the picture shows twice, once in the parent's direct photos and
+    // once inside the child block. The count and the query predicate must agree.
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let cache = common::InMemoryCache::new();
+    let deep = tag_picture(&db, user, "Era.2026.Vietnam", "2026-08-01 09:12:00").await;
+    common::add_pipeline_tag(&db, deep, "Era.2026").await;
+    let shallow = tag_picture(&db, user, "Era.2026", "2026-01-05 10:00:00").await;
+
+    let items = tag_metadata::list_tree(&db, &cache, user, false).await.unwrap();
+    let parent = item(&items, "Era.2026").unwrap();
+    assert_eq!(parent.live.count, 2, "ancestor-expanded, both pictures");
+    assert_eq!(parent.live.exact_count, 1, "the deeper picture is Vietnam's");
+    assert_eq!(item(&items, "Era.2026.Vietnam").unwrap().live.exact_count, 1);
+
+    assert_eq!(exact_ids(&db, user, "Era.2026").await, vec![shallow]);
+    assert_eq!(exact_ids(&db, user, "Era.2026.Vietnam").await, vec![deep]);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

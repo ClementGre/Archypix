@@ -190,6 +190,8 @@ export interface TagMeta {
     show_when_empty: boolean
     sort_index: number | null
     children_order: TagOrder
+    /** Direction for `children_order` — the field says what to sort by, this which way round (§7). */
+    children_order_desc: boolean
     view_mode: TagViewMode
     /** `null` ⇒ derived (§3.4). */
     subtag_placement: TagSubtagPlacement | null
@@ -201,7 +203,7 @@ export interface TagMeta {
 export interface TagCounts {
     /** Ancestor-inclusive. */
     count: number
-    /** Only pictures stored at exactly this path. */
+    /** Only pictures whose **deepest** tag here is this path (feature 35 §2). */
     exact_count: number
     date_from: string | null
     date_to: string | null

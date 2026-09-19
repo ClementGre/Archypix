@@ -16,8 +16,18 @@ const pending = new Map<string, TagMetaPatch>()
 const listeners = new Set<Listener>()
 let timer: ReturnType<typeof setTimeout> | undefined
 let retried = false
-/** Surfaced by the toast in `useTagMetaQueue` when a flush fails twice. */
-let onError: ((message: string) => void) | undefined
+let handlers: QueueHandlers | undefined
+
+export interface QueueHandlers {
+    /** Merge a leaving batch into the served payload — see `flushTagMeta`. */
+    commit: (items: TagMetaPatch[]) => void
+    /** Surfaced as a toast when a flush fails twice. */
+    error: (message: string) => void
+}
+
+export function configureTagMetaQueue(next: QueueHandlers): void {
+    handlers = next
+}
 
 /** Queue a partial write. Only the fields that actually changed should be passed, so a stale flush
  *  can never clobber a concurrent change from another device. */
@@ -27,11 +37,6 @@ export function queueTagMeta(patch: TagMetaPatch): void {
     for (const l of listeners) l([...pending.keys()])
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => void flushTagMeta(), DEBOUNCE_MS)
-}
-
-/** Whether a tag has an unflushed write (used to keep optimistic local state authoritative). */
-export function pendingTagMeta(path: string): TagMetaPatch | undefined {
-    return pending.get(path)
 }
 
 /** Every unflushed write. The tag payload is overlaid with these so a refetch — which the tree
@@ -45,13 +50,13 @@ export function onTagMetaQueueChange(listener: Listener): () => void {
     return () => listeners.delete(listener)
 }
 
-export function setTagMetaQueueErrorHandler(handler: (message: string) => void): void {
-    onError = handler
-}
-
 /**
  * Send the coalesced batch. `unload` switches to `fetch(keepalive)`, which survives document
  * teardown; the ordinary path goes through axios so the 401 → refresh → retry interceptor applies.
+ *
+ * The batch is **committed to the served payload before it leaves the queue**: the overlay is what
+ * keeps a flushed change visible, and dropping it while the cached payload still holds the
+ * pre-write rows is what made the tree silently revert a minute after every edit.
  *
  * A failed flush re-queues **once** and then surfaces a toast rather than silently discarding.
  */
@@ -62,6 +67,7 @@ export async function flushTagMeta(unload = false): Promise<void> {
     }
     if (pending.size === 0) return
     const items = [...pending.values()]
+    handlers?.commit(items)
     pending.clear()
     for (const l of listeners) l([])
     try {
@@ -71,7 +77,7 @@ export async function flushTagMeta(unload = false): Promise<void> {
     } catch (e) {
         if (retried) {
             retried = false
-            onError?.(e instanceof Error ? e.message : 'Could not save tag preferences')
+            handlers?.error(e instanceof Error ? e.message : 'Could not save tag preferences')
             return
         }
         retried = true

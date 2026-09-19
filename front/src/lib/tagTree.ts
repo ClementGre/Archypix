@@ -133,55 +133,55 @@ export function buildTagTree(items: TagListItem[], trash: TrashView = 'exclude')
             .map((n) => ({...n, children: prune(n.children)}))
             .filter((n) => isVisible(n, trash))
 
-    const sortRec = (nodes: TagNode[], parentOrder: TagOrder): TagNode[] => {
-        const sorted = sortSiblings(nodes, parentOrder, trash)
-        return sorted.map((n) => ({
-            ...n,
-            children: sortRec(n.children, n.meta?.children_order ?? 'manual'),
-        }))
+    const sortRec = (nodes: TagNode[], parent: TagMeta | null | undefined): TagNode[] => {
+        const sorted = sortSiblings(
+            nodes,
+            parent?.children_order ?? 'manual',
+            trash,
+            parent?.children_order_desc ?? false,
+        )
+        return sorted.map((n) => ({...n, children: sortRec(n.children, n.meta)}))
     }
 
-    const rootOrder = items.find((i) => i.path === '')?.meta?.children_order ?? 'manual'
-    return sortRec(prune(roots), rootOrder)
+    return sortRec(prune(roots), items.find((i) => i.path === '')?.meta)
 }
 
 /**
- * Sort one sibling set under a parent's `children_order` (§7).
+ * Sort one sibling set under a parent's `children_order` and its direction (§7).
  *
  * Manual order is `sort_index` ascending with unset last, tie-broken by the display name, so
  * **manual and alphabetical coincide until the first drag** — reordering needs no mode switch and
  * an unconfigured tree is alphabetical, as expected.
  */
-export function sortSiblings(nodes: TagNode[], order: TagOrder, trash: TrashView): TagNode[] {
-    const byName = (a: TagNode, b: TagNode) => a.name.localeCompare(b.name)
-    const byDate = (a: TagNode, b: TagNode, side: 'date_from' | 'date_to') => {
-        const av = effectiveDate(a, side, trash)
-        const bv = effectiveDate(b, side, trash)
-        if (av === bv) return byName(a, b)
-        if (!av) return 1 // a tag with no range sorts last, whichever side is active
-        if (!bv) return -1
-        return av < bv ? -1 : 1
-    }
+export function sortSiblings(
+    nodes: TagNode[],
+    order: TagOrder,
+    trash: TrashView,
+    desc = false,
+): TagNode[] {
+    const sign = desc ? -1 : 1
+    const byName = (a: TagNode, b: TagNode) => sign * a.name.localeCompare(b.name)
+    /** A tag with nothing to sort by stays last in **both** directions. */
+    const byValue =
+        (value: (n: TagNode) => string | number | null | undefined) =>
+        (a: TagNode, b: TagNode) => {
+            const av = value(a)
+            const bv = value(b)
+            if (av == null || bv == null) return (av == null ? 1 : 0) - (bv == null ? 1 : 0) || byName(a, b)
+            return av === bv ? byName(a, b) : sign * (av < bv ? -1 : 1)
+        }
     const out = [...nodes]
     switch (order) {
         case 'path':
-            return out.sort((a, b) => a.path.localeCompare(b.path))
+            return out.sort((a, b) => sign * a.path.localeCompare(b.path))
         case 'display_name':
             return out.sort(byName)
         case 'date_from':
-            return out.sort((a, b) => byDate(a, b, 'date_from'))
         case 'date_to':
-            return out.sort((a, b) => byDate(a, b, 'date_to'))
+            return out.sort(byValue((n) => effectiveDate(n, order, trash)))
         case 'manual':
         default:
-            return out.sort((a, b) => {
-                const ai = a.meta?.sort_index
-                const bi = b.meta?.sort_index
-                if (ai == null && bi == null) return byName(a, b)
-                if (ai == null) return 1
-                if (bi == null) return -1
-                return ai === bi ? byName(a, b) : ai - bi
-            })
+            return out.sort(byValue((n) => n.meta?.sort_index))
     }
 }
 
@@ -242,10 +242,14 @@ function renumber(
 /**
  * Materialise the current resolved order as explicit indices (§7). Entering reorder mode calls this
  * so the list starts numbered — otherwise the first move is a no-op (see `reorderWrites`). Returns
- * nothing when every sibling already has one.
+ * nothing when every sibling already has one, unless `force` — leaving a descending order writes
+ * ascending indices along the list *as displayed*, so it does not flip under the user.
  */
-export function initialOrderWrites(siblings: TagNode[]): Array<{ tag_path: string; sort_index: number }> {
-    if (!siblings.some((n) => n.meta?.sort_index == null)) return []
+export function initialOrderWrites(
+    siblings: TagNode[],
+    force = false,
+): Array<{ tag_path: string; sort_index: number }> {
+    if (!force && !siblings.some((n) => n.meta?.sort_index == null)) return []
     return renumber(siblings)
 }
 
