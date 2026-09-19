@@ -5,7 +5,7 @@
 // The mode is remembered per tag in `tag_metadata`, so the trigger simply names the active one. It
 // is not highlighted as "non-default": a stored preference is the normal state, not an anomaly.
 
-import {Layers, Rows3, Wrench} from 'lucide-react'
+import {Layers, Rows3} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {
     DropdownMenu,
@@ -69,17 +69,6 @@ export function ViewMenu() {
                         )
                     })}
                 </DropdownMenuRadioGroup>
-                {pinned ? (
-                    <p className="flex items-start gap-1.5 px-2 py-1.5 text-[11px] text-muted-foreground">
-                        <Wrench className="mt-0.5 h-3 w-3 shrink-0"/>
-                        Fix mode needs a flat stream to find neighbours, so subtag blocks are off until you
-                        leave it. Your stored choice comes back.
-                    </p>
-                ) : (
-                    <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                        Remembered for this tag and followed across your devices — it is not part of the link.
-                    </p>
-                )}
             </DropdownMenuContent>
         </DropdownMenu>
     )

@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {AlertTriangle, ArrowRight, Calendar as CalendarIcon, Check, Pencil, RotateCcw, Trash2} from 'lucide-react'
+import {AlertTriangle, ArrowRight, Pencil, Trash2} from 'lucide-react'
 import {toast} from 'sonner'
 import {
     Dialog,
@@ -10,14 +10,17 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog'
 import {Button} from '@/components/ui/button'
-import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
-import {Switch} from '@/components/ui/switch'
-import {Textarea} from '@/components/ui/textarea'
 import {ConfirmDialog} from '@/components/common/ConfirmDialog'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
-import {CoverPicker} from '@/components/tags/CoverPicker'
+import {
+    draftFromMeta,
+    draftToPatch,
+    type TagMetaDraft,
+    TagMetaFields,
+    TagNameField,
+    toNaive,
+} from '@/components/tags/TagMetaFields'
 import {
     useAllTagsWithSources,
     useRenameTag,
@@ -27,54 +30,14 @@ import {
 } from '@/hooks/useTags'
 import {display} from '@/lib/tagTree'
 import {apiErrorMessage} from '@/api/client'
-import {cn, TagPath} from '@/lib/utils'
-import type {TagListItem, TagMetaPatch} from '@/lib/types'
-
-/** A small fixed palette; the picker behind "Custom" stores free hex (§3.2). */
-const PALETTE = [
-    '#ef4444', '#f97316', '#eab308', '#22c55e',
-    '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899',
-]
-
-/** The API speaks naive timestamps; the picker wants `YYYY-MM-DDTHH:MM:SS`. */
-function toNaive(iso: string | null | undefined): string | null {
-    return iso ? `${iso.replace(' ', 'T').slice(0, 19)}` : null
-}
-
-/** One side of the date range: the custom picker, with the derived value as the reset target (§4). */
-function DateOverrideField({label, value, derived, onChange}: {
-    label: string
-    value: string | null
-    derived: string | null
-    onChange: (value: string | null) => void
-}) {
-    return (
-        <div className="space-y-1.5">
-            <Label>{label}</Label>
-            <DateTimePickerPopover value={value} onChange={onChange}>
-                <Button variant="outline" className="w-full justify-start font-normal">
-                    <CalendarIcon className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground"/>
-                    <span className={cn('truncate', !value && 'text-muted-foreground')}>
-                        {value ? formatNaive(value) : formatNaive(derived) || 'Not set'}
-                    </span>
-                </Button>
-            </DateTimePickerPopover>
-            <button
-                type="button"
-                onClick={() => onChange(null)}
-                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-                <RotateCcw className="h-3 w-3"/>
-                Derived: {formatNaive(derived) || '—'}
-            </button>
-        </div>
-    )
-}
+import {TagPath} from '@/lib/utils'
+import type {TagListItem} from '@/lib/types'
 
 /**
  * The one tag dialog, reached from the tag tree's `…` menu and absorbing the old `RenameTagDialog`.
- * Fields map 1:1 to feature 34 §3; every write goes through the §4.1 queue except the rename
- * (an async cascade) and *Reset metadata* (no undo, so it is already confirmed).
+ * Fields map 1:1 to feature 34 §3 and are shared with the create dialog; every write goes through
+ * the §4.1 queue except the rename (an async cascade) and *Reset metadata* (no undo, so it is
+ * already confirmed).
  */
 export function EditTagDialog({
                                   tagPath,
@@ -95,31 +58,19 @@ export function EditTagDialog({
     const meta = metaByPath.get(tagPath) ?? null
     const label = TagPath.leaf(tagPath)
 
-    const [name, setName] = useState('')
-    const [description, setDescription] = useState('')
-    const [color, setColor] = useState('')
-    const [dateFrom, setDateFrom] = useState<string | null>(null)
-    const [dateTo, setDateTo] = useState<string | null>(null)
-    const [showWhenEmpty, setShowWhenEmpty] = useState(false)
-    const [webdavDirName, setWebdavDirName] = useState('')
-    const [cover, setCover] = useState<string | null>(null)
+    const [draft, setDraft] = useState<TagMetaDraft>(() => draftFromMeta(meta))
     const [newTag, setNewTag] = useState('')
 
     // Re-seed the form from the stored row whenever the dialog opens for a tag.
     useEffect(() => {
         if (!open) return
-        setName(meta?.display_name ?? '')
-        setDescription(meta?.description ?? '')
-        setColor(meta?.color ?? '')
-        setDateFrom(toNaive(meta?.date_from))
-        setDateTo(toNaive(meta?.date_to))
-        setShowWhenEmpty(meta?.show_when_empty ?? false)
-        setWebdavDirName(meta?.webdav_dir_name ?? '')
-        setCover(meta?.cover_picture_id ?? null)
+        setDraft(draftFromMeta(meta))
         setNewTag('')
         // The stored row is the source of truth on open; later keystrokes are local state.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, tagPath])
+
+    const patch = (fields: Partial<TagMetaDraft>) => setDraft((d) => ({...d, ...fields}))
 
     const sources = useMemo(
         () => sourced?.find((i: TagListItem) => i.path === tagPath)?.sources ?? [],
@@ -131,18 +82,7 @@ export function EditTagDialog({
     const isEmptyTag = (item?.count ?? 0) === 0 && !!meta?.show_when_empty
 
     const save = () => {
-        const patch: TagMetaPatch = {
-            tag_path: tagPath,
-            display_name: name.trim() || null,
-            description: description.trim() || null,
-            color: color || null,
-            date_from: dateFrom,
-            date_to: dateTo,
-            show_when_empty: showWhenEmpty,
-            cover_picture_id: cover,
-            webdav_dir_name: webdavDirName.trim() || null,
-        }
-        write(patch)
+        write(draftToPatch(tagPath, draft))
         onOpenChange(false)
     }
 
@@ -192,109 +132,13 @@ export function EditTagDialog({
                 </div>
 
                 <div className="space-y-4 py-1">
-                    <div className="space-y-1.5">
-                        <Label htmlFor="tag-display-name">Display name</Label>
-                        <Input
-                            id="tag-display-name"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder={label}
-                            maxLength={128}
-                        />
-                        <p className="text-[11px] text-muted-foreground">
-                            Emoji are welcome — the name travels everywhere the tag does.
-                        </p>
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <Label htmlFor="tag-description">Description</Label>
-                        <Textarea
-                            id="tag-description"
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            rows={2}
-                            maxLength={2000}
-                        />
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <Label>Colour</Label>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                            {PALETTE.map((c) => (
-                                <button
-                                    key={c}
-                                    type="button"
-                                    onClick={() => setColor(color === c ? '' : c)}
-                                    style={{backgroundColor: c}}
-                                    className={cn(
-                                        'flex h-6 w-6 items-center justify-center rounded-full border',
-                                        color === c ? 'ring-2 ring-offset-1 ring-ring' : 'border-transparent',
-                                    )}
-                                    aria-label={`Colour ${c}`}
-                                >
-                                    {color === c && <Check className="h-3 w-3 text-white"/>}
-                                </button>
-                            ))}
-                            <Input
-                                type="color"
-                                value={color || '#888888'}
-                                onChange={(e) => setColor(e.target.value)}
-                                className="h-6 w-10 cursor-pointer p-0.5"
-                                aria-label="Custom colour"
-                            />
-                            {color && (
-                                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
-                                        onClick={() => setColor('')}>
-                                    Clear
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-
-                    <CoverPicker value={cover} onChange={setCover}/>
-
-                    {/* An unset side shows the derived value; resetting a side clears the override (§4). */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <DateOverrideField label="From" value={dateFrom} derived={toNaive(item?.date_from)}
-                                           onChange={setDateFrom}/>
-                        <DateOverrideField label="To" value={dateTo} derived={toNaive(item?.date_to)}
-                                           onChange={setDateTo}/>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                        <div>
-                            <Label htmlFor="tag-show-empty">Show when empty</Label>
-                            <p className="text-[11px] text-muted-foreground">
-                                Keep the tag in the tree even with no photos.
-                            </p>
-                        </div>
-                        <Switch id="tag-show-empty" checked={showWhenEmpty} onCheckedChange={setShowWhenEmpty}/>
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <Label htmlFor="tag-webdav">WebDAV folder name</Label>
-                        <div className="flex items-center gap-2">
-                            <Input
-                                id="tag-webdav"
-                                value={webdavDirName}
-                                onChange={(e) => setWebdavDirName(e.target.value)}
-                                placeholder={label}
-                                maxLength={255}
-                            />
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={!name.trim()}
-                                onClick={() => setWebdavDirName(name.trim())}
-                            >
-                                Use display name
-                            </Button>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                            Set once, deliberately — a mounted client sees a folder rename as delete + create, so
-                            this never follows the display name on its own.
-                        </p>
-                    </div>
+                    <TagNameField value={draft.name} onChange={(name) => patch({name})} placeholder={label}/>
+                    <TagMetaFields
+                        draft={draft}
+                        onChange={patch}
+                        label={label}
+                        derived={{from: toNaive(item?.date_from), to: toNaive(item?.date_to)}}
+                    />
 
                     {/* The rename control — the path is the identity, so this is the async cascade. */}
                     <div className="space-y-1.5">

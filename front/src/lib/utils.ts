@@ -130,6 +130,68 @@ export const TagPath = {
         return decodeLabel(parts[parts.length - 1] ?? '')
     },
 
+    /** Wire path of the parent, or `null` at the top level. */
+    parent(wire: string): string | null {
+        const cut = wire.lastIndexOf('.')
+        return cut < 0 ? null : wire.slice(0, cut)
+    },
+
+    /** Coerce free text into a valid ltree label — the client twin of the backend's
+     *  `TagPath::slugify_label`, so `Vietnam 🇻🇳 2024` mints `Vietnam_2024` (feature 34 §5). */
+    slugify(raw: string): string {
+        let out = ''
+        let prevUnderscore = false
+        for (const ch of raw.normalize('NFD').replace(/[̀-ͯ]/g, '')) {
+            if (/[A-Za-z0-9_]/.test(ch)) {
+                out += ch
+                prevUnderscore = ch === '_'
+            } else if (!prevUnderscore) {
+                out += '_'
+                prevUnderscore = true
+            }
+        }
+        return out.replace(/^_+|_+$/g, '') || 'untitled'
+    },
+
+    /**
+     * Auto-fixable typos in display-form path input: accents stripped, spaces / `-` → `_`,
+     * `.` / `\` → `/` (the display-form delimiter). Characters that cannot be mapped are kept
+     * verbatim so `invalidChars` can flag them.
+     */
+    sanitize(raw: string): { clean: string; replaced: string[] } {
+        const replaced: string[] = []
+        let s = raw.normalize('NFD').replace(/[̀-ͯ]/g, '')
+        if (s !== raw) replaced.push('Accents are removed')
+        if (/[ \-]/.test(s)) {
+            s = s.replace(/[ \-]+/g, '_')
+            replaced.push('Spaces and “-” become “_”')
+        }
+        if (/[.\\]/.test(s)) {
+            s = s.replace(/[.\\]+/g, '/')
+            replaced.push('“.” and “\\” become “/”')
+        }
+        return {clean: s, replaced}
+    },
+
+    /** Distinct characters still invalid after `sanitize` — a path field blocks on these. */
+    invalidChars(raw: string): string[] {
+        const set = new Set<string>()
+        for (const ch of TagPath.sanitize(raw).clean) if (!/[A-Za-z0-9_/]/.test(ch)) set.add(ch)
+        return [...set]
+    },
+
+    /** Free display-form text (`/Era/Vietnam 🇻🇳 2024`) → a wire path, each segment slugified. This
+     *  is the create path: unlike `toWire` it accepts anything, because the typed text becomes the
+     *  display name and only the slug becomes the identity (§5). */
+    toWireSlug(display: string): string {
+        return display
+            .split('/')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map(TagPath.slugify)
+            .join('.')
+    },
+
     /** True if the wire path is under the reserved `SharedToMe` subtree. */
     isProtected(wire: string): boolean {
         return wire === PROTECTED_PREFIX || wire.startsWith(`${PROTECTED_PREFIX}.`)

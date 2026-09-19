@@ -233,6 +233,9 @@ function TreeRow({
     const count = countsFor(node, trash).count
     const empty = count === 0
     const color = node.meta?.color ?? null
+    // A coloured row keeps its own colour when selected — deeper tint, solid accent, bolder text —
+    // rather than swapping to the primary accent, which reads as a different tag.
+    const tint = st.excluded ? null : color
 
     return (
         <div>
@@ -270,9 +273,11 @@ function TreeRow({
                     'group flex cursor-pointer items-center gap-1 rounded-md border-l-2 py-1 pr-1 text-sm',
                     st.excluded
                         ? 'text-destructive/80 line-through'
-                        : st.included
-                            ? 'bg-primary/10 text-primary'
-                            : 'text-foreground hover:bg-muted',
+                        : tint
+                            ? cn('text-foreground', st.included && 'font-medium')
+                            : st.included
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-foreground hover:bg-muted',
                     over && 'ring-2 ring-primary ring-inset',
                     dragging && !droppable && 'cursor-not-allowed opacity-50',
                 )}
@@ -280,8 +285,15 @@ function TreeRow({
                 // a bare dot standing in for the icon.
                 style={{
                     paddingLeft: depth * 12 + 4,
-                    borderLeftColor: color ?? 'transparent',
-                    ...(color && !st.excluded && !st.included ? {backgroundColor: `${color}14`} : {}),
+                    borderLeftColor: tint ? (st.included ? tint : `${tint}80`) : (color ?? 'transparent'),
+                    ...(tint ? {backgroundColor: `${tint}${st.included ? '3d' : '14'}`} : {}),
+                    // Included: the label takes a variant of the tag's own colour, mixed toward the
+                    // theme foreground so it darkens in light mode and lightens in dark. The colour
+                    // changes on selection as `text-primary` does for an uncoloured tag, and the
+                    // contrast against the tint is the theme's, not the palette's.
+                    ...(tint && st.included
+                        ? {color: `color-mix(in oklab, ${tint} 62%, var(--color-foreground))`}
+                        : {}),
                 }}
             >
                 <button

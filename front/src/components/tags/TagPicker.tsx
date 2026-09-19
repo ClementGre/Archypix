@@ -1,14 +1,12 @@
 import {type ReactNode, useState} from 'react'
-import {AlertTriangle, ChevronRight, Plus, Tag as TagIcon} from 'lucide-react'
+import {AlertTriangle, ChevronRight, Plus, Settings2, Tag as TagIcon} from 'lucide-react'
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList} from '@/components/ui/command'
 import {Button} from '@/components/ui/button'
-import {useTagTree} from '@/hooks/useTags'
+import {NewTagDialog} from '@/components/tags/NewTagDialog'
+import {useTagTree, useWriteTagMeta} from '@/hooks/useTags'
 import {displayPath} from '@/lib/tagTree'
 import {TagPath} from '@/lib/utils'
-
-const LABEL_OK = /^[A-Za-z0-9_/]+$/
-const VALID_CHAR = /[A-Za-z0-9_/]/
 
 /** Returns all ancestor wire paths for a given wire path (e.g. `A.B.C` → [`A`, `A.B`]). */
 function ancestorWirePaths(wire: string): string[] {
@@ -20,43 +18,20 @@ function ancestorWirePaths(wire: string): string[] {
     return result
 }
 
-interface Sanitized {
-    /** The input with auto-fixable characters replaced (kept in the field). */
-    clean: string
-    /** Human-readable replacement notes (orange warnings). */
-    replaced: string[]
+/** What the typed text would create: the slugified path plus the leaf as typed, which becomes the
+ *  display name (feature 34 §5). The field accepts anything — only the slug is the identity. */
+interface TagDraft {
+    path: string
+    parent: string | null
+    /** The leaf segment verbatim, e.g. `Vietnam 🇻🇳 2024`. */
+    leaf: string
 }
 
-/**
- * Auto-fix common typos as the user types display-form tag input:
- *  - strip accents (é → e),
- *  - spaces / `-` → `_`,
- *  - `.` / `\` → `/` (the display-form delimiter).
- * Characters that can't be mapped are kept verbatim so the caller can flag them in red.
- */
-function sanitizeTagInput(raw: string): Sanitized {
-    const replaced: string[] = []
-
-    const deaccented = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    if (deaccented !== raw) replaced.push('Removed accents')
-
-    let s = deaccented
-    if (/[ \-]/.test(s)) {
-        s = s.replace(/[ \-]+/g, '_')
-        replaced.push('Invalid character changed to "_"')
-    }
-    if (/[.\\]/.test(s)) {
-        s = s.replace(/[.\\]+/g, '/')
-        replaced.push('Invalid character changed to "/"')
-    }
-    return {clean: s, replaced}
-}
-
-/** Distinct characters still invalid after sanitization. */
-function invalidChars(s: string): string[] {
-    const set = new Set<string>()
-    for (const ch of s) if (!VALID_CHAR.test(ch)) set.add(ch)
-    return [...set]
+function draftFor(input: string): TagDraft | null {
+    const segments = input.split('/').map((s) => s.trim()).filter(Boolean)
+    if (!segments.length) return null
+    const path = segments.map(TagPath.slugify).join('.')
+    return {path, parent: TagPath.parent(path), leaf: segments[segments.length - 1]}
 }
 
 interface TagPickerProps {
@@ -88,10 +63,12 @@ export function TagPicker({
                           }: TagPickerProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [replaced, setReplaced] = useState<string[]>([])
   // The cmdk-highlighted item value (a wire path, or a `__create__…` token).
   const [active, setActive] = useState('')
+  /** The draft handed to the create dialog, snapshotted when the popover closes behind it. */
+  const [customize, setCustomize] = useState<TagDraft | null>(null)
   const {items, metaByPath} = useTagTree()
+  const write = useWriteTagMeta()
 
     const allTags = items.map((i) => i.path).filter(Boolean)
     /** Named path over raw path, and **search matches both** (feature 34 §5). */
@@ -118,53 +95,45 @@ export function TagPicker({
         .sort()
 
   const q = query.trim()
+  // Matches the display name, the display path and the raw wire path — the field takes free text,
+  // so a pasted `Era.2026.Vietnam` has to find its tag as readily as a typed `/Era/2026`.
   const options = q
       ? all.filter((t) => {
           const needle = q.toLowerCase()
-          return TagPath.toDisplay(t).toLowerCase().includes(needle) || namedOf(t).toLowerCase().includes(needle)
+          return t.toLowerCase().includes(needle)
+              || TagPath.toDisplay(t).toLowerCase().includes(needle)
+              || namedOf(t).toLowerCase().includes(needle)
       })
       : all
 
-  const bad = invalidChars(q)
-  const wireFromInput = q ? TagPath.toWire(q) : ''
-  const wouldBeNewProtected = !!wireFromInput && TagPath.isProtected(wireFromInput) && !expandedSet.has(wireFromInput)
+  const typed = draftFor(q)
+  const draft = typed && !expandedSet.has(typed.path) ? typed : null
   // Protected tags can never be created (the API reserves the prefix).
-  const canCreate =
-      allowCreate &&
-      !!q &&
-      bad.length === 0 &&
-      LABEL_OK.test(q.replace(/^\/+/, '')) &&
-      !!wireFromInput &&
-      !TagPath.isProtected(wireFromInput) &&
-      !expandedSet.has(wireFromInput)
-
-  const onInput = (raw: string) => {
-    const s = sanitizeTagInput(raw)
-    setQuery(s.clean)
-    setReplaced(s.replaced)
-  }
+  const wouldBeNewProtected = !!draft && TagPath.isProtected(draft.path)
+  const canCreate = allowCreate && !!draft && !wouldBeNewProtected
 
   // Fill the field with `<tag>/` so the user can append a child without retyping the prefix
   // (e.g. autocomplete `/Event` then type `Birthday` to create `/Event/Birthday`).
-  const autocompleteInto = (wire: string) => {
-    setQuery(TagPath.toDisplay(wire) + '/')
-    setReplaced([])
-  }
+  const autocompleteInto = (wire: string) => setQuery(TagPath.toDisplay(wire) + '/')
 
   const choose = (wire: string) => {
     onSelect(wire)
     setOpen(false)
     setQuery('')
-    setReplaced([])
+  }
+
+  /** Create straight from the typed text: the slug is the path, what was typed is the name (§5). */
+  const createTyped = () => {
+      if (!draft) return
+      if (draft.leaf !== TagPath.leaf(draft.path)) write({tag_path: draft.path, display_name: draft.leaf})
+      choose(draft.path)
   }
 
   return (
+      <>
       <Popover open={open} onOpenChange={(o) => {
           setOpen(o)
-          if (!o) {
-              setQuery('')
-              setReplaced([])
-          }
+          if (!o) setQuery('')
       }}>
         <PopoverTrigger asChild>
             {trigger ?? (
@@ -178,7 +147,7 @@ export function TagPicker({
           <Command shouldFilter={false} value={active} onValueChange={setActive}>
             <CommandInput
                 value={query}
-                onValueChange={onInput}
+                onValueChange={setQuery}
                 placeholder={placeholder}
                 onKeyDown={(e) => {
                     // Tab autocompletes the highlighted existing tag into the field as a prefix.
@@ -189,30 +158,11 @@ export function TagPicker({
                 }}
             />
 
-            {/* Inline validation: orange auto-fixes, red blockers. */}
-            {(replaced.length > 0 || bad.length > 0 || wouldBeNewProtected) && (
-                <div className="space-y-1 border-b px-2 py-1.5 text-[11px]">
-                    {replaced.length > 0 && (
-                        <p className="flex items-start gap-1 text-amber-500">
-                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>
-                            <span>{replaced.join(' · ')}</span>
-                        </p>
-                    )}
-                    {wouldBeNewProtected && (
-                        <p className="flex items-start gap-1 text-destructive">
-                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>
-                            <span>“SharedToMe” is a reserved prefix and can’t be used.</span>
-                        </p>
-                    )}
-                    {bad.length > 0 && (
-                        <p className="flex items-start gap-1 text-destructive">
-                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>
-                            <span>
-                                Not allowed: {bad.map((c) => `“${c}”`).join(' ')}. Use letters, numbers, “_” or “/”.
-                            </span>
-                        </p>
-                    )}
-                </div>
+            {wouldBeNewProtected && (
+                <p className="flex items-start gap-1 border-b px-2 py-1.5 text-[11px] text-destructive">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>
+                    <span>“SharedToMe” is a reserved prefix and can’t be used.</span>
+                </p>
             )}
 
             <CommandList>
@@ -246,10 +196,32 @@ export function TagPicker({
                       </button>
                     </CommandItem>
                 ))}
-                {canCreate && (
-                    <CommandItem value={`__create__${wireFromInput}`} onSelect={() => choose(wireFromInput)}>
-                      <Plus className="mr-2 h-3.5 w-3.5"/>
-                      Create “{TagPath.toDisplay(wireFromInput)}”
+                {canCreate && draft && (
+                    <CommandItem value={`__create__${draft.path}`} onSelect={createTyped}>
+                      <Plus className="mr-2 h-3.5 w-3.5 shrink-0"/>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate">Create “{draft.leaf}”</span>
+                          <span className="truncate font-mono text-[11px] text-muted-foreground">
+                              {TagPath.toDisplay(draft.path)}
+                          </span>
+                      </span>
+                      {/* Configure the new tag before it is used, rather than create-then-edit. */}
+                      <button
+                          type="button"
+                          onMouseDown={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                          }}
+                          onClick={(e) => {
+                              e.stopPropagation()
+                              setCustomize(draft)
+                              setOpen(false)
+                          }}
+                          className="ml-2 flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                          <Settings2 className="h-3.5 w-3.5"/>
+                          Customize
+                      </button>
                     </CommandItem>
                 )}
               </CommandGroup>
@@ -257,5 +229,18 @@ export function TagPicker({
           </Command>
         </PopoverContent>
       </Popover>
+
+      {customize && (
+          <NewTagDialog
+              parentPath={customize.parent}
+              initialName={customize.leaf}
+              // Photos follow right after, so the tag does not need to survive as an empty one.
+              emptyByDefault={false}
+              open
+              onOpenChange={(o) => !o && setCustomize(null)}
+              onCreated={onSelect}
+          />
+      )}
+      </>
   )
 }

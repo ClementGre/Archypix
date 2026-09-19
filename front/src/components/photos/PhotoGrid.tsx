@@ -1,6 +1,6 @@
 import {Fragment, useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {useSearchParams} from 'react-router-dom'
-import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2, Wrench} from 'lucide-react'
+import {AlertCircle, ChevronRight, FolderOpen, ImageOff, Loader2} from 'lucide-react'
 import {useHierarchies, useHierarchyBrowse} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {useTimelineView} from '@/hooks/useTimelineView'
@@ -13,7 +13,6 @@ import {useTimelineExpansion} from '@/stores/timelineExpansion'
 import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
 import {display, type TagNode, type TrashView} from '@/lib/tagTree'
-import {NO_GROUPING} from '@/lib/grouping'
 import type {PictureFilters} from '@/lib/types'
 import {TagFilterBar} from '@/components/tags/TagFilterBar'
 import {TagDropDialog, type TagDrop, undoAction} from '@/components/tags/TagDropDialog'
@@ -284,8 +283,10 @@ export function PhotoGrid() {
                         base={filters}
                         hideCounts={hideCounts}
                         onDropOnTag={onDropOnTag}
-                        modeOverride={view.pinned ? 'all' : undefined}
-                        groupingOverride={view.pinned ? NO_GROUPING : undefined}
+                        // The view root reads its mode and grouping from `useTimelineView`, which is
+                        // where fix mode's pin is resolved — `direct` survives it, only `subtag` does not (§9).
+                        modeOverride={view.mode}
+                        groupingOverride={view.grouping}
                     />
                 )}
             </div>
@@ -313,15 +314,6 @@ export function PhotoGrid() {
                         <SortMenu/>
                     </div>
                 </div>
-                {/* Both overrides are stated with their reason and restore on leaving fix mode —
-                    neither is written to `tag_metadata` (§9). */}
-                {view.pinned && (
-                    <p className="flex items-center gap-1.5 border-b border-border bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
-                        <Wrench className="h-3 w-3 shrink-0"/>
-                        Fix mode needs a flat stream to find temporal and spatial neighbours, so grouping and
-                        subtag blocks are off. Both come back when you leave it.
-                    </p>
-                )}
                 <div className="min-h-0 flex-1">
                     <GroupedGridProvider>{body}</GroupedGridProvider>
                 </div>
