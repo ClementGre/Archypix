@@ -3,7 +3,7 @@
 use crate::domain::pipeline::PipelineInput;
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceConfig;
-use crate::infra::routine::pipeline::{PipelineRun, announcement, dedup};
+use crate::routines::pipeline::{PipelineRun, announcement, dedup};
 use crate::infra::settings::keys;
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;

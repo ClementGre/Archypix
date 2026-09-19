@@ -6,7 +6,7 @@
 //! - Its `last_pipeline_run_at` is NULL (never processed), or
 //! - Its `last_pipeline_run_at` is older than any enabled service's `last_invalidated_at`.
 //!
-//! It is a [`Routine`] (`infra::routine`): `Input = Key = Uuid` (the user whose pictures/shares
+//! It is a [`Routine`] (`routines`): `Input = Key = Uuid` (the user whose pictures/shares
 //! changed). Per-user runs are serialized; parallel across users up to `PIPELINE_CONCURRENCY`.
 //! Triggers arriving while a user is running coalesce into a single re-run. The [`sweep`] is the
 //! recovery/poll fallback (and startup pass): it re-derives every user with dirty pictures or a
@@ -19,7 +19,7 @@ pub mod evaluation;
 
 use crate::clients::federation::FederationClient;
 use crate::infra::redis::Cache;
-use crate::infra::routine::{Routine, RoutineHandle};
+use crate::routines::{Routine, RoutineHandle};
 use crate::infra::settings::keys;
 use crate::repository::dedup::DedupRepository;
 use crate::repository::pipeline::PipelineRepository;
@@ -45,7 +45,7 @@ pub struct PipelineRun<'a> {
 
 // ── Routine ───────────────────────────────────────────────────────────────────
 
-/// The tagging pipeline as a routine. Holds its own handle (wired after [`spawn`](crate::infra::routine::spawn)
+/// The tagging pipeline as a routine. Holds its own handle (wired after [`spawn`](crate::routines::spawn)
 /// via [`set_handle`](Self::set_handle)) so a run can wake same-backend recipients.
 pub struct PipelineRoutine {
     db: PgPool,

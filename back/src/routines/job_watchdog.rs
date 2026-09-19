@@ -9,12 +9,12 @@
 //!   window so the `jobs` table does not grow without bound (every upload creates a `gen_thumbnail`
 //!   job; EXIF/visual edits add more).
 //!
-//! Both are `()`-keyed sweep-only routines (`infra::routine`): no manual trigger, the default sweep
+//! Both are `()`-keyed sweep-only routines (`routines`): no manual trigger, the default sweep
 //! runs `run(())` on each interval tick.
 
 use crate::domain::job::{JobConfig, JobStatus, JobType};
 use crate::domain::picture::ExifSyncStatus;
-use crate::infra::routine::Routine;
+use crate::routines::Routine;
 use crate::infra::settings::keys;
 use crate::repository::job::{JobRepository, StaleReset};
 use crate::repository::picture::PictureRepository;
@@ -138,62 +138,3 @@ impl Routine for JobCleanupRoutine {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
-    #[sqlx::test(migrator = "MIGRATOR")]
-    async fn cleanup_task_tick_deletes_old_terminal_jobs(db: PgPool) {
-        let user_id = uuid::Uuid::new_v4();
-        sqlx::query!(
-            "INSERT INTO users (id, username, email, display_name) VALUES ($1, $2, $3, $4)",
-            user_id,
-            "cleanup_user",
-            "cleanup@test.com",
-            "Cleanup User",
-        )
-        .execute(&db)
-        .await
-        .unwrap();
-
-        // Old completed job — should be pruned.
-        sqlx::query!(
-            "INSERT INTO jobs (owner_id, job_type, status, completed_at)
-             VALUES ($1, 'gen_thumbnail', 'completed', (now() AT TIME ZONE 'utc') - INTERVAL '40 days')",
-            user_id,
-        )
-            .execute(&db)
-            .await
-            .unwrap();
-        // Recent completed job — should remain.
-        sqlx::query!(
-            "INSERT INTO jobs (owner_id, job_type, status, completed_at)
-             VALUES ($1, 'gen_thumbnail', 'completed', (now() AT TIME ZONE 'utc'))",
-            user_id,
-        )
-        .execute(&db)
-        .await
-        .unwrap();
-        // Pending job — never touched.
-        sqlx::query!(
-            "INSERT INTO jobs (owner_id, job_type, status) VALUES ($1, 'gen_thumbnail', 'pending')",
-            user_id,
-        )
-        .execute(&db)
-        .await
-        .unwrap();
-
-        let settings = crate::infra::settings::test_settings_with(&[]);
-        let task = JobCleanupRoutine::new(db.clone(), settings);
-        task.run(()).await.unwrap();
-
-        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs")
-            .fetch_one(&db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(remaining, 2, "only the old completed job should be deleted");
-    }
-}

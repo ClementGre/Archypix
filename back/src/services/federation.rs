@@ -3,9 +3,8 @@ use crate::clients::federation::models::AnnouncedPicture;
 use crate::domain::share::ShareStatus;
 use crate::domain::tag::TagPath;
 use crate::domain::tag_metadata::SharedTagMeta;
+use crate::domain::routine::UnannounceInput;
 use crate::infra::redis::Cache;
-use crate::infra::routine;
-use crate::infra::routine::RoutineHandle;
 use crate::infra::s3::{self, Storage};
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
@@ -13,6 +12,7 @@ use crate::repository::share::{IncomingShareRepository, OutgoingShareRepository}
 use crate::repository::share_announcement::ShareAnnouncementRepository;
 use crate::repository::user::UserRepository;
 use crate::services::pictures::PictureVariant;
+use archypix_common::routine::RoutineHandle;
 use crate::services::shares::{register_received_pictures, unregister_announced_pictures};
 use crate::services::users::find_local_user_id;
 use archypix_common::error::{AppError, map_sqlx_error};
@@ -208,7 +208,7 @@ pub async fn receive_share_revoke(
     cache: &dyn Cache,
     federation: &FederationClient,
     settings: &Settings,
-    task_queue: &RoutineHandle<routine::unannounce::UnannounceInput>,
+    task_queue: &RoutineHandle<UnannounceInput>,
     pipeline_waker: &RoutineHandle<Uuid>,
     authenticated_instance: &str,
     outgoing_share_id: Uuid,

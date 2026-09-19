@@ -2,10 +2,10 @@ use crate::clients::federation::FederationClient;
 use crate::clients::resolver::ResolverClient;
 use crate::infra::crypto::JwtService;
 use crate::infra::redis::Cache;
-use crate::infra::routine::RoutineHandle;
-use crate::infra::routine::exif_recheck::ExifRecheckInput;
-use crate::infra::routine::tag_rename::TagRenameInput;
-use crate::infra::routine::unannounce::UnannounceInput;
+use archypix_common::routine::RoutineHandle;
+use crate::domain::routine::ExifRecheckInput;
+use crate::domain::routine::TagRenameInput;
+use crate::domain::routine::UnannounceInput;
 use crate::infra::s3::Storage;
 use archypix_common::routine::{RoutineStatus, TriggerAny};
 use archypix_common::settings::Settings;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 /// Trigger handles for the routine framework (feature 17). Each routine that anything outside its own
 /// runtime triggers gets a handle here; the sweep-only routines (job watchdog/cleanup, purge sweep)
-/// need none. See `infra::routine` and `doc/features/17_unified_routine_framework.md`.
+/// need none. See `routines` and `doc/features/17_unified_routine_framework.md`.
 #[derive(Clone)]
 pub struct Routines {
     /// Per-user pipeline wake. Trigger after any event that creates dirty pictures or share work for

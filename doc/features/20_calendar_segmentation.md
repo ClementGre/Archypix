@@ -437,7 +437,7 @@ The domain layer is organized for consistency across the three service types:
   segmentation resolves to **zero or one** tag (§7); shared-tag-mapping drops the `!is_broken` filter
   (redundant — derived, §10.1).
 
-The pipeline (`infra/routine/pipeline/evaluation.rs`) parses each service's `config` column once into
+The pipeline (`routines/pipeline/evaluation.rs`) parses each service's `config` column once into
 a `ServiceConfig` (replacing the three `*RuleRepository::list_for_services` joins with one read) and
 calls `config.evaluate(...)` per picture. Dirty detection, per-source reconciliation
 (`source = segment`/`rule`/`share_mapping`), ordering, and gating are unchanged.

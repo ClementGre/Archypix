@@ -20,8 +20,8 @@ use crate::domain::tag::TagPath;
 use crate::infra::crypto::{self, JwtService};
 use crate::infra::ratelimit;
 use crate::infra::redis::Cache;
-use crate::infra::routine::RoutineHandle;
-use crate::infra::routine::unannounce::UnannounceInput;
+use archypix_common::routine::RoutineHandle;
+use crate::domain::routine::UnannounceInput;
 use crate::infra::s3::Storage;
 use crate::infra::settings::keys;
 use crate::repository::picture::{

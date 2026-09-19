@@ -1,14 +1,14 @@
 //! Best-effort delivery for the revocation-cascade unannounce: same-backend operations run directly
 //! against the DB; cross-instance ones post to the recipient's federation endpoint. Called by the
-//! `Unannounce` routine (`infra::routine::unannounce`).
+//! `Unannounce` routine (`routines::unannounce`).
 //!
-//! Note: the *pipeline* announces/unannounces inline (see `infra::routine::pipeline::announcement`). The only
+//! Note: the *pipeline* announces/unannounces inline (see `routines::pipeline::announcement`). The only
 //! path left here is the best-effort downstream unannounce emitted by `cleanup_incoming_share`.
 
 use crate::clients::federation::FederationClient;
 use crate::clients::federation::models::PicturesUnannouncementRequest;
-use crate::infra::routine::RoutineHandle;
-use crate::infra::routine::unannounce::UnannounceInput;
+use archypix_common::routine::RoutineHandle;
+use crate::domain::routine::UnannounceInput;
 use crate::infra::settings::keys;
 use crate::repository::share::IncomingShareRepository;
 use crate::services::shares::registration::unregister_announced_pictures;

@@ -8,7 +8,7 @@ use crate::common;
 
 use archypix_back::clients::federation::FederationClient;
 use archypix_back::domain::share::ShareStatus;
-use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::routines::RoutineHandle;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::services::shares::{
     accept_incoming_share, create_outgoing_share, reject_incoming_share, revoke_outgoing_share,
@@ -31,7 +31,7 @@ async fn settle_sender(
 ) {
     let cache = Arc::new(common::InMemoryCache::new());
     let waker = RoutineHandle::<Uuid>::disconnected();
-    archypix_back::infra::routine::pipeline::run_once_for_user(
+    archypix_back::routines::pipeline::run_once_for_user(
         db,
         fed,
         cache.as_ref(),

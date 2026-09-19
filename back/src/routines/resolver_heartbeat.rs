@@ -1,6 +1,6 @@
 //! Resolver heartbeat (feature 23 §3.2, §8.2).
 //!
-//! A startup + interval [`Routine`](crate::infra::routine::Routine): mint a fresh backend-signed
+//! A startup + interval [`Routine`](crate::routines::Routine): mint a fresh backend-signed
 //! `ResolverDelegation` token, gather fleet metrics, and push both to the resolver. The resolver
 //! stores the token (replaying it on every call it makes to this backend) and the metrics (for its
 //! placement strategies + overview). A missed heartbeat self-heals on the next tick; the delegation
@@ -8,7 +8,7 @@
 //! `use_resolver = true`.
 
 use crate::clients::resolver::{HeartbeatMetrics, ResolverClient};
-use crate::infra::routine::Routine;
+use crate::routines::Routine;
 use crate::infra::settings::keys;
 use crate::repository::admin::AdminRepository;
 use archypix_common::settings::Settings;

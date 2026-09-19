@@ -8,23 +8,15 @@
 //! DB outbox + a re-deriving sweep) is a noted follow-up. The work itself lives in
 //! [`crate::services::tags::cascade_rename`].
 
+use crate::domain::routine::TagRenameInput;
 use crate::domain::tag::TagPath;
 use crate::infra::redis::Cache;
-use crate::infra::routine::{Routine, RoutineHandle};
 use crate::infra::settings::keys;
+use crate::routines::{Routine, RoutineHandle};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
-
-/// Payload **and** dedup key. Identical renames in flight collapse to one rerun (idempotent).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct TagRenameInput {
-    pub user_id: Uuid,
-    /// ltree form (dot-separated), already validated non-reserved by the endpoint.
-    pub old_tag: String,
-    pub new_tag: String,
-}
 
 /// Renames a tag across tags, shares, tagging-service configs, and hierarchies, then wakes the
 /// pipeline so the re-tag + re-announce work runs.

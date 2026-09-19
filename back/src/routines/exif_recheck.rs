@@ -9,9 +9,9 @@
 //! Rows holding unsynced DB edits (`pending`, `pending_job_creation`, `write_failed`) are never in
 //! scope — a re-extraction makes the file authoritative and would discard them (31 §5).
 
-use crate::infra::routine::{Routine, RoutineHandle};
+use crate::domain::routine::{ExifRecheckInput, RecheckScope};
 use crate::infra::settings::keys;
-use crate::services::jobs::RecheckScope;
+use crate::routines::{Routine, RoutineHandle};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -20,14 +20,6 @@ use uuid::Uuid;
 
 /// Wake handle for the EXIF recheck sweep.
 pub type ExifRecheckHandle = RoutineHandle<ExifRecheckInput>;
-
-/// Which worklist to drain, and the optional MIME narrowing (lower-cased) the `mime` scope uses
-/// after an allowlist bump.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ExifRecheckInput {
-    pub scope: RecheckScope,
-    pub mime_types: Vec<String>,
-}
 
 /// Re-extracts EXIF for pictures whose stored verdict may be stale.
 pub struct ExifRecheckRoutine {

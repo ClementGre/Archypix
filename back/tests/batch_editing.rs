@@ -8,7 +8,7 @@ mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::domain::picture::ExifSyncStatus;
-use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::routines::RoutineHandle;
 use archypix_back::repository::picture::{PictureRepository, ResolvedSelection};
 use archypix_back::repository::tag::TagRepository;
 use archypix_back::services::aggregate::{AggregateRequest, AggregateSection};

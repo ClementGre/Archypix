@@ -2,8 +2,10 @@ mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
 use archypix_back::domain::picture::ExifSyncStatus;
-use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::routines::RoutineHandle;
 use archypix_back::repository::picture::PictureRepository;
+use archypix_back::routines::Routine;
+use archypix_back::routines::job_watchdog::JobCleanupRoutine;
 use archypix_back::services::jobs;
 use archypix_common::error::AppError;
 use sqlx::PgPool;
@@ -601,7 +603,7 @@ async fn recheck_sweep_enqueues_and_stamps_extracting(db: PgPool) {
         .unwrap();
 
     let enqueued =
-        jobs::recheck_exif_batch(&db, jobs::RecheckScope::Mime, None, Uuid::new_v4(), 10)
+        jobs::recheck_exif_batch(&db, archypix_back::domain::routine::RecheckScope::Mime, None, Uuid::new_v4(), 10)
             .await
             .unwrap();
     assert_eq!(enqueued, 1);
@@ -640,7 +642,7 @@ async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
         .execute(&db)
         .await
         .unwrap();
-        jobs::recheck_exif_batch(&db, jobs::RecheckScope::Mime, None, sweep, 10)
+        jobs::recheck_exif_batch(&db, archypix_back::domain::routine::RecheckScope::Mime, None, sweep, 10)
             .await
             .unwrap();
     }
@@ -657,4 +659,61 @@ async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
         Some(1),
         "the sweep-scoped key must collapse the repeat"
     );
+}
+
+// ── Job cleanup routine (was src/routines/job_watchdog.rs::tests) ─────────────
+
+
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn cleanup_task_tick_deletes_old_terminal_jobs(db: PgPool) {
+    let user_id = uuid::Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO users (id, username, email, display_name) VALUES ($1, $2, $3, $4)",
+        user_id,
+        "cleanup_user",
+        "cleanup@test.com",
+        "Cleanup User",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    // Old completed job — should be pruned.
+    sqlx::query!(
+        "INSERT INTO jobs (owner_id, job_type, status, completed_at)
+         VALUES ($1, 'gen_thumbnail', 'completed', (now() AT TIME ZONE 'utc') - INTERVAL '40 days')",
+        user_id,
+    )
+        .execute(&db)
+        .await
+        .unwrap();
+    // Recent completed job — should remain.
+    sqlx::query!(
+        "INSERT INTO jobs (owner_id, job_type, status, completed_at)
+         VALUES ($1, 'gen_thumbnail', 'completed', (now() AT TIME ZONE 'utc'))",
+        user_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    // Pending job — never touched.
+    sqlx::query!(
+        "INSERT INTO jobs (owner_id, job_type, status) VALUES ($1, 'gen_thumbnail', 'pending')",
+        user_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let settings = archypix_back::infra::settings::test_settings_with(&[]);
+    let task = JobCleanupRoutine::new(db.clone(), settings);
+    task.run(()).await.unwrap();
+
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs")
+        .fetch_one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(remaining, 2, "only the old completed job should be deleted");
 }

@@ -3,13 +3,14 @@ use crate::domain::job::{
     EditPictureConfig, ExifEdit, ExifField, FullExif, GenThumbnailConfig, Job, JobConfig,
 };
 use crate::domain::picture::{ExifSyncStatus, Picture};
+use crate::domain::routine::RecheckScope;
 use crate::infra::redis::Cache;
-use crate::infra::routine::RoutineHandle;
 use crate::repository::job::JobRepository;
 use crate::repository::picture::{PictureRepository, ResolvedSelection};
 use crate::repository::share::IncomingShareRepository;
 use crate::services::aggregate::DryRun;
 use archypix_common::error::{AppError, map_sqlx_error};
+use archypix_common::routine::RoutineHandle;
 use archypix_common::mime::{supports_exif, supports_video};
 use archypix_common::settings::Settings;
 use sqlx::{Executor, PgPool, Postgres};
@@ -381,31 +382,6 @@ pub async fn reextract_picture_exif(
     tx.commit().await.map_err(map_sqlx_error)?;
     waker.trigger_debounced(user_id);
     Ok(job)
-}
-
-/// Which worklist an admin EXIF recheck sweep drains (feature 33 §8).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Deserialize, serde::Serialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RecheckScope {
-    /// Rows the MIME preflight rejected — the normal case after an allowlist bump.
-    #[default]
-    Mime,
-    /// Rows no engine could open, after an engine upgrade. Rare and mostly futile.
-    File,
-    /// Rows whose extraction never returned, after a tool outage.
-    Failed,
-}
-
-impl RecheckScope {
-    fn status(self) -> ExifSyncStatus {
-        match self {
-            Self::Mime => ExifSyncStatus::UnsupportedMime,
-            Self::File => ExifSyncStatus::UnsupportedFile,
-            Self::Failed => ExifSyncStatus::ExtractFailed,
-        }
-    }
 }
 
 /// One bounded tick of the admin EXIF recheck sweep (feature 33 §8): enqueue a re-extraction for up

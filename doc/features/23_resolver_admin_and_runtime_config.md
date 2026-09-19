@@ -282,7 +282,7 @@ would be expired (stale-prune routine, §8.3).
 
 ### 8.1 What moves
 
-The generic core of [`back/src/infra/routine.rs`](../../back/src/infra/routine.rs) — the `Routine`
+The generic core of [`back/src/routines.rs`](../../back/src/routines.rs) — the `Routine`
 trait, `RoutineHandle`, `Scheduler`/`RunState`/`Phase`, `spawn`, `run_routine`, `run_once`, and the
 framework unit tests — moves to `common::routine`, gated behind a `routine` cargo feature (pulls
 `tokio`, `tracing`, `async-trait`, `anyhow`, `uuid` only for consumers that enable it). The concrete

@@ -1,12 +1,12 @@
 //! Storage-usage reconcile sweep (feature 22 §7).
 //!
-//! A sweep-only [`Routine`](crate::infra::routine::Routine): recompute every user's four billed
+//! A sweep-only [`Routine`](crate::routines::Routine): recompute every user's four billed
 //! counters from scratch (a set of grouped `SUM … GROUP BY` scans, not per-object work), overwrite
 //! `user_storage`, and refresh the `storage:committed:*` Redis mirror. This is the drift safety net
 //! that lets the trigger-maintained fast counter be trusted.
 
 use crate::infra::redis::{Cache, RedisKey};
-use crate::infra::routine::Routine;
+use crate::routines::Routine;
 use crate::infra::settings::keys;
 use crate::repository::user_storage::UserStorageRepository;
 use archypix_common::error::AppError;

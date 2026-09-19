@@ -3,11 +3,11 @@
 //! A batch EXIF edit applies a single set-based UPDATE that stamps `exif_sync_status =
 //! 'pending_job_creation'` instead of enumerating-then-creating one `edit_picture` job per picture.
 //! This drain picks those rows up, creates the reconcile jobs in batches, and flips them to
-//! `pending`. It is a `()`-keyed [`Routine`] (`infra::routine`): a batch edit triggers it via the
+//! `pending`. It is a `()`-keyed [`Routine`] (`routines`): a batch edit triggers it via the
 //! `RoutineHandle<()>`, and a short interval (with a startup sweep) is the crash/lost-wake recovery
 //! backstop. Each `run` drains until empty, so a single trigger covers an arbitrary backlog.
 
-use crate::infra::routine::{Routine, RoutineHandle};
+use crate::routines::{Routine, RoutineHandle};
 use crate::infra::settings::keys;
 use archypix_common::settings::Settings;
 use sqlx::PgPool;

@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod predicate;
 pub mod public_share;
 pub mod received_exif;
+pub mod routine;
 pub mod segmentation;
 pub mod share;
 pub mod tag;

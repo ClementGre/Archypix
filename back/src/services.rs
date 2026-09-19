@@ -1,5 +1,6 @@
 pub mod aggregate;
 pub mod auth;
+pub mod dedup;
 pub mod federation;
 pub mod hierarchy;
 pub mod jobs;

@@ -18,7 +18,7 @@ use archypix_back::domain::auth::TokenType;
 use archypix_back::domain::job::{FullExif, JobStatus};
 use archypix_back::domain::picture::ExifSyncStatus;
 use archypix_back::infra::crypto::JwtService;
-use archypix_back::infra::routine::RoutineHandle;
+use archypix_back::routines::RoutineHandle;
 use archypix_back::infra::settings::{keys, test_settings_with};
 use archypix_back::repository::job::JobRepository;
 use archypix_back::repository::picture::PictureRepository;
@@ -992,8 +992,8 @@ async fn watchdog_exhaustion_marks_the_extraction_failed(db: PgPool) {
     .unwrap();
 
     let settings = test_settings_with(&[]);
-    archypix_back::infra::routine::Routine::run(
-        &archypix_back::infra::routine::job_watchdog::JobWatchdogRoutine::new(db.clone(), settings),
+    archypix_back::routines::Routine::run(
+        &archypix_back::routines::job_watchdog::JobWatchdogRoutine::new(db.clone(), settings),
         (),
     )
     .await

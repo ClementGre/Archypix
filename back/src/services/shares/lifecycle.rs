@@ -10,8 +10,8 @@ use crate::clients::federation::models::{
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tag::TagPath;
 use crate::infra::redis::Cache;
-use crate::infra::routine::RoutineHandle;
-use crate::infra::routine::unannounce::UnannounceInput;
+use archypix_common::routine::RoutineHandle;
+use crate::domain::routine::UnannounceInput;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::pipeline::PipelineRepository;

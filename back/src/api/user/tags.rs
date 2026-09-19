@@ -217,7 +217,7 @@ pub async fn rename(
     state
         .routines
         .tag_rename
-        .trigger(crate::infra::routine::tag_rename::TagRenameInput {
+        .trigger(crate::domain::routine::TagRenameInput {
             user_id,
             old_tag: old.as_ltree().to_string(),
             new_tag: new.as_ltree().to_string(),

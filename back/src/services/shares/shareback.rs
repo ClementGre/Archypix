@@ -3,7 +3,7 @@
 
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
 use crate::domain::tagging::ServiceType;
-use crate::infra::routine::RoutineHandle;
+use archypix_common::routine::RoutineHandle;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tagging::TaggingServiceRepository;
 use archypix_common::error::AppError;

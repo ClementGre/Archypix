@@ -11,11 +11,12 @@
 | Layer        | Responsibility                                                                | Can depend on                               | Must NOT depend on                |
 |--------------|-------------------------------------------------------------------------------|---------------------------------------------|-----------------------------------|
 | `api`        | HTTP handlers, auth extraction, request/response models.                      | `services`, `repository`, `domain`, `infra` | External connectivity details.    |
-| `services`   | Multi-step workflows and transaction boundaries.                              | `repository`, `clients`, `domain`, `infra`  | Axum types, HTTP-specific models. |
+| `routines`   | The concrete background routines the generic runtime schedules.               | `services`, `repository`, `clients`, `domain`, `infra` | `api`.                 |
+| `services`   | Multi-step workflows and transaction boundaries.                              | `repository`, `clients`, `domain`, `infra`  | `routines`, Axum types, HTTP-specific models. |
 | `clients`    | Outbound HTTP adapters (federation backends, resolver, S3).                   | `infra`, `domain`                           | `services`, `repository`, `api`.  |
 | `repository` | SQL operations only — no business logic.                                      | `domain`                                    | `services`, `clients`.            |
 | `domain`     | Business types, invariants, pure transformations, tagging pipeline evaluator. | std + lightweight crates only               | `repository`, `infra`, clients.   |
-| `infra`      | Raw connectivity primitives: config, error, Redis, S3, crypto (JWT, hashing). | External SDKs                               | `api`, `services`, `clients`.     |
+| `infra`      | Raw connectivity primitives: config, error, Redis, S3, crypto (JWT, hashing). | External SDKs                               | `api`, `routines`, `services`, `clients`. |
 | `state`      | `AppState` — bootstrap, holds all composed handles.                           | `infra`, `clients`                          | `services`, `repository`, `api`.  |
 
 **Key rules:**
@@ -24,6 +25,9 @@
 - Multi-step workflows run in an explicit SQL transaction. For cross-instance share creation, the outbound federation call runs inside the transaction
   so failure auto-rolls back the `OutgoingShare` insert.
 - API handlers call repositories directly only for single-step CRUD with no orchestration.
+- `services` schedules background work without depending on `routines`: trigger payloads live in
+  `domain/routine.rs` and `RoutineHandle` comes from `archypix_common::routine`. Keeping those two
+  out of `routines` is what makes the layer graph acyclic.
 
 ## C) Module layout (`back/src/`)
 
@@ -46,12 +50,23 @@ domain/
   pipeline.rs       # PipelineInput (the picture projection the evaluator reads)
   predicate.rs      # feature 13: rule predicate engine (Predicate/Field/Condition + parsing)
   segmentation.rs   # feature 20: SegmentationConfig (band-list parse/validate/resolve)
+  routine.rs        # routine trigger payloads (Unannounce/TagRename/ExifRecheck inputs, RecheckScope)
+                    # — here, not in routines/, so services can schedule work (see §B key rules)
 
 repository/
   user.rs / picture.rs / picture_version.rs / user_settings.rs
   user_storage.rs # feature 22: read the trigger-maintained billed breakdown; reconcile recompute
   tag.rs          # per-source tag CRUD, service-tag promotion/removal helpers
-  picture.rs      # picture CRUD + list/count; push_filters renders TagPredicate + legacy `tag`
+  picture.rs      # filter/sort/selection/aggregate types + `PictureRepository`; the impl is split
+                  # across picture/ (one `impl PictureRepository` block per file)
+  picture/
+    crud.rs       # create/copy + find/list-by-id + the set_* and delete mutations
+    received.rs   # federation-received rows: materialization, remote-id lookup, orphan pruning
+    query.rs      # list/count + push_filters (renders TagPredicate + legacy `tag`) and push_order_by
+    exif.rs       # EXIF read/write, sync-status transitions, thumbnail/extraction worklists
+    selection.rs  # ResolvedSelection membership: push_selection_where + the count/resolve queries
+    aggregate.rs  # feature 14: the aggregate_* summary/numeric/date/gps/distinct/creator queries
+    batch.rs      # batch trash + batch EXIF apply over a selection
   hierarchy.rs    # hierarchy CRUD SQL (load/store config JSONB)
   share.rs / auth.rs / job.rs / tagging.rs
   public_share.rs # feature 27: public-share CRUD, find_by_token, live coverage queries (find_covered_picture/
@@ -72,13 +87,31 @@ clients/
   resolver.rs       # self_register, update_mapping, verify_token
 
 services/
-  auth.rs / users.rs / pictures.rs / user_settings.rs / jobs.rs
+  auth.rs / users.rs / user_settings.rs / jobs.rs
   storage.rs        # feature 22: storage-quota enforcement math (committed+reserved), reservations,
                     #   warn levels, GET /me/storage payload
   selection.rs      # feature 14: PictureSelection/PictureFilter → ResolvedSelection (membership term)
   aggregate.rs      # feature 14: type-aware summary/tags/exif aggregation + dry-run shape
-  hierarchy.rs      # read resolver (build_tree, predicate_for_path / most-specific-wins) + CRUD orchestration; load_resolved + WebDAV token mgmt
-  vfs.rs            # protocol-agnostic VirtualFs over the hierarchy resolver (list/stat/read + write-back);
+  dedup.rs          # feature 11: classify_arrival (boomerang guard) — the inline, non-routine half
+  pictures.rs       # the shared types (PictureVariant/ThumbnailSize, list params/items); the
+                    #   functions live in pictures/
+  pictures/
+    upload.rs       # begin_upload_batch / begin_upload / complete_upload
+    copy.rs         # copy_picture / copy_covered_picture + copy_source_into_library
+    lifecycle.rs    # version snapshot, trash/restore (single + batch), dedup copies + survivor
+    exif.rs         # recipient EXIF override/propose + creator set (single + batch)
+    listing.rs      # get_picture_details, list_pictures, list_with_filter (+ its unit tests)
+    presign.rs      # presign_picture_variant / presign_variant_for_picture
+  hierarchy.rs      # facade re-exporting hierarchy/
+  hierarchy/
+    resolver.rs     # resolve: HierarchyConfig + distinct tag paths → ResolvedDir tree
+    tree.rs         # the `tree` endpoint (TreeEntry/TreeResult)
+    browse.rs       # the `browse` endpoint
+    crud.rs         # list/get/create/update/delete + load_resolved
+    webdav.rs       # WebDAV token management (06_webdav.md §3, §17)
+  vfs.rs            # protocol-agnostic VirtualFs over the hierarchy resolver; `Vfs`'s impl is split
+                    #   across vfs/ (read.rs list/stat/read, write.rs PUT + finalize, dirops.rs
+                    #   DELETE/MOVE/COPY/MKCOL + tag-dir ops, sidecar.rs, staging.rs)
   webdav.rs         # WebDAV Basic-auth resolution (token → session) + Redis cache
   shares/
     lifecycle.rs    # create/accept/revoke/reject + cleanup_incoming_share
@@ -102,23 +135,23 @@ api/
 
 infra/
   config.rs / error.rs / redis.rs / crypto.rs / db.rs / s3.rs
-  routine.rs         # feature 17: generic Routine trait + RoutineHandle + per-key
-                     # debounce/coalesce/rerun runtime — the one runtime all background work runs on
-  routine/           # the concrete routines, grouped under the framework
-    pipeline.rs      # Pipeline routine: per-user tag/announce reconcile; sweep = recovery/poll fallback
-    exif_drain.rs    # feature 14: ExifDrain routine (deferred-EXIF-job drain)
-    tag_rename.rs    # TagRename routine (trigger-only; run is todo!) + TagRenameInput
-    unannounce.rs    # Unannounce routine (trigger-only; revocation-cascade tail) + UnannounceInput
-    job_watchdog.rs  # JobWatchdogTask + JobCleanupTask routines (sweep-only)
-    purge_sweep.rs   # PurgeSweepTask routine (sweep-only): physically purge owned, retention-expired
+
+routines.rs          # re-exports the generic runtime from archypix_common::routine (feature 23 §8)
+routines/            # the concrete routines — application work, above services
+  pipeline.rs        # Pipeline routine: per-user tag/announce reconcile; sweep = recovery/poll fallback
+  exif_drain.rs      # feature 14: ExifDrain routine (deferred-EXIF-job drain)
+  tag_rename.rs      # TagRename routine (trigger-only; run is todo!)
+  unannounce.rs      # Unannounce routine (trigger-only; revocation-cascade tail)
+  job_watchdog.rs    # JobWatchdogTask + JobCleanupTask routines (sweep-only)
+  purge_sweep.rs     # PurgeSweepTask routine (sweep-only): physically purge owned, retention-expired
                      # trashed pictures — unannounce + delete tracking, S3 cleanup, hard-delete
-    storage_reconcile.rs # feature 22: StorageReconcileTask (sweep-only) — recompute user_storage
+  storage_reconcile.rs # feature 22: StorageReconcileTask (sweep-only) — recompute user_storage
                      # counters from scratch + refresh the Redis committed mirror
-    pipeline/
-      evaluation.rs  # per-user tag service evaluation + reconciliation, then announcement
-      dedup.rs       # feature 11: content-dedup reconciler (serial per user) — survivor selection,
-                     # rescue-promotion, arrival classification (boomerang guard)
-      announcement.rs # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
+  pipeline/
+    evaluation.rs    # per-user tag service evaluation + reconciliation, then announcement
+    dedup.rs         # feature 11: content-dedup reconciler (serial per user) — survivor selection,
+                     # rescue-promotion
+    announcement.rs  # inline reconcile_share: PFA/errored full pass + active dirty-delta (deliver-then-record)
 ```
 
 ## D) AppState
@@ -151,7 +184,7 @@ proxy (`sub="resolver"`).
 
 ## E) Tagging pipeline
 
-The pipeline is the `Pipeline` [`Routine`](#h-routine-framework-feature-17) (`infra/pipeline.rs`): `run(user_id)` evaluates enabled
+The pipeline is the `Pipeline` [`Routine`](#h-routine-framework-feature-17) (`routines/pipeline.rs`): `run(user_id)` evaluates enabled
 tagging services against dirty pictures and reconciles tag assignments; `sweep` is its recovery/poll fallback.
 
 **Dirty picture detection** — `pictures.last_pipeline_run_at IS NULL` on new/invalidated pictures; `tagging_services.last_invalidated_at` bumps on
@@ -280,7 +313,7 @@ membership term (`PictureRepository::push_selection_where`) is reused as a SQL s
 (`services::aggregate`) and the batch writes are set-based, never materialising a 10k selection.
 A batch EXIF edit cannot create one `edit_picture` job per picture synchronously: owned pictures take
 a single set-based `UPDATE` that stamps `exif_sync_status = 'pending_job_creation'`, and the
-deferred-job drain (`infra::exif_drain`, the `ExifDrain` `Routine` — `()`-keyed, triggered + interval
+deferred-job drain (`routines::exif_drain`, the `ExifDrain` `Routine` — `()`-keyed, triggered + interval
 sweep) creates the reconcile jobs and flips them to `pending`. Received pictures take the
 set-based local-override merge (or a propose-to-owner edit in `suggest` mode). Convergence is tracked
 through the `exif_sync` histogram, not per-picture job ids. The reconcile target is **bound at
@@ -293,7 +326,7 @@ picture's bytes into the caller's library as a new owned identity with root-reso
 provenance (same-/cross-instance byte paths), then enqueues `gen_thumbnail`. The worker computes a
 metadata-stripped `content_hash` (stable across EXIF edits, changes on visual re-encode), forwarded in
 `AnnouncedPicture` so recipients group across owners. The **dedup reconciler** runs **serial per user
-in the pipeline** (`infra::pipeline::dedup`). Each `content_hash` group (or `file_hash` fallback) is
+in the pipeline** (`routines::pipeline::dedup`). Each `content_hash` group (or `file_hash` fallback) is
 **Live** (no rejection → one live survivor, rest `content_dedupe`) or **Rejected** (≥1
 `manual`/`boomerang` → exactly one `manual` trash representative, rest `boomerang`). The reconciler is
 **stable**: a correct single-live group is never reshuffled, so whichever copy is live — including one
@@ -463,14 +496,14 @@ its `OutgoingShare` to `pending_first_announcement`.
 
 The generic core (the `Routine` trait, `RoutineHandle`, scheduler, `spawn`) was **lifted to
 [`common::routine`](../common/src/routine.rs)** (feature 23 §8) behind a `routine` cargo feature so the
-resolver reuses it; `back/src/infra/routine.rs` re-exports it and keeps the concrete backend routines.
+resolver reuses it; `back/src/routines.rs` re-exports it and keeps the concrete backend routines.
 Routines read their `interval()` from the live settings snapshot each tick, so an interval change from
 the dashboard takes effect after the current wait (no re-spawn). When `USE_RESOLVER=true`, `main` also
 spawns the **`ResolverHeartbeat`** routine (startup + `resolver_heartbeat_interval_secs`), which mints a
 fresh backend-signed `ResolverDelegation` token, gathers fleet metrics, and pushes them to the resolver
 (feature 23 §3.2).
 
-All background work runs on one generic runtime, `infra/routine.rs`. A **`Routine`** is a named unit
+All background work runs on one generic runtime, `routines.rs`. A **`Routine`** is a named unit
 of work triggerable three ways: recurrently (every `interval()`), at startup (`run_on_startup()`),
 and manually (`RoutineHandle::trigger`/`trigger_debounced`). Each trigger carries an `Input`; a dedup
 `Key` is *derived* from it (`Routine::key`). Equal keys never run concurrently — while a key is
@@ -534,6 +567,18 @@ After adding a migration:
 - Keep repository separated from services: don't create too specific repository functions, instead create general ones that can be reused. Don't
   reference services in a repository function: if a function is made for a specific task today, it may be used elsewhere tomorrow, so make them
   factorized and general rather than specific to a given service.
+
+### Where tests go
+
+- **Pure unit tests** (`#[test]`, no database) stay in the file they cover, in a `#[cfg(test)] mod tests`.
+  They compile out of non-test builds and are the only way to reach private items.
+- **DB tests** (`#[sqlx::test]`) go in `back/tests/`, never in `src/` — a test in `src/` cannot use
+  `tests/common/mod.rs` and ends up re-declaring `MIGRATOR` and its own seed helpers. Seed through
+  `common` (`seed_user`, `seed_user_bare`, `seed_picture`, `seed_picture_with_tag`); add to `common`
+  rather than defining a local helper, unless the fixture is genuinely different (say so in a comment).
+- One test *binary* per suite, not per file: a suite that wants several files gets a directory with a
+  `mod.rs` root and a `[[test]]` entry in `Cargo.toml` (`federation`, `repository`), so `MIGRATOR` and
+  `common` are declared once.
 
 ### Tracing
 

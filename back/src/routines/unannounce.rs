@@ -6,25 +6,13 @@
 //! lost to a crash is lost. The pipeline handles all other (un)announcement inline.
 
 use crate::clients::federation::FederationClient;
-use crate::infra::routine::{Routine, RoutineHandle};
+use crate::domain::routine::UnannounceInput;
 use crate::infra::settings::keys;
+use crate::routines::{Routine, RoutineHandle};
 use archypix_common::settings::Settings;
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
-
-/// Payload **and** dedup key. Two distinct unannounces (different fields) both run; two identical
-/// ones in flight collapse to a single rerun (idempotent).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct UnannounceInput {
-    pub outgoing_share_id: Uuid,
-    pub sender_username: String,
-    pub recipient_username: String,
-    pub recipient_instance: String,
-    /// Announce ids (recipient's `remote_picture_id`) of the pictures to remove.
-    pub picture_ids: Vec<String>,
-    pub is_same_backend: bool,
-}
 
 /// Delivers `UnannounceInput`s. Holds the pipeline handle so a same-backend unregister can wake the
 /// recipient's pipeline.

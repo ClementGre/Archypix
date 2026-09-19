@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO jobs (owner_id, job_type, status, completed_at)\n         VALUES ($1, 'gen_thumbnail', 'completed', (now() AT TIME ZONE 'utc'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1103bb6cba552d30463b0fde439e02c45affebb4f1e231e32e2faede35bf2986"
+}

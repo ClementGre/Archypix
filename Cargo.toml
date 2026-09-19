@@ -6,3 +6,8 @@ members = [
     "resolver",
 ]
 resolver = "2"
+
+# Full debuginfo is the default; line tables keep backtraces with line numbers at
+# ~a quarter less rebuild time. `debug = 0` breaks proc-macro dylibs on macOS/rustc 1.96.
+[profile.dev]
+debug = "line-tables-only"

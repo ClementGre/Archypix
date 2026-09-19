@@ -2,8 +2,8 @@ mod common;
 
 use archypix_back::clients::federation::models::AnnouncedPicture;
 use archypix_back::domain::share::ShareStatus;
-use archypix_back::infra::routine::RoutineHandle;
-use archypix_back::infra::routine::pipeline;
+use archypix_back::routines::RoutineHandle;
+use archypix_back::routines::pipeline;
 use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::share::{IncomingShareRepository, OutgoingShareRepository};
 use archypix_back::services::shares;

@@ -8,8 +8,8 @@
 mod common;
 
 use archypix_back::domain::job::{ExifField, FullExif};
-use archypix_back::infra::routine::RoutineHandle;
-use archypix_back::infra::routine::pipeline::{self};
+use archypix_back::routines::RoutineHandle;
+use archypix_back::routines::pipeline::{self};
 use archypix_back::infra::settings::test_settings_with;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::repository::share::IncomingShareRepository;

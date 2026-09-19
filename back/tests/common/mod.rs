@@ -12,8 +12,9 @@ use archypix_back::domain::tag::encode_sender_label;
 use archypix_back::domain::validation::MIN_PASSWORD_LEN;
 use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::redis::{Cache, RedisKey};
-use archypix_back::infra::routine::unannounce::{UnannounceInput, UnannounceRoutine};
-use archypix_back::infra::routine::{self, RoutineHandle};
+use archypix_back::domain::routine::UnannounceInput;
+use archypix_back::routines::unannounce::UnannounceRoutine;
+use archypix_back::routines::{self, RoutineHandle};
 use archypix_back::infra::s3::Storage;
 use archypix_back::infra::settings::keys;
 use archypix_back::state::{AppState, RoutineRegistry, Routines};
@@ -283,7 +284,7 @@ pub fn test_task_queue_with_federation(
 ) -> (RoutineHandle<UnannounceInput>, RoutineHandle<Uuid>) {
     let pipeline = RoutineHandle::<Uuid>::disconnected();
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let (queue, runtime) = routine::spawn(
+    let (queue, runtime) = routines::spawn(
         UnannounceRoutine::new(db.clone(), federation, settings.clone(), pipeline.clone()),
         shutdown_rx,
     );
@@ -398,6 +399,23 @@ pub async fn seed_user(db: &PgPool, username: &str, password: &str) -> Uuid {
     .await
     .unwrap()
     .id
+}
+
+/// Insert a bare user row and return its ID. Unlike [`seed_user`] this skips `create_user`, so
+/// there is no password hash — use it when the test never logs the user in.
+pub async fn seed_user_bare(db: &PgPool) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO users (id, username, email, display_name) VALUES ($1, $2, $3, $4)",
+        id,
+        format!("u_{}", &id.to_string()[..8]),
+        format!("{}@t.com", id),
+        "T",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    id
 }
 
 /// Insert a bare picture row for `user_id` and return its ID.

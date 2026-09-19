@@ -360,20 +360,30 @@ submenu (Custom order / Display name / Tag name / Start date / End date, writing
 **Share this tag…** (opens a pre-filled `CreateShareDialog`), **New public share link…** and **Edit tag…**; **⌘/Ctrl-click** quick-toggles a
 tag in the include set to build "X and Y" fast. There is no per-row exact toggle — *Direct only* in the grid's **View** dropdown replaced it
 (feature 35 §4). The tree only **highlights** rows by state — emerald (included) or struck-through red (excluded, `⦸` icon); a tag's colour
-is a left accent bar on the row plus a tint on its `#`, not a substitute icon. The active filter itself is surfaced in the centre
+is a left accent bar on the row plus a tint on its `#`, not a substitute icon, and a **coloured row keeps its own colour when included** —
+deeper tint, solid accent, bolder text, and a label `color-mix`ed toward `--color-foreground` so the colour shifts on selection the way
+`text-primary` does for an uncoloured tag while the contrast stays the theme's. The active filter itself is surfaced in the centre
 `TagFilterBar` breadcrumb (not in the tree). Rows are also **drop targets** for photos dragged from the grid (§9 below), and reorder mode swaps the `…`
 menu for up/down buttons — each move is an ordinary `sort_index` write through the queue, not a reorder endpoint),
-`EditTagDialog` (the one tag dialog, absorbing the old `RenameTagDialog`: display name, description, colour palette + custom picker, date-range
-overrides with per-side reset-to-derived, *show when empty*, WebDAV folder name, the rename control with its async-cascade warning, and a footer
-*Reset metadata* / *Delete tag* worded by consequence), `NewTagDialog` (mints an empty `show_when_empty` tag; the typed label is slugified for the path
-and kept as the display name, and a sibling collision is rejected rather than auto-disambiguated), `TagDropDialog` (the §9 drop confirmation, with real
-figures from a `dry_run` batch edit), `TagShareBadge`, `TagPicker` (autocomplete over existing tags + create-new, matching **both** display name and
-path; `allowProtected` prop — see §9; optional `trigger` prop
+`TagMetaFields` (the shared `tag_metadata` form — description, colour palette + custom picker, cover, date-range overrides with per-side
+reset-to-derived, *show when empty*, WebDAV folder name — plus `TagNameField`, `TagPathField` (live-validated display-form path: `TagPath.sanitize`
+notes the auto-fixes in amber and `TagPath.invalidChars` blocks in red, the validation `TagPicker` used to apply to its own input) and the
+`TagMetaDraft` ⇄ `TagMetaPatch` helpers; the display name is its
+own field because the create dialog shows it above the fold), `EditTagDialog` (the one tag dialog, absorbing the old `RenameTagDialog`: the read-only
+counts/provenance header, `TagMetaFields`, the rename control with its async-cascade warning, and a footer *Reset metadata* / *Delete tag* worded by
+consequence), `NewTagDialog` (the one create dialog, used by the tree's **New tag** / **New subtag…** and by `TagPicker`'s **Customize**: a name field
+whose slug is the path, plus an expandable **Customize** pane holding the editable tag path — it follows the name until the user takes it over — and
+the whole `TagMetaFields` set, so a tag arrives configured rather than created-then-edited. `show_when_empty` defaults **on** from the tree, where the
+point is an empty tag, and **off** from the picker, where photos follow at once; a sibling collision is rejected rather than auto-disambiguated),
+`TagDropDialog` (the §9 drop confirmation, with real
+figures from a `dry_run` batch edit), `TagShareBadge`, `TagPicker` (autocomplete over existing tags + create-new, matching display name, display path
+and raw wire path so a pasted `Era.2026.Vietnam` finds its tag; `allowProtected` prop — see §9; optional `trigger` prop
 to
 render a custom trigger, e.g. the small **+** button in the details-panel Tags section header. Each list row carries a **›** button (and **Tab**
 autocompletes the highlighted tag) that fills the field with `<tag>/` so the user can append a child without retyping — e.g. autocomplete `/Event`
-then type `Birthday`. Input is **sanitized live**: accents stripped, spaces/`-` → `_`, `.`/`\` → `/` with an **amber** note of what was replaced, and a
-**red** warning for a reserved `SharedToMe` prefix or any still-invalid character).
+then type `Birthday`. The field takes **free text** — `/` is the only separator — because the create row keeps what was typed as the display name and
+slugifies it for the path (feature 34 §5), showing both; a **Customize** button on that row opens `NewTagDialog` seeded from it. The one blocker left
+is the reserved `SharedToMe` prefix).
 
 **`tagging/`** — `TaggingPage` (titled **"Tagging services"**; header has a **Force run** button — `POST /pictures/pipeline/wake` — for debugging)
 composes `PipelineList` (rule + segmentation services — the "queries" — shown **first**) then `SharedMappingSection`

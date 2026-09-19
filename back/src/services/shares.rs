@@ -5,7 +5,7 @@
 //! - [`shareback`]     — ShareBack auto-accept (mapping wiring).
 //! - [`delivery`]      — best-effort task delivery of the revocation-cascade unannounce.
 //!
-//! Picture announcement is driven exclusively by the tagging pipeline (`infra::routine::pipeline`): share
+//! Picture announcement is driven exclusively by the tagging pipeline (`routines::pipeline`): share
 //! acceptance moves the sender's `OutgoingShare` to `pending_first_announcement`, and the pipeline
 //! reconciles its coverage **inline** (deliver-then-record) and flips it to `active`. These services
 //! only manage share state; the only remaining task is the best-effort downstream unannounce emitted

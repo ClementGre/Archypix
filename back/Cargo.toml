@@ -49,3 +49,7 @@ tempfile = "3.27.0"
 [[test]]
 name = "federation"
 path = "tests/federation/mod.rs"
+
+[[test]]
+name = "repository"
+path = "tests/repository/mod.rs"

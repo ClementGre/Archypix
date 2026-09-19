@@ -6,8 +6,8 @@
 mod common;
 
 use archypix_back::infra::redis::Cache;
-use archypix_back::infra::routine::RoutineHandle;
-use archypix_back::infra::routine::pipeline::{self, dedup};
+use archypix_back::routines::RoutineHandle;
+use archypix_back::routines::pipeline;
 use archypix_back::infra::s3::Storage;
 use archypix_back::infra::settings::test_settings_with;
 use archypix_back::services::pictures;
@@ -306,7 +306,7 @@ async fn dedup_collapse_merges_manual_tags_onto_survivor(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn keep_copy_replaces_manual_tags_from_old_live(db: PgPool) {
-    use archypix_back::infra::routine::RoutineHandle;
+    use archypix_back::routines::RoutineHandle;
     use archypix_back::repository::tag::TagRepository;
     let user = common::seed_user(&db, "alice", "pass").await;
     let a = seed_owned(&db, user, "hashA", None).await;
@@ -380,7 +380,7 @@ async fn arrival_into_rejected_group_boomerangs(db: PgPool) {
 
     // A fresh copy of the same content arrives (created live), then is classified.
     let arrival = seed_received(&db, user, "hashX", None).await;
-    dedup::classify_arrival(&db, user, arrival).await.unwrap();
+    archypix_back::services::dedup::classify_arrival(&db, user, arrival).await.unwrap();
 
     assert_eq!(
         reason(&db, arrival).await.as_deref(),
@@ -394,7 +394,7 @@ async fn arrival_with_live_survivor_is_not_boomeranged(db: PgPool) {
     let user = common::seed_user(&db, "bob", "pass").await;
     seed_owned(&db, user, "hashY", None).await; // a live survivor exists
     let arrival = seed_received(&db, user, "hashY", None).await;
-    dedup::classify_arrival(&db, user, arrival).await.unwrap();
+    archypix_back::services::dedup::classify_arrival(&db, user, arrival).await.unwrap();
     // Not boomeranged; the reconciler will instead content_dedupe it.
     assert_ne!(reason(&db, arrival).await.as_deref(), Some("boomerang"));
 

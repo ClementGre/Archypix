@@ -1,0 +1,5 @@
+[env]
+# Compile query macros against .sqlx/ instead of round-tripping to Postgres.
+# Not forced: `SQLX_OFFLINE=false cargo check` still verifies against the live DB.
+# Re-run `cargo sqlx prepare -- --tests` after changing queries (doc 03 §I).
+SQLX_OFFLINE = "true"

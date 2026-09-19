@@ -185,7 +185,7 @@ centralises the effective-usage math so all four call sites behave identically.
 
 ## 7. Reconcile routine
 
-A sweep-only [`Routine`](../../back/src/infra/routine.rs) (same shape as `purge_sweep`) that, per user
+A sweep-only [`Routine`](../../back/src/routines.rs) (same shape as `purge_sweep`) that, per user
 (batched), recomputes the four counters with a single grouped query over `pictures` + `picture_versions`,
 writes `user_storage`, and refreshes `storage:committed:*`. Runs on an interval
 (`storage_reconcile_interval_secs`, default daily) and corrects any trigger drift. Cheap: it is a set

@@ -186,7 +186,7 @@ per-user isolation and bounded concurrency, and we already know *which* user eac
 ### `PipelineWaker`
 
 > **Superseded by feature 17.** `PipelineWaker` is now `RoutineHandle<Uuid>` and the per-user
-> scheduler below is the generic `infra::routine` runtime; `wake`/`wake_debounced` → `trigger`/
+> scheduler below is the generic `routines` runtime; `wake`/`wake_debounced` → `trigger`/
 > `trigger_debounced`, `channel`+`create` → `routine::spawn`. The semantics described here are
 > unchanged — see `doc/features/17_unified_routine_framework.md`.
 

@@ -1,6 +1,6 @@
 //! Physical-purge sweep for soft-deleted owned pictures (09 §5.1).
 //!
-//! A sweep-only [`Routine`](crate::infra::routine::Routine) that finds owned pictures whose retention window has elapsed
+//! A sweep-only [`Routine`](crate::routines::Routine) that finds owned pictures whose retention window has elapsed
 //! (`deleted_at + user_settings.trash_retention_days < now`, derived per-owner so a retention change
 //! needs no backfill), unannounces them from any share recipients, deletes their S3 objects
 //! (original + thumbnails + versions), and hard-deletes the row. Removing the row drops its tags
@@ -9,8 +9,8 @@
 //! mirroring the revocation cascade (`cleanup_incoming_share`).
 
 use crate::infra::redis::{Cache, RedisKey};
-use crate::infra::routine::unannounce::UnannounceInput;
-use crate::infra::routine::{Routine, RoutineHandle};
+use crate::domain::routine::UnannounceInput;
+use crate::routines::{Routine, RoutineHandle};
 use crate::infra::s3::{self, Storage};
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;

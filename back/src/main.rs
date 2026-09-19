@@ -3,16 +3,16 @@ use archypix_back::clients::resolver::ResolverClient;
 use archypix_back::infra;
 use archypix_back::infra::crypto::JwtService;
 use archypix_back::infra::redis::Cache;
-use archypix_back::infra::routine;
-use archypix_back::infra::routine::exif_drain::ExifDrainRoutine;
-use archypix_back::infra::routine::exif_recheck::ExifRecheckRoutine;
-use archypix_back::infra::routine::job_watchdog::{JobCleanupRoutine, JobWatchdogRoutine};
-use archypix_back::infra::routine::pipeline::PipelineRoutine;
-use archypix_back::infra::routine::purge_sweep::PurgeSweepRoutine;
-use archypix_back::infra::routine::resolver_heartbeat::ResolverHeartbeatRoutine;
-use archypix_back::infra::routine::storage_reconcile::StorageReconcileRoutine;
-use archypix_back::infra::routine::tag_rename::TagRenameRoutine;
-use archypix_back::infra::routine::unannounce::UnannounceRoutine;
+use archypix_back::routines;
+use archypix_back::routines::exif_drain::ExifDrainRoutine;
+use archypix_back::routines::exif_recheck::ExifRecheckRoutine;
+use archypix_back::routines::job_watchdog::{JobCleanupRoutine, JobWatchdogRoutine};
+use archypix_back::routines::pipeline::PipelineRoutine;
+use archypix_back::routines::purge_sweep::PurgeSweepRoutine;
+use archypix_back::routines::resolver_heartbeat::ResolverHeartbeatRoutine;
+use archypix_back::routines::storage_reconcile::StorageReconcileRoutine;
+use archypix_back::routines::tag_rename::TagRenameRoutine;
+use archypix_back::routines::unannounce::UnannounceRoutine;
 use archypix_back::infra::s3::Storage;
 use archypix_back::infra::settings::keys;
 use archypix_back::state::RoutineEntry;
@@ -115,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
     let cache: Arc<dyn infra::redis::Cache> = Arc::new(redis);
 
     // ── Routine framework (feature 17) ──────────────────────────────────────────
-    // `routine::spawn` spawns each runtime and returns its trigger handle plus a `JoinHandle`; we keep
+    // `routines::spawn` spawns each runtime and returns its trigger handle plus a `JoinHandle`; we keep
     // the join handles so graceful shutdown can flip `shutdown_tx` and drain in-flight runs.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut routine_joins = Vec::new();
@@ -257,7 +257,7 @@ fn start_routines(
     );
     let pipeline_cell = pipeline.handle_cell();
     let (pipeline_handle, pipeline_status, pipeline_join) =
-        routine::spawn_with_status(pipeline, RoutineStatus::default(), shutdown_rx.clone());
+        routines::spawn_with_status(pipeline, RoutineStatus::default(), shutdown_rx.clone());
     let _ = pipeline_cell.set(pipeline_handle.clone());
     routine_joins.push(pipeline_join);
     routine_entries.push(RoutineEntry {
@@ -267,7 +267,7 @@ fn start_routines(
     });
 
     // Deferred-EXIF-job drain (feature 14 §5).
-    let (exif_drain_handle, exif_drain_status, exif_drain_join) = routine::spawn_with_status(
+    let (exif_drain_handle, exif_drain_status, exif_drain_join) = routines::spawn_with_status(
         ExifDrainRoutine::new(db.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -280,7 +280,7 @@ fn start_routines(
     });
 
     // Admin EXIF recheck sweep (trigger-only, feature 33 §8).
-    let (exif_recheck_handle, exif_recheck_status, exif_recheck_join) = routine::spawn_with_status(
+    let (exif_recheck_handle, exif_recheck_status, exif_recheck_join) = routines::spawn_with_status(
         ExifRecheckRoutine::new(db.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -293,7 +293,7 @@ fn start_routines(
     });
 
     // Tag-rename cascade (trigger-only) — wakes the pipeline to re-tag + re-announce.
-    let (tag_rename_handle, tag_rename_status, tag_rename_join) = routine::spawn_with_status(
+    let (tag_rename_handle, tag_rename_status, tag_rename_join) = routines::spawn_with_status(
         TagRenameRoutine::new(
             db.clone(),
             cache.clone(),
@@ -311,7 +311,7 @@ fn start_routines(
     });
 
     // Best-effort downstream unannounce (trigger-only) — wakes the recipient's pipeline.
-    let (unannounce_handle, unannounce_status, unannounce_join) = routine::spawn_with_status(
+    let (unannounce_handle, unannounce_status, unannounce_join) = routines::spawn_with_status(
         UnannounceRoutine::new(
             db.clone(),
             federation.clone(),
@@ -329,7 +329,7 @@ fn start_routines(
     });
 
     // Sweep-only routines: job watchdog, job cleanup, purge sweep, storage reconcile.
-    let (jw_handle, jw_status, job_watchdog_join) = routine::spawn_with_status(
+    let (jw_handle, jw_status, job_watchdog_join) = routines::spawn_with_status(
         JobWatchdogRoutine::new(db.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -340,7 +340,7 @@ fn start_routines(
         status: jw_status,
         trigger: Arc::new(jw_handle),
     });
-    let (jc_handle, jc_status, job_cleanup_join) = routine::spawn_with_status(
+    let (jc_handle, jc_status, job_cleanup_join) = routines::spawn_with_status(
         JobCleanupRoutine::new(db.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -351,7 +351,7 @@ fn start_routines(
         status: jc_status,
         trigger: Arc::new(jc_handle),
     });
-    let (ps_handle, ps_status, purge_sweep_join) = routine::spawn_with_status(
+    let (ps_handle, ps_status, purge_sweep_join) = routines::spawn_with_status(
         PurgeSweepRoutine::new(
             db.clone(),
             storage.clone(),
@@ -368,7 +368,7 @@ fn start_routines(
         status: ps_status,
         trigger: Arc::new(ps_handle),
     });
-    let (sr_handle, sr_status, storage_reconcile_join) = routine::spawn_with_status(
+    let (sr_handle, sr_status, storage_reconcile_join) = routines::spawn_with_status(
         StorageReconcileRoutine::new(db.clone(), cache.clone(), settings.clone()),
         RoutineStatus::default(),
         shutdown_rx.clone(),
@@ -383,7 +383,7 @@ fn start_routines(
     // Resolver heartbeat (feature 23 §3.2) — pushes a fresh delegation token + fleet metrics. Only
     // when a resolver is configured; a standalone backend needs none.
     if settings.get(keys::USE_RESOLVER) {
-        let (hb_handle, hb_status, heartbeat_join) = routine::spawn_with_status(
+        let (hb_handle, hb_status, heartbeat_join) = routines::spawn_with_status(
             ResolverHeartbeatRoutine::new(db.clone(), resolver.clone(), settings.clone()),
             RoutineStatus::default(),
             shutdown_rx.clone(),

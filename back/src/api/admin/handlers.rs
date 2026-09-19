@@ -352,7 +352,7 @@ pub struct RecheckExifRequest {
     /// Which stale-verdict worklist to drain. `mime` (default) after an allowlist bump, `file`
     /// after an engine upgrade, `failed` after a tool outage.
     #[serde(default)]
-    pub scope: services::jobs::RecheckScope,
+    pub scope: crate::domain::routine::RecheckScope,
     /// Optional narrowing of the `mime` scope to the MIME types that just became supported.
     #[serde(default)]
     pub mime_types: Vec<String>,
@@ -374,7 +374,7 @@ pub async fn recheck_exif(
     state
         .routines
         .exif_recheck
-        .trigger(crate::infra::routine::exif_recheck::ExifRecheckInput {
+        .trigger(crate::domain::routine::ExifRecheckInput {
             scope: body.scope,
             mime_types,
         });

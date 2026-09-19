@@ -46,7 +46,7 @@ new trigger sets a **rerun** flag (storing the latest input), and the runtime re
 
 ## 2. Design
 
-### 2.1 The trait (`infra/routine.rs`)
+### 2.1 The trait (`routines.rs`)
 
 ```rust
 #[async_trait::async_trait]
@@ -239,7 +239,7 @@ itself is config-free. `PIPELINE_DEBOUNCE_MS=0` (test default) keeps disabling d
 
 ## 6. Testing
 
-- **Framework unit tests** (`infra/routine.rs`): a `CountingRoutine<Key>` over `AtomicUsize` asserting
+- **Framework unit tests** (`routines.rs`): a `CountingRoutine<Key>` over `AtomicUsize` asserting
   (a) recurring tick on interval, (b) `run_on_startup` immediate sweep, (c) shutdown stops the loop
   (port the existing `scheduler.rs` tests), plus the keyed behaviours that only the pipeline covered
   today: (d) two triggers with the **same** key while running ⇒ exactly one rerun, (e) two **distinct**
@@ -253,7 +253,7 @@ itself is config-free. `PIPELINE_DEBOUNCE_MS=0` (test default) keeps disabling d
 
 ## 7. Migration order (de-risked)
 
-1. `infra/routine.rs`: trait + handle + runtime + tests. Register in `infra.rs`.
+1. `routines.rs`: trait + handle + runtime + tests. Register in `lib.rs`.
 2. Port the `()`-keyed routines first (`ExifDrain`, `JobWatchdog`, `JobCleanup`, `PurgeSweep`) —
    proves the default-`sweep` / `()`-key path.
 3. Port `Pipeline` (`Key = Uuid`) — the runtime is literally its current scheduler; keep
