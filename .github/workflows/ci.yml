@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-  label:
-    types:
-      - created
+    tags:
+      - '*.*.*'
 
 env:
   REGISTRY: ghcr.io
@@ -45,6 +44,12 @@ jobs:
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}-${{ matrix.service }}
+          # latest is added automatically on semver tags (flavor latest=auto)
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
 
       - name: Build and push
         id: push
