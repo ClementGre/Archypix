@@ -43,6 +43,10 @@ pub fn validate_exif_edit(
             return Err("gps_lng out of range [-180,180]".into());
         }
     }
+    // (0,0) is the "no fix" sentinel the read path drops (30 §12.11) — it can't mean a location here.
+    if set.gps_lat == Some(0.0) && set.gps_lng == Some(0.0) {
+        return Err("gps (0,0) is the no-fix sentinel, not a location".into());
+    }
     if let Some(o) = set.orientation {
         if !(1..=8).contains(&o) {
             return Err("orientation must be 1..=8".into());
@@ -225,6 +229,19 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        // The no-fix sentinel is rejected, but a single zero axis is a real coordinate.
+        let bad = FullExif {
+            gps_lat: Some(0.0),
+            gps_lng: Some(0.0),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        let ok = FullExif {
+            gps_lat: Some(0.0),
+            gps_lng: Some(9.4),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&ok, vec![], vec![]).is_ok());
         // A field cannot be both set and emptied/cleared.
         let set = FullExif {
             orientation: Some(3),

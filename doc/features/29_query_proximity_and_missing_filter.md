@@ -205,9 +205,9 @@ set, not an ordered page).
 4. **Antimeridian / poles** — the haversine `a` term folds longitude wraparound correctly
    (`sin²(Δlng/2)`) and stays well-behaved at the poles, so the geo ordering is exact there (this is
    the reason for haversine over the cheaper equirectangular metric).
-5. **Null-island GPS `(0,0)`** counts as *present* (it is non-NULL). Some devices write it for
-   a failed fix; treating it as missing is a heuristic left to the fix tools (30 §12), not this
-   filter.
+5. **Null-island GPS `(0,0)`** never reaches these filters: the read path drops the sentinel at
+   extraction (30 §12.11), so such a picture is genuinely NULL and `gps=missing` catches it.
+   No special case here.
 
 ## 10. Documentation updates
 

@@ -11,7 +11,7 @@
 //! a key **absent** means un-claimed (the owner's value flows through). This third state is why the
 //! override is a raw `Value`, not a sparse [`FullExif`] (whose `None` cannot distinguish the two).
 
-use crate::domain::job::{CameraExif, ExifField, FullExif};
+use crate::domain::job::{drop_null_island, CameraExif, ExifField, FullExif};
 use chrono::NaiveDateTime;
 use serde_json::{Map, Value};
 
@@ -90,12 +90,14 @@ pub fn materialize(remote: Option<&Value>, overrides: Option<&Value>) -> Materia
     let captured_at = merged
         .get("captured_at")
         .and_then(|v| serde_json::from_value::<NaiveDateTime>(v.clone()).ok());
-    let gps_lat = merged.get("gps_lat").and_then(Value::as_f64);
-    let gps_lng = merged.get("gps_lng").and_then(Value::as_f64);
-    let gps_alt = merged
+    let mut gps_lat = merged.get("gps_lat").and_then(Value::as_f64);
+    let mut gps_lng = merged.get("gps_lng").and_then(Value::as_f64);
+    let mut gps_alt = merged
         .get("gps_alt")
         .and_then(Value::as_i64)
         .map(|n| n as i32);
+    // A peer still on the old extraction can announce (0,0); don't let it back in.
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
     let orientation = merged
         .get("orientation")
         .and_then(Value::as_i64)
@@ -194,5 +196,15 @@ mod tests {
         let merged = materialize(Some(&json!({})), Some(&existing));
         assert_eq!(merged.gps_lng, Some(6.0));
         let _ = merged;
+    }
+
+    /// A peer still on the old extraction announces the no-fix sentinel; the promoted columns must
+    /// not take it (30 §12.11). `exif_data` keeps the owner's raw claim untouched.
+    #[test]
+    fn announced_no_fix_sentinel_does_not_reach_the_columns() {
+        let remote = json!({ "gps_lat": 0.0, "gps_lng": 0.0, "gps_alt": 0, "camera_brand": "Canon" });
+        let m = materialize(Some(&remote), None);
+        assert_eq!((m.gps_lat, m.gps_lng, m.gps_alt), (None, None, None));
+        assert_eq!(m.exif_data.get("gps_lat"), Some(&json!(0.0)));
     }
 }

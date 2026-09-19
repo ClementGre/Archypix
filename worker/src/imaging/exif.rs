@@ -1,5 +1,5 @@
 use crate::error::{Result, WorkerError};
-use archypix_common::job::{CameraExif, ExifField, ExtractedExif, FullExif};
+use archypix_common::job::{drop_null_island, CameraExif, ExifField, ExtractedExif, FullExif};
 use chrono::NaiveDateTime;
 use exiftool::{ExifTool, ExifToolError};
 use num_rational::Ratio;
@@ -61,13 +61,14 @@ pub fn rexiv2_read(path: &Path) -> Result<ExtractedExif> {
     );
 
     let gps = metadata.get_gps_info();
-    let gps_lat = gps.as_ref().map(|g| g.latitude);
-    let gps_lng = gps.as_ref().map(|g| g.longitude);
+    let mut gps_lat = gps.as_ref().map(|g| g.latitude);
+    let mut gps_lng = gps.as_ref().map(|g| g.longitude);
     // Altitude is only present when the tag exists; lat/lng without altitude is common.
-    let gps_alt = gps
+    let mut gps_alt = gps
         .as_ref()
         .filter(|_| metadata.has_tag("Exif.GPSInfo.GPSAltitude"))
         .map(|g| g.altitude as i32);
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
 
     let orientation = match metadata.get_tag_numeric("Exif.Image.Orientation") {
         n @ 1..=8 => Some(n as i16),
@@ -246,16 +247,17 @@ fn map_exiftool_json(json: &Value) -> ExtractedExif {
             .is_some_and(|r| r.trim().eq_ignore_ascii_case(negative));
         if below { -v.abs() } else { v.abs() }
     };
-    let gps_lat = tag_f64(json, "GPS", "GPSLatitude")
+    let mut gps_lat = tag_f64(json, "GPS", "GPSLatitude")
         .map(|v| sign(v, tag_string(json, "GPS", "GPSLatitudeRef"), "S"));
-    let gps_lng = tag_f64(json, "GPS", "GPSLongitude")
+    let mut gps_lng = tag_f64(json, "GPS", "GPSLongitude")
         .map(|v| sign(v, tag_string(json, "GPS", "GPSLongitudeRef"), "W"));
     // Presence-gated like rexiv2's `has_tag` check, and signed by the ref (1 = below sea level).
-    let gps_alt = tag_f64(json, "GPS", "GPSAltitude").map(|alt| {
+    let mut gps_alt = tag_f64(json, "GPS", "GPSAltitude").map(|alt| {
         let below = tag_f64(json, "GPS", "GPSAltitudeRef").is_some_and(|r| r == 1.0);
         let alt = if below { -alt.abs() } else { alt };
         alt as i32
     });
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
 
     let orientation = match tag_f64(json, "IFD0", "Orientation") {
         Some(n) if (1.0..=8.0).contains(&n) => Some(n as i16),
@@ -933,6 +935,52 @@ mod tests {
         for (name, tags) in corpus {
             assert_engines_agree(&fixture(dir.path(), name, tags));
         }
+    }
+
+    /// A camera with the receiver on but no lock stamps a complete, well-formed (0,0) GPS group.
+    /// Both engines must read it as *no location* (30 §12.11), or it lands on the map and escapes
+    /// the `gps=missing` filter the fix tools run on.
+    #[test]
+    fn both_engines_drop_the_no_fix_sentinel() {
+        if !exiftool_available() {
+            eprintln!("exiftool not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(
+            dir.path(),
+            "no_fix.jpg",
+            &[
+                "-GPSLatitude=0",
+                "-GPSLatitudeRef=N",
+                "-GPSLongitude=0",
+                "-GPSLongitudeRef=E",
+                "-GPSAltitude=0",
+                "-GPSAltitudeRef#=0",
+                "-DateTimeOriginal=2024:06:01 12:00:00",
+            ],
+        );
+        for exif in [
+            rexiv2_read(&path).expect("rexiv2 read").exif,
+            exiftool_read(&path).expect("exiftool read").exif,
+        ] {
+            assert_eq!(exif.gps_lat, None);
+            assert_eq!(exif.gps_lng, None);
+            assert_eq!(exif.gps_alt, None, "the group is dropped whole");
+            assert!(exif.captured_at.is_some(), "only GPS is affected");
+        }
+        assert_engines_agree(&path);
+    }
+
+    /// The sentinel is exactly zero on both axes — a real coordinate that merely has a zero
+    /// component (the equator, the prime meridian) must survive.
+    #[test]
+    fn one_zero_axis_is_a_real_location() {
+        let mut lat = Some(0.0);
+        let mut lng = Some(9.4);
+        let mut alt = Some(12);
+        drop_null_island(&mut lat, &mut lng, &mut alt);
+        assert_eq!((lat, lng, alt), (Some(0.0), Some(9.4), Some(12)));
     }
 
     #[test]

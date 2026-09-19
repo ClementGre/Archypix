@@ -719,6 +719,11 @@ type ExifField = "captured_at" | "gps_lat" | "gps_lng" | "gps_alt" | "orientatio
     "iso_speed" | "exposure_time_num" | "exposure_time_den";
 ```
 
+A `set` of exactly `gps_lat: 0, gps_lng: 0` is rejected `400`: the read path treats it as the
+"receiver had no fix" sentinel and drops it (30 §12.11), so it cannot also mean a location. One
+zero axis (equator, prime meridian) is a normal coordinate. Shared by every EXIF write path
+(owned, recipient override, batch).
+
 **Response `200`:**
 
 ```ts

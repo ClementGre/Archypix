@@ -199,6 +199,15 @@ pub struct CameraExif {
     pub frame_rate: Option<f64>,
 }
 
+/// `(0,0)` is the "receiver had no fix" sentinel some writers stamp, not a location — drop the
+/// whole GPS group rather than believe it (feature 30 §12.11). Exact zero only: EXIF stores `0/1`
+/// rationals, so a genuine equatorial shot is never hit.
+pub fn drop_null_island(lat: &mut Option<f64>, lng: &mut Option<f64>, alt: &mut Option<i32>) {
+    if *lat == Some(0.0) && *lng == Some(0.0) {
+        (*lat, *lng, *alt) = (None, None, None);
+    }
+}
+
 /// The full editable EXIF: the five promoted fields (their own `pictures` columns) plus the
 /// [`CameraExif`] camera/lens fields. One canonical typed shape for every EXIF carrier — an owner's
 /// authoritative snapshot (`remote_exif_data`), a recipient's sticky overrides

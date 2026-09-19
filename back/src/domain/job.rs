@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 pub use archypix_common::job::{
     // Core types used throughout back/.
+    drop_null_island,
     CameraExif,
     CropTransform,
     EditPictureConfig,

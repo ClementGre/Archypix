@@ -267,10 +267,17 @@ edits re-evaluate `gps_within_bbox` / `capture_year` / segments for free (featur
     order is directory/name-based, not chronological, so **grid-local GPS interpolation (§5.2)
     is unavailable** — fall back to the directed bracketing lookup (§5.3) or reference-picking.
     `has_gps`/`captured_at` still flow through `browse` (feature 29) so highlighting works.
-11. **Null-island `(0,0)` GPS.** Counts as *present* server-side (non-NULL), so it is not
-    highlighted as missing. Offer an optional client heuristic to *also* flag `(0,0)` (and
-    exact-integer 0 lat/lng) as suspect in GPS mode; off by default to avoid false positives on
-    genuine equatorial/prime-meridian shots.
+11. **Null-island `(0,0)` GPS.** A complete, well-formed `(0,0)` group is what a receiver with no
+    lock stamps, not a location. It is dropped whole (lat/lng/alt) at the **read path** —
+    `drop_null_island` in `archypix-common`, called by both engines in `worker/src/imaging/exif.rs`
+    and by the received-picture merge (`domain/received_exif.rs`), so a peer still on the old code
+    cannot announce it back in. Because the promoted columns and the `file_exif` snapshot both come
+    from that one `FullExif`, target and snapshot agree and feature 31's reconciler never writes
+    back — **the file is left untouched**. Such a picture is then plainly missing GPS, so the
+    `gps=missing` filter and fix-mode highlighting catch it and no client heuristic is needed. The
+    write paths reject a `(0,0)` set (`domain/validation.rs`) so it cannot be reintroduced. Exact
+    zero on *both* axes only — one zero axis (equator, prime meridian) is a real coordinate.
+    Migration `0019_null_island_gps` cleans existing rows (columns + snapshot together).
 12. **Accept-and-advance across pages.** *Next missing* may need to page the grid forward; after
     a successful apply the fixed picture is optimistically de-highlighted (and drops from the
     fix set) via the existing `['pictures']` invalidation, so the cursor lands on the next
@@ -316,7 +323,14 @@ edits re-evaluate `gps_within_bbox` / `capture_year` / segments for free (featur
   (`back/tests/photos_fix_tools.rs`). *(Frontend has no test runner configured; the parser +
   interpolation math are pure and documented — a vitest matrix is a follow-up.)*
 - [x] Docs (§13).
+- [x] Null-island `(0,0)` dropped at the read path instead of by a client heuristic (§12.11):
+  `drop_null_island` in `archypix-common`, wired into both engines, the received merge and the
+  edit validators; migration `0019_null_island_gps` cleans existing rows.
 
 **Deferred (follow-ups):** date **run-interpolation** (§6, evenly spacing undated targets between
-two dated ends); the optional **null-island `(0,0)`** client heuristic (§12.11); a single batched
-propose/mixed-selection EXIF endpoint (§11 optimisation); frontend vitest suite.
+two dated ends); a single batched propose/mixed-selection EXIF endpoint (§11 optimisation);
+frontend vitest suite.
+
+**Not planned:** a *GPS accuracy* field (`GPSHPositioningError` in metres, mirrored to a column, so
+an interpolated fix records how uncertain it is and §5.4's far-apart warning becomes quantitative)
+— discussed, worth doing, not specced.
