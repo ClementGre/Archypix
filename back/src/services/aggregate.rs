@@ -68,6 +68,7 @@ const NUMERIC_FIELDS: &[(&str, &str)] = &[
     ("height", "p.height::float8"),
     ("orientation", "p.orientation::float8"),
     ("gps_alt", "p.gps_alt::float8"),
+    ("gps_accuracy_m", "p.gps_accuracy_m"),
 ];
 
 /// Date fields aggregated as min/max range + avg instant.

@@ -49,6 +49,8 @@ interface MapViewProps {
      * interpolation anchors (feature 30 §5.1). Default colour is a neutral slate.
      */
     extraMarkers?: { lat: number; lng: number; color?: string; label?: string }[]
+    /** Point mode: the GPS accuracy radius (metres) drawn around the pin (feature 36). */
+    pointRadiusM?: number | null
 }
 
 const HANDLE_HTML = (color: string) =>
@@ -57,7 +59,7 @@ const FAV_HTML =
     `<div style="font-size:18px;line-height:14px;color:#f59e0b;text-shadow:0 0 2px rgba(0,0,0,.6),0 0 2px rgba(0,0,0,.6)">★</div>`
 
 export function MapView(props: MapViewProps) {
-    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true, interactive = true, extraMarkers} = props
+    const {mode, point, onPoint, bbox, onBbox, circle, onCircle, className, expandable = true, interactive = true, extraMarkers, pointRadiusM} = props
     const containerRef = useRef<HTMLDivElement>(null)
     const mapRef = useRef<LMap | null>(null)
     const tileRef = useRef<LLayer | null>(null)
@@ -111,6 +113,27 @@ export function MapView(props: MapViewProps) {
                 zIndexOffset: -1000,
             }).addTo(map),
         )
+    }
+
+    const radiusLayer = useRef<LCircle | null>(null)
+    const radiusRef = useRef(pointRadiusM)
+    radiusRef.current = pointRadiusM
+
+    // (Re)draw the accuracy circle around the pin. Safe to call before/after map init.
+    const renderRadius = useRef<() => void>(() => {
+    })
+    renderRadius.current = () => {
+        const map = mapRef.current
+        const L = window.L
+        if (!map || !L) return
+        radiusLayer.current?.remove()
+        radiusLayer.current = null
+        const p = latest.current.point
+        const r = radiusRef.current
+        if (mode !== 'point' || p?.lat == null || p?.lng == null || !r) return
+        radiusLayer.current = L.circle([p.lat, p.lng], {
+            radius: r, color: '#10b981', weight: 1, fillOpacity: 0.08, interactive: false,
+        }).addTo(map)
     }
 
     // Fit the map so the pin AND all extra markers (GPS-fix anchors / references) are visible.
@@ -343,6 +366,7 @@ export function MapView(props: MapViewProps) {
 
             renderFavorites.current()
             renderExtra.current()
+            renderRadius.current()
             // Defer sizing to the next frame: the map may still be laid out (sidebar transitions), and
             // fitting bounds before the container has a real size can throw. Guard against the map being
             // torn down (fast unmount/remount when the fix panel switches targets) in the interval —
@@ -365,6 +389,7 @@ export function MapView(props: MapViewProps) {
             handles.current = []
             favMarkers.current = []
             extraLayers.current = []
+            radiusLayer.current = null
             tileRef.current = null
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,6 +446,10 @@ export function MapView(props: MapViewProps) {
     useEffect(() => {
         renderFavorites.current()
     }, [favorites])
+
+    useEffect(() => {
+        renderRadius.current()
+    }, [point?.lat, point?.lng, pointRadiusM])
 
     // Re-render the static extra markers when they change, and re-frame all points (no-op until ready).
     useEffect(() => {

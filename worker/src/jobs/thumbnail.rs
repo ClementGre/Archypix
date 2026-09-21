@@ -179,9 +179,11 @@ pub async fn handle(
 
     // Dimensions: prefer the decoded image (authoritative, orientation-consistent with the raw
     // thumbnails); fall back to EXIF only when the image was not decoded (non-thumbnailable format).
+    // A metadata-only pass decodes nothing, so it reports none and the stored decoded ones stay.
     let exif_dims = work
         .exif
         .extracted()
+        .filter(|_| !config.metadata_only)
         .map(|e| (e.width, e.height))
         .unwrap_or((None, None));
     work.width = decoded_dims.0.or(exif_dims.0);

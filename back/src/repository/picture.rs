@@ -224,6 +224,15 @@ pub struct BatchExifCounts {
 
 pub struct PictureRepository;
 
+/// One row of an EXIF recheck worklist, carrying its keyset-cursor position.
+#[derive(Debug, sqlx::FromRow)]
+pub struct RecheckTarget {
+    pub id: Uuid,
+    pub local_user_id: Uuid,
+    pub ingested_at: NaiveDateTime,
+    pub has_thumbnails: bool,
+}
+
 mod aggregate;
 mod batch;
 mod crud;
@@ -329,6 +338,13 @@ fn push_exif_column_assignments(
         q.push("gps_alt = ").push_bind(set.gps_alt).push(", ");
     } else if cleared(ExifField::GpsAlt) {
         q.push("gps_alt = NULL, ");
+    }
+    if set.gps_accuracy_m.is_some() {
+        q.push("gps_accuracy_m = ")
+            .push_bind(set.gps_accuracy_m)
+            .push(", ");
+    } else if cleared(ExifField::GpsAccuracyM) {
+        q.push("gps_accuracy_m = NULL, ");
     }
     if set.orientation.is_some() {
         q.push("orientation = ")

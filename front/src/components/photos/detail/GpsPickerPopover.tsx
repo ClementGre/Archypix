@@ -10,10 +10,12 @@ import {useIsMobile} from '@/hooks/useMediaQuery'
 
 // ── Popover ────────────────────────────────────────────────────────────────────
 
-interface GpsValue {
+export interface GpsValue {
     lat: string
     lng: string
     alt: string
+    /** Accuracy radius in metres (feature 36): '' = unstated, '0' = exact. */
+    accuracy: string
 }
 
 interface GpsPickerPopoverProps {
@@ -26,11 +28,12 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
     const [open, setOpen] = useState(false)
     const isMobile = useIsMobile()
 
-    const lat = value.lat !== '' && !isNaN(parseFloat(value.lat)) ? parseFloat(value.lat) : null
-    const lng = value.lng !== '' && !isNaN(parseFloat(value.lng)) ? parseFloat(value.lng) : null
+    const num = (s: string) => (s !== '' && !isNaN(parseFloat(s)) ? parseFloat(s) : null)
+    const lat = num(value.lat)
+    const lng = num(value.lng)
 
     const clear = () => {
-        onChange({lat: '', lng: '', alt: ''})
+        onChange({lat: '', lng: '', alt: '', accuracy: ''})
         setOpen(false)
     }
 
@@ -67,6 +70,7 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
                             onPoint={(la, ln) =>
                                 onChange({...value, lat: la.toFixed(6), lng: ln.toFixed(6)})
                             }
+                            pointRadiusM={num(value.accuracy)}
                             className="h-64 w-full"
                         />
                     </div>
@@ -95,15 +99,30 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
                         />
                     </div>
                 </div>
-                <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Altitude (m)</Label>
-                    <NumberInput
-                        step="1"
-                        placeholder="35"
-                        value={value.alt}
-                        onChange={(e) => onChange({...value, alt: e.target.value})}
-                        className="h-8"
-                    />
+                <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Altitude (m)</Label>
+                        <NumberInput
+                            step="1"
+                            placeholder="35"
+                            value={value.alt}
+                            onChange={(e) => onChange({...value, alt: e.target.value})}
+                            className="h-8"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground" title="How far off the location may be. 0 = exact, empty = unknown.">
+                            Accuracy (± m)
+                        </Label>
+                        <NumberInput
+                            step="1"
+                            min="0"
+                            placeholder="Unknown"
+                            value={value.accuracy}
+                            onChange={(e) => onChange({...value, accuracy: e.target.value})}
+                            className="h-8"
+                        />
+                    </div>
                 </div>
 
                 {/* Clear lives at the bottom (not the corner) so it isn't mistaken for "close". */}

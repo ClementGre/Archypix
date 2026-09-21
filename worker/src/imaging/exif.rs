@@ -68,7 +68,11 @@ pub fn rexiv2_read(path: &Path) -> Result<ExtractedExif> {
         .as_ref()
         .filter(|_| metadata.has_tag("Exif.GPSInfo.GPSAltitude"))
         .map(|g| g.altitude as i32);
-    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
+    let mut gps_accuracy_m = rational_to_f64(
+        metadata.get_tag_rational("Exif.GPSInfo.GPSHPositioningError"),
+    )
+    .map(round2);
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt, &mut gps_accuracy_m);
 
     let orientation = match metadata.get_tag_numeric("Exif.Image.Orientation") {
         n @ 1..=8 => Some(n as i16),
@@ -135,6 +139,7 @@ pub fn rexiv2_read(path: &Path) -> Result<ExtractedExif> {
             gps_lat,
             gps_lng,
             gps_alt,
+            gps_accuracy_m,
             orientation,
             camera,
         },
@@ -188,6 +193,7 @@ const EXIFTOOL_READ_ARGS: &[&str] = &[
     "-GPSLongitudeRef#",
     "-GPSAltitude#",
     "-GPSAltitudeRef#",
+    "-GPSHPositioningError#",
     "-DateTimeOriginal",
     "-CreateDate",
     "-ModifyDate",
@@ -257,7 +263,8 @@ fn map_exiftool_json(json: &Value) -> ExtractedExif {
         let alt = if below { -alt.abs() } else { alt };
         alt as i32
     });
-    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
+    let mut gps_accuracy_m = tag_f64(json, "GPS", "GPSHPositioningError").map(round2);
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt, &mut gps_accuracy_m);
 
     let orientation = match tag_f64(json, "IFD0", "Orientation") {
         Some(n) if (1.0..=8.0).contains(&n) => Some(n as i16),
@@ -288,6 +295,7 @@ fn map_exiftool_json(json: &Value) -> ExtractedExif {
             gps_lat,
             gps_lng,
             gps_alt,
+            gps_accuracy_m,
             orientation,
             camera: CameraExif {
                 exposure_time_num,
@@ -367,7 +375,7 @@ pub fn write_exif_overrides(
 /// GPS (lat/lng/alt) and exposure time (num/den) are **grouped** in both writers — clearing any
 /// member deletes the whole group — so they are only cleared when every member is absent from the
 /// target. Without this, a target with coordinates but no altitude would write the coordinates and
-/// then delete them again.
+/// then delete them again. The GPS accuracy is its own tag, cleared on its own.
 pub fn target_clear_fields(target: &FullExif) -> Vec<ExifField> {
     let mut clear = Vec::new();
     if target.captured_at.is_none() {
@@ -375,6 +383,9 @@ pub fn target_clear_fields(target: &FullExif) -> Vec<ExifField> {
     }
     if target.gps_lat.is_none() && target.gps_lng.is_none() && target.gps_alt.is_none() {
         clear.push(ExifField::GpsLat);
+    }
+    if target.gps_accuracy_m.is_none() {
+        clear.push(ExifField::GpsAccuracyM);
     }
     if target.orientation.is_none() {
         clear.push(ExifField::Orientation);
@@ -477,6 +488,9 @@ fn write_exif_overrides_with_exiftool(
         args.push("-GPSAltitude=".to_string());
         args.push("-GPSAltitudeRef=".to_string());
     }
+    if let Some(acc) = set.gps_accuracy_m {
+        args.push(format!("-GPSHPositioningError={acc}"));
+    }
     if let Some(ref brand) = set.camera.camera_brand {
         args.push(format!("-Make={brand}"));
     }
@@ -510,6 +524,9 @@ fn write_exif_overrides_with_exiftool(
             }
             ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt => {
                 clear_gps = true;
+            }
+            ExifField::GpsAccuracyM => {
+                args.push("-GPSHPositioningError=".to_string());
             }
             ExifField::Orientation => {
                 args.push("-Orientation=".to_string());
@@ -565,6 +582,51 @@ fn write_exif_overrides_with_rexiv2(
 ) -> Result<()> {
     let metadata = Metadata::new_from_path(path).map_err(|e| classify_open_failure(path, &e))?;
 
+    // ── Clear ──────────────────────────────────────────────────────────────────
+    // Before the sets: `delete_gps_info` wipes the whole GPS IFD, which would take a GPS accuracy
+    // written in this same pass with it.
+    for field in clear {
+        match field {
+            ExifField::CapturedAt => {
+                for tag in &[
+                    "Exif.Photo.DateTimeOriginal",
+                    "Exif.Photo.DateTimeDigitized",
+                    "Exif.Image.DateTime",
+                ] {
+                    let _ = metadata.clear_tag(tag);
+                }
+            }
+            ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt => {
+                metadata.delete_gps_info();
+            }
+            ExifField::GpsAccuracyM => {
+                let _ = metadata.clear_tag("Exif.GPSInfo.GPSHPositioningError");
+            }
+            ExifField::Orientation => {
+                let _ = metadata.clear_tag("Exif.Image.Orientation");
+            }
+            ExifField::CameraBrand => {
+                let _ = metadata.clear_tag("Exif.Image.Make");
+            }
+            ExifField::CameraModel => {
+                let _ = metadata.clear_tag("Exif.Image.Model");
+            }
+            ExifField::FocalLengthMm => {
+                let _ = metadata.clear_tag("Exif.Photo.FocalLengthIn35mmFilm");
+            }
+            ExifField::FNumber => {
+                let _ = metadata.clear_tag("Exif.Photo.FNumber");
+            }
+            ExifField::IsoSpeed => {
+                let _ = metadata.clear_tag("Exif.Photo.ISOSpeedRatings");
+                let _ = metadata.clear_tag("Exif.Photo.PhotographicSensitivity");
+            }
+            ExifField::ExposureTimeNum | ExifField::ExposureTimeDen => {
+                let _ = metadata.clear_tag("Exif.Photo.ExposureTime");
+            }
+        }
+    }
+
     // ── Set ────────────────────────────────────────────────────────────────────
     if let Some(dt) = set.captured_at {
         let s = dt.format("%Y:%m:%d %H:%M:%S").to_string();
@@ -594,6 +656,13 @@ fn write_exif_overrides_with_rexiv2(
             let _ = metadata.clear_tag("Exif.GPSInfo.GPSAltitudeRef");
         }
     }
+    // After `set_gps_info`, which rewrites the GPS IFD. Centimetres fit an i32 up to the 20 000 km cap.
+    if let Some(acc) = set.gps_accuracy_m {
+        let _ = metadata.set_tag_rational(
+            "Exif.GPSInfo.GPSHPositioningError",
+            &Ratio::new((acc * 100.0).round() as i32, 100),
+        );
+    }
     if let Some(ref brand) = set.camera.camera_brand {
         let _ = metadata.set_tag_string("Exif.Image.Make", brand);
     }
@@ -619,46 +688,6 @@ fn write_exif_overrides_with_rexiv2(
         let num = set.camera.exposure_time_num.unwrap_or(0);
         let den = set.camera.exposure_time_den.unwrap_or(1).max(1);
         let _ = metadata.set_tag_rational("Exif.Photo.ExposureTime", &Ratio::new(num, den));
-    }
-
-    // ── Clear ──────────────────────────────────────────────────────────────────
-    for field in clear {
-        match field {
-            ExifField::CapturedAt => {
-                for tag in &[
-                    "Exif.Photo.DateTimeOriginal",
-                    "Exif.Photo.DateTimeDigitized",
-                    "Exif.Image.DateTime",
-                ] {
-                    let _ = metadata.clear_tag(tag);
-                }
-            }
-            ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt => {
-                metadata.delete_gps_info();
-            }
-            ExifField::Orientation => {
-                let _ = metadata.clear_tag("Exif.Image.Orientation");
-            }
-            ExifField::CameraBrand => {
-                let _ = metadata.clear_tag("Exif.Image.Make");
-            }
-            ExifField::CameraModel => {
-                let _ = metadata.clear_tag("Exif.Image.Model");
-            }
-            ExifField::FocalLengthMm => {
-                let _ = metadata.clear_tag("Exif.Photo.FocalLengthIn35mmFilm");
-            }
-            ExifField::FNumber => {
-                let _ = metadata.clear_tag("Exif.Photo.FNumber");
-            }
-            ExifField::IsoSpeed => {
-                let _ = metadata.clear_tag("Exif.Photo.ISOSpeedRatings");
-                let _ = metadata.clear_tag("Exif.Photo.PhotographicSensitivity");
-            }
-            ExifField::ExposureTimeNum | ExifField::ExposureTimeDen => {
-                let _ = metadata.clear_tag("Exif.Photo.ExposureTime");
-            }
-        }
     }
 
     metadata
@@ -770,6 +799,7 @@ mod tests {
             gps_lat: Some(48.85),
             gps_lng: Some(2.35),
             gps_alt: Some(35),
+            gps_accuracy_m: Some(12.5),
             orientation: Some(1),
             camera: CameraExif {
                 camera_brand: Some("Canon".into()),
@@ -787,8 +817,8 @@ mod tests {
 
     #[test]
     fn an_empty_target_clears_every_group_once() {
-        // date, GPS, orientation, brand, model, focal, f-number, ISO, exposure.
-        assert_eq!(target_clear_fields(&FullExif::default()).len(), 9);
+        // date, GPS, GPS accuracy, orientation, brand, model, focal, f-number, ISO, exposure.
+        assert_eq!(target_clear_fields(&FullExif::default()).len(), 10);
     }
 
     // ── Engine dispatch, fallback and classification (feature 33 §3) ──────────
@@ -894,6 +924,7 @@ mod tests {
                     "-GPSLongitudeRef=E",
                     "-GPSAltitude=35",
                     "-GPSAltitudeRef#=0",
+                    "-GPSHPositioningError=4.735",
                     "-Make=Canon",
                     "-Model=EOS R5",
                     "-ISO=400",
@@ -957,6 +988,7 @@ mod tests {
                 "-GPSLongitudeRef=E",
                 "-GPSAltitude=0",
                 "-GPSAltitudeRef#=0",
+                "-GPSHPositioningError=0",
                 "-DateTimeOriginal=2024:06:01 12:00:00",
             ],
         );
@@ -967,6 +999,7 @@ mod tests {
             assert_eq!(exif.gps_lat, None);
             assert_eq!(exif.gps_lng, None);
             assert_eq!(exif.gps_alt, None, "the group is dropped whole");
+            assert_eq!(exif.gps_accuracy_m, None, "the group is dropped whole");
             assert!(exif.captured_at.is_some(), "only GPS is affected");
         }
         assert_engines_agree(&path);
@@ -979,8 +1012,9 @@ mod tests {
         let mut lat = Some(0.0);
         let mut lng = Some(9.4);
         let mut alt = Some(12);
-        drop_null_island(&mut lat, &mut lng, &mut alt);
-        assert_eq!((lat, lng, alt), (Some(0.0), Some(9.4), Some(12)));
+        let mut acc = Some(5.0);
+        drop_null_island(&mut lat, &mut lng, &mut alt, &mut acc);
+        assert_eq!((lat, lng, alt, acc), (Some(0.0), Some(9.4), Some(12), Some(5.0)));
     }
 
     #[test]
@@ -1047,6 +1081,56 @@ mod tests {
 
         let read = exiftool_read(&path).expect("exiftool read");
         assert_eq!(read.exif.orientation, Some(6));
+    }
+
+    /// The accuracy round-trips through both writers and is read identically by both engines; a
+    /// target that drops it removes a stale one without touching the location, and a location-less
+    /// target keeps it (the rexiv2 clear-then-set order, feature 36 §3).
+    #[test]
+    fn gps_accuracy_round_trips_through_both_writers() {
+        if !exiftool_available() {
+            eprintln!("exiftool not found; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let located = FullExif {
+            gps_lat: Some(48.858222),
+            gps_lng: Some(2.2945),
+            gps_accuracy_m: Some(1234.56),
+            ..Default::default()
+        };
+        let unstated = FullExif {
+            gps_accuracy_m: None,
+            ..located.clone()
+        };
+        let bare = FullExif {
+            gps_accuracy_m: Some(40.0),
+            ..Default::default()
+        };
+        type Writer = fn(&Path, &FullExif, &[ExifField]) -> Result<()>;
+        let writers: [(&str, Writer); 2] = [
+            ("rexiv2", write_exif_overrides_with_rexiv2),
+            ("exiftool", write_exif_overrides_with_exiftool),
+        ];
+        for (name, write) in writers {
+            let path = dir.path().join(format!("{name}.jpg"));
+            std::fs::write(&path, TINY_JPEG).unwrap();
+
+            write(&path, &located, &target_clear_fields(&located)).unwrap();
+            assert_eq!(rexiv2_read(&path).unwrap().exif.gps_accuracy_m, Some(1234.56), "{name}");
+            assert_engines_agree(&path);
+
+            write(&path, &unstated, &target_clear_fields(&unstated)).unwrap();
+            let read = rexiv2_read(&path).unwrap().exif;
+            assert_eq!(read.gps_accuracy_m, None, "{name}: stale accuracy dropped");
+            assert!(read.gps_lat.is_some(), "{name}: location kept");
+            assert_engines_agree(&path);
+
+            write(&path, &bare, &target_clear_fields(&bare)).unwrap();
+            let read = exiftool_read(&path).unwrap().exif;
+            assert_eq!(read.gps_accuracy_m, Some(40.0), "{name}: survives the group clear");
+            assert_eq!(read.gps_lat, None, "{name}");
+        }
     }
 
     #[test]

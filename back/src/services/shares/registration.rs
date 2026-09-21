@@ -88,17 +88,7 @@ pub async fn register_received_pictures(
             Some(&remote_val),
             received.local_exif_overrides.as_ref().map(|j| &j.0),
         );
-        PictureRepository::apply_received_materialization(
-            &mut *tx,
-            received.id,
-            &merged.camera(),
-            merged.captured_at,
-            merged.gps_lat,
-            merged.gps_lng,
-            merged.gps_alt,
-            merged.orientation,
-        )
-        .await?;
+        PictureRepository::apply_received_materialization(&mut *tx, received.id, &merged).await?;
 
         TagRepository::assign_incoming_share_tag(
             &mut *tx,

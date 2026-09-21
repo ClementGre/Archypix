@@ -11,11 +11,12 @@ import {useGridItems} from '@/stores/gridItems'
 import {Button} from '@/components/ui/button'
 import {MapView} from '@/components/common/MapView'
 import {formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
-import {CancelReferencesButton, FixPane} from './fixShared'
+import {CancelReferencesButton, FixPane, GpsAccuracyControl} from './fixShared'
 import {DateTimelinePreview} from './DateTimelinePreview'
 import {FixBulkDialog} from './FixBulkDialog'
 import {referenceBulkRows} from '@/lib/fixBulk'
-import type {FixValue} from '@/hooks/useFixApply'
+import {type AccuracyChoice, resolveAccuracy, sourceAccuracy} from '@/lib/gpsInterpolation'
+import {type FixValue, gpsFixValue} from '@/hooks/useFixApply'
 import type {PictureListItem} from '@/lib/types'
 
 export function BatchReferencePanel() {
@@ -23,12 +24,16 @@ export function BatchReferencePanel() {
     const {exit} = useReferencePhase()
     const grid = useGridItems((s) => s.items)
     const [showDialog, setShowDialog] = useState(false)
+    const [accChoice, setAccChoice] = useState<AccuracyChoice>('suggested')
     const deriv = useReferenceDerivation(field ?? 'gps', null)
+    const suggestedAcc = deriv.gpsValue?.accuracyM ?? null
+    const sourceAcc = sourceAccuracy(deriv.refAnchors)
+    const accuracy = resolveAccuracy(accChoice, suggestedAcc, sourceAcc)
 
     // A single target lets a bracket interpolate; batch uses the centroid / mean (null target time).
     const value: FixValue | null =
         field === 'gps'
-            ? deriv.gpsValue ? {gps_lat: deriv.gpsValue.lat, gps_lng: deriv.gpsValue.lng, gps_alt: deriv.gpsValue.alt} : null
+            ? deriv.gpsValue ? {...gpsFixValue(deriv.gpsValue), gps_accuracy_m: accuracy} : null
             : deriv.dateValue ? {captured_at: deriv.dateValue} : null
 
     const targetItems = grid.filter((i) => targetIds.includes(i.id)) as PictureListItem[]
@@ -53,9 +58,19 @@ export function BatchReferencePanel() {
                         interactive={false}
                         point={{lat: deriv.gpsValue.lat, lng: deriv.gpsValue.lng}}
                         extraMarkers={deriv.refAnchors.map((a) => ({lat: a.lat, lng: a.lng, color: '#0ea5e9'}))}
+                        pointRadiusM={accuracy}
                         className="h-40 w-full"
                     />
                 </div>
+            )}
+            {field === 'gps' && deriv.gpsValue && (
+                <GpsAccuracyControl
+                    choice={accChoice}
+                    onChoice={setAccChoice}
+                    suggested={suggestedAcc}
+                    source={sourceAcc}
+                    sourceCount={deriv.refAnchors.length}
+                />
             )}
             {field === 'date' && deriv.dateMs != null && deriv.refTimes.length > 0 && (
                 <div className="rounded-md border border-border">

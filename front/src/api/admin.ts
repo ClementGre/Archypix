@@ -142,6 +142,18 @@ export async function regenerateThumbnails(client: AxiosInstance, body: {
     return data
 }
 
+/** Which worklist the EXIF recheck sweep drains (feature 33 §8, `synced` feature 36 §5). */
+export type RecheckScope = 'synced' | 'mime' | 'file' | 'failed'
+
+/**
+ * Start the background EXIF recheck sweep. Rows holding unsynced edits are never touched, and an
+ * already-thumbnailed row is re-read without regenerating its thumbnails.
+ */
+export async function recheckExif(client: AxiosInstance, scope: RecheckScope): Promise<{ started: boolean }> {
+    const {data} = await client.post('/api/admin/pictures/recheck-exif', {scope})
+    return data
+}
+
 // ── Rate limiting observability (feature 28 §9.3) ────────────────────────────────
 
 export async function getRateLimits(client: AxiosInstance = apiClient): Promise<RateLimitsResponse> {

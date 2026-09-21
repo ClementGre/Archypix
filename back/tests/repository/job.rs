@@ -13,6 +13,7 @@ async fn seed_job(db: &PgPool, owner_id: Uuid) -> Job {
     let config = JobConfig::GenThumbnail(GenThumbnailConfig {
         picture_id: Uuid::new_v4(),
         is_initial: true,
+        metadata_only: false,
     });
     JobRepository::create(db, owner_id, None, &config)
         .await
@@ -216,6 +217,7 @@ fn thumb_config() -> JobConfig {
     JobConfig::GenThumbnail(GenThumbnailConfig {
         picture_id: Uuid::new_v4(),
         is_initial: true,
+        metadata_only: false,
     })
 }
 

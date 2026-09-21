@@ -1,8 +1,8 @@
 import {useState} from 'react'
 import {useMutation} from '@tanstack/react-query'
-import {AlertTriangle, Loader2, RefreshCw, RotateCcw, XCircle} from 'lucide-react'
+import {AlertTriangle, FileSearch, Loader2, RefreshCw, RotateCcw, XCircle} from 'lucide-react'
 import {toast} from 'sonner'
-import {regenerateThumbnails} from '@/api/admin'
+import {type RecheckScope, recheckExif, regenerateThumbnails} from '@/api/admin'
 import {useAdminClient} from '@/api/adminClient'
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table'
 import {Button} from '@/components/ui/button'
@@ -267,10 +267,64 @@ function RegenPanel() {
     )
 }
 
+const RECHECK_SCOPES: Record<RecheckScope, string> = {
+    synced: 'In-sync pictures — after the extractor learns a new field',
+    mime: 'Unsupported types — after a format allowlist bump',
+    file: 'Unreadable files — after an engine upgrade',
+    failed: 'Failed extractions — after a tool outage',
+}
+
+/** Background EXIF re-read sweep (feature 33 §8, `synced` feature 36 §5). */
+function RecheckExifPanel() {
+    const [scope, setScope] = useState<RecheckScope>('synced')
+    const {client} = useAdminClient()
+    const recheck = useMutation({
+        mutationFn: () => recheckExif(client, scope),
+        onSuccess: () => toast.success('EXIF recheck started', {description: 'It runs in the background, in batches.'}),
+        onError: (e: unknown) => toast.error('Could not start the recheck', {description: apiErrorMessage(e)}),
+    })
+    return (
+        <div className="space-y-3 rounded-md border border-border p-4">
+            <div>
+                <h3 className="text-sm font-medium">Re-read EXIF from files</h3>
+                <p className="text-xs text-muted-foreground">
+                    Re-extracts metadata from the stored originals. Pictures with an edit not yet written to the file
+                    are skipped, so no edit is lost, and pictures that already have thumbnails keep them.
+                </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+                <Select value={scope} onValueChange={(v) => setScope(v as RecheckScope)}>
+                    <SelectTrigger className="w-96 max-w-full">
+                        <SelectValue/>
+                    </SelectTrigger>
+                    <SelectContent>
+                        {Object.entries(RECHECK_SCOPES).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>{label}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                <ConfirmDialog
+                    trigger={
+                        <Button variant="outline" size="sm" className="gap-1.5" disabled={recheck.isPending}>
+                            {recheck.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <FileSearch className="h-3.5 w-3.5"/>}
+                            Re-read EXIF
+                        </Button>
+                    }
+                    title="Re-read EXIF from files?"
+                    description="This enqueues a metadata extraction for every matching picture. It can cover the whole library and runs in the background."
+                    confirmLabel="Start"
+                    onConfirm={() => recheck.mutate()}
+                />
+            </div>
+        </div>
+    )
+}
+
 export function JobsTab() {
     return (
         <div className="space-y-4">
             <RegenPanel/>
+            <RecheckExifPanel/>
             <Tabs defaultValue="all">
                 <TabsList>
                     <TabsTrigger value="all">All jobs</TabsTrigger>

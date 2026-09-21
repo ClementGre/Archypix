@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height,\n                                     exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, orientation,\n                                     copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id,\n                                     creator, exif_sync_status, file_exif)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)\n               RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                         filename, mime_type, file_size, width, height,\n                         exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                         deleted_at, deleted_reason as \"deleted_reason: _\",\n                         owner_deleted_at, owner_purge_at,\n                         remote_exif_data as \"remote_exif_data: _\",\n                         local_exif_overrides as \"local_exif_overrides: _\",\n                         captured_at, ingested_at, updated_at, remote_updated_at,\n                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,\n                         file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                         content_hash, copy_source_owner_username,\n                         copy_source_owner_instance, copy_source_picture_id,\n                         creator, creator_override, original_file_created_at, file_modified_at",
+  "query": "SELECT id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,\n                      filename, mime_type, file_size, width, height,\n                      exif_data as \"exif_data: _\", metadata as \"metadata: _\",\n                      deleted_at, deleted_reason as \"deleted_reason: _\",\n                      owner_deleted_at, owner_purge_at,\n                      remote_exif_data as \"remote_exif_data: _\",\n                      local_exif_overrides as \"local_exif_overrides: _\",\n                      captured_at, ingested_at, updated_at, remote_updated_at,\n                      blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,\n                      file_hash, exif_sync_status as \"exif_sync_status: _\", file_exif as \"file_exif: _\",\n                      content_hash, copy_source_owner_username,\n                      copy_source_owner_instance, copy_source_picture_id,\n                      creator, creator_override, original_file_created_at, file_modified_at\n               FROM pictures WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -302,6 +302,17 @@
       },
       {
         "ordinal": 26,
+        "name": "gps_accuracy_m",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "pictures",
+            "name": "gps_accuracy_m"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "orientation",
         "type_info": "Int2",
         "origin": {
@@ -312,7 +323,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "thumbnails_generated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -323,7 +334,7 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "file_hash",
         "type_info": "Text",
         "origin": {
@@ -334,7 +345,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "exif_sync_status: _",
         "type_info": {
           "Custom": {
@@ -361,7 +372,7 @@
         }
       },
       {
-        "ordinal": 30,
+        "ordinal": 31,
         "name": "file_exif: _",
         "type_info": "Jsonb",
         "origin": {
@@ -372,7 +383,7 @@
         }
       },
       {
-        "ordinal": 31,
+        "ordinal": 32,
         "name": "content_hash",
         "type_info": "Text",
         "origin": {
@@ -383,7 +394,7 @@
         }
       },
       {
-        "ordinal": 32,
+        "ordinal": 33,
         "name": "copy_source_owner_username",
         "type_info": "Varchar",
         "origin": {
@@ -394,7 +405,7 @@
         }
       },
       {
-        "ordinal": 33,
+        "ordinal": 34,
         "name": "copy_source_owner_instance",
         "type_info": "Varchar",
         "origin": {
@@ -405,7 +416,7 @@
         }
       },
       {
-        "ordinal": 34,
+        "ordinal": 35,
         "name": "copy_source_picture_id",
         "type_info": "Varchar",
         "origin": {
@@ -416,7 +427,7 @@
         }
       },
       {
-        "ordinal": 35,
+        "ordinal": 36,
         "name": "creator",
         "type_info": "Text",
         "origin": {
@@ -427,7 +438,7 @@
         }
       },
       {
-        "ordinal": 36,
+        "ordinal": 37,
         "name": "creator_override",
         "type_info": "Text",
         "origin": {
@@ -438,7 +449,7 @@
         }
       },
       {
-        "ordinal": 37,
+        "ordinal": 38,
         "name": "original_file_created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -449,7 +460,7 @@
         }
       },
       {
-        "ordinal": 38,
+        "ordinal": 39,
         "name": "file_modified_at",
         "type_info": "Timestamp",
         "origin": {
@@ -462,41 +473,7 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Uuid",
-        "Varchar",
-        "Varchar",
-        "Int8",
-        "Int4",
-        "Int4",
-        "Jsonb",
-        "Timestamp",
-        "Float8",
-        "Float8",
-        "Int4",
-        "Int2",
-        "Varchar",
-        "Varchar",
-        "Varchar",
-        "Text",
-        {
-          "Custom": {
-            "name": "picture_exif_sync_status",
-            "kind": {
-              "Enum": [
-                "synced",
-                "pending",
-                "unsupported_mime",
-                "pending_job_creation",
-                "write_failed",
-                "unsupported_file",
-                "extracting",
-                "extract_failed"
-              ]
-            }
-          }
-        },
-        "Jsonb"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -529,6 +506,7 @@
       true,
       true,
       true,
+      true,
       false,
       true,
       true,
@@ -541,5 +519,5 @@
       false
     ]
   },
-  "hash": "3529beeac6cd9d5b0dd4f87df549a1ca744568fc471caf1d9ac5073c6e28fd9c"
+  "hash": "307671e77e2371b06595f73a9337b7aa439b9729804b36c980f0a35e927b7793"
 }

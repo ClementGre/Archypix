@@ -20,6 +20,7 @@ function toDetail(id: string, d: PublicPictureDetail): PictureDetail {
         gps_lat: d.gps_lat ?? null,
         gps_lng: d.gps_lng ?? null,
         gps_alt: d.gps_alt ?? null,
+        gps_accuracy_m: d.gps_accuracy_m ?? null,
         orientation: d.orientation,
         exif_data: (d.exif_data as Record<string, unknown>) ?? {},
         exif_sync_status: 'synced',

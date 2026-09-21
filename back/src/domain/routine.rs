@@ -47,6 +47,9 @@ pub enum RecheckScope {
     File,
     /// Rows whose extraction never returned, after a tool outage.
     Failed,
+    /// Rows in sync with their file, re-read after the extractor learns a new field (feature 36 §5).
+    /// Safe by construction: DB and file agree, so nothing the user edited can be lost.
+    Synced,
 }
 
 impl RecheckScope {
@@ -55,6 +58,7 @@ impl RecheckScope {
             Self::Mime => ExifSyncStatus::UnsupportedMime,
             Self::File => ExifSyncStatus::UnsupportedFile,
             Self::Failed => ExifSyncStatus::ExtractFailed,
+            Self::Synced => ExifSyncStatus::Synced,
         }
     }
 }

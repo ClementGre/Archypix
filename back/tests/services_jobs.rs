@@ -1,7 +1,8 @@
 mod common;
 
-use archypix_back::domain::job::{ExifField, FullExif};
+use archypix_back::domain::job::{ExifField, FullExif, GenThumbnailConfig, JobConfig};
 use archypix_back::domain::picture::ExifSyncStatus;
+use archypix_back::domain::routine::RecheckScope;
 use archypix_back::routines::RoutineHandle;
 use archypix_back::repository::picture::PictureRepository;
 use archypix_back::routines::Routine;
@@ -602,8 +603,8 @@ async fn recheck_sweep_enqueues_and_stamps_extracting(db: PgPool) {
         .await
         .unwrap();
 
-    let enqueued =
-        jobs::recheck_exif_batch(&db, archypix_back::domain::routine::RecheckScope::Mime, None, Uuid::new_v4(), 10)
+    let (enqueued, _) =
+        jobs::recheck_exif_batch(&db, RecheckScope::Mime, None, Uuid::new_v4(), None, 10)
             .await
             .unwrap();
     assert_eq!(enqueued, 1);
@@ -622,8 +623,8 @@ async fn recheck_sweep_enqueues_and_stamps_extracting(db: PgPool) {
     );
 }
 
-/// A tick that re-sees a row within the same sweep now reuses the live job instead of failing on the
-/// key — the sweep no longer has to swallow the error to keep draining.
+/// A tick that re-sees a row within the same sweep (the cursor is the first guard; here it is
+/// bypassed) reuses the live job instead of failing on the key.
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
     let alice_id = common::seed_user(&db, "alice", "pass").await;
@@ -642,7 +643,7 @@ async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
         .execute(&db)
         .await
         .unwrap();
-        jobs::recheck_exif_batch(&db, archypix_back::domain::routine::RecheckScope::Mime, None, sweep, 10)
+        jobs::recheck_exif_batch(&db, RecheckScope::Mime, None, sweep, None, 10)
             .await
             .unwrap();
     }
@@ -659,6 +660,98 @@ async fn recheck_sweep_repeating_within_one_sweep_is_a_no_op(db: PgPool) {
         Some(1),
         "the sweep-scoped key must collapse the repeat"
     );
+}
+
+/// Mark `picture_id` as having observed its own file — what a real extraction leaves behind.
+async fn set_file_snapshot(db: &PgPool, picture_id: Uuid) {
+    sqlx::query!(
+        "UPDATE pictures SET file_exif = '{}'::jsonb WHERE id = $1",
+        picture_id
+    )
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+/// The job config the sweep enqueued for `picture_id`.
+async fn gen_thumbnail_config(db: &PgPool, picture_id: Uuid) -> GenThumbnailConfig {
+    let config = sqlx::query_scalar!(
+        "SELECT config FROM jobs WHERE picture_id = $1 AND job_type = 'gen_thumbnail'",
+        picture_id,
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    match serde_json::from_value(config).unwrap() {
+        JobConfig::GenThumbnail(cfg) => cfg,
+        other => panic!("expected gen_thumbnail, got {other:?}"),
+    }
+}
+
+/// The `synced` scope (feature 36 §5): a re-read row lands back in `synced`, so only the keyset
+/// cursor ends the sweep; an already-thumbnailed row is re-read without regenerating thumbnails.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn synced_sweep_reads_metadata_only_and_terminates(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+    set_file_snapshot(&db, pic_id).await;
+    let sweep = Uuid::new_v4();
+
+    let (n, cursor) = jobs::recheck_exif_batch(&db, RecheckScope::Synced, None, sweep, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let cfg = gen_thumbnail_config(&db, pic_id).await;
+    assert!(cfg.is_initial && cfg.metadata_only);
+
+    // The job lands: the row is `synced` again and has no job in flight.
+    sqlx::query!(
+        "UPDATE jobs SET status = 'completed', completed_at = (now() AT TIME ZONE 'utc') WHERE picture_id = $1",
+        pic_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::Synced)
+        .await
+        .unwrap();
+
+    let (again, _) = jobs::recheck_exif_batch(&db, RecheckScope::Synced, None, sweep, cursor, 10)
+        .await
+        .unwrap();
+    assert_eq!(again, 0, "the cursor must not revisit a row the sweep already re-read");
+}
+
+/// A `synced` row that never observed its own file (a physical copy seeded from a received
+/// picture's effective EXIF) would lose the recipient's overrides to a re-read — it is skipped.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn synced_sweep_skips_rows_without_a_file_snapshot(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    make_editable(&db, pic_id).await;
+
+    let (n, _) = jobs::recheck_exif_batch(&db, RecheckScope::Synced, None, Uuid::new_v4(), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    let picture = PictureRepository::find_by_id(&db, pic_id).await.unwrap().unwrap();
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Synced, "left untouched");
+}
+
+/// A row that never got thumbnails (its extraction job failed before them) still gets them.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn recheck_of_an_unthumbnailed_row_is_a_full_job(db: PgPool) {
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    PictureRepository::set_exif_sync_status(&db, pic_id, ExifSyncStatus::ExtractFailed)
+        .await
+        .unwrap();
+
+    jobs::recheck_exif_batch(&db, RecheckScope::Failed, None, Uuid::new_v4(), None, 10)
+        .await
+        .unwrap();
+    assert!(!gen_thumbnail_config(&db, pic_id).await.metadata_only);
 }
 
 // ── Job cleanup routine (was src/routines/job_watchdog.rs::tests) ─────────────

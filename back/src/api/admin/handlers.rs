@@ -349,8 +349,8 @@ pub async fn regenerate_thumbnails(
 /// Request body for `POST /api/admin/pictures/recheck-exif`.
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct RecheckExifRequest {
-    /// Which stale-verdict worklist to drain. `mime` (default) after an allowlist bump, `file`
-    /// after an engine upgrade, `failed` after a tool outage.
+    /// Which worklist to drain. `mime` (default) after an allowlist bump, `file` after an engine
+    /// upgrade, `failed` after a tool outage, `synced` after the extractor learns a new field.
     #[serde(default)]
     pub scope: crate::domain::routine::RecheckScope,
     /// Optional narrowing of the `mime` scope to the MIME types that just became supported.

@@ -39,6 +39,7 @@ function toAnchor(p: PictureDetail): FixAnchor | null {
         lat: p.gps_lat,
         lng: p.gps_lng,
         alt: p.gps_alt,
+        accuracy: p.gps_accuracy_m,
         time: p.captured_at,
     }
 }

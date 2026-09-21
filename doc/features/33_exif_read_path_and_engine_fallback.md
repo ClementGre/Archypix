@@ -365,6 +365,10 @@ is an incident, not a migration. The routine gives backpressure and resumability
 
 The sweep skips `pending`/`pending_job_creation`/`write_failed` for the reason above.
 
+Feature 36 §5 later added `synced` (re-read after the extractor learns a field), a keyset cursor over
+`(ingested_at, id)` so no row is re-read twice in one sweep, and per-row `metadata_only` so an
+already-thumbnailed row keeps its thumbnails.
+
 `POST /api/admin/pictures/regenerate-thumbnails` with `reextract_exif = true` is a re-extraction
 trigger too and must set `extracting` on the rows it touches, or an edit can race the in-flight
 extraction — the race 04 §11.2 exists to prevent. With `reextract_exif = false` it stays as it is

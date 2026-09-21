@@ -1,12 +1,62 @@
 // Small shared pieces for the fix panels (feature 30): a consistent "Pick references" button (same
-// wording across GPS / Date / batch), a "Cancel references" control, and the non-collapsible pane
-// wrapper whose fixed frame justifies the full-bleed map / calendar inside.
+// wording across GPS / Date / batch), a "Cancel references" control, the GPS accuracy control
+// (feature 36), and the non-collapsible pane wrapper whose fixed frame justifies the full-bleed
+// map / calendar inside.
 
 import type {ReactNode} from 'react'
 import {CalendarClock, MapPin, Users, X} from 'lucide-react'
 import {Button} from '@/components/ui/button'
+import {NumberInput} from '@/components/ui/number-input'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
+import {type AccuracyChoice, formatAccuracy, resolveAccuracy} from '@/lib/gpsInterpolation'
+import {cn} from '@/lib/utils'
 import type {FixMode, PictureDetail} from '@/lib/types'
+
+/** The accuracy row of a GPS fix: a metre input plus Suggested / Exact / Same-as-photo presets. */
+export function GpsAccuracyControl({choice, onChoice, suggested, source, sourceCount}: {
+    choice: AccuracyChoice
+    onChoice: (c: AccuracyChoice) => void
+    suggested: number | null
+    /** The source photos' stated accuracy (`sourceAccuracy`); only offered when there are sources. */
+    source: number | null
+    sourceCount: number
+}) {
+    const value = resolveAccuracy(choice, suggested, source)
+    const preset = (c: 'suggested' | 'exact' | 'source', label: string) => (
+        <button
+            type="button"
+            onClick={() => onChoice(c)}
+            className={cn(
+                'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                choice === c ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted',
+            )}
+        >
+            {label}
+        </button>
+    )
+    const known = (m: number | null) => (m != null ? formatAccuracy(m) : 'unknown')
+    return (
+        <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground" title="How far off this location may be. 0 = exact.">Accuracy ±</span>
+                <NumberInput
+                    step="1"
+                    min="0"
+                    placeholder="Unknown"
+                    value={value ?? ''}
+                    onChange={(e) => onChoice({custom: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value)))})}
+                    className="h-7 w-28 text-xs"
+                />
+                <span className="text-xs text-muted-foreground">m</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+                {preset('suggested', `Suggested ${known(suggested)}`)}
+                {preset('exact', 'Exact')}
+                {sourceCount > 0 && preset('source', `Same as photo${sourceCount > 1 ? 's' : ''} ${known(source)}`)}
+            </div>
+        </div>
+    )
+}
 
 /** Consistent references entry button. Label is identical everywhere so it reads the same. */
 export function PickReferencesButton({onClick}: { onClick: () => void }) {

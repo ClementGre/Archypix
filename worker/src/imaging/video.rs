@@ -135,6 +135,7 @@ pub fn extract_video_metadata(path: &Path) -> Result<ExtractedExif> {
             gps_lat,
             gps_lng,
             gps_alt,
+            gps_accuracy_m: None,
             orientation: None,
             camera,
         },

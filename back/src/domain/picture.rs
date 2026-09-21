@@ -46,6 +46,8 @@ pub struct Picture {
     pub gps_lat: Option<f64>,
     pub gps_lng: Option<f64>,
     pub gps_alt: Option<i32>,
+    /// Horizontal position error radius in metres (feature 36); `None` = unstated.
+    pub gps_accuracy_m: Option<f64>,
     pub orientation: Option<i16>,
     pub thumbnails_generated_at: Option<NaiveDateTime>,
     /// SHA-256 hex digest of the stored file. Used as WebDAV ETag.
@@ -148,6 +150,7 @@ impl Picture {
             gps_lat: self.gps_lat,
             gps_lng: self.gps_lng,
             gps_alt: self.gps_alt,
+            gps_accuracy_m: self.gps_accuracy_m,
             orientation: self.orientation,
             camera: self.exif_data.0.clone(),
         }
@@ -409,6 +412,7 @@ mod tests {
             gps_lat: None,
             gps_lng: None,
             gps_alt: None,
+            gps_accuracy_m: None,
             orientation: None,
             thumbnails_generated_at: None,
             file_hash: None,

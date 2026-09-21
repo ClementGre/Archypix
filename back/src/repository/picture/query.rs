@@ -39,7 +39,7 @@ impl PictureRepository {
                           p.deleted_at, p.deleted_reason, p.owner_deleted_at, p.owner_purge_at,
                           p.remote_exif_data, p.local_exif_overrides,
                           p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
-                          p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
+                          p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.gps_accuracy_m, p.orientation,
                           p.thumbnails_generated_at, p.file_hash,
                           p.exif_sync_status, p.file_exif,
                           p.content_hash, p.copy_source_owner_username,

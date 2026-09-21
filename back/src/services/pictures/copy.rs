@@ -232,7 +232,6 @@ async fn copy_source_into_library(
 
     // ── New owned row, seeded from the source's effective EXIF ────────────────
     let eff = source.full_exif();
-    let camera_json = serde_json::to_value(&eff.camera).unwrap_or_else(|_| serde_json::json!({}));
 
     let mut tx = db
         .begin()
@@ -247,12 +246,7 @@ async fn copy_source_into_library(
         source.file_size,
         source.width,
         source.height,
-        camera_json,
-        eff.captured_at,
-        eff.gps_lat,
-        eff.gps_lng,
-        eff.gps_alt,
-        eff.orientation,
+        &eff,
         cs_user.as_deref(),
         cs_instance.as_deref(),
         cs_pic.as_deref(),

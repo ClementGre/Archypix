@@ -22,6 +22,7 @@ pub fn field_key(f: ExifField) -> &'static str {
         ExifField::GpsLat => "gps_lat",
         ExifField::GpsLng => "gps_lng",
         ExifField::GpsAlt => "gps_alt",
+        ExifField::GpsAccuracyM => "gps_accuracy_m",
         ExifField::Orientation => "orientation",
         ExifField::CameraBrand => "camera_brand",
         ExifField::CameraModel => "camera_model",
@@ -63,6 +64,7 @@ pub struct MaterializedExif {
     pub gps_lat: Option<f64>,
     pub gps_lng: Option<f64>,
     pub gps_alt: Option<i32>,
+    pub gps_accuracy_m: Option<f64>,
     pub orientation: Option<i16>,
 }
 
@@ -96,8 +98,9 @@ pub fn materialize(remote: Option<&Value>, overrides: Option<&Value>) -> Materia
         .get("gps_alt")
         .and_then(Value::as_i64)
         .map(|n| n as i32);
+    let mut gps_accuracy_m = merged.get("gps_accuracy_m").and_then(Value::as_f64);
     // A peer still on the old extraction can announce (0,0); don't let it back in.
-    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt);
+    drop_null_island(&mut gps_lat, &mut gps_lng, &mut gps_alt, &mut gps_accuracy_m);
     let orientation = merged
         .get("orientation")
         .and_then(Value::as_i64)
@@ -108,6 +111,7 @@ pub fn materialize(remote: Option<&Value>, overrides: Option<&Value>) -> Materia
         gps_lat,
         gps_lng,
         gps_alt,
+        gps_accuracy_m,
         orientation,
     }
 }
@@ -202,9 +206,9 @@ mod tests {
     /// not take it (30 §12.11). `exif_data` keeps the owner's raw claim untouched.
     #[test]
     fn announced_no_fix_sentinel_does_not_reach_the_columns() {
-        let remote = json!({ "gps_lat": 0.0, "gps_lng": 0.0, "gps_alt": 0, "camera_brand": "Canon" });
+        let remote = json!({ "gps_lat": 0.0, "gps_lng": 0.0, "gps_alt": 0, "gps_accuracy_m": 5.0, "camera_brand": "Canon" });
         let m = materialize(Some(&remote), None);
-        assert_eq!((m.gps_lat, m.gps_lng, m.gps_alt), (None, None, None));
+        assert_eq!((m.gps_lat, m.gps_lng, m.gps_alt, m.gps_accuracy_m), (None, None, None, None));
         assert_eq!(m.exif_data.get("gps_lat"), Some(&json!(0.0)));
     }
 }

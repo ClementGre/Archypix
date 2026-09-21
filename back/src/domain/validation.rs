@@ -2,13 +2,23 @@
 
 use crate::domain::job::{ExifField, FullExif};
 
-/// Any GPS component present pulls in all three (they are set/cleared/emptied as a unit).
+/// Largest meaningful GPS accuracy: about half the Earth's circumference (and it fits the
+/// centimetre EXIF rational in an `i32`).
+pub const MAX_GPS_ACCURACY_M: f64 = 20_000_000.0;
+
+/// Any coordinate component pulls in all three plus the accuracy (they are set/cleared/emptied as
+/// a unit). The accuracy alone is its own field: dropping it keeps the location.
 pub fn couple_gps(mut fields: Vec<ExifField>) -> Vec<ExifField> {
     if fields
         .iter()
         .any(|f| matches!(f, ExifField::GpsLat | ExifField::GpsLng | ExifField::GpsAlt))
     {
-        for f in [ExifField::GpsLat, ExifField::GpsLng, ExifField::GpsAlt] {
+        for f in [
+            ExifField::GpsLat,
+            ExifField::GpsLng,
+            ExifField::GpsAlt,
+            ExifField::GpsAccuracyM,
+        ] {
             if !fields.contains(&f) {
                 fields.push(f);
             }
@@ -46,6 +56,11 @@ pub fn validate_exif_edit(
     // (0,0) is the "no fix" sentinel the read path drops (30 §12.11) — it can't mean a location here.
     if set.gps_lat == Some(0.0) && set.gps_lng == Some(0.0) {
         return Err("gps (0,0) is the no-fix sentinel, not a location".into());
+    }
+    if let Some(acc) = set.gps_accuracy_m {
+        if !(0.0..=MAX_GPS_ACCURACY_M).contains(&acc) {
+            return Err(format!("gps_accuracy_m out of range [0,{MAX_GPS_ACCURACY_M}]"));
+        }
     }
     if let Some(o) = set.orientation {
         if !(1..=8).contains(&o) {
@@ -209,21 +224,34 @@ mod tests {
     #[test]
     fn exif_edit() {
         use crate::domain::job::ExifField;
-        // GPS-couples empty/clear; a lone GPS component pulls in all three.
+        // GPS-couples empty/clear; a lone coordinate pulls in the location and its accuracy.
         let (empty, clear) =
             validate_exif_edit(&FullExif::default(), vec![ExifField::GpsLat], vec![]).unwrap();
-        assert_eq!(
-            empty.len(),
-            3,
-            "empty GPS is coupled to all three components"
-        );
+        assert_eq!(empty.len(), 4, "empty GPS is coupled to all four components");
         assert!(clear.is_empty());
+        // …but the accuracy alone can be dropped without losing the location.
+        let (_, clear) =
+            validate_exif_edit(&FullExif::default(), vec![], vec![ExifField::GpsAccuracyM])
+                .unwrap();
+        assert_eq!(clear, vec![ExifField::GpsAccuracyM]);
         // Range checks.
         let bad = FullExif {
             gps_lat: Some(120.0),
             ..Default::default()
         };
         assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        for acc in [-1.0, MAX_GPS_ACCURACY_M + 1.0, f64::NAN] {
+            let bad = FullExif {
+                gps_accuracy_m: Some(acc),
+                ..Default::default()
+            };
+            assert!(validate_exif_edit(&bad, vec![], vec![]).is_err(), "{acc}");
+        }
+        let exact = FullExif {
+            gps_accuracy_m: Some(0.0),
+            ..Default::default()
+        };
+        assert!(validate_exif_edit(&exact, vec![], vec![]).is_ok(), "0 m = exact");
         let bad = FullExif {
             orientation: Some(9),
             ..Default::default()

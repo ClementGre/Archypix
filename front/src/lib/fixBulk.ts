@@ -4,7 +4,7 @@
 // the before/after anchors they were interpolated from.
 
 import type {PictureDetail, PictureListItem} from '@/lib/types'
-import type {FixValue} from '@/hooks/useFixApply'
+import {type FixValue, gpsFixValue} from '@/hooks/useFixApply'
 import {dateSuggestions} from '@/lib/dateSuggestions'
 import {deriveGps, type GpsAnchor} from '@/lib/gpsInterpolation'
 import {gridGpsNeighbours} from '@/lib/gridAnchors'
@@ -99,7 +99,7 @@ export async function gpsBulkRows(
             try {
                 const d = await getDetail(id)
                 if (d.gps_lat != null && d.gps_lng != null) {
-                    coords.set(id, {lat: d.gps_lat, lng: d.gps_lng, alt: d.gps_alt, time: d.captured_at})
+                    coords.set(id, {lat: d.gps_lat, lng: d.gps_lng, alt: d.gps_alt, accuracy: d.gps_accuracy_m, time: d.captured_at})
                 }
             } catch {
                 // Unreachable anchor → that target falls back to whatever anchors resolved.
@@ -112,7 +112,7 @@ export async function gpsBulkRows(
         const g = anchors.length ? deriveGps(it.captured_at, anchors) : null
         return {
             ...base(it),
-            value: g ? {gps_lat: g.lat, gps_lng: g.lng, gps_alt: g.alt} : null,
+            value: g ? gpsFixValue(g) : null,
             provenance: g ? 'interpolated' : null,
             before: anchorView(before),
             after: anchorView(after),

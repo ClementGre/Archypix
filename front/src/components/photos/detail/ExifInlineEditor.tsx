@@ -10,8 +10,9 @@ import {dateSuggestions} from '@/lib/dateSuggestions'
 import {GpsPickerPopover} from './GpsPickerPopover'
 import {type FieldState, FieldStateHint} from './FieldStateHint'
 import {cn, formatDuration, isAudioMime, isVideoMime} from '@/lib/utils'
+import {formatAccuracy} from '@/lib/gpsInterpolation'
 import type {ExifField, ExifSyncStatus, PictureDetail} from '@/lib/types'
-import type {ExifDraft, useExifDraft} from '@/hooks/useExifDraft'
+import {type ExifDraft, GPS_KEYS, type useExifDraft} from '@/hooks/useExifDraft'
 
 /** A read-only metadata row (label + value), matching the editable rows' layout. */
 export function ReadOnlyRow({label, value}: { label: string; value: string }) {
@@ -346,10 +347,10 @@ export function ExifInlineEditor({
 
     const gpsDisplay =
         draft.gps_lat && draft.gps_lng
-            ? `${parseFloat(draft.gps_lat).toFixed(4)}, ${parseFloat(draft.gps_lng).toFixed(4)}${draft.gps_alt ? ` · ${draft.gps_alt} m` : ''}`
+            ? `${parseFloat(draft.gps_lat).toFixed(4)}, ${parseFloat(draft.gps_lng).toFixed(4)}${draft.gps_alt ? ` · ${draft.gps_alt} m` : ''}${draft.gps_accuracy_m ? ` · ${formatAccuracy(parseFloat(draft.gps_accuracy_m))}` : ''}`
             : '—'
-    const gpsIsDirty = dirty('gps_lat') || dirty('gps_lng') || dirty('gps_alt')
-    const gpsState = fieldState('gps_lat', 'gps_lng', 'gps_alt')
+    const gpsIsDirty = GPS_KEYS.some(dirty)
+    const gpsState = fieldState(...GPS_KEYS)
     const expIsDirty = dirty('exposure_time_num') || dirty('exposure_time_den')
 
     // Raw exif_data fields not surfaced as dedicated rows (read-only).
@@ -538,8 +539,8 @@ export function ExifInlineEditor({
                         {canEdit ? (
                             <FieldStateHint state={gpsState}>
                                 <GpsPickerPopover
-                                    value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt}}
-                                    onChange={({lat, lng, alt}) => setGps(lat, lng, alt)}
+                                    value={{lat: draft.gps_lat, lng: draft.gps_lng, alt: draft.gps_alt, accuracy: draft.gps_accuracy_m}}
+                                    onChange={setGps}
                                 >
                                     <button
                                         className={cn(

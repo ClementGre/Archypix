@@ -113,6 +113,8 @@ export interface PictureDetail {
     gps_lat: number | null
     gps_lng: number | null
     gps_alt: number | null
+    /** Horizontal position error radius in metres (feature 36); null = unstated, 0 = exact. */
+    gps_accuracy_m: number | null
     orientation: number | null
     exif_data: Record<string, unknown>
     exif_sync_status: ExifSyncStatus
@@ -823,6 +825,7 @@ export interface ExifOverrides {
     gps_lat: number | null
     gps_lng: number | null
     gps_alt: number | null
+    gps_accuracy_m: number | null
     orientation: number | null
     camera_brand: string | null
     camera_model: string | null
@@ -845,6 +848,7 @@ export interface EditPictureResponse {
     gps_lat: number | null
     gps_lng: number | null
     gps_alt: number | null
+    gps_accuracy_m: number | null
     orientation: number | null
     exif_data: Record<string, unknown>
     updated_at: string
@@ -871,6 +875,7 @@ export interface OverrideExifResponse {
     gps_lat: number | null
     gps_lng: number | null
     gps_alt: number | null
+    gps_accuracy_m: number | null
     orientation: number | null
     exif_data: Record<string, unknown>
     local_exif_overrides: Record<string, unknown> | null

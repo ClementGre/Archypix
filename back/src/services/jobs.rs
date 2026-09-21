@@ -13,6 +13,7 @@ use archypix_common::error::{AppError, map_sqlx_error};
 use archypix_common::routine::RoutineHandle;
 use archypix_common::mime::{supports_exif, supports_video};
 use archypix_common::settings::Settings;
+use chrono::NaiveDateTime;
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
@@ -38,6 +39,7 @@ where
     let config = JobConfig::GenThumbnail(GenThumbnailConfig {
         picture_id,
         is_initial,
+        metadata_only: false,
     });
     let idempotency = match (is_initial, file_hash) {
         (true, Some(hash)) => Some(format!("gen_thumbnail_extract:{picture_id}:{hash}")),
@@ -104,6 +106,7 @@ pub async fn regenerate_thumbnails(
         let config = JobConfig::GenThumbnail(GenThumbnailConfig {
             picture_id,
             is_initial: reextract_exif,
+            metadata_only: false,
         });
         JobRepository::create(db, owner_id, Some(picture_id), &config).await?;
         enqueued.push(picture_id);
@@ -375,6 +378,7 @@ pub async fn reextract_picture_exif(
     let config = JobConfig::GenThumbnail(GenThumbnailConfig {
         picture_id,
         is_initial: true,
+        metadata_only: false,
     });
     let job = JobRepository::create(&mut *tx, user_id, Some(picture_id), &config).await?;
     PictureRepository::set_exif_sync_status(&mut *tx, picture_id, ExifSyncStatus::Extracting)
@@ -385,36 +389,45 @@ pub async fn reextract_picture_exif(
 }
 
 /// One bounded tick of the admin EXIF recheck sweep (feature 33 §8): enqueue a re-extraction for up
-/// to `limit` rows in `scope`, stamping each `extracting`. Returns the number enqueued; a short
-/// count means the worklist is drained.
+/// to `limit` rows in `scope` after the keyset cursor `after`, stamping each `extracting`. Returns
+/// the number enqueued and the cursor to resume from; a short count means the worklist is drained.
 ///
-/// The sweep-scoped idempotency key collapses a repeated tick within one sweep and never dedupes
-/// against a previous one. Rows holding unsynced DB edits are never in scope, so no edit can be
-/// discarded.
+/// The cursor is what terminates a sweep: a re-extracted row returns to a status the scope may
+/// match (always, for `synced`), and without it the sweep would pick it up again. Rows holding
+/// unsynced DB edits are never in scope, so no edit can be discarded. An already-thumbnailed row
+/// reads metadata only (feature 36 §5).
 #[tracing::instrument(skip(db, mime_types))]
 pub async fn recheck_exif_batch(
     db: &PgPool,
     scope: RecheckScope,
     mime_types: Option<&[String]>,
     sweep_id: Uuid,
+    after: Option<(NaiveDateTime, Uuid)>,
     limit: i64,
-) -> Result<usize, AppError> {
-    let targets =
-        PictureRepository::find_by_exif_sync_status(db, &[scope.status()], mime_types, limit)
-            .await?;
+) -> Result<(usize, Option<(NaiveDateTime, Uuid)>), AppError> {
+    let targets = PictureRepository::find_by_exif_sync_status(
+        db,
+        &[scope.status()],
+        mime_types,
+        after,
+        limit,
+    )
+    .await?;
+    let cursor = targets.last().map(|t| (t.ingested_at, t.id)).or(after);
     let mut enqueued = Vec::new();
-    for (picture_id, owner_id) in targets {
+    for t in targets {
         let config = JobConfig::GenThumbnail(GenThumbnailConfig {
-            picture_id,
+            picture_id: t.id,
             is_initial: true,
+            metadata_only: t.has_thumbnails,
         });
-        let key = format!("gen_thumbnail_reextract:{picture_id}:{sweep_id}");
-        JobRepository::create_idempotent(db, owner_id, Some(picture_id), &config, &key).await?;
-        enqueued.push(picture_id);
+        let key = format!("gen_thumbnail_reextract:{}:{sweep_id}", t.id);
+        JobRepository::create_idempotent(db, t.local_user_id, Some(t.id), &config, &key).await?;
+        enqueued.push(t.id);
     }
     PictureRepository::set_exif_sync_status_bulk(db, &enqueued, None, ExifSyncStatus::Extracting)
         .await?;
-    Ok(enqueued.len())
+    Ok((enqueued.len(), cursor))
 }
 
 /// Reset a picture's DB EXIF to its persisted physical-file snapshot (`file_exif`), the user's way

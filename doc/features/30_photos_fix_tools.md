@@ -331,6 +331,5 @@ edits re-evaluate `gps_within_bbox` / `capture_year` / segments for free (featur
 two dated ends); a single batched propose/mixed-selection EXIF endpoint (§11 optimisation);
 frontend vitest suite.
 
-**Not planned:** a *GPS accuracy* field (`GPSHPositioningError` in metres, mirrored to a column, so
-an interpolated fix records how uncertain it is and §5.4's far-apart warning becomes quantitative)
-— discussed, worth doing, not specced.
+**Follow-up (done):** the *GPS accuracy* a fix records — `GPSHPositioningError`, suggested from the
+anchors' spread and settable in both GPS panels — is feature 36.

@@ -42,7 +42,7 @@ export function useReferenceDerivation(field: FixMode, singleTargetTime: string 
         () =>
             refDetails
                 .filter((d) => d.gps_lat != null && d.gps_lng != null)
-                .map((d) => ({lat: d.gps_lat!, lng: d.gps_lng!, alt: d.gps_alt, time: d.captured_at})),
+                .map((d) => ({lat: d.gps_lat!, lng: d.gps_lng!, alt: d.gps_alt, accuracy: d.gps_accuracy_m, time: d.captured_at})),
         [refDetails],
     )
     const gpsValue = field === 'gps' && refAnchors.length ? deriveGps(singleTargetTime, refAnchors) : null

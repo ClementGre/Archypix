@@ -109,6 +109,10 @@ pub struct GenThumbnailConfig {
     /// When `true`, this is the first thumbnail generation for this picture:
     /// the worker must also extract and return EXIF metadata.
     pub is_initial: bool,
+    /// Skip the thumbnails: the claim hands out no thumbnail write URLs, so the worker only reads
+    /// metadata (admin re-extract sweep, feature 36 §5). Absent on older rows → `false`.
+    #[serde(default)]
+    pub metadata_only: bool,
 }
 
 /// Config for `edit_picture` jobs.
@@ -153,6 +157,7 @@ pub enum ExifField {
     GpsLat,
     GpsLng,
     GpsAlt,
+    GpsAccuracyM,
     Orientation,
     CameraBrand,
     CameraModel,
@@ -202,9 +207,14 @@ pub struct CameraExif {
 /// `(0,0)` is the "receiver had no fix" sentinel some writers stamp, not a location — drop the
 /// whole GPS group rather than believe it (feature 30 §12.11). Exact zero only: EXIF stores `0/1`
 /// rationals, so a genuine equatorial shot is never hit.
-pub fn drop_null_island(lat: &mut Option<f64>, lng: &mut Option<f64>, alt: &mut Option<i32>) {
+pub fn drop_null_island(
+    lat: &mut Option<f64>,
+    lng: &mut Option<f64>,
+    alt: &mut Option<i32>,
+    accuracy: &mut Option<f64>,
+) {
     if *lat == Some(0.0) && *lng == Some(0.0) {
-        (*lat, *lng, *alt) = (None, None, None);
+        (*lat, *lng, *alt, *accuracy) = (None, None, None, None);
     }
 }
 
@@ -225,6 +235,9 @@ pub struct FullExif {
     pub gps_lng: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gps_alt: Option<i32>,
+    /// Horizontal position error radius in metres (`GPSHPositioningError`); `None` = unstated.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub gps_accuracy_m: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub orientation: Option<i16>,
     #[serde(flatten)]
@@ -246,6 +259,9 @@ impl FullExif {
         }
         if set.gps_alt.is_some() {
             self.gps_alt = set.gps_alt;
+        }
+        if set.gps_accuracy_m.is_some() {
+            self.gps_accuracy_m = set.gps_accuracy_m;
         }
         if set.orientation.is_some() {
             self.orientation = set.orientation;
@@ -281,6 +297,7 @@ impl FullExif {
             ExifField::GpsLat => self.gps_lat = None,
             ExifField::GpsLng => self.gps_lng = None,
             ExifField::GpsAlt => self.gps_alt = None,
+            ExifField::GpsAccuracyM => self.gps_accuracy_m = None,
             ExifField::Orientation => self.orientation = None,
             ExifField::CameraBrand => self.camera.camera_brand = None,
             ExifField::CameraModel => self.camera.camera_model = None,
@@ -323,6 +340,7 @@ impl FullExif {
             ExifField::GpsLat => self.gps_lat.is_some(),
             ExifField::GpsLng => self.gps_lng.is_some(),
             ExifField::GpsAlt => self.gps_alt.is_some(),
+            ExifField::GpsAccuracyM => self.gps_accuracy_m.is_some(),
             ExifField::Orientation => self.orientation.is_some(),
             ExifField::CameraBrand => self.camera.camera_brand.is_some(),
             ExifField::CameraModel => self.camera.camera_model.is_some(),
@@ -362,6 +380,7 @@ impl FullExif {
         diff_p!(gps_lat, GpsLat);
         diff_p!(gps_lng, GpsLng);
         diff_p!(gps_alt, GpsAlt);
+        diff_p!(gps_accuracy_m, GpsAccuracyM);
         diff_p!(orientation, Orientation);
         diff_c!(camera_brand, CameraBrand);
         diff_c!(camera_model, CameraModel);
@@ -452,8 +471,21 @@ mod tests {
         let cfg = JobConfig::GenThumbnail(GenThumbnailConfig {
             picture_id: Uuid::new_v4(),
             is_initial: true,
+            metadata_only: true,
         });
         round_trip(&cfg);
+    }
+
+    /// Job rows persisted before `metadata_only` existed must still deserialize — as full jobs.
+    #[test]
+    fn gen_thumbnail_config_without_metadata_only_is_a_full_job() {
+        let json = serde_json::json!({
+            "type": "gen_thumbnail", "picture_id": Uuid::nil(), "is_initial": true,
+        });
+        let JobConfig::GenThumbnail(cfg) = serde_json::from_value(json).unwrap() else {
+            panic!("expected gen_thumbnail");
+        };
+        assert!(!cfg.metadata_only);
     }
 
     #[test]
@@ -534,6 +566,7 @@ mod tests {
         let cfg = JobConfig::GenThumbnail(GenThumbnailConfig {
             picture_id: Uuid::nil(),
             is_initial: true,
+            metadata_only: false,
         });
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(

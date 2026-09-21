@@ -287,8 +287,10 @@ go to the list query as a `geoRef`, so the server returns per-row `distance_m` w
 is a **non-collapsible pane** (`FixPane`) in the details panel right before Tags, shown only when the selected picture
 is **missing** the active field. `GpsFixPanel` = a **full-bleed** `MapView` (border kept, auto-fits all points) with the
 draggable proposed pin; below it the before/after anchors from `useFixAnchors` (grid-local scan → directed bracketing
-fallback), the "N km apart" distance (amber + warning when the anchors are > 50 km apart or ≥ 24 h from the target), and
-2-decimal `N`/`E` coordinates. `DateFixPanel` = a small centered inline calendar on a full-width background + a compact
+fallback), the "N km apart" distance (amber + warning when the anchors are > 50 km apart or ≥ 24 h from the target),
+2-decimal `N`/`E` coordinates, and a `GpsAccuracyControl` (feature 36 §4: metre input + **Suggested** / **Exact** /
+**Same as photo(s)** presets, drawn as a radius around the pin; shared with `BatchReferencePanel`; the same accuracy is
+editable in `GpsPickerPopover`, with its own row in the batch EXIF section). `DateFixPanel` = a small centered inline calendar on a full-width background + a compact
 time input + priority suggestion chips (`lib/dateSuggestions`). Apply is an `ApplyControls` split button whose main
 action is the last-used one (Apply, or Apply & next — persisted in `stores/fixPrefs`) with a dropdown for either, plus a
 **Skip** that advances without writing. **Pick references** (one consistent button everywhere) enters the phase
@@ -491,7 +493,8 @@ write-back op-lists with a "suggest from predicate" helper — enabled on `match
 untagged" warning, and an inactive-when-write-back-off note), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed/drop-assign),
 `JsonConfigDialog` (raw `config` textarea; applies to the draft).
 
-**`admin/`** (backend `/admin` + shared) — `OverviewTab`/`UsersTab`/`JobsTab`/`SharesTab`, plus the feature-23/24 additions: **`SettingsPanel`** (the
+**`admin/`** (backend `/admin` + shared) — `OverviewTab`/`UsersTab`/`JobsTab` (thumbnail regeneration + the **Re-read EXIF**
+recheck sweep, one `scope` select, feature 33 §8 / 36 §5)/`SharesTab`, plus the feature-23/24 additions: **`SettingsPanel`** (the
 metadata-driven runtime-config editor — a filter box, then groups `FieldMeta[]` by `group`, renders a control per `kind` (bool→Switch, enum→Select,
 numbers→**`NumberInput` with per-kind min/max/step** — u16 0–65535 etc., list→comma-string), a `FieldInfoPopover` (i) with the copyable env name /
 type /

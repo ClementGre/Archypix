@@ -146,6 +146,11 @@ Retriable failures have no variant: they fail the job instead of completing it, 
 plus the watchdog own the row from there. In practice ExifTool refuses very little — it reports "no
 metadata" far more often than an error — so `Failed` is rare.
 
+A **metadata-only** `gen_thumbnail` (`metadata_only`, the admin re-read of an already-thumbnailed
+row, feature 36 §5) is claimed with no thumbnail write URLs: the worker skips thumbnails and
+BlurHash as it does for a non-thumbnailable format, and reports no dimensions, so the stored decoded
+ones stay.
+
 ## EXIF edit write-through
 
 The backend applies EXIF changes to `pictures` synchronously; an `edit_picture` job reconciles the embedded EXIF in the S3 original.

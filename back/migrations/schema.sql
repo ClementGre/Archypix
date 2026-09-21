@@ -399,7 +399,8 @@ CREATE TABLE public.pictures (
     remote_updated_at timestamp without time zone,
     original_file_created_at timestamp without time zone,
     file_exif jsonb,
-    file_modified_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL
+    file_modified_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
+    gps_accuracy_m double precision
 );
 
 CREATE TABLE public.public_shares (

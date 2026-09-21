@@ -15,12 +15,21 @@ import {useReferenceDerivation} from '@/hooks/useReferenceDerivation'
 import {useFixReference} from '@/stores/fixReference'
 import {useFixHighlight} from '@/stores/fixHighlight'
 import {useSelectionStore} from '@/stores/selection'
-import {formatDistance, formatLatLng, haversineM, naiveToMs} from '@/lib/gpsInterpolation'
+import {
+    type AccuracyChoice,
+    formatDistance,
+    formatLatLng,
+    type GpsAnchor,
+    haversineM,
+    naiveToMs,
+    resolveAccuracy,
+    sourceAccuracy,
+} from '@/lib/gpsInterpolation'
 import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
 import {ReceivedModeToggle} from './ReceivedModeToggle'
 import {ApplyControls} from './ApplyControls'
-import {CancelReferencesButton, NearbyReferenceSort, PickReferencesButton} from './fixShared'
+import {CancelReferencesButton, GpsAccuracyControl, NearbyReferenceSort, PickReferencesButton} from './fixShared'
 import type {PictureDetail} from '@/lib/types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -89,6 +98,7 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
     const [draft, setDraft] = useState<{ lat: number | null; lng: number | null; alt: number | null }>({
         lat: target.gps_lat, lng: target.gps_lng, alt: target.gps_alt,
     })
+    const [accChoice, setAccChoice] = useState<AccuracyChoice>('suggested')
     const [saving, setSaving] = useState(false)
     const [receivedMode, setReceivedMode] = useState<FixReceivedMode>('local')
     const manual = useRef(false)
@@ -102,6 +112,7 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
     if (resetSig !== lastResetSig.current) {
         lastResetSig.current = resetSig
         manual.current = false
+        setAccChoice('suggested')
         setDraft(seed ? {lat: seed.lat, lng: seed.lng, alt: seed.alt} : {lat: target.gps_lat, lng: target.gps_lng, alt: target.gps_alt})
     }
 
@@ -118,10 +129,17 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
         return () => setAnchorIds([])
     }, [refActive, before?.id, after?.id, setAnchorIds])
 
-    const extraMarkers = useMemo(() => {
-        const pts = refActive ? refDeriv.refAnchors : [before, after].filter((a): a is NonNullable<typeof a> => !!a)
-        return pts.map((a) => ({lat: a.lat, lng: a.lng, color: '#0ea5e9'}))
-    }, [refActive, refDeriv.refAnchors, before, after])
+    // The photos the location derives from: the picked references, else the before/after anchors.
+    const sources: GpsAnchor[] = useMemo(
+        () => (refActive ? refDeriv.refAnchors : [before, after].filter((a): a is NonNullable<typeof a> => !!a)),
+        [refActive, refDeriv.refAnchors, before, after],
+    )
+    const extraMarkers = useMemo(() => sources.map((a) => ({lat: a.lat, lng: a.lng, color: '#0ea5e9'})), [sources])
+
+    // No derivation: the draft is the picture's own location, so its own accuracy is the suggestion.
+    const suggestedAcc = seed ? seed.accuracyM : target.gps_accuracy_m
+    const sourceAcc = sourceAccuracy(sources)
+    const accuracy = resolveAccuracy(accChoice, suggestedAcc, sourceAcc)
 
     const hasValue = draft.lat != null && draft.lng != null
 
@@ -144,7 +162,12 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
         if (!hasValue) return
         setSaving(true)
         try {
-            await applyOne(target.id, owned, {gps_lat: draft.lat!, gps_lng: draft.lng!, gps_alt: draft.alt}, receivedMode)
+            await applyOne(
+                target.id,
+                owned,
+                {gps_lat: draft.lat!, gps_lng: draft.lng!, gps_alt: draft.alt, gps_accuracy_m: accuracy},
+                receivedMode,
+            )
             invalidate()
             toast.success('Location applied')
             finish(advance)
@@ -185,6 +208,7 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
                         setDraft((d) => ({...d, lat, lng}))
                     }}
                     extraMarkers={extraMarkers}
+                    pointRadiusM={accuracy}
                     className="h-52 w-full"
                     expandable
                 />
@@ -228,6 +252,16 @@ export function GpsFixPanel({target, allowExifEdit}: { target: PictureDetail; al
                     {hasValue ? formatLatLng(draft.lat!, draft.lng!) : 'No location yet. Drag the pin or pick references.'}
                 </p>
             </div>
+
+            {hasValue && (
+                <GpsAccuracyControl
+                    choice={accChoice}
+                    onChoice={setAccChoice}
+                    suggested={suggestedAcc}
+                    source={sourceAcc}
+                    sourceCount={sources.length}
+                />
+            )}
 
             {!owned && <ReceivedModeToggle value={receivedMode} onChange={setReceivedMode} allowPropose={allowExifEdit}/>}
 

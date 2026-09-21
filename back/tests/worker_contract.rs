@@ -804,6 +804,76 @@ async fn each_extraction_outcome_lands_its_state(db: PgPool) {
     }
 }
 
+/// Feature 36 §5 end to end: the `synced` sweep's job is claimed with no thumbnail write URLs, and
+/// its read lands the newly-extracted field while the stored thumbnails and dimensions stay put.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_metadata_only_re_extraction_keeps_the_thumbnails(db: PgPool) {
+    let settings = test_settings_with(&[]);
+    let token = worker_token(&settings);
+    let alice_id = common::seed_user(&db, "alice", "pass").await;
+    let app = archypix_back::api::routes(settings.clone())
+        .with_state(common::test_app_state(db.clone(), &settings));
+    let pic_id = common::seed_picture(&db, alice_id).await;
+    sqlx::query!(
+        "UPDATE pictures SET mime_type = 'image/jpeg', width = 4000, height = 3000, file_exif = '{}'::jsonb,
+                             thumbnails_generated_at = '2024-01-01T00:00:00', blurhash = 'LKO2?U%2Tw=w'
+         WHERE id = $1",
+        pic_id,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    archypix_back::services::jobs::recheck_exif_batch(
+        &db,
+        archypix_back::domain::routine::RecheckScope::Synced,
+        None,
+        Uuid::new_v4(),
+        None,
+        10,
+    )
+    .await
+    .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(get("/api/worker/jobs/next?types=gen_thumbnail", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let claim = json_body(resp).await;
+    let writes = &claim["presigned_writes"];
+    for variant in ["small", "medium", "large"] {
+        assert!(writes.get(variant).is_none(), "no {variant} thumbnail URL: {writes}");
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            &format!("/api/worker/jobs/{}/respond", claim["job_id"].as_str().unwrap()),
+            &token,
+            &serde_json::json!({
+                "claim_token": claim["claim_token"],
+                "outcome": "done",
+                "job": "gen_thumbnail",
+                "thumbnails_generated": false,
+                "exif": {"extracted": {"gps_lat": 48.85, "gps_lng": 2.29, "gps_accuracy_m": 4.74}},
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let picture = PictureRepository::find_by_id(&db, pic_id).await.unwrap().unwrap();
+    assert_eq!(picture.gps_accuracy_m, Some(4.74));
+    assert_eq!(picture.exif_sync_status, ExifSyncStatus::Synced);
+    assert_eq!(picture.blurhash.as_deref(), Some("LKO2?U%2Tw=w"));
+    assert_eq!((picture.width, picture.height), (Some(4000), Some(3000)));
+    assert_eq!(
+        picture.thumbnails_generated_at.map(|t| t.to_string()),
+        Some("2024-01-01 00:00:00".into()),
+    );
+}
+
 /// §6.5: a permanently failed extraction job never reaches `complete_job` and the watchdog only
 /// rescues budget exhaustion, so `fail_job` has to settle the row — otherwise it stays `extracting`
 /// forever with no job left to move it, and every edit is refused.

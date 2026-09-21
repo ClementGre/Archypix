@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE pictures SET mime_type = 'image/jpeg', width = 4000, height = 3000, file_exif = '{}'::jsonb,\n                             thumbnails_generated_at = '2024-01-01T00:00:00', blurhash = 'LKO2?U%2Tw=w'\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "714d0b3b51ade089624bd7ebe2abd394c57714cf4b95af2876dea4d809c0aee7"
+}

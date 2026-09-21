@@ -6,6 +6,8 @@ export interface GpsAnchor {
     lat: number
     lng: number
     alt?: number | null
+    /** The anchor's own stated accuracy radius in metres (feature 36), or null when unstated. */
+    accuracy?: number | null
     /** NaiveDateTime "YYYY-MM-DDTHH:MM:SS" (or null). Used only for time-weighted interpolation. */
     time?: string | null
 }
@@ -17,6 +19,8 @@ export interface GpsResult {
     lng: number
     alt: number | null
     method: GpsMethod
+    /** Suggested accuracy radius in metres (feature 36 §4), or null when nothing states one. */
+    accuracyM: number | null
     /** Whether the two anchors sit far apart in time — interpolation is then a guess (§5.4). */
     farApart?: boolean
 }
@@ -57,7 +61,41 @@ export function formatDistance(m: number): string {
     return `${Math.round(m / 1000)} km`
 }
 
+/** A GPS accuracy radius as a label ("±120 m", or "exact" for 0) — feature 36. */
+export function formatAccuracy(m: number): string {
+    if (m === 0) return 'exact'
+    return m < 1 ? '±<1 m' : `±${formatDistance(m)}`
+}
+
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6
+
+/**
+ * Worst-case error of a point derived from `refs` (feature 36 §4): the true location lies among the
+ * references, so it is at most the farthest one away, widened by that reference's own accuracy.
+ */
+function spreadAccuracy(lat: number, lng: number, refs: GpsAnchor[]): number {
+    return Math.round(Math.max(...refs.map((r) => haversineM(lat, lng, r.lat, r.lng) + (r.accuracy ?? 0))))
+}
+
+/** The largest accuracy the references state, or null when none does — "same as the source photos". */
+export function sourceAccuracy(refs: GpsAnchor[]): number | null {
+    const stated = refs.map((r) => r.accuracy).filter((a): a is number => a != null)
+    return stated.length ? Math.max(...stated) : null
+}
+
+/**
+ * How a GPS fix sets the accuracy (feature 36 §4): the derivation's suggestion, exact (0), the source
+ * photos' own, or a custom radius in metres (`null` = unknown). A mode rather than a value, so
+ * "suggested" follows the derivation as its anchors load.
+ */
+export type AccuracyChoice = 'suggested' | 'exact' | 'source' | { custom: number | null }
+
+export function resolveAccuracy(choice: AccuracyChoice, suggested: number | null, source: number | null): number | null {
+    if (choice === 'suggested') return suggested
+    if (choice === 'exact') return 0
+    if (choice === 'source') return source
+    return choice.custom
+}
 
 // Anchors more than this far apart in time make interpolation a guess (warn badge, §5.4).
 const FAR_APART_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -83,6 +121,7 @@ function interpolatePair(tMs: number, a: GpsAnchor, b: GpsAnchor): GpsResult {
         lng: round6(lng),
         alt,
         method: 'interpolated',
+        accuracyM: spreadAccuracy(lat, lng, [a, b]),
         farApart: span > FAR_APART_MS,
     }
 }
@@ -97,12 +136,12 @@ function centroid(refs: GpsAnchor[]): GpsResult {
         withAlt.length === n && n > 0
             ? Math.round(withAlt.reduce((s, p) => s + (p.alt as number), 0) / n)
             : null
-    return {lat: round6(lat), lng: round6(lng), alt, method: n === 1 ? 'copy' : 'centroid'}
+    return {lat: round6(lat), lng: round6(lng), alt, method: 'centroid', accuracyM: spreadAccuracy(lat, lng, refs)}
 }
 
 /**
  * Derive a GPS point for a target from reference anchors (§5.4):
- *  - 1 reference → copy it (average of one = itself);
+ *  - 1 reference → copy it (average of one = itself), inheriting its stated accuracy;
  *  - exactly 2 references that **bracket** a dated target in time → time-weighted interpolation;
  *  - otherwise (same-side pair, N > 2, or an undated target) → plain centroid.
  * Returns `null` when there are no usable references.
@@ -110,7 +149,7 @@ function centroid(refs: GpsAnchor[]): GpsResult {
 export function deriveGps(targetTime: string | null | undefined, refs: GpsAnchor[]): GpsResult | null {
     const usable = refs.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng))
     if (usable.length === 0) return null
-    if (usable.length === 1) return {...centroid(usable), method: 'copy'}
+    if (usable.length === 1) return {...centroid(usable), method: 'copy', accuracyM: usable[0].accuracy ?? null}
 
     const tMs = naiveToMs(targetTime)
     if (usable.length === 2 && tMs != null) {

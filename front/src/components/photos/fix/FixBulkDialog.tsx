@@ -16,7 +16,7 @@ import {OrientedContainImage} from '@/components/photos/OrientedImage'
 import {MapView} from '@/components/common/MapView'
 import {ReceivedModeToggle} from './ReceivedModeToggle'
 import {type FixReceivedMode, type FixValue, useFixApply} from '@/hooks/useFixApply'
-import {formatLatLng} from '@/lib/gpsInterpolation'
+import {formatAccuracy, formatLatLng} from '@/lib/gpsInterpolation'
 import {type BulkRow, type Provenance, PROVENANCE_LABEL} from '@/lib/fixBulk'
 import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
@@ -26,7 +26,11 @@ type RowStatus = 'idle' | 'saving' | 'done' | 'error' | 'grant_missing'
 
 function valueLabel(field: FixMode, v: FixValue | null): string {
     if (!v) return 'skip'
-    if (field === 'gps') return v.gps_lat == null || v.gps_lng == null ? 'skip' : formatLatLng(v.gps_lat, v.gps_lng)
+    if (field === 'gps') {
+        if (v.gps_lat == null || v.gps_lng == null) return 'skip'
+        const acc = v.gps_accuracy_m != null ? ` ${formatAccuracy(v.gps_accuracy_m)}` : ''
+        return `${formatLatLng(v.gps_lat, v.gps_lng)}${acc}`
+    }
     return v.captured_at ? formatNaive(v.captured_at) : 'skip'
 }
 
@@ -215,13 +219,15 @@ export function FixBulkDialog({open, onOpenChange, field, title, initialRows, ha
                                             lat: row.value?.gps_lat != null ? String(row.value.gps_lat) : '',
                                             lng: row.value?.gps_lng != null ? String(row.value.gps_lng) : '',
                                             alt: row.value?.gps_alt != null ? String(row.value.gps_alt) : '',
+                                            accuracy: row.value?.gps_accuracy_m != null ? String(row.value.gps_accuracy_m) : '',
                                         }}
                                         onChange={(v) =>
                                             setRow(row.id, {
                                                 value: v.lat && v.lng ? {
                                                     gps_lat: parseFloat(v.lat),
                                                     gps_lng: parseFloat(v.lng),
-                                                    gps_alt: v.alt ? Math.round(parseFloat(v.alt)) : null
+                                                    gps_alt: v.alt ? Math.round(parseFloat(v.alt)) : null,
+                                                    gps_accuracy_m: v.accuracy ? Math.round(parseFloat(v.accuracy) * 100) / 100 : null,
                                                 } : null,
                                                 provenance: 'manual',
                                             })

@@ -145,6 +145,8 @@ pub async fn claim_next_job(
 
     let thumb_key = s3::picture_key(picture.local_user_id, picture_id);
     let presigned_writes = match &config {
+        // No write URLs is what makes the worker skip the thumbnails (feature 36 §5).
+        JobConfig::GenThumbnail(cfg) if cfg.metadata_only => PresignedWrites::default(),
         JobConfig::GenThumbnail(_) => PresignedWrites::thumbnails(
             state
                 .storage

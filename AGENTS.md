@@ -109,3 +109,5 @@ What each one is, since that is not derivable from its headings. Use the grep ab
 - **34_tag_metadata** — decorative `(user_id, tag_path)` side table. Substrate for 35 (spec-only).
 - **35_timeline_view** — structured browse over any tag subtree + the gallery filter-param rewrite
   (spec-only; depends on 34).
+- **36_gps_accuracy** — `gps_accuracy_m` / `GPSHPositioningError`, fix-tool suggestion, and the
+  `synced` metadata-only EXIF recheck that populates it.

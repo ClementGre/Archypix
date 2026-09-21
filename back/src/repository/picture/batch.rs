@@ -113,7 +113,7 @@ impl PictureRepository {
         push_pruned_new_ov(&mut q, set_patch, clear_keys);
         q.push(", exif_data = (");
         push_merged(&mut q, set_patch, clear_keys);
-        q.push(" - ARRAY['captured_at','gps_lat','gps_lng','gps_alt','orientation']::text[])");
+        q.push(" - ARRAY['captured_at','gps_lat','gps_lng','gps_alt','gps_accuracy_m','orientation']::text[])");
         q.push(", captured_at = ((");
         push_merged(&mut q, set_patch, clear_keys);
         q.push(")->>'captured_at')::timestamp");
@@ -126,6 +126,9 @@ impl PictureRepository {
         q.push(", gps_alt = ((");
         push_merged(&mut q, set_patch, clear_keys);
         q.push(")->>'gps_alt')::int");
+        q.push(", gps_accuracy_m = ((");
+        push_merged(&mut q, set_patch, clear_keys);
+        q.push(")->>'gps_accuracy_m')::float8");
         q.push(", orientation = ((");
         push_merged(&mut q, set_patch, clear_keys);
         q.push(")->>'orientation')::smallint");

@@ -609,6 +609,7 @@ Full picture details including version history.
     gps_lat: number | null;        // f64
     gps_lng: number | null;
     gps_alt: number | null;        // metres (i32)
+    gps_accuracy_m: number | null; // horizontal error radius, metres (feature 36); null = unstated, 0 = exact
     orientation: number | null;    // EXIF orientation value (i16), 1–8
   exif_data: object;             // arbitrary EXIF fields (camera make/model, focal length, etc.);
                                  // for video, read-only tech metadata: duration_s, video_codec,
@@ -704,6 +705,7 @@ interface ExifOverrides {
     gps_lat: number | null;
     gps_lng: number | null;
     gps_alt: number | null;
+    gps_accuracy_m: number | null;
     orientation: number | null;
     camera_brand: string | null;
     camera_model: string | null;
@@ -714,15 +716,17 @@ interface ExifOverrides {
     exposure_time_den: number | null;
 }
 
-type ExifField = "captured_at" | "gps_lat" | "gps_lng" | "gps_alt" | "orientation" |
+type ExifField = "captured_at" | "gps_lat" | "gps_lng" | "gps_alt" | "gps_accuracy_m" | "orientation" |
     "camera_brand" | "camera_model" | "focal_length_mm" | "f_number" |
     "iso_speed" | "exposure_time_num" | "exposure_time_den";
 ```
 
 A `set` of exactly `gps_lat: 0, gps_lng: 0` is rejected `400`: the read path treats it as the
 "receiver had no fix" sentinel and drops it (30 §12.11), so it cannot also mean a location. One
-zero axis (equator, prime meridian) is a normal coordinate. Shared by every EXIF write path
-(owned, recipient override, batch).
+zero axis (equator, prime meridian) is a normal coordinate. `gps_accuracy_m` outside
+`[0, 20 000 000]` is `400`. Clearing any coordinate also clears `gps_accuracy_m`; clearing
+`gps_accuracy_m` alone keeps the location (feature 36 §2). Shared by every EXIF write path (owned,
+recipient override, batch).
 
 **Response `200`:**
 
@@ -734,6 +738,7 @@ zero axis (equator, prime meridian) is a normal coordinate. Shared by every EXIF
     gps_lat: number | null;
     gps_lng: number | null;
     gps_alt: number | null;
+    gps_accuracy_m: number | null;
     orientation: number | null;
     exif_data: object;
     updated_at: string;
@@ -832,6 +837,7 @@ flight (it would write the pre-revert target back to the file).
     gps_lat: number | null;
     gps_lng: number | null;
     gps_alt: number | null;
+    gps_accuracy_m: number | null;
     orientation: number | null;
     exif_data: object;
     updated_at: string;
@@ -878,6 +884,7 @@ Edit a **received** picture's EXIF (`set`/`clear`, same shape as an owned edit) 
     gps_lat: number | null;
     gps_lng: number | null;
     gps_alt: number | null;
+    gps_accuracy_m: number | null;
     orientation: number | null;
     exif_data: object;                  // the materialised merge
     local_exif_overrides: object | null;
@@ -2489,15 +2496,16 @@ Pictures with an in-flight `gen_thumbnail` job are skipped. Received pictures ar
 ### `POST /api/admin/pictures/recheck-exif`
 
 Re-extract EXIF for pictures whose stored verdict may be stale (feature 33 §8) — after an allowlist
-bump, an engine upgrade or a tool outage. The work is handed to the `exif_recheck` routine, which
-drains the scope in bounded batches (`exif_recheck_batch`), so a library-wide match cannot enqueue a
-million jobs at once. Returns as soon as the sweep is triggered.
+bump, an engine upgrade, a tool outage, or the extractor learning a new field. The work is handed to
+the `exif_recheck` routine, which drains the scope in bounded batches (`exif_recheck_batch`) along a
+keyset cursor, so a library-wide match cannot enqueue a million jobs at once and no row is re-read
+twice in one sweep. Returns as soon as the sweep is triggered.
 
 **Request:**
 
 ```ts
 {
-  scope?: "mime" | "file" | "failed";  // default "mime"
+  scope?: "mime" | "file" | "failed" | "synced";  // default "mime"
   mime_types?: string[];               // optional narrowing of `mime` to the MIMEs that just became supported
 }
 ```
@@ -2505,10 +2513,12 @@ million jobs at once. Returns as soon as the sweep is triggered.
 - `scope: "mime"` — rows in `unsupported_mime`; the normal case after an allowlist bump.
 - `scope: "file"` — rows in `unsupported_file`, after a read-engine upgrade. Rare and mostly futile.
 - `scope: "failed"` — rows in `extract_failed`, after a tool outage.
+- `scope: "synced"` — rows in `synced` that have observed their own file (`file_exif` set), after
+  the extractor learns a new field (feature 36 §5). DB and file agree, so nothing is lost.
 
 Rows holding unsynced DB edits (`pending`, `pending_job_creation`, `write_failed`) are never in
 scope, and rows with a `gen_thumbnail` job already in flight are skipped. Each swept row is stamped
-`extracting`.
+`extracting`. A row that already has thumbnails is re-read **without** regenerating them.
 
 **Response `200`:** `{ started: true }`
 
@@ -2859,6 +2869,7 @@ type ExifField =
     | "gps_lat"
     | "gps_lng"
     | "gps_alt"
+    | "gps_accuracy_m"
     | "orientation"
     | "camera_brand"
     | "camera_model"

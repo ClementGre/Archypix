@@ -2,6 +2,7 @@ import {useEffect, useMemo, useRef, useState} from 'react'
 import {toast} from 'sonner'
 import {useEditExif, useOverrideExif, useReextractExif, useRetryExifSync, useRevertExifToFile} from '@/hooks/usePictureEdit'
 import {apiErrorMessage} from '@/api/client'
+import type {GpsValue} from '@/components/photos/detail/GpsPickerPopover'
 import type {ExifEditMode, ExifField, ExifOverrides, PictureDetail} from '@/lib/types'
 
 export interface ExifDraft {
@@ -9,6 +10,7 @@ export interface ExifDraft {
     gps_lat: string
     gps_lng: string
     gps_alt: string
+    gps_accuracy_m: string
     orientation: string
     camera_brand: string
     camera_model: string
@@ -19,6 +21,9 @@ export interface ExifDraft {
     exposure_time_den: string
 }
 
+/** The keys the GPS popover edits together (the location group plus its accuracy). */
+export const GPS_KEYS = ['gps_lat', 'gps_lng', 'gps_alt', 'gps_accuracy_m'] as const
+
 function buildInitial(picture: PictureDetail): ExifDraft {
     const e = picture.exif_data ?? {}
     const str = (key: string) => (e[key] != null ? String(e[key]) : '')
@@ -27,6 +32,7 @@ function buildInitial(picture: PictureDetail): ExifDraft {
         gps_lat: picture.gps_lat != null ? String(picture.gps_lat) : '',
         gps_lng: picture.gps_lng != null ? String(picture.gps_lng) : '',
         gps_alt: picture.gps_alt != null ? String(picture.gps_alt) : '',
+        gps_accuracy_m: picture.gps_accuracy_m != null ? String(picture.gps_accuracy_m) : '',
         orientation: picture.orientation != null ? String(picture.orientation) : '',
         camera_brand: str('camera_brand'),
         camera_model: str('camera_model'),
@@ -39,9 +45,9 @@ function buildInitial(picture: PictureDetail): ExifDraft {
 }
 
 const EMPTY_DRAFT: ExifDraft = {
-    captured_at: '', gps_lat: '', gps_lng: '', gps_alt: '', orientation: '', camera_brand: '',
-    camera_model: '', focal_length_mm: '', f_number: '', iso_speed: '', exposure_time_num: '',
-    exposure_time_den: '',
+    captured_at: '', gps_lat: '', gps_lng: '', gps_alt: '', gps_accuracy_m: '', orientation: '',
+    camera_brand: '', camera_model: '', focal_length_mm: '', f_number: '', iso_speed: '',
+    exposure_time_num: '', exposure_time_den: '',
 }
 
 /**
@@ -59,6 +65,7 @@ function buildSnapshotDraft(snapshot: Record<string, unknown> | null, missing: E
         gps_lat: str('gps_lat'),
         gps_lng: str('gps_lng'),
         gps_alt: str('gps_alt'),
+        gps_accuracy_m: str('gps_accuracy_m'),
         orientation: str('orientation'),
         camera_brand: str('camera_brand'),
         camera_model: str('camera_model'),
@@ -106,6 +113,8 @@ function buildPayload(
     diffNum('gps_lat', draft.gps_lat, initial.gps_lat)
     diffNum('gps_lng', draft.gps_lng, initial.gps_lng)
     diffNum('gps_alt', draft.gps_alt, initial.gps_alt, (s) => Math.round(Number(s)))
+    // Centimetres: what the file's EXIF rational keeps, so the read-back matches (feature 36 §3).
+    diffNum('gps_accuracy_m', draft.gps_accuracy_m, initial.gps_accuracy_m, (s) => Math.round(Number(s) * 100) / 100)
     // orientation is intentionally excluded — rotate buttons auto-commit it separately.
     diffText('camera_brand', draft.camera_brand, initial.camera_brand)
     diffText('camera_model', draft.camera_model, initial.camera_model)
@@ -243,9 +252,9 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
         setDraft((prev) => ({...prev, [key]: value}))
     }
 
-    function setGps(lat: string, lng: string, alt: string) {
-        cancelPendingRemoval('gps_lat', 'gps_lng', 'gps_alt')
-        setDraft((prev) => ({...prev, gps_lat: lat, gps_lng: lng, gps_alt: alt}))
+    function setGps(v: GpsValue) {
+        cancelPendingRemoval(...GPS_KEYS)
+        setDraft((prev) => ({...prev, gps_lat: v.lat, gps_lng: v.lng, gps_alt: v.alt, gps_accuracy_m: v.accuracy}))
     }
 
     function reset(key: keyof ExifDraft) {
@@ -254,13 +263,8 @@ export function useExifDraft(picture: PictureDetail, opts?: { allowExifEdit?: bo
     }
 
     function resetGps() {
-        cancelPendingRemoval('gps_lat', 'gps_lng', 'gps_alt')
-        setDraft((prev) => ({
-            ...prev,
-            gps_lat: initialDraft.gps_lat,
-            gps_lng: initialDraft.gps_lng,
-            gps_alt: initialDraft.gps_alt,
-        }))
+        cancelPendingRemoval(...GPS_KEYS)
+        setDraft((prev) => ({...prev, ...Object.fromEntries(GPS_KEYS.map((k) => [k, initialDraft[k]]))}))
     }
 
     function rotate(direction: 'cw' | 'ccw') {

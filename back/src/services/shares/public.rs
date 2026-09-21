@@ -295,6 +295,7 @@ pub struct PublicPictureDetail {
     pub gps_lat: Option<f64>,
     pub gps_lng: Option<f64>,
     pub gps_alt: Option<i32>,
+    pub gps_accuracy_m: Option<f64>,
     pub exif_data: Option<Value>,
 }
 
@@ -337,6 +338,7 @@ pub async fn public_picture_detail(
         gps_lat: (!view_only).then_some(p.gps_lat).flatten(),
         gps_lng: (!view_only).then_some(p.gps_lng).flatten(),
         gps_alt: (!view_only).then_some(p.gps_alt).flatten(),
+        gps_accuracy_m: (!view_only).then_some(p.gps_accuracy_m).flatten(),
         exif_data: (!view_only).then(|| serde_json::to_value(&p.exif_data).unwrap_or(Value::Null)),
     })
 }

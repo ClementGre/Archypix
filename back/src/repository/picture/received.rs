@@ -1,4 +1,4 @@
-use crate::domain::job::CameraExif;
+use crate::domain::received_exif::MaterializedExif;
 use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::NaiveDateTime;
 use sqlx::{Executor, Postgres};
@@ -33,22 +33,16 @@ impl PictureRepository {
     /// `merge(remote_exif_data, local_exif_overrides)` the caller computed (09 §6/§8). Bumps
     /// `updated_at` (announcement re-delivery gate) and re-dirties the row for the local `metadata`
     /// event (date/GPS rules re-evaluate on the merged EXIF).
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip(ex, camera), fields(picture_id = %id))]
+    #[tracing::instrument(skip(ex, merged), fields(picture_id = %id))]
     pub async fn apply_received_materialization<'e, E>(
         ex: E,
         id: Uuid,
-        camera: &CameraExif,
-        captured_at: Option<NaiveDateTime>,
-        gps_lat: Option<f64>,
-        gps_lng: Option<f64>,
-        gps_alt: Option<i32>,
-        orientation: Option<i16>,
+        merged: &MaterializedExif,
     ) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let exif_data = serde_json::to_value(camera)
+        let exif_data = serde_json::to_value(merged.camera())
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         sqlx::query!(
             r#"UPDATE pictures
@@ -57,16 +51,18 @@ impl PictureRepository {
                    gps_lat     = $4,
                    gps_lng     = $5,
                    gps_alt     = $6,
+                   gps_accuracy_m = $8,
                    orientation = $7,
                    last_pipeline_run_at = NULL
                WHERE id = $1"#,
             id,
             exif_data,
-            captured_at,
-            gps_lat,
-            gps_lng,
-            gps_alt,
-            orientation,
+            merged.captured_at,
+            merged.gps_lat,
+            merged.gps_lng,
+            merged.gps_alt,
+            merged.orientation,
+            merged.gps_accuracy_m,
         )
         .execute(ex)
         .await

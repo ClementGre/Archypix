@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET status = 'completed', completed_at = (now() AT TIME ZONE 'utc') WHERE picture_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "18d747b07f0921187d84130fb958570932067a4d4cfe06c33564b1cd6620ed5b"
+}

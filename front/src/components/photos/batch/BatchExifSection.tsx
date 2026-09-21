@@ -8,11 +8,12 @@ import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Section} from '@/components/photos/detail/Section'
 import {FieldLabel} from '@/components/photos/detail/FieldLabel'
 import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
-import {GpsPickerPopover} from '@/components/photos/detail/GpsPickerPopover'
+import {GpsPickerPopover, type GpsValue} from '@/components/photos/detail/GpsPickerPopover'
 import {MapView} from '@/components/common/MapView'
 import {BatchConfirmDialog} from './BatchConfirmDialog'
 import {batchEditExif} from '@/api/pictures'
 import {useBatchMutations} from '@/hooks/useBatch'
+import {formatAccuracy} from '@/lib/gpsInterpolation'
 import {cn, formatBytes} from '@/lib/utils'
 import type {BatchDryRun, BatchExifMode, ExifField, ExifOverrides, FieldAggregate, PictureSelection} from '@/lib/types'
 
@@ -31,6 +32,8 @@ function formatScalar(field: string, value: unknown): string {
             return `ISO ${value}`
         case 'gps_alt':
             return `${value} m`
+        case 'gps_accuracy_m':
+            return formatAccuracy(Number(value))
         case 'width':
         case 'height':
             return `${value} px`
@@ -276,8 +279,10 @@ export function BatchMetadataSection({exif, total, open, onOpenChange}: {
 
 // ── EXIF (editable) section ─────────────────────────────────────────────────────
 
+type Scalar = { field: ExifField; label: string; type?: 'text' | 'number'; step?: string | number }
+
 // Editable scalar fields, in the SAME order as the single-picture EXIF editor.
-const SCALARS: Array<{ field: ExifField; label: string; type?: 'text' | 'number'; step?: string | number }> = [
+const SCALARS: Scalar[] = [
     {field: 'camera_brand', label: 'Camera brand'},
     {field: 'camera_model', label: 'Camera model'},
     {field: 'focal_length_mm', label: 'Focal length', type: 'number', step: 'any'},
@@ -285,11 +290,11 @@ const SCALARS: Array<{ field: ExifField; label: string; type?: 'text' | 'number'
     {field: 'iso_speed', label: 'ISO', type: 'number', step: 1},
 ]
 
-interface GpsStr {
-    lat: string
-    lng: string
-    alt: string
-}
+// Its own row so a selection can be marked approximate without moving it (feature 36).
+const ACCURACY: Scalar = {field: 'gps_accuracy_m', label: 'GPS accuracy', type: 'number', step: 'any'}
+
+/** The GPS popover's location part; its accuracy is the `gps_accuracy_m` scalar draft. */
+type GpsLocation = Omit<GpsValue, 'accuracy'>
 
 export function BatchExifSection({exif, total, selection, hasReceived, open, onOpenChange}: {
     exif: Record<string, FieldAggregate> | undefined
@@ -305,7 +310,7 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
     // an empty value ⇒ empty (owned: nulls the column; received: a `null` override claim), a
     // non-empty value ⇒ set.
     const [draft, setDraft] = useState<Record<string, string>>({})
-    const [gpsDraft, setGpsDraft] = useState<GpsStr | undefined>(undefined)
+    const [gpsDraft, setGpsDraft] = useState<GpsLocation | undefined>(undefined)
     const [mode, setMode] = useState<BatchExifMode>('local')
 
     const setField = (f: string, v: string) => setDraft((d) => ({...d, [f]: v}))
@@ -330,7 +335,8 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
             } else if (f === 'camera_brand' || f === 'camera_model') {
                 v.trim() ? ((set as Record<string, unknown>)[f] = v.trim()) : empty.push(f as ExifField)
             } else {
-                const n = num(v)
+                // Accuracy in centimetres: what the file's EXIF rational keeps (feature 36 §3).
+                const n = f === 'gps_accuracy_m' ? r2(num(v)) : num(v)
                 n != null ? ((set as Record<string, unknown>)[f] = n) : empty.push(f as ExifField)
             }
         }
@@ -375,10 +381,17 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
     const gpsStats = gpsAgg ? `${total - gpsAgg.null_count}/${total} have GPS` : null
     // Seed the picker with the selection's centroid (and mean altitude) rather than an empty form.
     const numStr = (n: number | null | undefined) => (n == null ? '' : String(n))
-    const defaultGpsPickerLocation: GpsStr = {
+    const defaultGpsPickerLocation: GpsLocation = {
         lat: numStr(gpsAgg?.centroid?.lat),
         lng: numStr(gpsAgg?.centroid?.lng),
         alt: numStr(gpsAltAgg?.avg == null ? null : Math.round(gpsAltAgg.avg)),
+    }
+    // One accuracy draft, editable from its row or from the popover.
+    const accuracyValue = draft.gps_accuracy_m ?? numStr(commonNumeric(exif?.gps_accuracy_m))
+    const gpsLocation = gpsDraft ?? defaultGpsPickerLocation
+    const onGpsPicker = ({accuracy, ...loc}: GpsValue) => {
+        if (accuracy !== accuracyValue) setField('gps_accuracy_m', accuracy)
+        if (loc.lat !== gpsLocation.lat || loc.lng !== gpsLocation.lng || loc.alt !== gpsLocation.alt) setGpsDraft(loc)
     }
 
     const previewBbox = useMemo(() => {
@@ -478,7 +491,7 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
 
                     {/* GPS + read-only map */}
                     <Row label="GPS" dirty={gpsDirty} onReset={() => setGpsDraft(undefined)} stats={gpsStats}>
-                        <GpsPickerPopover value={gpsDraft ?? defaultGpsPickerLocation} onChange={setGpsDraft}>
+                        <GpsPickerPopover value={{...gpsLocation, accuracy: accuracyValue}} onChange={onGpsPicker}>
                             <button
                                 className={cn('truncate rounded px-1 text-right text-xs transition-colors hover:bg-muted', (gpsDisplay === '—' || gpsDisplay === 'cleared') && 'text-muted-foreground')}>
                                 {gpsDisplay}
@@ -499,8 +512,8 @@ export function BatchExifSection({exif, total, selection, hasReceived, open, onO
                         </div>
                     )}
 
-                    {/* Camera scalars */}
-                    {SCALARS.map((s) => (
+                    {/* GPS accuracy, then camera scalars */}
+                    {[ACCURACY, ...SCALARS].map((s) => (
                         <Row key={s.field} label={s.label} dirty={draft[s.field] !== undefined} onReset={() => resetField(s.field)}
                              stats={statsText(s.field, exif[s.field], total)}>
                             <ScalarEdit field={s.field} label={s.label} agg={exif[s.field]} draftVal={draft[s.field]}

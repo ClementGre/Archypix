@@ -39,7 +39,7 @@ impl PictureRepository {
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
-                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                         blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
@@ -93,6 +93,7 @@ impl PictureRepository {
                    gps_lat     = $5,
                    gps_lng     = $6,
                    gps_alt     = $7,
+                   gps_accuracy_m = $17,
                    orientation = $8,
                    blurhash    = COALESCE($9,  blurhash),
                    exif_data   = (exif_data - $10::text[]) || $11::jsonb,
@@ -116,7 +117,7 @@ impl PictureRepository {
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
-                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                         blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
@@ -137,6 +138,7 @@ impl PictureRepository {
             content_hash,
             file_exif_json,
             set_thumbnails,
+            extracted.gps_accuracy_m,
         )
             .fetch_one(ex)
             .await
@@ -231,6 +233,7 @@ impl PictureRepository {
                    gps_lat     = $3,
                    gps_lng     = $4,
                    gps_alt     = $5,
+                   gps_accuracy_m = $10,
                    orientation = $6,
                    exif_data   = (exif_data - $7::text[]) || $8::jsonb,
                    exif_sync_status     = $9,
@@ -246,6 +249,7 @@ impl PictureRepository {
             &camera_keys as &[String],
             patch as serde_json::Value,
             status as ExifSyncStatus,
+            snapshot.gps_accuracy_m,
         )
         .execute(ex)
         .await
@@ -305,22 +309,30 @@ impl PictureRepository {
     }
 
     /// Up to `limit` owned pictures whose `exif_sync_status` is one of `statuses` and that have no
-    /// `gen_thumbnail` job in flight, optionally narrowed to `mime_types` (lower-cased). Returns
-    /// `(picture_id, owner_id)` — the worklist shape the sweeps and drains share.
+    /// `gen_thumbnail` job in flight, optionally narrowed to `mime_types` (lower-cased), strictly
+    /// after the keyset cursor `after` in `(ingested_at, id)` order.
+    ///
+    /// A `synced` row is only returned once it has observed its own file (`file_exif`): a physical
+    /// copy seeded from a received picture is `synced` on the recipient's overrides while its bytes
+    /// hold the owner's original, and re-reading it would discard them (feature 36 §5).
     #[tracing::instrument(skip(ex, statuses, mime_types))]
     pub async fn find_by_exif_sync_status(
         ex: &PgPool,
         statuses: &[ExifSyncStatus],
         mime_types: Option<&[String]>,
+        after: Option<(NaiveDateTime, Uuid)>,
         limit: i64,
-    ) -> Result<Vec<(Uuid, Uuid)>, AppError> {
+    ) -> Result<Vec<RecheckTarget>, AppError> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
         let labels: Vec<String> = statuses.iter().map(|s| s.as_str().to_string()).collect();
         let mut q = sqlx::QueryBuilder::<Postgres>::new(
-            "SELECT p.id, p.local_user_id FROM pictures p \
+            "SELECT p.id, p.local_user_id, p.ingested_at, \
+                    p.thumbnails_generated_at IS NOT NULL AS has_thumbnails \
+             FROM pictures p \
              WHERE p.remote_picture_id IS NULL AND p.deleted_at IS NULL \
+               AND (p.exif_sync_status <> 'synced' OR p.file_exif IS NOT NULL) \
                AND p.exif_sync_status::text = ANY(",
         );
         q.push_bind(labels).push("::text[])");
@@ -329,19 +341,24 @@ impl PictureRepository {
                 .push_bind(mimes.to_vec())
                 .push("::text[])");
         }
+        if let Some((ingested_at, id)) = after {
+            q.push(" AND (p.ingested_at, p.id) > (")
+                .push_bind(ingested_at)
+                .push(", ")
+                .push_bind(id)
+                .push(")");
+        }
         q.push(
             " AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.picture_id = p.id \
                                 AND j.job_type = 'gen_thumbnail' \
                                 AND j.status IN ('pending', 'processing')) \
-             ORDER BY p.ingested_at LIMIT ",
+             ORDER BY p.ingested_at, p.id LIMIT ",
         );
         q.push_bind(limit);
-        let rows = q
-            .build_query_as::<(Uuid, Uuid)>()
+        q.build_query_as::<RecheckTarget>()
             .fetch_all(ex)
             .await
-            .map_err(map_sqlx_error)?;
-        Ok(rows)
+            .map_err(map_sqlx_error)
     }
 
     /// Update only the persisted physical-file EXIF snapshot (`file_exif`) after a successful

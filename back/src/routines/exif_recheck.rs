@@ -7,7 +7,8 @@
 //! resumability for free. Trigger-only: the admin endpoint is the only producer.
 //!
 //! Rows holding unsynced DB edits (`pending`, `pending_job_creation`, `write_failed`) are never in
-//! scope — a re-extraction makes the file authoritative and would discard them (31 §5).
+//! scope — a re-extraction makes the file authoritative and would discard them (31 §5). The
+//! `synced` scope re-reads files after the extractor learns a new field (feature 36 §5).
 
 use crate::domain::routine::{ExifRecheckInput, RecheckScope};
 use crate::infra::settings::keys;
@@ -47,23 +48,27 @@ impl Routine for ExifRecheckRoutine {
         input.scope
     }
 
-    /// Drain in bounded batches until a pass enqueues fewer than `batch`. The sweep id is minted
-    /// here, so the idempotency key is idempotent within this sweep and never against a previous one.
+    /// Drain in bounded batches, walking a keyset cursor, until a pass enqueues fewer than `batch`.
+    /// The sweep id is minted here, so the idempotency key is idempotent within this sweep and never
+    /// against a previous one.
     async fn run(&self, input: ExifRecheckInput) -> anyhow::Result<()> {
         let batch = self.settings.get(keys::EXIF_RECHECK_BATCH);
         let sweep_id = Uuid::new_v4();
         let mimes = (!input.mime_types.is_empty()).then_some(input.mime_types.as_slice());
         let mut total = 0usize;
+        let mut after = None;
         loop {
-            let n = crate::services::jobs::recheck_exif_batch(
+            let (n, cursor) = crate::services::jobs::recheck_exif_batch(
                 &self.db,
                 input.scope,
                 mimes,
                 sweep_id,
+                after,
                 batch,
             )
             .await?;
             total += n;
+            after = cursor;
             if (n as i64) < batch {
                 break;
             }

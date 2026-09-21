@@ -55,6 +55,7 @@ export interface PublicPictureDetail {
     gps_lat?: number | null
     gps_lng?: number | null
     gps_alt?: number | null
+    gps_accuracy_m?: number | null
     exif_data?: Record<string, unknown> | null
 }
 

@@ -2,26 +2,42 @@ import {useCallback} from 'react'
 import {useQueryClient} from '@tanstack/react-query'
 import {editPicture, editReceivedExif} from '@/api/pictures'
 import {invalidatePicturesAndTags} from '@/lib/invalidation'
-import type {ExifEditMode, ExifOverrides} from '@/lib/types'
+import type {GpsResult} from '@/lib/gpsInterpolation'
+import type {ExifEditMode, ExifField, ExifOverrides} from '@/lib/types'
 
-/** A GPS or capture-date value to write onto a target (feature 30 §11). */
+/**
+ * A GPS or capture-date value to write onto a target (feature 30 §11). A `null` accuracy removes the
+ * target's stale one: it described the old location (feature 36 §4).
+ */
 export interface FixValue {
     gps_lat?: number
     gps_lng?: number
     gps_alt?: number | null
+    gps_accuracy_m?: number | null
     captured_at?: string
 }
 
 /** Received-picture apply mode: a private local override, or a propose-to-owner edit (§9). */
 export type FixReceivedMode = ExifEditMode
 
-function toSet(value: FixValue): Partial<ExifOverrides> {
+/** The fix value for a derived GPS point, carrying its suggested accuracy (feature 36 §4). */
+export function gpsFixValue(g: GpsResult): FixValue {
+    return {gps_lat: g.lat, gps_lng: g.lng, gps_alt: g.alt, gps_accuracy_m: g.accuracyM}
+}
+
+function toDelta(value: FixValue): { set: Partial<ExifOverrides>; unset: ExifField[] } {
     const set: Partial<ExifOverrides> = {}
-    if (value.gps_lat != null) set.gps_lat = value.gps_lat
-    if (value.gps_lng != null) set.gps_lng = value.gps_lng
-    if (value.gps_alt != null) set.gps_alt = value.gps_alt
+    const unset: ExifField[] = []
     if (value.captured_at != null) set.captured_at = value.captured_at
-    return set
+    if (value.gps_lat != null && value.gps_lng != null) {
+        set.gps_lat = value.gps_lat
+        set.gps_lng = value.gps_lng
+        if (value.gps_alt != null) set.gps_alt = value.gps_alt
+        // Accuracy is outside the backend's coordinate coupling, so it alone can be dropped here.
+        if (value.gps_accuracy_m != null) set.gps_accuracy_m = value.gps_accuracy_m
+        else unset.push('gps_accuracy_m')
+    }
+    return {set, unset}
 }
 
 /**
@@ -35,12 +51,12 @@ export function useFixApply() {
 
     const applyOne = useCallback(
         async (id: string, owned: boolean, value: FixValue, receivedMode: FixReceivedMode) => {
-            const set = toSet(value)
+            const {set, unset} = toDelta(value)
             if (Object.keys(set).length === 0) return
             if (owned) {
-                await editPicture(id, {set})
+                await editPicture(id, {set, clear: unset})
             } else {
-                await editReceivedExif(id, {mode: receivedMode, set})
+                await editReceivedExif(id, {mode: receivedMode, set, empty: unset})
             }
         },
         [],

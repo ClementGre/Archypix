@@ -38,7 +38,7 @@ impl PictureRepository {
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
-                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                         blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
@@ -66,7 +66,7 @@ impl PictureRepository {
     /// copy time (a copy is a snapshot — it does not stay linked to the owner). `content_hash`/
     /// `file_hash`/thumbnails are filled by the enqueued `gen_thumbnail`.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip(ex, exif_data), fields(picture_id = %id, user_id = %local_user_id))]
+    #[tracing::instrument(skip(ex, exif), fields(picture_id = %id, user_id = %local_user_id))]
     pub async fn create_copy<'e, E>(
         ex: E,
         id: Uuid,
@@ -76,12 +76,7 @@ impl PictureRepository {
         file_size: Option<i64>,
         width: Option<i32>,
         height: Option<i32>,
-        exif_data: serde_json::Value,
-        captured_at: Option<NaiveDateTime>,
-        gps_lat: Option<f64>,
-        gps_lng: Option<f64>,
-        gps_alt: Option<i32>,
-        orientation: Option<i16>,
+        exif: &FullExif,
         copy_source_owner_username: Option<&str>,
         copy_source_owner_instance: Option<&str>,
         copy_source_picture_id: Option<&str>,
@@ -92,13 +87,15 @@ impl PictureRepository {
     where
         E: Executor<'e, Database = Postgres>,
     {
+        let exif_data = serde_json::to_value(&exif.camera)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         sqlx::query_as!(
             Picture,
             r#"INSERT INTO pictures (id, local_user_id, filename, mime_type, file_size, width, height,
-                                     exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, orientation,
-                                     copy_source_owner_username, copy_source_owner_instance, copy_source_picture_id,
-                                     creator, exif_sync_status, file_exif)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
+                                     exif_data, metadata, captured_at, gps_lat, gps_lng, gps_alt, gps_accuracy_m,
+                                     orientation, copy_source_owner_username, copy_source_owner_instance,
+                                     copy_source_picture_id, creator, exif_sync_status, file_exif)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb)
                RETURNING id, local_user_id, remote_picture_id, owner_username, owner_instance_domain,
                          filename, mime_type, file_size, width, height,
                          exif_data as "exif_data: _", metadata as "metadata: _",
@@ -107,7 +104,7 @@ impl PictureRepository {
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
-                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                         blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
@@ -120,11 +117,12 @@ impl PictureRepository {
             width,
             height,
             exif_data,
-            captured_at,
-            gps_lat,
-            gps_lng,
-            gps_alt,
-            orientation,
+            exif.captured_at,
+            exif.gps_lat,
+            exif.gps_lng,
+            exif.gps_alt,
+            exif.gps_accuracy_m,
+            exif.orientation,
             copy_source_owner_username,
             copy_source_owner_instance,
             copy_source_picture_id,
@@ -215,7 +213,7 @@ impl PictureRepository {
                          remote_exif_data as "remote_exif_data: _",
                          local_exif_overrides as "local_exif_overrides: _",
                          captured_at, ingested_at, updated_at, remote_updated_at,
-                         blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                         blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                          file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                          content_hash, copy_source_owner_username,
                          copy_source_owner_instance, copy_source_picture_id,
@@ -266,7 +264,7 @@ impl PictureRepository {
                       p.remote_exif_data as "remote_exif_data: _",
                       p.local_exif_overrides as "local_exif_overrides: _",
                       p.captured_at, p.ingested_at, p.updated_at, p.remote_updated_at,
-                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.orientation,
+                      p.blurhash, p.gps_lat, p.gps_lng, p.gps_alt, p.gps_accuracy_m, p.orientation,
                       p.thumbnails_generated_at, p.file_hash,
                       p.exif_sync_status as "exif_sync_status: _", p.file_exif as "file_exif: _",
                       p.content_hash, p.copy_source_owner_username,
@@ -306,7 +304,7 @@ impl PictureRepository {
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
-                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                      blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
@@ -334,7 +332,7 @@ impl PictureRepository {
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
-                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                      blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,
@@ -371,7 +369,7 @@ impl PictureRepository {
                       remote_exif_data as "remote_exif_data: _",
                       local_exif_overrides as "local_exif_overrides: _",
                       captured_at, ingested_at, updated_at, remote_updated_at,
-                      blurhash, gps_lat, gps_lng, gps_alt, orientation, thumbnails_generated_at,
+                      blurhash, gps_lat, gps_lng, gps_alt, gps_accuracy_m, orientation, thumbnails_generated_at,
                       file_hash, exif_sync_status as "exif_sync_status: _", file_exif as "file_exif: _",
                       content_hash, copy_source_owner_username,
                       copy_source_owner_instance, copy_source_picture_id,

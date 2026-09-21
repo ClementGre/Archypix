@@ -10,6 +10,7 @@ import {useAuthStore} from '@/stores/auth'
 import {useSelectionStore} from '@/stores/selection'
 import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {formatBytes, formatDateTime, isVideoMime} from '@/lib/utils'
+import {formatAccuracy} from '@/lib/gpsInterpolation'
 import {Button} from '@/components/ui/button'
 import {displayDimensions, OrientedContainImage} from '@/components/photos/OrientedImage'
 import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
@@ -215,7 +216,7 @@ function PublicExifSection({d}: { d: PublicPictureDetail }) {
         [
             'GPS',
             d.gps_lat != null && d.gps_lng != null
-                ? `${d.gps_lat.toFixed(5)}, ${d.gps_lng.toFixed(5)}${d.gps_alt != null ? ` · ${d.gps_alt} m` : ''}`
+                ? `${d.gps_lat.toFixed(5)}, ${d.gps_lng.toFixed(5)}${d.gps_alt != null ? ` · ${d.gps_alt} m` : ''}${d.gps_accuracy_m != null ? ` · ${formatAccuracy(d.gps_accuracy_m)}` : ''}`
                 : null,
         ],
         ['Camera brand', str(ex.camera_brand)],
