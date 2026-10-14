@@ -7,7 +7,6 @@ import {Loader2, Users} from 'lucide-react'
 import {useFixReference} from '@/stores/fixReference'
 import {useReferencePhase} from '@/hooks/useReferencePhase'
 import {useReferenceDerivation} from '@/hooks/useReferenceDerivation'
-import {useGridItems} from '@/stores/gridItems'
 import {Button} from '@/components/ui/button'
 import {MapView} from '@/components/common/MapView'
 import {formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
@@ -17,12 +16,10 @@ import {FixBulkDialog} from './FixBulkDialog'
 import {referenceBulkRows} from '@/lib/fixBulk'
 import {type AccuracyChoice, resolveAccuracy, sourceAccuracy} from '@/lib/gpsInterpolation'
 import {type FixValue, gpsFixValue} from '@/hooks/useFixApply'
-import type {PictureListItem} from '@/lib/types'
 
 export function BatchReferencePanel() {
-    const {field, targetIds} = useFixReference()
+    const {field, targetIds, targetItems} = useFixReference()
     const {exit} = useReferencePhase()
-    const grid = useGridItems((s) => s.items)
     const [showDialog, setShowDialog] = useState(false)
     const [accChoice, setAccChoice] = useState<AccuracyChoice>('suggested')
     const deriv = useReferenceDerivation(field ?? 'gps', null)
@@ -36,7 +33,6 @@ export function BatchReferencePanel() {
             ? deriv.gpsValue ? {...gpsFixValue(deriv.gpsValue), gps_accuracy_m: accuracy} : null
             : deriv.dateValue ? {captured_at: deriv.dateValue} : null
 
-    const targetItems = grid.filter((i) => targetIds.includes(i.id)) as PictureListItem[]
     const hasReceived = targetItems.some((i) => !i.owned)
 
     return (

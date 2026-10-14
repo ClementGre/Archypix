@@ -397,7 +397,7 @@ Fixes from a review of the initial agent build:
   logged-in visitor who already holds a live incoming share from this owner covering the same tag sees
   "Already in your incoming shares" instead of the Convert action. Convert lives only in the top bar (a
   whole-album action); the details sidebar offers only per-picture Save-a-copy.
-- **Owner management.** `PublicShareDialog` is create-**or**-edit; each link row has an edit button + a
+- **Owner management.** `PublicShareDialog` is create-**or**-edit (creating copies the link and shows it in the toast); each link row has an edit button + a
   `PublicShareInfoPopover`; both create buttons sit at the top of the Outgoing pane; the tag tree `…` menu
   offers "New public share link…"; visitor-facing copy is friendlier ("Add to my account" / "Convert to a
   share on your account" / "Upload").

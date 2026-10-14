@@ -1,6 +1,7 @@
 import {useCallback} from 'react'
 import {useSearchParams} from 'react-router-dom'
 import {useFixReference} from '@/stores/fixReference'
+import {useGridItems} from '@/stores/gridItems'
 import {useTimelineView} from '@/hooks/useTimelineView'
 import {useUIStore} from '@/stores/ui'
 import type {FixMode} from '@/lib/types'
@@ -21,7 +22,9 @@ export function useReferencePhase() {
         (field: FixMode, targetIds: string[]) => {
             // Snapshot both the URL (to restore) and the view's selection-filter signature (so the
             // deferred land intent knows when this exact view is back on screen after exit).
-            enter(field, targetIds, sp.toString(), JSON.stringify(selectionFilter))
+            const ids = new Set(targetIds)
+            const targetItems = useGridItems.getState().items.filter((i) => ids.has(i.id))
+            enter(field, targetIds, targetItems, sp.toString(), JSON.stringify(selectionFilter))
             // On mobile the sidebar is an overlay drawer over the grid — close it so the user can tap
             // reference photos; they reopen it (to preview/apply) via the reference bar's Review button.
             closeMobileDrawer()

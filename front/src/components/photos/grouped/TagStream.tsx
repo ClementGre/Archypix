@@ -36,8 +36,12 @@ const TOP_BLOCKS = -1
 /** Every sticky header is this tall, so a nested one can offset itself by its ancestors' heights. */
 const HEADER_H = 28
 
-/** Sticky headers stack outermost-on-top; deeper ones slide *under* their ancestors. */
-const headerZ = (stickyTop: number) => Math.max(1, 30 - stickyTop / HEADER_H)
+/** Pins a header below its ancestors' headers, offset by `--sticky-base` (the app bar where the document
+ *  scrolls, set by `PhotoGrid`). Outermost on top; deeper ones slide *under* their ancestors. */
+const pin = (stickyTop: number) => ({
+    top: `calc(var(--sticky-base, 0px) + ${stickyTop}px)`,
+    zIndex: Math.max(1, 30 - stickyTop / HEADER_H),
+})
 
 /** The padding a header sits inside and has to bleed back out of: the grid container's `p-3` at the
  *  top level, an expanded card's `p-1.5` for the stream nested in it. A header inset by its
@@ -340,8 +344,7 @@ function ExpandedChild({child, order, stickyTop, ctx, onCollapse, onOpen}: {
             <div
                 className="sticky flex h-7 items-center gap-1.5 rounded-t-[2px] border-b bg-background pr-1"
                 style={{
-                    top: stickyTop,
-                    zIndex: headerZ(stickyTop),
+                    ...pin(stickyTop),
                     backgroundImage: `linear-gradient(${tint}, ${tint})`,
                     borderColor: accent ? `${accent}55` : undefined,
                 }}
@@ -419,7 +422,7 @@ function GroupSection({
                 // Opaque, full-bleed, and no margin — each of the three is a way for the page to show
                 // through around a pinned header.
                 <h4 className="sticky flex h-7 items-center gap-2 border-b border-border/60 bg-background text-xs font-medium"
-                    style={{top: stickyTop, zIndex: headerZ(stickyTop), ...bleed(pad)}}>
+                    style={{...pin(stickyTop), ...bleed(pad)}}>
                     <span>{section.label}</span>
                     {settled && section.items.length > 0 && (
                         <span className="text-[10px] font-normal text-muted-foreground">{section.items.length}</span>

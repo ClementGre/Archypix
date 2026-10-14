@@ -312,7 +312,7 @@ edits re-evaluate `gps_within_bbox` / `capture_year` / segments for free (featur
 - [x] `DateFixPanel` + `lib/filenameDate.ts` parser (pattern table); chips (filename / source-file /
   uploaded, `lib/dateSuggestions.ts`); normal-editor prefill (`DateTimePickerPopover` suggestions)
     + upload `original_file_created_at`. *(Run interpolation deferred — noted below.)*
-- [x] Two-step selection: target stash + reference-picking phase (`stores/fixReference`, persistent
+- [x] Two-step selection: target stash (ids + grid rows, so a batch survives navigating away) + reference-picking phase (`stores/fixReference`, persistent
   selection scoped to the phase, `ReferenceBar`) + derived-value preview (`FixPanel`).
 - [x] Bulk preview popup (`FixBulkDialog` — per-row nullable value, include toggles, editable) over
   both fields.

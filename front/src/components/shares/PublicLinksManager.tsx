@@ -2,10 +2,8 @@ import {useState} from 'react'
 import {Ban, Check, Copy, Loader2, Pencil} from 'lucide-react'
 import {toast} from 'sonner'
 import type {PublicShareSummary} from '@/api/publicShares'
-import {publicShareUrl} from '@/api/publicShares'
-import {GLOBAL_DOMAIN} from '@/lib/constants'
-import {TagPath} from '@/lib/utils'
-import {useAuthStore} from '@/stores/auth'
+import {usePublicShareUrl} from '@/hooks/usePublicShares'
+import {copyText, TagPath} from '@/lib/utils'
 import {Button} from '@/components/ui/button'
 import {Section} from '@/components/photos/detail/Section'
 import {PublicShareDialog} from './PublicShareDialog'
@@ -42,21 +40,16 @@ export function PublicLinksManager({shares, isPending}: PublicLinksManagerProps)
 }
 
 function PublicLinkRow({share}: { share: PublicShareSummary }) {
-    const username = useAuthStore((s) => s.user?.username ?? '')
-    const domain = useAuthStore((s) => s.instance) || GLOBAL_DOMAIN
+    const shareUrl = usePublicShareUrl()
     const [copied, setCopied] = useState(false)
     const [revokeOpen, setRevokeOpen] = useState(false)
     const [editOpen, setEditOpen] = useState(false)
 
-    const url = publicShareUrl(domain, username, share.token)
+    const url = shareUrl(share.token)
     const copy = async () => {
-        try {
-            await navigator.clipboard.writeText(url)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-        } catch {
-            toast.error('Could not copy the link.')
-        }
+        if (!(await copyText(url))) return toast.error('Could not copy the link.')
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
     }
 
     return (

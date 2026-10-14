@@ -227,7 +227,7 @@ presence filters); under `geo_near` each `PhotoCard` shows a `distance_m` badge,
 `TagFilterBar` (`components/tags/`, the breadcrumb-style bar of the view root + the cross-cutting include / `⦸`-exclude tag
 chips, each tinted with the tag's own colour and removable, plus Clear; occupies the toolbar's left, the hierarchy
 breadcrumb replacing it when browsing), `Lightbox` (full-screen viewer driven by the `view` param;
-←/→/Esc, plus **Delete/⌘+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
+←/→/Esc, plus **Delete/⌘·Ctrl+Backspace trashes the picture in view immediately, no confirm dialog** — both that shortcut
 and the header's trash button (via `ConfirmDialog`) then **advance to the next picture (or previous if it was last)
 instead of closing**, only closing when no picture remains;
 **portaled to `document.body`** so it paints above the mobile sidebar drawer while the trash confirm dialog still stacks
@@ -278,6 +278,7 @@ distinct values with an **(i)** popover for the rest. Editable fields are click-
 local/suggest mode toggle re-running it when received pictures are present); the GPS aggregate renders its bbox on a
 read-only `MapView`. `BatchConfirmDialog` is the mandatory confirmation gate: runs the endpoint's `dry_run` on open
 (re-running when `dryRunKey` changes) before enabling Confirm; trigger-based or programmatically-controlled.
+`BatchTrashDialog` is its trash preset (the panel's Trash button and `TrashShortcut`, the gallery's Delete-key host, §9).
 **`photos/fix/`** (feature 30 photos-fix tools) — enabled from the grid-header **`IssuesFilter`** (a *Fix tools*
 Off/GPS/Date line under the presence filters), setting the `fix` URL param. `PhotoCard` highlights pictures missing the
 active field (amber ring + `MapPinOff`/`CalendarOff` badge, non-trashed only) and the GPS before/after anchors (sky
@@ -294,7 +295,8 @@ editable in `GpsPickerPopover`, with its own row in the batch EXIF section). `Da
 time input + priority suggestion chips (`lib/dateSuggestions`). Apply is an `ApplyControls` split button whose main
 action is the last-used one (Apply, or Apply & next — persisted in `stores/fixPrefs`) with a dropdown for either, plus a
 **Skip** that advances without writing. **Pick references** (one consistent button everywhere) enters the phase
-(`stores/fixReference` + `useReferencePhase`: snapshots/restores the gallery filters/sort, closes the mobile drawer):
+(`stores/fixReference` + `useReferencePhase`: snapshots/restores the gallery filters/sort, snapshots the targets' grid rows — the
+batch pane builds its apply rows from them once the user navigates away to find references — and closes the mobile drawer):
 card clicks route to `toggleRef`, the floating `ReferenceBar` replaces `SelectionActionBar` (with a mobile **Review**
 button to reopen the drawer). The reference view sits **inline** — it replaces the before/after zone (GPS) or the
 suggestion chips (Date) with a reference summary (derived value on the same map / a `DateTimelinePreview`), the map /
@@ -445,7 +447,8 @@ single row of two equal-width compact buttons — **Share tag** (`CreateShareDia
 (`PublicShareDialog`), both driven controlled from the header (no "Outgoing" label). `PublicShareDialog` is **create-or-edit** (`share` prop
 prefills + switches to
 `update`; the tag is immutable on edit; a "Change/Keep current" password control), `initialTag`-driven
-(also from the tag tree `…` menu). `PublicLinksManager` is a collapsed-by-default `Section` listing the
+(also from the tag tree `…` menu); creating copies the new link to the clipboard and shows it in the toast (with a **Copy** action when the
+clipboard refuses). The link URL comes from `usePublicShareUrl`. `PublicLinksManager` is a collapsed-by-default `Section` listing the
 active links, each row with copy-link / **edit** / revoke and a `PublicShareInfoPopover` (reuses
 `ShareInfoPopover`'s `FlagChip`/`DetailRow` — permissions, tag, password, counts, timestamps, message).
 
@@ -595,7 +598,9 @@ block alone, so it never renders twice.
   inline margins, so the background spans edge to edge while the text stays aligned with the rows below. That padding is a wrapper *inside* the scroll
   container rather than on it, so the vertical half scrolls away under a pinned header instead of holding it off the top. An expanded card carries no
   `overflow-hidden`, which would make it the scrollport of its own sticky headers; it rounds the header's top corners instead. Block headers are
-  tinted with the tag's own colour over an opaque base, so the tint says which tag the rows below belong to.
+  tinted with the tag's own colour over an opaque base, so the tint says which tag the rows below belong to. Below `md` the document scrolls under
+  the sticky `TopBar`, so the grid content offsets every pin by `--sticky-base` (the bar's `--spacing-topbar`) and is `isolate`d, keeping the
+  headers' z-indexes beneath the bar.
 - **Laziness:** a collapsed block costs zero requests; an expanded child mounts its own infinite query only once `useInView` says it is near the
   viewport, and each stream carries its own pagination sentinel so a nested section advances its own query.
 - `grouped/GroupedGridContext` is what keeps selection coherent across all that: every mounted section registers
@@ -780,9 +785,11 @@ block alone, so it never renders twice.
   `OrientedContainImage` paints the checkerboard on the exact image box (so the lightbox keeps a black letterbox around it).
 - **Sensitive actions** (revoke / reject / delete) are gated by `ConfirmDialog`, which also accepts **Enter to confirm**
   regardless of which footer button has focus (Radix defaults focus to Cancel). The single exception is the keyboard
-  trash shortcut: **Delete/⌘+Backspace** on a single selected picture (`SelectionPanel`) or the picture open in the
-  `Lightbox` trashes it directly, skipping the dialog — a deliberate keystroke doesn't need the mouse-click confirm
-  gate. Both shortcuts ignore the keypress while focus is in a text input and no-op on an already-trashed picture.
+  trash shortcut: **Delete/⌘·Ctrl+Backspace** on a single selected picture (`TrashShortcut`, mounted by `PhotoGrid`) or
+  the picture open in the `Lightbox` trashes it directly, skipping the dialog — a deliberate keystroke doesn't need the
+  mouse-click confirm gate. Both ignore the keypress while focus is in a text input and no-op on an already-trashed
+  picture. On a multi-selection the same shortcut opens the batch trash confirm (`BatchTrashDialog`, shared with the
+  multi-selection panel's Trash button) — its dry run still gates the write.
 - **Upload flow:** `UploadDialog` (rendered once in `AppShell`) is triggered via `useUploadStore`. The `TopBar` Upload button and the `GalleryPage`
   full-page drag zone both call `openDialog(files?)`. **Files and directories** can be dropped or picked — dropped dirs are walked recursively via the
   `webkitGetAsEntry` filesystem-entries API and the folder picker uses a `webkitdirectory` input; in both cases **hidden files/dirs (dotfiles) are

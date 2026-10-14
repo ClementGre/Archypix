@@ -6,6 +6,21 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs))
 }
 
+/** Delete, or ⌘/Ctrl+Backspace: the keyboard shortcut that trashes the selection. */
+export function isTrashShortcut(e: KeyboardEvent): boolean {
+    return e.key === 'Delete' || ((e.metaKey || e.ctrlKey) && e.key === 'Backspace')
+}
+
+/** Clipboard write that reports failure instead of throwing (insecure context, no user activation). */
+export async function copyText(text: string): Promise<boolean> {
+    try {
+        await navigator.clipboard.writeText(text)
+        return true
+    } catch {
+        return false
+    }
+}
+
 // ── Thumbnails ─────────────────────────────────────────────────────────────────
 
 /**
