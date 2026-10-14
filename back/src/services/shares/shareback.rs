@@ -2,7 +2,7 @@
 //! incoming share is auto-activated and an automatic per-share `SharedTagMappingService` is created.
 
 use crate::domain::share::{IncomingShare, OutgoingShare, ShareStatus};
-use crate::domain::tagging::ServiceType;
+use crate::domain::tagging::{NewService, ServiceType};
 use archypix_common::routine::RoutineHandle;
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tagging::TaggingServiceRepository;
@@ -37,9 +37,10 @@ pub async fn auto_accept_shareback_local(
         db,
         recipient_id,
         ServiceType::SharedTagMapping,
-        "Share-back",
-        &[],
-        &[],
+        &NewService {
+            name: "Share-back".to_string(),
+            ..Default::default()
+        },
         &config,
     )
     .await?;

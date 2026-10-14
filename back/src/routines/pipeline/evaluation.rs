@@ -1,6 +1,7 @@
 //! Per-user tag service evaluation + reconciliation, plus the announcement step.
 
 use crate::domain::pipeline::PipelineInput;
+use crate::domain::pipeline::prune::{GateHistory, Origin, PruneOptions};
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceConfig;
 use crate::routines::pipeline::{PipelineRun, announcement, dedup};
@@ -53,6 +54,8 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
         }
     }
 
+    let prune_opts: Vec<PruneOptions> = services.iter().map(PruneOptions::from).collect();
+
     // ── Find dirty pictures ───────────────────────────────────────────────────
     let dirty = PipelineRepository::find_dirty_for_user(db, user_id).await?;
     if dirty.is_empty() {
@@ -85,22 +88,26 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
         // Only manual and incoming_share tags form the gating base — pipeline tags are
         // re-derived from scratch each run, so prior-run pipeline tags must not influence
         // `requires`/`excludes` (a stale tag could otherwise keep a service firing).
-        let mut base_by_pic: HashMap<Uuid, Vec<TagPath>> = HashMap::new();
+        let mut base_by_pic: HashMap<Uuid, Vec<(TagPath, Origin)>> = HashMap::new();
         for tag in all_tags {
-            if matches!(tag.source, TagSource::Manual | TagSource::IncomingShare) {
-                base_by_pic
-                    .entry(tag.picture_id)
-                    .or_default()
-                    .push(TagPath::from_ltree(&tag.tag_path));
-            }
+            let origin = match tag.source {
+                TagSource::Manual => Origin::Manual,
+                TagSource::IncomingShare => Origin::IncomingShare,
+                _ => continue,
+            };
+            base_by_pic
+                .entry(tag.picture_id)
+                .or_default()
+                .push((TagPath::from_ltree(tag.tag_path), origin));
         }
 
         let mut success_ids: Vec<Uuid> = Vec::with_capacity(chunk.len());
 
         for picture in chunk {
             // Gating tags accumulate this run's pipeline output (in service order) on top of
-            // the base, so a downstream service can `require` an upstream service's tag.
-            let mut gating_tags: Vec<TagPath> = base_by_pic.remove(&picture.id).unwrap_or_default();
+            // the base, so a downstream service can `require` an upstream service's tag. The
+            // history also records each gate decision for the shadow prune (feature 39 §4.3).
+            let mut history = GateHistory::new(base_by_pic.remove(&picture.id).unwrap_or_default());
             let incoming_share_ids: &[Uuid] = share_ids_by_pic
                 .get(&picture.id)
                 .map(|v| v.as_slice())
@@ -137,33 +144,33 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
                 &global_domain,
             );
 
-            for service in &services {
-                let input = PipelineInput {
-                    picture_id: picture.id,
-                    captured_at: picture.captured_at,
-                    ingested_at: Some(picture.ingested_at),
-                    updated_at: Some(picture.updated_at),
-                    gps_lat: picture.gps_lat,
-                    gps_lng: picture.gps_lng,
-                    gps_alt: picture.gps_alt,
-                    filename: picture.filename.clone(),
-                    camera_brand: cam.camera_brand.clone(),
-                    camera_model: cam.camera_model.clone(),
-                    focal_length_mm: cam.focal_length_mm,
-                    f_number: cam.f_number,
-                    iso_speed: cam.iso_speed,
-                    exposure_time,
-                    orientation: picture.orientation,
-                    mime_type: picture.mime_type.clone(),
-                    file_size: picture.file_size,
-                    width: picture.width,
-                    height: picture.height,
-                    is_owned: picture.is_owned,
-                    owner: owner.clone(),
-                    creator: creator.clone(),
-                };
+            let input = PipelineInput {
+                picture_id: picture.id,
+                captured_at: picture.captured_at,
+                ingested_at: Some(picture.ingested_at),
+                updated_at: Some(picture.updated_at),
+                gps_lat: picture.gps_lat,
+                gps_lng: picture.gps_lng,
+                gps_alt: picture.gps_alt,
+                filename: picture.filename.clone(),
+                camera_brand: cam.camera_brand.clone(),
+                camera_model: cam.camera_model.clone(),
+                focal_length_mm: cam.focal_length_mm,
+                f_number: cam.f_number,
+                iso_speed: cam.iso_speed,
+                exposure_time,
+                orientation: picture.orientation,
+                mime_type: picture.mime_type.clone(),
+                file_size: picture.file_size,
+                width: picture.width,
+                height: picture.height,
+                is_owned: picture.is_owned,
+                owner,
+                creator,
+            };
 
-                if !service.should_run(&gating_tags) {
+            for (idx, service) in services.iter().enumerate() {
+                if !history.gate(idx, service) {
                     continue;
                 }
 
@@ -175,21 +182,25 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
 
                 // Keep only the deepest tags this service emits (its own minimal form); a
                 // shallower tag from a *different* source is kept independently by the reconcile.
-                for tag in TagPath::fold_deepest(result.tags_to_add) {
-                    if !gating_tags.iter().any(|t| t == &tag) {
-                        gating_tags.push(tag.clone());
-                    }
-                    produced.push(PipelineTagAssignment {
-                        tag_path: tag.as_ltree().to_string(),
-                        source: source.to_string(),
-                        source_id: service.id,
-                    });
-                }
+                let tags = TagPath::fold_deepest(result.tags_to_add);
+                produced.extend(tags.iter().map(|tag| PipelineTagAssignment {
+                    tag_path: tag.as_ltree().to_string(),
+                    source: source.to_string(),
+                    source_id: service.id,
+                }));
+                history.produce(idx, tags);
             }
+            let prune = history.plan(&prune_opts);
 
-            // Atomically add the produced tags and remove stale pipeline tags.
-            if let Err(e) =
-                PipelineRepository::reconcile_pipeline_tags(db, picture.id, &produced).await
+            // Atomically add the produced tags, remove stale pipeline tags, and prune shadows.
+            if let Err(e) = PipelineRepository::reconcile_pipeline_tags(
+                db,
+                picture.id,
+                &produced,
+                &prune.remove,
+                &prune.assign,
+            )
+            .await
             {
                 tracing::error!(
                     picture_id = %picture.id,

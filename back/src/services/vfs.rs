@@ -5,12 +5,12 @@
 //! and the write taxonomy (PUT/DELETE/MOVE/COPY/MKCOL) — as tag mutations and uploads. The
 //! WebDAV adapter in `api::webdav` is a thin shell over this; an SFTP adapter could reuse it.
 
-use crate::domain::hierarchy::{NamingStrategy, TagOp, TagOpKind};
+use crate::domain::hierarchy::{NamingStrategy, TagOp, TagOpKind, TrashedDuplicate};
 use crate::domain::tag_metadata::{
     TagMetadataPatch, validate_display_name, validate_webdav_dir_name,
 };
 use crate::infra::settings::keys;
-use crate::services::hierarchy::ResolvedDir;
+use crate::services::hierarchy::{MirrorWrite, ResolvedDir};
 use crate::state::AppState;
 use archypix_common::error::AppError;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -36,10 +36,30 @@ const SIDECAR_MAX_BYTES: usize = 1024 * 1024;
 /// of a `mirror` node by new trailing segments that map to a deeper tag (06_webdav.md §9).
 enum PathResolution<'d> {
     Existing(&'d ResolvedDir),
-    /// The deepest tag to assign (`tagRoot + new segments`), already validated.
     MirrorExtension {
+        /// The deepest tag to assign (`base tag + new segments`), already validated.
         tag: String,
+        /// How many leading segments name the nearest existing ancestor.
+        base_len: usize,
+        mirror: MirrorWrite,
     },
+}
+
+impl PathResolution<'_> {
+    fn trashed_duplicate(&self) -> TrashedDuplicate {
+        match self {
+            PathResolution::Existing(dir) => dir.trashed_duplicate,
+            PathResolution::MirrorExtension { mirror, .. } => mirror.trashed_duplicate,
+        }
+    }
+
+    /// The `drop` inbox this resolves to, if any.
+    fn drop_dir(&self) -> Option<&ResolvedDir> {
+        match self {
+            PathResolution::Existing(dir) if dir.is_drop => Some(dir),
+            _ => None,
+        }
+    }
 }
 
 /// Where a finalized picture's bytes come from: a local temp file (a direct PUT) or an object
@@ -147,6 +167,7 @@ pub struct Vfs<'a> {
 }
 
 mod dirops;
+mod drop;
 mod read;
 mod sidecar;
 mod staging;
@@ -277,20 +298,25 @@ pub fn project_files(
             } else {
                 base.clone()
             };
-            VfsEntry {
-                name,
-                is_dir: false,
-                size: p.file_size.unwrap_or(0).max(0) as u64,
-                // Bytes-only mtime (feature 32) — `updated_at` moves on every re-tag, which makes
-                // mtime-comparing sync clients re-download the whole library.
-                modified: p.file_modified_at,
-                etag: p.file_hash.clone(),
-                mime_type: p.mime_type.clone(),
-                picture_id: Some(p.id),
-                writable,
-            }
+            picture_entry(p, name, writable)
         })
         .collect()
+}
+
+/// A picture projected to a file entry named `name`.
+fn picture_entry(p: &crate::domain::picture::Picture, name: String, writable: bool) -> VfsEntry {
+    VfsEntry {
+        name,
+        is_dir: false,
+        size: p.file_size.unwrap_or(0).max(0) as u64,
+        // Bytes-only mtime (feature 32) — `updated_at` moves on every re-tag, which makes
+        // mtime-comparing sync clients re-download the whole library.
+        modified: p.file_modified_at,
+        etag: p.file_hash.clone(),
+        mime_type: p.mime_type.clone(),
+        picture_id: Some(p.id),
+        writable,
+    }
 }
 
 fn base_name(p: &crate::domain::picture::Picture, naming: NamingStrategy) -> String {

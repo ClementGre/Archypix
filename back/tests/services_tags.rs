@@ -1,7 +1,7 @@
 mod common;
 
 use archypix_back::domain::tag::TagPath;
-use archypix_back::domain::tagging::ServiceType;
+use archypix_back::domain::tagging::{NewService, ServiceType};
 use archypix_back::routines::RoutineHandle;
 use archypix_back::repository::hierarchy::HierarchyRepository;
 use archypix_back::repository::picture::ResolvedSelection;
@@ -194,9 +194,11 @@ async fn cascade_rename_rewrites_everywhere(db: PgPool) {
         &db,
         user,
         ServiceType::Rule,
-        "R",
-        &["Photos.Travel".to_string()],
-        &[],
+        &NewService {
+            name: "R".to_string(),
+            requires: vec!["Photos.Travel".to_string()],
+            ..Default::default()
+        },
         &json!({"rules": [{"id": Uuid::new_v4(), "predicate": {"and": []}, "assign_tag": "Photos.Travel.Auto"}]}),
     )
         .await

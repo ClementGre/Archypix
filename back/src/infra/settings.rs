@@ -148,6 +148,8 @@ pub mod keys {
 
     // ── WebDAV ──
     pub const WEBDAV_MAX_UPLOAD_BYTES: SettingKey<u64> = SettingKey::new("webdav_max_upload_bytes");
+    pub const WEBDAV_DROP_VERIFY_WINDOW_SECS: SettingKey<u64> =
+        SettingKey::new("webdav_drop_verify_window_secs");
 
     // ── Rate limits & caps ──
     pub const RATE_LIMIT_LOGIN_MAX: SettingKey<u64> = SettingKey::new("rate_limit_login_max");
@@ -325,6 +327,7 @@ pub fn registry() -> Vec<SettingSpec> {
 
         // ── WebDAV ──
         SettingSpec::new(WEBDAV_MAX_UPLOAD_BYTES, group::WEBDAV).default("5368709120").doc("Upper bound on a single WebDAV PUT body (bytes).", "5368709120"),
+        SettingSpec::new(WEBDAV_DROP_VERIFY_WINDOW_SECS, group::WEBDAV).default("600").doc("How long a drop inbox lists a file it received, so a client can verify its upload (seconds).", "600"),
 
         // ── Rate limits & caps ──
         SettingSpec::new(RATE_LIMIT_LOGIN_MAX, group::RATE_LIMITS).default("10").doc("Max failed/attempted logins per username per window.", "10"),

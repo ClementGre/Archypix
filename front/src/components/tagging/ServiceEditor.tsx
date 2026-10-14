@@ -2,18 +2,18 @@ import {ArrowLeft} from 'lucide-react'
 import {toast} from 'sonner'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
-import {Switch} from '@/components/ui/switch'
 import {Separator} from '@/components/ui/separator'
 import {RequiresExcludesEditor} from './RequiresExcludesEditor'
 import {ServiceNameEditor} from './ServiceNameEditor'
-import {DeleteServiceDialog} from './DeleteServiceDialog'
+import {ServiceActions} from './ServiceActions'
+import {PruneSettings} from './PruneSettings'
 import {RuleEditor} from './RuleEditor'
 import {SegmentEditor} from './SegmentEditor'
 import {MappingEditor} from './MappingEditor'
 import {serviceTypeLabel} from './ServiceRow'
 import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {apiErrorMessage} from '@/api/client'
-import type {ServiceDetailResponse, ServiceType} from '@/lib/types'
+import type {ServiceDetailResponse, ServicePatch, ServiceType} from '@/lib/types'
 
 const TYPE_COLOR: Record<ServiceType, string> = {
     rule: 'bg-violet-500/15 text-violet-500',
@@ -29,9 +29,9 @@ interface ServiceEditorProps {
 
 /** Right-pane editor for the selected service: header + gates + type-specific config. */
 export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) {
-    const {update, remove} = useTaggingMutations()
+    const {update} = useTaggingMutations()
 
-    const patch = (body: { name?: string; enabled?: boolean; requires?: string[]; excludes?: string[] }) =>
+    const patch = (body: ServicePatch) =>
         update.mutate({id: service.id, body}, {onError: (err) => toast.error(apiErrorMessage(err))})
 
     return (
@@ -54,16 +54,8 @@ export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) 
                         className="text-base"
                     />
                     <div className="flex-1"/>
-                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        {service.enabled ? 'Enabled' : 'Disabled'}
-                        <Switch checked={service.enabled} onCheckedChange={(enabled) => patch({enabled})} disabled={update.isPending}/>
-                    </label>
-                    <DeleteServiceDialog
-                        isPending={remove.isPending}
-                        onDelete={(promoteTags) =>
-                            remove.mutate({id: service.id, promoteTags}, {onSuccess: onDeleted, onError: (err) => toast.error(apiErrorMessage(err))})
-                        }
-                    />
+                    <span className="text-sm text-muted-foreground">{service.enabled ? 'Enabled' : 'Disabled'}</span>
+                    <ServiceActions service={service} onDeleted={onDeleted}/>
                 </div>
             </div>
 
@@ -77,6 +69,14 @@ export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) 
                         onUpdate={patch}
                         isPending={update.isPending}
                     />
+                </div>
+            </section>
+
+            {/* Manual tag pruning */}
+            <section>
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manual tags</h3>
+                <div className="rounded-lg border p-3">
+                    <PruneSettings service={service} onUpdate={patch} isPending={update.isPending}/>
                 </div>
             </section>
 

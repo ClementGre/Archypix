@@ -1,5 +1,6 @@
 
-use crate::domain::hierarchy::{TagOp, TagOpKind};
+use crate::domain::hierarchy::TagOp;
+use crate::services::hierarchy::{ChainNode, node_chain, transition};
 use crate::domain::tag::TagPath;
 use crate::infra::s3;
 use crate::infra::settings::keys;
@@ -69,8 +70,11 @@ impl<'a> Vfs<'a> {
         // whose new segments mint a deeper tag (06_webdav.md §9).
         let target = self.resolve_path(parent)?;
 
-        // Overwrite is only possible inside an existing directory.
-        if let PathResolution::Existing(dir) = &target {
+        // Overwrite is only possible inside an existing directory — not a drop inbox, whose listing
+        // is for verification only: a same-named upload there is a new photo (feature 39 §7).
+        if let PathResolution::Existing(dir) = &target
+            && !dir.is_drop
+        {
             let dir = *dir;
             if let Some(existing) = self
                 .dir_files(dir)
@@ -178,10 +182,44 @@ impl<'a> Vfs<'a> {
             }
         }
 
-        // New file — the destination's onAdd ops (existing writable dir's op-list, or the
-        // synthesized mirror auto-tag assign).
-        let on_add = self.on_add_ops(&target)?;
+        // New file — every onAdd of the destination's node chain (feature 39 §3.2).
+        self.require_writable(&target)?;
+        let (_, enter) = transition(&[], &self.target_chain(parent, &target));
+        let (pid, created) = self
+            .land_new(
+                &target,
+                &enter,
+                source,
+                hash,
+                size,
+                content_type,
+                &name,
+                original_file_created_at,
+            )
+            .await?;
+        if let Some(dir) = target.drop_dir() {
+            self.note_drop(dir, &name, pid).await;
+        }
+        self.bust_tag_tree().await;
+        self.state.routines.pipeline.trigger_debounced(self.user_id);
+        Ok(created)
+    }
 
+    /// Land a new file at `target`: retag a live duplicate, apply the `trashedDuplicate` policy to
+    /// a trashed one, or ingest a genuinely new picture. Returns the picture and whether a new
+    /// resource was created for this path.
+    #[allow(clippy::too_many_arguments)]
+    async fn land_new(
+        &self,
+        target: &PathResolution<'_>,
+        enter: &[TagOp],
+        source: ByteSource<'_>,
+        hash: &str,
+        size: i64,
+        content_type: Option<&str>,
+        name: &str,
+        original_file_created_at: Option<NaiveDateTime>,
+    ) -> Result<(Uuid, bool), AppError> {
         // Dedupe: a relocate/copy a dumb client expressed as a fresh upload (§8). If the picture
         // gains the directory's tag (it wasn't already here) it's a genuine new resource for this
         // path → 201 Created; if it already had the tag the PUT is a true no-op → 204 No Content.
@@ -190,22 +228,25 @@ impl<'a> Vfs<'a> {
         {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
             trace!("vfs put: hash matched live picture — retag instead of new upload");
-            let added = self.apply_add_ops(&on_add, p.id).await?;
-            self.bust_tag_tree().await;
-            self.state.routines.pipeline.trigger_debounced(self.user_id);
-            return Ok(added);
+            let added = self.apply_transition(p.id, &[], enter, false).await?;
+            return Ok((p.id, added));
         }
-        // Un-delete a recently trashed match (naive rename under fullDelete, §8).
+        // A trashed match: a naive rename under fullDelete (restore), or a deleted photo a sync
+        // client re-sends (ignore) — feature 39 §6.
         if let Some(p) =
             PictureRepository::find_owned_by_hash(&self.state.db, self.user_id, hash, true).await?
         {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
-            trace!("vfs put: hash matched trashed picture — un-delete and retag");
-            PictureRepository::set_deleted(&self.state.db, self.user_id, p.id, false).await?;
-            self.apply_add_ops(&on_add, p.id).await?;
-            self.bust_tag_tree().await;
-            self.state.routines.pipeline.trigger_debounced(self.user_id);
-            return Ok(true);
+            match target.trashed_duplicate() {
+                TrashedDuplicate::Restore => {
+                    trace!("vfs put: hash matched trashed picture — restore and retag");
+                    self.apply_transition(p.id, &[], enter, true).await?;
+                }
+                TrashedDuplicate::Ignore => {
+                    trace!("vfs put: hash matched trashed picture — the delete stands");
+                }
+            }
+            return Ok((p.id, true));
         }
 
         // Quota gate (feature 22 §6): a genuinely new picture bills its full size — reject before
@@ -246,7 +287,7 @@ impl<'a> Vfs<'a> {
             &mut *tx,
             new_id,
             self.user_id,
-            Some(&name),
+            Some(name),
             content_type,
             Some(size),
             None,
@@ -272,10 +313,8 @@ impl<'a> Vfs<'a> {
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         crate::services::storage::invalidate_committed(self.state.cache.as_ref(), self.user_id)
             .await;
-        self.apply_add_ops(&on_add, new_id).await?;
-        self.bust_tag_tree().await;
-        self.state.routines.pipeline.trigger_debounced(self.user_id);
-        Ok(true)
+        self.apply_transition(new_id, &[], enter, false).await?;
+        Ok((new_id, true))
     }
 
     /// Resolve a (possibly not-yet-existing) directory path to either an existing [`ResolvedDir`]
@@ -291,19 +330,19 @@ impl<'a> Vfs<'a> {
             let Some(anc) = self.dir(&segments[..i]) else {
                 continue;
             };
-            // The base tag + its writability: a `mirror` directory extends its own tag; a
-            // container hoisting a `keepDir=false` mirror (root/static/query) maps a brand-new
-            // child directory to that mirror's tagRoot (feature 18 §11).
-            let (base, writable) = if let Some(t) = anc.mirror_tag.as_ref() {
-                (t.clone(), anc.writable)
-            } else if let Some((t, w)) = anc.new_child_mirror.as_ref() {
-                (t.clone(), *w)
-            } else {
-                return Err(AppError::Forbidden(
-                    "cannot create directories outside a mirror node".into(),
-                ));
+            // The base tag + its mirror: a `mirror` directory extends its own tag; a container
+            // hoisting a `keepDir=false` mirror (root/static/query) maps a brand-new child
+            // directory to that mirror's tagRoot (feature 18 §11).
+            let (base, mirror) = match (&anc.mirror_tag, &anc.mirror, &anc.new_child_mirror) {
+                (Some(t), Some(m), _) => (t.clone(), m.clone()),
+                (None, _, Some((t, m))) => (t.clone(), m.clone()),
+                _ => {
+                    return Err(AppError::Forbidden(
+                        "cannot create directories outside a mirror node".into(),
+                    ));
+                }
             };
-            if !writable {
+            if !mirror.writable {
                 return Err(AppError::Forbidden(
                     "this part of the hierarchy is read-only".into(),
                 ));
@@ -322,26 +361,43 @@ impl<'a> Vfs<'a> {
                 .map_err(AppError::Conflict)?
                 .as_ltree()
                 .to_string();
-            return Ok(PathResolution::MirrorExtension { tag });
+            return Ok(PathResolution::MirrorExtension {
+                tag,
+                base_len: i,
+                mirror,
+            });
         }
         Err(AppError::NotFound)
     }
 
-    /// The onAdd ops to apply when a picture lands in `target`: the existing directory's op-list,
-    /// or a single assign of the synthesized mirror tag.
-    pub(super) fn on_add_ops(&self, target: &PathResolution<'_>) -> Result<Vec<TagOp>, AppError> {
+    /// Reject a write into a read-only target (a mirror extension was checked on resolution).
+    pub(super) fn require_writable(&self, target: &PathResolution<'_>) -> Result<(), AppError> {
         match target {
-            PathResolution::Existing(dir) => Ok(dir
-                .write_back
-                .as_ref()
-                .ok_or_else(|| AppError::Forbidden("directory is read-only".into()))?
-                .on_add
-                .clone()),
-            PathResolution::MirrorExtension { tag } => Ok(vec![TagOp {
-                op: TagOpKind::Assign,
-                path: tag.clone(),
-            }]),
+            PathResolution::Existing(dir) if dir.write_back.is_none() => {
+                Err(AppError::Forbidden("directory is read-only".into()))
+            }
+            _ => Ok(()),
         }
     }
 
+    /// The node chain of a write target (feature 39 §3.1). A mirror extension takes its mirror's
+    /// step — replacing the base directory's when the base is that mirror, else appended.
+    pub(super) fn target_chain(&self, segments: &[String], target: &PathResolution<'_>) -> Vec<ChainNode> {
+        match target {
+            PathResolution::Existing(_) => node_chain(&self.root, segments).unwrap_or_default(),
+            PathResolution::MirrorExtension {
+                tag,
+                base_len,
+                mirror,
+            } => {
+                let base = &segments[..*base_len];
+                let mut chain = node_chain(&self.root, base).unwrap_or_default();
+                if self.dir(base).and_then(|d| d.node_id.as_deref()) == Some(&mirror.node_id) {
+                    chain.pop();
+                }
+                chain.push(mirror.chain_node(tag));
+                chain
+            }
+        }
+    }
 }

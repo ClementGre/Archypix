@@ -41,13 +41,15 @@ domain/
                     #   the file's own snapshot, feature 31), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
   hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static/drop), validation,
-                    #   per-node writeBackEnabled (feature 18 effective_enabled), TagPredicate
+                    #   per-node writeBackEnabled (feature 18 effective_enabled) /
+                    #   trashedDuplicate (feature 39), TagPredicate
   share.rs          # OutgoingShare, IncomingShare
   public_share.rs   # feature 27: PublicShare + PublicShareStatus, token gen, coverage/permission helpers
   # (feature 28: the dead domain::federation module — FederationMessage*/BackendMapping — was deleted)
   job.rs            # Job (includes claim_token), re-exports from archypix-common
-  tagging.rs        # service model + ServiceConfig (parse/validate/normalize/evaluate dispatch) + should_run
+  tagging.rs        # service model + ServiceConfig (parse/validate/normalize/evaluate dispatch) + gate
   pipeline.rs       # PipelineInput (the picture projection the evaluator reads)
+    prune.rs        # feature 39: GateHistory + the shadowed-manual-tag prune plan
   predicate.rs      # feature 13: rule predicate engine (Predicate/Field/Condition + parsing)
   segmentation.rs   # feature 20: SegmentationConfig (band-list parse/validate/resolve)
   routine.rs        # routine trigger payloads (Unannounce/TagRename/ExifRecheck inputs, RecheckScope)
@@ -104,14 +106,16 @@ services/
     presign.rs      # presign_picture_variant / presign_variant_for_picture
   hierarchy.rs      # facade re-exporting hierarchy/
   hierarchy/
-    resolver.rs     # resolve: HierarchyConfig + distinct tag paths → ResolvedDir tree
+    resolver.rs     # resolve: HierarchyConfig + distinct tag paths → ResolvedDir tree; node chains +
+                    #   the write-back transition (feature 39 §3); filtered-mirror path sets
     tree.rs         # the `tree` endpoint (TreeEntry/TreeResult)
     browse.rs       # the `browse` endpoint
     crud.rs         # list/get/create/update/delete + load_resolved
     webdav.rs       # WebDAV token management (06_webdav.md §3, §17)
   vfs.rs            # protocol-agnostic VirtualFs over the hierarchy resolver; `Vfs`'s impl is split
                     #   across vfs/ (read.rs list/stat/read, write.rs PUT + finalize, dirops.rs
-                    #   DELETE/MOVE/COPY/MKCOL + tag-dir ops, sidecar.rs, staging.rs)
+                    #   DELETE/MOVE/COPY/MKCOL + tag-dir ops, drop.rs drop-inbox verification
+                    #   listing, sidecar.rs, staging.rs)
   webdav.rs         # WebDAV Basic-auth resolution (token → session) + Redis cache
   shares/
     lifecycle.rs    # create/accept/revoke/reject + cleanup_incoming_share
@@ -240,7 +244,19 @@ sub-resources. `shared_tag_mapping` is **one service per incoming share** (scala
 `incoming_shares.id` for `incoming_share`, or `NULL` for `manual`.
 
 **Reconciliation** — `PipelineRepository::reconcile_pipeline_tags` (atomic CTE per picture) inserts produced tags and deletes stale `rule`/`segment`/
-`share_mapping` rows. `manual` and `incoming_share` tags are never touched.
+`share_mapping` rows. `incoming_share` tags are never touched; `manual` rows only by the shadow prune below.
+
+**Shadowed manual tag pruning (39)** — the per-picture loop gates every service through a
+`domain::pipeline::prune::GateHistory`, which records each gate decision (per-arm satisfiers, which
+`excludes` matched) and each service's output, with where every gating path came from (manual,
+incoming share, an upstream service). After the last service, `GateHistory::plan` turns it into a
+prune plan: a `manual` row whose exact path an opted-in service (`prune_shadowed_manual_tags`)
+produced is deleted, re-anchored at the deepest `requires` arm of a fired service it alone
+satisfied (or a `keep_manual_tags` floor), or kept unreduced when it is the sole blocker of an
+otherwise-firing service. The plan rides the same `reconcile_pipeline_tags` statement, so the anchor
+and the delete land together and no re-dirty is needed; toggling the option invalidates the service,
+which backfills every pre-existing shadow on the next run. See
+`doc/features/39_hierarchy_writeback_and_projection.md` §4.
 
 **Announcement** — the pipeline is the single picture-announcement path, delivering inline (deliver-then-record). Handles
 `pending_first_announcement` (full-coverage initial pass), `active` dirty-delta reconciliation, and failure recovery (`errored` → full reconcile after
@@ -304,8 +320,8 @@ the owner, size/count/MIME caps + per-IP+share rate limit), tagged into the albu
 derived shares and optionally trashes `#`-contributions. The tag-rename cascade rewrites
 `public_shares.tag_path`. See `doc/features/27_public_shares.md`.
 
-**Service lifecycle** — **disabling** removes a service's tags; **deleting** either promotes them to `manual` (`promote_service_tags_to_manual`) or
-removes them, controlled by the `promote_tags` flag.
+**Service lifecycle** — **disabling** and **deleting** either promote a service's tags to `manual` (`promote_service_tags_to_manual`) or
+remove them, controlled by the `promote_tags` flag (a `PATCH` with `enabled: false` carries it too — feature 39 §4.7).
 
 **Batch editing & deferred EXIF jobs (14)** — every batch endpoint (`aggregate`, tags, EXIF,
 trash/restore) resolves a `PictureSelection` (`services::selection`) into a `ResolvedSelection` whose

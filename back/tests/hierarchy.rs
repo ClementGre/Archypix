@@ -693,3 +693,82 @@ async fn mirror_exclude_cuts_picture_from_ancestor_dir(db: PgPool) {
     assert!(!in_q.contains(&excluded));
     assert!(in_q.contains(&sibling));
 }
+
+// ─── feature 39: mirror projection & precise pruning ─────────────────────────────────
+
+async fn tree_names(db: &PgPool, user: Uuid, id: Uuid, path: &str) -> Vec<String> {
+    hierarchy::resolve_tree(db, user, id, path, 1, false)
+        .await
+        .unwrap()
+        .directories
+        .into_iter()
+        .map(|d| d.name)
+        .collect()
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn mirror_min_depth_projects_one_level(db: PgPool) {
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let japan = pic_with_tags(&db, user, &["Era.2025.Japan"]).await;
+    let above = pic_with_tags(&db, user, &["Era.2026"]).await;
+    let id = create(
+        &db,
+        user,
+        "H",
+        serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 2, "maxDepth": 2}
+        ]}),
+    )
+    .await;
+
+    assert_eq!(tree_names(&db, user, id, "").await, ["Japan"]);
+    let ids = browse_ids(&state, user, id, "Japan").await;
+    assert!(ids.contains(&japan) && !ids.contains(&above), "above the cut is dropped");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn foreign_include_prunes_directories_precisely(db: PgPool) {
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let trip = pic_with_tags(&db, user, &["Era.2025.Japan", "Travel"]).await;
+    pic_with_tags(&db, user, &["Era.2025.Home"]).await;
+    pic_with_tags(&db, user, &["Era.2026.Work"]).await;
+    let id = create(
+        &db,
+        user,
+        "H",
+        serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "include": ["Travel"]}
+        ]}),
+    )
+    .await;
+
+    // Path presence alone would list 2026 and 2025/Home; neither holds a travel picture.
+    assert_eq!(tree_names(&db, user, id, "").await, ["2025"]);
+    assert_eq!(tree_names(&db, user, id, "2025").await, ["Japan"]);
+    assert_eq!(browse_ids(&state, user, id, "2025/Japan").await, HashSet::from([trip]));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn sub_tag_and_foreign_exclude_keep_distinct_meanings(db: PgPool) {
+    // 39 §5.4: a sub-tag exclude prunes a subtree yet lets a picture show under its other branch;
+    // a foreign exclude cuts the picture from the whole mirror, emptied directories included.
+    let state = common::test_app_state(db.clone(), &test_settings_with(&[]));
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let both = pic_with_tags(&db, user, &["Photos.Travel", "Photos.Outdoor"]).await;
+    pic_with_tags(&db, user, &["Photos.Medical", "Sensitive"]).await;
+    let id = create(
+        &db,
+        user,
+        "H",
+        serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Photos",
+             "exclude": ["Photos.Outdoor", "Sensitive"]}
+        ]}),
+    )
+    .await;
+
+    assert_eq!(tree_names(&db, user, id, "").await, ["Travel"]);
+    assert!(browse_ids(&state, user, id, "Travel").await.contains(&both));
+}

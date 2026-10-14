@@ -162,11 +162,14 @@ Full model, grammar, validation, and worked examples: `doc/features/20_calendar_
 ### 3.5 Tag removal
 
 Pipeline-assigned tags are **live** — re-derived on every run. Previously-stored `rule`/`segment`/`share_mapping` tags no longer produced are removed
-atomically. `manual` and `incoming_share` tags are never touched.
+atomically. `incoming_share` tags are never touched. `manual` tags are touched only by a service that opted in to
+**shadow pruning** (`prune_shadowed_manual_tags`, default off): when it produces the *identical* path, the redundant manual row is
+removed — reduced, when the gates of the services that fired depend on it, to the deepest gate arm it alone satisfied (or a
+`keep_manual_tags` floor), never below. See [`doc/features/39_hierarchy_writeback_and_projection.md`](features/39_hierarchy_writeback_and_projection.md) §4.
 
 Because tags are stored per-source, dropping one source's deep tag never disturbs another source's row for the same path.
 
-- **Disabling** a service removes its tags; re-enabling re-adds them on the next run.
+- **Disabling** a service removes its tags (or promotes them to `manual` with `promote_tags`); re-enabling re-adds them on the next run.
 - **Deleting** a service promotes its tags to `manual` (pre-existing manual tag for the same path wins, redundant row dropped), or removes them —
   controlled by a `promote_tags` flag.
 
@@ -183,7 +186,8 @@ The `config` is an ordered tree of **nodes**, each rendering to a directory. Thr
 
 - **`mirror`** — dynamically expands the live tag subtree under `tagRoot`. `keepDir` keeps the
   `tagRoot` label as a directory level; `collapsed` subtrees roll their pictures up to the nearest
-  enabled ancestor; `exclude` subtrees are removed entirely (pictures + directories).
+  enabled ancestor; `exclude` subtrees are removed entirely (pictures + directories). A mirror can
+  also project a depth band (`minDepth`/`maxDepth`) and require foreign tags (`include`, feature 39).
 - **`query`** — an explicit tag predicate; may nest. Effective predicate = own ∧ all ancestors.
   `match: all | any` combines a flat `include` list; `exclude` rejects; `matchUntagged` selects
   pictures with no stored tag of any source. A node is writable iff it declares a `writeBack` op-list.
@@ -194,6 +198,8 @@ The `config` is an ordered tree of **nodes**, each rendering to a directory. Thr
 Write-back is a per-node tri-state (`writeBackEnabled: inherit | on | off`) under the
 hierarchy-wide master switch (a hard ceiling), and a `mirror` can cap its depth (`maxDepth`) and
 exclude foreign tags — see [`doc/features/18_hierarchy_improvements.md`](features/18_hierarchy_improvements.md).
+A write is a **transition** between node chains: the `onRemove` of every node being left, then the
+`onAdd` of every node being entered — a node in both fires nothing (feature 39 §3).
 
 ```jsonc
 {
@@ -233,7 +239,7 @@ directory instead of disappearing; pictures under excluded subtrees disappear.
 
 | WebDAV operation                                 | Effect                                                                                       |
 |:-------------------------------------------------|:---------------------------------------------------------------------------------------------|
-| Move picture from `Travel/` to `Outdoor/`        | Tag `/Photos/Travel` removed, `/Photos/Outdoor` added                                        |
+| Move picture from `Travel/` to `Outdoor/`        | Tag `/Photos/Travel` removed, `/Photos/Outdoor` added (ancestors shared by both stay put)    |
 | Copy picture into `Outdoor/`                     | `/Photos/Outdoor` added, original tags kept                                                  |
 | Upload new picture into `Travel/Alps/`           | Picture ingested, tag `/Photos/Travel/Alps` assigned, pipeline triggered with label `ingest` |
 | Delete picture ( `safeDeleteMode: singleBranch`) | Only the tag for the accessed path is removed; picture survives if it has other tags         |

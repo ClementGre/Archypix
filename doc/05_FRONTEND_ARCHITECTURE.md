@@ -406,11 +406,14 @@ composes `PipelineList` (rule + segmentation services — the "queries" — show
 (shared-tag-mapping services, which still **run first** in the pipeline, in a **collapsed-by-default `Section`** below the queries so the user reads
 the rules/segments before expanding the mappings).
 `PipelineList` (**@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s (a compact row —
-type badge, name, item count, enabled switch, a prominent **Edit** button and delete; the requires/excludes **gates are not on the card**, only on the
-editor page, so the list stays short with many services).
+type badge, name, item count and a `ServiceActions` menu; the requires/excludes **gates are not on the card**, only on the
+editor page, so the list stays short with many services). `ServiceActions` (feature 39 §4.7) is the enable / **Disable…** / **Delete…** menu:
+disable and delete share one confirmation dialog with a "promote tags to manual" checkbox (pre-checked on delete, and on disable when the
+service prunes manual shadows).
 `RequiresExcludesEditor`
-(gates as a **local draft committed on Save**, on the editor page), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
-`NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
+(gates as a **local draft committed on Save**, on the editor page), `PruneSettings` (feature 39: the `prune_shadowed_manual_tags` checkbox, the
+`keep_manual_tags` floor as a local draft, and the enabled services' gate arms related to this service's outputs shown read-only — new services are
+created with pruning on), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
 AND/OR/NOT block composer where **a single root @dnd-kit `DndContext` lets you drag a block between levels** (out of a
 group, into a sibling group) as well as reorder within one; field-condition leaves pick a field via a **grouped,
 searchable `FieldPicker`** (Dates / Camera / Location / File / Ownership) + a type-aware operator/value (numbers use the
@@ -495,17 +498,22 @@ tree), `WebdavDialog` (mount-info popup: copyable mount URL, username (`@user`),
 access),
 `HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
 center
-grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs), `CreateHierarchyDialog` (name → create empty →
-open editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
-name/enabled/Save/Reset/Delete + a small **Braces** JSON-debug button; hierarchy-level settings — naming, safeDeleteMode, write-back master switch —
-then the node tree; edits a local draft committed on Save via `PATCH`, re-validated server-side), `NodeEditor` (mutually-recursive `NodeListEditor` +
-per-node card; add/remove/reorder of `mirror`/`query`/`static`/`drop` nodes with their kind-specific fields and an Advanced disclosure for per-node
-naming/safeDeleteMode and the **write-back tri-state** `inherit|on|off` — feature 18; the master switch + parent chain are threaded down as a `wb`
-context so it labels "Inherit (on/off)", disables under a master-off ceiling, and gates the safe-delete control on the node's effective write-back;
-`mirror` fields include `maxDepth`/`deeperMode` and foreign-tag excludes; `drop` is a name + assign-tags inbox editor), `WriteBackEditor` (query-node
-write-back op-lists with a "suggest from predicate" helper — enabled on `matchUntagged` nodes too with a free-form op-list + the "can't guarantee
-untagged" warning, and an inactive-when-write-back-off note), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed/drop-assign),
-`JsonConfigDialog` (raw `config` textarea; applies to the draft).
+grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs; a `preview` mode only expands, for the
+editor), `CreateHierarchyDialog` (name + a starting preset — empty, or the feature-39 §8.1 phone-camera-sync `Camera` query → create → open
+editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
+Save/Reset/Delete + a small **Braces** JSON-debug button; **master-detail** (feature 39 §9): the left column holds a "Hierarchy settings" entry,
+the authored `NodeTree` and the **resolved** directory tree (`HierarchyDirTree preview`, as last saved — the two differ under `minDepth` or a
+foreign `include`); the right pane edits the selection — hierarchy-level name/enabled/naming/safeDeleteMode/master switch, or a node via
+`NodeSettings`; edits a local draft committed on Save via `PATCH`, re-validated server-side), `NodeTree` (indented rows with kind badges;
+add/remove/reorder of `mirror`/`query`/`static`/`drop` nodes and sub-folders; tree edits are pure helpers in `hierarchyUtils` — `mapNode`,
+`moveNode`, `addChild`, `inheritedFor`), `NodeSettings` (the kind-specific fields and an Advanced disclosure for per-node naming/safeDeleteMode
+and the **write-back** and **trashed-duplicate** tri-states — features 18/39; `inheritedFor` resolves the master switch + parent chain so they
+label "Inherit (…)", disable under a master-off ceiling, and gate the safe-delete control on the node's effective write-back; `mirror` fields
+include `include`, `minDepth`/`maxDepth`/`deeperMode` and foreign-tag excludes; `drop` is a name + assign-tags inbox editor, created with
+`trashedDuplicate: ignore`), `WriteBackEditor` (query-node write-back op-lists with a "suggest from predicate" helper — enabled on
+`matchUntagged` nodes too with a free-form op-list + the "can't guarantee untagged" warning, and an inactive-when-write-back-off note),
+`JsonConfigDialog` (raw `config` textarea; applies to the draft). `tags/TagListField` (chips + `TagPicker`) is shared by the node fields and the
+tagging-service keep-list.
 
 **`admin/`** (backend `/admin` + shared) — `OverviewTab`/`UsersTab`/`JobsTab` (thumbnail regeneration + the **Re-read EXIF**
 recheck sweep, one `scope` select, feature 33 §8 / 36 §5)/`SharesTab`, plus the feature-23/24 additions: **`SettingsPanel`** (the

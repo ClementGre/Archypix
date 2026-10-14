@@ -2,7 +2,8 @@ use crate::domain::hierarchy::{
     HierarchyConfig, TagPredicate,
 };
 use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
-use crate::repository::picture::PictureListFilter;
+use crate::domain::tag::TagPath;
+use crate::repository::picture::{PictureListFilter, PictureRepository};
 use crate::repository::tag::TagRepository;
 use crate::repository::tag_metadata::TagMetadataRepository;
 use archypix_common::error::AppError;
@@ -50,7 +51,8 @@ pub async fn load_resolved(
 
 /// Resolve a config against the user's live tag set **plus** the feature-34 naming inputs: the
 /// deliberately-empty tags that must still render as directories (§8.1) and the custom
-/// `webdav_dir_name` overrides (§8). The one place both the WebDAV VFS and the webapp directory
+/// `webdav_dir_name` overrides (§8). A filtered mirror (feature 39 §5.3) expands from the paths its
+/// matching pictures carry instead. The one place both the WebDAV VFS and the webapp directory
 /// tree go through, so they never disagree about a directory's name.
 pub async fn resolve_for_user(
     db: &PgPool,
@@ -60,18 +62,37 @@ pub async fn resolve_for_user(
     let mut distinct = TagRepository::list_paths_by_user(db, user_id).await?;
     let meta = TagMetadataRepository::list_for_user(db, user_id).await?;
     let mut custom: HashMap<String, String> = HashMap::new();
+    let mut kept_empty: Vec<String> = Vec::new();
     for m in meta {
         if m.tag_path.is_empty() {
             continue; // the root view is not a directory
         }
-        if m.show_when_empty && !distinct.contains(&m.tag_path) {
-            distinct.push(m.tag_path.clone());
+        if m.show_when_empty {
+            kept_empty.push(m.tag_path.clone());
         }
         if let Some(name) = m.webdav_dir_name {
             custom.insert(m.tag_path, name);
         }
     }
-    let mut root = resolve(config, &distinct);
+    let mut filtered: HashMap<String, Vec<String>> = HashMap::new();
+    for f in mirror_filters(config) {
+        let mut paths =
+            PictureRepository::tag_paths_under(db, user_id, &f.tag_root, &f.predicate).await?;
+        let root = TagPath::from_ltree(f.tag_root.as_str());
+        paths.extend(
+            kept_empty
+                .iter()
+                .filter(|t| root.is_ancestor_or_self(&TagPath::from_ltree(t.as_str())))
+                .cloned(),
+        );
+        filtered.insert(f.node_id, paths);
+    }
+    for t in kept_empty {
+        if !distinct.contains(&t) {
+            distinct.push(t);
+        }
+    }
+    let mut root = resolve(config, &distinct, &filtered);
     apply_custom_dir_names(&mut root, &custom);
     Ok(root)
 }

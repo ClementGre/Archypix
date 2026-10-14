@@ -152,6 +152,16 @@ impl TagPath {
         other.0.starts_with(&format!("{}.", self.0))
     }
 
+    /// `self` is `other` or one of its ancestors — inclusive presence (01 §3).
+    pub fn is_ancestor_or_self(&self, other: &TagPath) -> bool {
+        self == other || self.is_ancestor_of(other)
+    }
+
+    /// Number of labels (`Photos.Travel` → 2).
+    pub fn depth(&self) -> usize {
+        self.0.split('.').count()
+    }
+
     /// All ancestor paths, from root down to (but not including) self.
     pub fn ancestors(&self) -> Vec<TagPath> {
         let parts: Vec<&str> = self.0.split('.').collect();

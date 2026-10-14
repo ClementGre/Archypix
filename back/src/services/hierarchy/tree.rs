@@ -57,7 +57,7 @@ async fn build_entries(
     for dir in dirs {
         // Empty-directory hiding only when counts are computed (§5.2). Drop inboxes are always
         // shown even though they surface no pictures (feature 18 §4).
-        if counts && !dir.always_visible && !dir_nonempty(db, user_id, dir).await? {
+        if counts && !dir.is_drop && !dir_nonempty(db, user_id, dir).await? {
             continue;
         }
         let picture_count = if counts {

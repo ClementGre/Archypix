@@ -155,6 +155,8 @@ effective_enabled(node):
 - With the master on, `writeBackEnabled` is a tri-state: `null` inherits the nearest explicit
   ancestor (or the root's `true`); `true`/`false` overrides for the node **and its subtree**
   (until a deeper node overrides again).
+- Feature 39's `trashedDuplicate` (`restore|ignore`, root seed `restore`) resolves the same way
+  (no master ceiling) — see [`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §6.
 
 ### 5.2 Writability matrix (replaces §7.5 of 05)
 
@@ -240,6 +242,9 @@ where `Private` is a sibling root, not under `Photos`.
 
 Validation: `collapsed[i] <@ tagRoot` still required; `exclude[i]` only needs to parse as a
 `TagPath`.
+
+`exclude` keeps **both** meanings — the two are not interchangeable and are not being split into
+two fields; feature 39 §5.4 records why, and §5.1 there adds the symmetric foreign `include`.
 
 ## 8. Implementation
 

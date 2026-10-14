@@ -332,6 +332,8 @@ export type SafeDeleteMode = 'singleBranch' | 'fullDelete'
 export type DeeperMode = 'collapse' | 'exclude'
 /** Per-node write-back tri-state (feature 18 §5). `null`/undefined = inherit. */
 export type WriteBackEnabled = boolean | null
+/** What a PUT does when its bytes match a trashed picture (feature 39 §6). */
+export type TrashedDuplicate = 'restore' | 'ignore'
 
 export interface WriteBackOp {
     op: 'assign' | 'remove'
@@ -351,6 +353,8 @@ export interface NodeCommon {
     safeDeleteMode?: SafeDeleteMode | null
     /** Tri-state write-back override; `null`/undefined = inherit nearest explicit ancestor. */
     writeBackEnabled?: WriteBackEnabled
+    /** Tri-state like `writeBackEnabled`; root seed `restore` (feature 39 §6). */
+    trashedDuplicate?: TrashedDuplicate | null
 }
 
 export interface MirrorNode extends NodeCommon {
@@ -358,7 +362,9 @@ export interface MirrorNode extends NodeCommon {
     tagRoot: string // ltree wire form
     keepDir?: boolean
     collapsed?: string[] // must be under tagRoot
-    exclude?: string[] // may be foreign to tagRoot (pure picture-membership cut)
+    exclude?: string[] // under tagRoot prunes the subtree; foreign = pure picture-membership cut
+    include?: string[] // foreign include arms every directory requires (feature 39 §5.1)
+    minDepth?: number // shallowest generated level below tagRoot; ≤1 = unrestricted (feature 39 §5.2)
     maxDepth?: number // 0/absent = unrestricted; caps levels below tagRoot
     deeperMode?: DeeperMode // pictures below the cut (default 'collapse')
 }
@@ -451,6 +457,10 @@ export interface ServiceBase {
     excludes: string[]
     enabled: boolean
     position: number
+    /** Prune manual tags this service also produces, down to the gate anchors (feature 39 §4). */
+    prune_shadowed_manual_tags: boolean
+    /** Floor below which a pruned manual tag is never reduced. */
+    keep_manual_tags: string[]
     created_at: string
     updated_at: string
 }
@@ -589,16 +599,18 @@ export type RuleConfig = { rules: { id?: string; predicate: RulePredicate; assig
 export type SharedTagMappingConfig = { incoming_share_id: string; assign_tags: string[] }
 export type ServiceConfig = RuleConfig | SegmentationConfig | SharedTagMappingConfig
 
-export interface ServiceResponse {
-    id: string
-    name: string
-    service_type: ServiceType
-    requires: string[]
-    excludes: string[]
-    enabled: boolean
-    position: number
-    created_at: string
-    updated_at: string
+export type ServiceResponse = ServiceBase
+
+/** Service-level fields `PATCH /tagging-services/{id}` accepts. */
+export interface ServicePatch {
+    name?: string
+    enabled?: boolean
+    requires?: string[]
+    excludes?: string[]
+    prune_shadowed_manual_tags?: boolean
+    keep_manual_tags?: string[]
+    /** With `enabled: false`: promote the service's tags to manual instead of dropping them. */
+    promote_tags?: boolean
 }
 
 // ---------- User settings & profile ----------

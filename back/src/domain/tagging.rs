@@ -3,7 +3,7 @@
 //! Every service type stores its payload in one `tagging_services.config` JSONB column (feature 20).
 //! [`ServiceConfig`] is the typed, validated form: it parses + validates raw config from the API
 //! ([`ServiceConfig::parse`]), re-serializes the normalized form ([`ServiceConfig::to_value`]), and
-//! evaluates a picture ([`ServiceConfig::evaluate`]). Gating lives on [`TaggingService::should_run`].
+//! evaluates a picture ([`ServiceConfig::evaluate`]). Gating lives on [`TaggingService::gate`].
 
 use crate::domain::pipeline::PipelineInput;
 use crate::domain::predicate::Predicate;
@@ -49,6 +49,10 @@ pub struct TaggingService {
     pub position: i32,
     /// Type-specific payload (raw JSONB; parse with [`ServiceConfig::parse`]).
     pub config: Value,
+    /// Prune `manual` rows whose exact path this service also produces (feature 39 §4).
+    pub prune_shadowed_manual_tags: bool,
+    /// Floor below which a pruned manual tag is never reduced (ltree[] as text[]).
+    pub keep_manual_tags: Vec<String>,
     /// Bumped on every configuration change. Pictures with `last_pipeline_run_at` older
     /// than this value are considered dirty and will be re-evaluated.
     pub last_invalidated_at: NaiveDateTime,
@@ -59,24 +63,70 @@ pub struct TaggingService {
     pub updated_at: NaiveDateTime,
 }
 
+/// The service-level fields a create sets (everything but the type-specific `config`).
+#[derive(Debug, Clone, Default)]
+pub struct NewService {
+    pub name: String,
+    pub requires: Vec<String>,
+    pub excludes: Vec<String>,
+    pub prune_shadowed_manual_tags: bool,
+    pub keep_manual_tags: Vec<String>,
+}
+
+/// Service-level fields to change on update; `None` leaves a field unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct ServicePatch {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub requires: Option<Vec<String>>,
+    pub excludes: Option<Vec<String>>,
+    pub prune_shadowed_manual_tags: Option<bool>,
+    pub keep_manual_tags: Option<Vec<String>>,
+}
+
+/// One service's gate decision for a picture, with the tags behind it (feature 39 §4.3).
+#[derive(Debug, Clone)]
+pub struct GateDecision {
+    pub enabled: bool,
+    /// Every `requires` arm with the gating tags satisfying it (empty ⇒ the arm fails).
+    pub requires: Vec<(TagPath, Vec<TagPath>)>,
+    /// Every `excludes` arm with the gating tags matching it (empty ⇒ the arm does not block).
+    pub excludes: Vec<(TagPath, Vec<TagPath>)>,
+}
+
+impl GateDecision {
+    /// Fires only with **all** of `requires` and **none** of `excludes` (01 §3).
+    pub fn fired(&self) -> bool {
+        self.enabled && self.requires_met() && self.excludes.iter().all(|(_, m)| m.is_empty())
+    }
+
+    pub fn requires_met(&self) -> bool {
+        self.requires.iter().all(|(_, s)| !s.is_empty())
+    }
+}
+
 impl TaggingService {
-    /// Whether this service should run for a picture carrying `current_tags`.
-    ///
-    /// Checks `enabled`, `requires` (all must match), and `excludes` (none must match). Tag presence
-    /// is evaluated inclusively against virtual ancestors: a picture with `Photos.Travel.Alps`
-    /// satisfies `requires: [Photos]`.
-    pub fn should_run(&self, current_tags: &[TagPath]) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        let present = |needle: &str| {
-            let path = TagPath::from_ltree(needle);
-            current_tags
-                .iter()
-                .any(|t| t == &path || t.ancestors().contains(&path))
+    /// Evaluate this service's gate against a picture carrying `current_tags`. Presence is
+    /// inclusive against virtual ancestors: `Photos.Travel.Alps` satisfies `requires: [Photos]`.
+    pub fn gate(&self, current_tags: &[TagPath]) -> GateDecision {
+        let arms = |list: &[String]| {
+            list.iter()
+                .map(|raw| {
+                    let arm = TagPath::from_ltree(raw.as_str());
+                    let hits = current_tags
+                        .iter()
+                        .filter(|t| arm.is_ancestor_or_self(t))
+                        .cloned()
+                        .collect();
+                    (arm, hits)
+                })
+                .collect()
         };
-        self.requires.iter().all(|req| present(req))
-            && !self.excludes.iter().any(|exc| present(exc))
+        GateDecision {
+            enabled: self.enabled,
+            requires: arms(&self.requires),
+            excludes: arms(&self.excludes),
+        }
     }
 
     pub fn rule_config(&self) -> Result<RuleConfig, serde_json::Error> {
@@ -299,6 +349,8 @@ mod tests {
             enabled: true,
             position: 0,
             config: json!({}),
+            prune_shadowed_manual_tags: false,
+            keep_manual_tags: vec![],
             last_invalidated_at: dt("2024-01-01 00:00:00"),
             last_error_at: None,
             last_error_msg: None,
@@ -345,36 +397,36 @@ mod tests {
         }
     }
 
-    // ── should_run ────────────────────────────────────────────────────────────
+    // ── gate ────────────────────────────────────────────────────────────
 
     #[test]
     fn disabled_service_never_runs() {
         let mut svc = service(&[], &[]);
         svc.enabled = false;
-        assert!(!svc.should_run(&tags(&["Photos"])));
+        assert!(!svc.gate(&tags(&["Photos"])).fired());
     }
 
     #[test]
     fn requires_exact_or_ancestor_match() {
         let svc = service(&["Photos"], &[]);
-        assert!(!svc.should_run(&tags(&["Images"])));
-        assert!(svc.should_run(&tags(&["Photos"])));
-        assert!(svc.should_run(&tags(&["Photos.Travel.Alps"])));
+        assert!(!svc.gate(&tags(&["Images"])).fired());
+        assert!(svc.gate(&tags(&["Photos"])).fired());
+        assert!(svc.gate(&tags(&["Photos.Travel.Alps"])).fired());
     }
 
     #[test]
     fn excludes_suppresses_service() {
         let svc = service(&[], &["Images"]);
-        assert!(svc.should_run(&tags(&["Photos"])));
-        assert!(!svc.should_run(&tags(&["Images"])));
-        assert!(!svc.should_run(&tags(&["Images.Icons"])));
+        assert!(svc.gate(&tags(&["Photos"])).fired());
+        assert!(!svc.gate(&tags(&["Images"])).fired());
+        assert!(!svc.gate(&tags(&["Images.Icons"])).fired());
     }
 
     #[test]
     fn all_requires_must_be_present() {
         let svc = service(&["Photos", "Travel"], &[]);
-        assert!(!svc.should_run(&tags(&["Photos"])));
-        assert!(svc.should_run(&tags(&["Photos", "Travel"])));
+        assert!(!svc.gate(&tags(&["Photos"])).fired());
+        assert!(svc.gate(&tags(&["Photos", "Travel"])).fired());
     }
 
     // ── ServiceConfig::parse ────────────────────────────────────────────────────

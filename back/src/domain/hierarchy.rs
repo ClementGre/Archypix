@@ -52,6 +52,17 @@ pub enum DeeperMode {
     Exclude,
 }
 
+/// What a `PUT` does when its bytes match a trashed owned picture (feature 39 §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrashedDuplicate {
+    /// Clear `deleted_at` and apply the destination's ops (a naive delete + re-create rename).
+    #[default]
+    Restore,
+    /// Leave the picture trashed and apply nothing; the write still succeeds.
+    Ignore,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TagOpKind {
@@ -98,6 +109,10 @@ pub struct Node {
     /// `drop` nodes (always writable).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_back_enabled: Option<bool>,
+    /// Tri-state like `write_back_enabled` (root seed `restore`); `drop` nodes are created with
+    /// an explicit `ignore` (feature 39 §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_duplicate: Option<TrashedDuplicate>,
     #[serde(flatten)]
     pub kind: NodeKind,
 }
@@ -117,8 +132,17 @@ pub enum NodeKind {
         keep_dir: bool,
         #[serde(default)]
         collapsed: Vec<String>,
+        /// `<@ tagRoot` prunes that subtree (05 §5.4); a foreign entry is a pure picture-membership
+        /// cut (18 §7.3). Both meanings stay (feature 39 §5.4).
         #[serde(default)]
         exclude: Vec<String>,
+        /// Foreign include arms: every directory also requires these tags (feature 39 §5.1).
+        #[serde(default)]
+        include: Vec<String>,
+        /// Shallowest generated directory level below `tag_root`; shallower levels are suppressed
+        /// and their pictures dropped. `0`/`1` = unrestricted (feature 39 §5.2).
+        #[serde(default)]
+        min_depth: u32,
         /// Cap directory generation to N tag levels below `tag_root`. `0`/absent = unrestricted
         /// (feature 18 §7.1).
         #[serde(default)]
@@ -167,7 +191,7 @@ impl NodeKind {
 }
 
 fn default_version() -> u32 {
-    2
+    3
 }
 fn default_write_back() -> bool {
     true
@@ -193,7 +217,7 @@ pub struct HierarchyConfig {
 impl Default for HierarchyConfig {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             safe_delete_mode: SafeDeleteMode::default(),
             naming: NamingStrategy::default(),
             write_back: true,
@@ -344,9 +368,21 @@ fn validate_node(
             tag_root,
             collapsed,
             exclude,
+            include,
+            min_depth,
+            max_depth,
             ..
         } => {
             let root = parse_path(tag_root)?;
+            if *max_depth > 0 && *min_depth > *max_depth {
+                return Err(format!(
+                    "node {:?}: minDepth must not exceed maxDepth",
+                    node.id
+                ));
+            }
+            for entry in include {
+                parse_path(entry)?;
+            }
             // `collapsed` must stay under tagRoot; `exclude` may be foreign now (feature 18 §7.3)
             // — a foreign exclude is a pure picture-membership cut, so it only needs to parse.
             for entry in collapsed {
@@ -691,9 +727,71 @@ mod tests {
     // ── feature 18: drop, tri-state write-back, foreign excludes, mirror depth ──────
 
     #[test]
-    fn default_version_is_2() {
+    fn default_version_is_3() {
         let c: HierarchyConfig = serde_json::from_value(serde_json::json!({"nodes": []})).unwrap();
+        assert_eq!(c.version, 3);
+    }
+
+    // ── feature 39: mirror include / minDepth, trashedDuplicate ──────────────────────
+
+    #[test]
+    fn v2_mirror_deserializes_with_v3_defaults() {
+        let json = serde_json::json!({"version": 2, "nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era"}
+        ]});
+        let c = cfg(json).unwrap();
         assert_eq!(c.version, 2);
+        assert_eq!(c.nodes[0].trashed_duplicate, None);
+        match &c.nodes[0].kind {
+            NodeKind::Mirror { include, min_depth, .. } => {
+                assert!(include.is_empty());
+                assert_eq!(*min_depth, 0);
+            }
+            _ => panic!("expected mirror"),
+        }
+    }
+
+    #[test]
+    fn mirror_min_depth_must_not_exceed_max_depth() {
+        let bad = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 3, "maxDepth": 2}
+        ]});
+        assert!(cfg(bad).is_err());
+        let equal = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 2, "maxDepth": 2}
+        ]});
+        assert!(cfg(equal).is_ok());
+        let unbounded = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 4}
+        ]});
+        assert!(cfg(unbounded).is_ok());
+    }
+
+    #[test]
+    fn mirror_include_may_be_foreign_but_must_parse() {
+        let ok = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "include": ["Travel", "SharedToMe.x"]}
+        ]});
+        assert!(cfg(ok).is_ok());
+        let bad = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "include": ["a b"]}
+        ]});
+        assert!(cfg(bad).is_err());
+    }
+
+    #[test]
+    fn trashed_duplicate_parses_and_rejects_unknown() {
+        let ok = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "In", "trashedDuplicate": "ignore", "onAdd": []}
+        ]});
+        assert_eq!(
+            cfg(ok).unwrap().nodes[0].trashed_duplicate,
+            Some(TrashedDuplicate::Ignore)
+        );
+        let bad = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "In", "trashedDuplicate": "inherit", "onAdd": []}
+        ]});
+        assert!(cfg(bad).is_err());
     }
 
     #[test]

@@ -99,6 +99,30 @@ impl PictureRepository {
             .map_err(map_sqlx_error)
     }
 
+    /// Distinct tag paths at or under `root` carried by the user's live pictures that match
+    /// `predicate` — the path set of a filtered hierarchy mirror (feature 39 §5.3).
+    #[tracing::instrument(skip(db, predicate), fields(user_id = %local_user_id))]
+    pub async fn tag_paths_under(
+        db: &PgPool,
+        local_user_id: Uuid,
+        root: &str,
+        predicate: &TagPredicate,
+    ) -> Result<Vec<String>, AppError> {
+        let mut q = sqlx::QueryBuilder::<Postgres>::new(
+            "SELECT DISTINCT t.tag_path::text FROM tags t JOIN pictures p ON p.id = t.picture_id \
+             WHERE p.deleted_at IS NULL AND p.local_user_id = ",
+        );
+        q.push_bind(local_user_id)
+            .push(" AND t.tag_path <@ ")
+            .push_bind(root.to_string())
+            .push("::ltree AND ");
+        Self::render_predicate(&mut q, predicate);
+        q.build_query_scalar()
+            .fetch_all(db)
+            .await
+            .map_err(map_sqlx_error)
+    }
+
     /// Emit the `ORDER BY` clause. Column sorts use `NULLS LAST` + the `p.id` tiebreaker (total
     /// order ⇒ stable pagination). Proximity sorts (feature 29 §6) are always nearest-first,
     /// sort field-missing rows last, and ignore `SortOrder`; the reference params are bound.

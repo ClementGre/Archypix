@@ -37,7 +37,7 @@ export default function TaggingPage() {
             return
         }
         create.mutate(
-            {service_type},
+            {service_type, prune_shadowed_manual_tags: true},
             {onSuccess: (svc) => select(svc.id), onError: (err) => toast.error(apiErrorMessage(err))},
         )
     }

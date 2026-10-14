@@ -138,6 +138,12 @@ Validation: every `collapsed`/`exclude` entry must be `<@ tagRoot`.
 > (`collapse|exclude` for pictures below the cut), and `exclude` entries may now be **foreign**
 > to `tagRoot` (a pure picture-membership cut, no directory effect); `collapsed` stays
 > `<@ tagRoot`.
+>
+> **Extended in [`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §5:**
+> `include` (foreign arms every directory requires; also assigned by the implicit op-list) and
+> `minDepth` (the shallowest generated level below `tagRoot` — shallower levels are suppressed and
+> level `minDepth` is hoisted to the node's level; pictures above the cut are dropped). Projected
+> leaves that collide ignoring case are qualified by their suppressed levels (`Paris (2025)`).
 
 ### 4.4 `kind: "query"`
 
@@ -224,8 +230,11 @@ names** (§5.6):
        (e.g. `Photos.Travel.Alps` with nothing tagged exactly `Photos.Travel` still yields a
        `Travel` directory). Derived from the path set, independent of exact-tag membership.
 - **Empty directories are hidden** (§12): a directory whose entire subtree resolves to zero
-  visible pictures is omitted. (For the `tree` endpoint this is computed from path presence;
-  precise zero-picture pruning may be deferred to the `counts=true` path to stay cheap.)
+  visible pictures is omitted. For an unfiltered mirror this is computed from path presence;
+  precise zero-picture pruning beyond that is the `counts=true` path. A **filtered** mirror (a
+  foreign `include` or `exclude`, feature 39 §5.3) expands from the tag paths its *matching*
+  pictures carry instead — one query per filtered mirror — so the directories it would leave
+  empty never appear (`show_when_empty` tags still do).
 
 ### 5.3 Per-directory picture predicate — "most-specific node wins"
 
@@ -369,10 +378,21 @@ rather than inferred at write time.
 }
 ```
 
-- `mirror`: implicit — `onAdd = [assign T]`, `onRemove = [remove T]` (T = the directory's
-  tag). Not stored.
+- `mirror`: implicit — `onAdd = [assign T]` (+ the mirror's `include` arms), `onRemove =
+  [remove T]` (T = the directory's tag). Not stored.
 - `query`: stored. The **UI auto-derives** defaults from the predicate; the author may
   override.
+
+### 7.1bis Transition (feature 39 §3)
+
+A write is a transition between the **node chains** (self + ancestors) of its source and
+destination directory, each mirror directory counting as its own node: `onRemove` fires for
+every node being left (`A_src \ A_dst`), then `onAdd` for every node entered (`A_dst \ A_src`), in
+one transaction; a node in both fires nothing. `PUT` enters the whole destination chain, `COPY`
+only adds, `MOVE` applies the full difference, a `singleBranch` `DELETE` fires the **deepest**
+node's `onRemove` only, and `fullDelete` mutates no tags. Each node's op-list is still validated
+against its **own** predicate (§7.2): the ancestor conjunction is satisfied by composing the
+op-lists of the nodes entered.
 
 ### 7.2 Compliance (validated by the edit service — see §11)
 
@@ -507,7 +527,11 @@ on create/patch. Rules:
 - Every tag path parses via `TagPath` (ltree labels `[A-Za-z0-9_]`). Paths may be under
   `SharedToMe` (E5 — received pictures are first-class; write-back there stays
   prefix-protected by the tag layer).
-- `mirror.collapsed[i] <@ tagRoot` and `mirror.exclude[i] <@ tagRoot`.
+- `mirror.collapsed[i] <@ tagRoot`. `mirror.exclude[i]` and `mirror.include[i]` only need to parse
+  — a foreign entry is a membership cut / arm (18 §7.3, 39 §5); the `<@ tagRoot` discriminator
+  selects an `exclude`'s meaning and is not a constraint.
+- `mirror.minDepth ≤ maxDepth` when `maxDepth` is set.
+- `trashedDuplicate ∈ {restore, ignore}` when present (feature 39 §6).
 - Node `id`s unique within the hierarchy.
 - **Sibling `name`s unique**, including a `mirror` node's expanded top-level names vs.
   explicit siblings → reject at save (no auto-merge/auto-suffix).
@@ -562,6 +586,11 @@ endpoint both consume it.
   duplicate-delete hazard `singleBranch` mitigates (§7.4).
 - **Reserved characters**: tag labels are `[A-Za-z0-9_]`, so directory names are
   filesystem-safe by construction; only file names (§8) need care.
+- **Sibling move under a shared node** (feature 39 §3): the shared ancestor fires nothing; only the
+  mirror directories being left/entered do.
+- **A picture above a `minDepth` cut** has no directory in that mirror and is dropped from it.
+- **`minDepth` + `collapsed`**: `collapsed` entries above the cut are moot.
+- **Foreign `include` with no matching picture**: the whole mirror renders nothing.
 
 ## 15. Testing
 

@@ -2,7 +2,7 @@ import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import {createService, deleteService, getService, listServices, reorderServices, replaceConfig, updateService,} from '@/api/tagging'
 import {queryKeys} from '@/lib/constants'
 import {invalidatePicturesAndTags} from '@/lib/invalidation'
-import type {ServiceConfig} from '@/lib/types'
+import type {ServiceConfig, ServicePatch} from '@/lib/types'
 
 export function useTaggingServices() {
     return useQuery({queryKey: queryKeys.taggingServices(), queryFn: listServices})
@@ -31,10 +31,7 @@ export function useTaggingMutations() {
     return {
         create: useMutation({mutationFn: createService, onSuccess: invalidate}),
         update: useMutation({
-            mutationFn: (vars: {
-                id: string
-                body: { name?: string; enabled?: boolean; requires?: string[]; excludes?: string[] }
-            }) => updateService(vars.id, vars.body),
+            mutationFn: (vars: { id: string; body: ServicePatch }) => updateService(vars.id, vars.body),
             onSuccess: invalidate,
         }),
         replaceConfig: useMutation({

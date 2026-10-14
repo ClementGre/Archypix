@@ -4,8 +4,8 @@ use crate::domain::tag_metadata::TagMetadataPatch;
 use crate::repository::picture::PictureRepository;
 use crate::repository::tag::TagRepository;
 use crate::repository::tag_metadata::TagMetadataRepository;
-use crate::services::hierarchy::ResolvedDir;
-use archypix_common::error::AppError;
+use crate::services::hierarchy::{ResolvedDir, node_chain, transition};
+use archypix_common::error::{AppError, map_sqlx_error};
 use tracing::trace;
 use uuid::Uuid;
 use super::*;
@@ -47,14 +47,20 @@ impl<'a> Vfs<'a> {
                 PictureRepository::set_deleted(&self.state.db, self.user_id, pid, true).await?;
             }
             SafeDeleteMode::SingleBranch => {
-                trace!("vfs delete: singleBranch (apply onRemove)");
+                // Deepest node only, not the chain difference: an ancestor's tag is not a single
+                // branch (feature 39 §3.2).
+                trace!("vfs delete: singleBranch (apply the directory's onRemove)");
                 let wb = dir.write_back.as_ref().ok_or_else(|| {
                     AppError::Forbidden(
                         "read-only directory; singleBranch delete not allowed".into(),
                     )
                 })?;
-                self.apply_remove_ops(&wb.on_remove, pid).await?;
+                self.apply_transition(pid, &wb.on_remove, &[], false).await?;
             }
+        }
+        if dir.is_drop {
+            let (_, name) = split_last(segments)?;
+            self.forget_drop(dir, &name).await;
         }
         self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
@@ -85,16 +91,24 @@ impl<'a> Vfs<'a> {
         }
         trace!("vfs move: re-file across directories");
 
-        // Re-file: remove from source, add to destination (existing dir or mirror extension §9).
+        // Re-file: leave the source chain, enter the destination's (existing dir or mirror
+        // extension §9) — the difference rule, feature 39 §3.1.
         let src = self.dir(from_parent).ok_or(AppError::NotFound)?;
-        let src_wb = src
-            .write_back
-            .as_ref()
-            .ok_or_else(|| AppError::Forbidden("source directory is read-only".into()))?
-            .clone();
-        let dst_on_add = self.on_add_ops(&self.resolve_path(to_parent)?)?;
-        self.apply_remove_ops(&src_wb.on_remove, pid).await?;
-        self.apply_add_ops(&dst_on_add, pid).await?;
+        if src.write_back.is_none() {
+            return Err(AppError::Forbidden("source directory is read-only".into()));
+        }
+        let dst = self.resolve_path(to_parent)?;
+        self.require_writable(&dst)?;
+        let src_chain = node_chain(&self.root, from_parent).unwrap_or_default();
+        let (leave, enter) = transition(&src_chain, &self.target_chain(to_parent, &dst));
+        self.apply_transition(pid, &leave, &enter, false).await?;
+        if src.is_drop {
+            let (_, name) = split_last(from)?;
+            self.forget_drop(src, &name).await;
+        }
+        if let Some(dir) = dst.drop_dir() {
+            self.note_drop(dir, &to_name, pid).await;
+        }
         self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(())
@@ -110,10 +124,18 @@ impl<'a> Vfs<'a> {
         let entry = self.file_entry(from).await?;
         let pid = entry.picture_id.ok_or(AppError::NotFound)?;
         tracing::Span::current().record("picture_id", tracing::field::display(pid));
-        let (to_parent, _) = split_last(to)?;
-        let dst_on_add = self.on_add_ops(&self.resolve_path(to_parent)?)?;
+        let (from_parent, _) = split_last(from)?;
+        let (to_parent, to_name) = split_last(to)?;
+        let dst = self.resolve_path(to_parent)?;
+        self.require_writable(&dst)?;
+        // Only the nodes being entered fire; nothing is left (feature 39 §3.2).
+        let src_chain = node_chain(&self.root, from_parent).unwrap_or_default();
+        let (_, enter) = transition(&src_chain, &self.target_chain(to_parent, &dst));
         trace!("vfs copy: add destination tags");
-        self.apply_add_ops(&dst_on_add, pid).await?;
+        self.apply_transition(pid, &[], &enter, false).await?;
+        if let Some(dir) = dst.drop_dir() {
+            self.note_drop(dir, &to_name, pid).await;
+        }
         self.bust_tag_tree().await;
         self.state.routines.pipeline.trigger_debounced(self.user_id);
         Ok(())
@@ -128,7 +150,7 @@ impl<'a> Vfs<'a> {
     pub async fn mkcol(&self, segments: &[String]) -> Result<(), AppError> {
         let (parent, requested) = split_last(segments)?;
         // A drop inbox is a leaf — MKCOL inside it is not allowed (feature 18 §4).
-        if self.dir(parent).is_some_and(|d| d.always_visible) {
+        if self.dir(parent).is_some_and(|d| d.is_drop) {
             return Err(AppError::MethodNotAllowed(
                 "cannot create a directory inside a drop inbox".into(),
             ));
@@ -205,7 +227,7 @@ impl<'a> Vfs<'a> {
         if self.dir(segments).is_some() {
             return Err(conflict());
         }
-        let PathResolution::MirrorExtension { tag } = self.resolve_path(segments)? else {
+        let PathResolution::MirrorExtension { tag, .. } = self.resolve_path(segments)? else {
             return Err(conflict());
         };
         // Fold onto an existing case-variant sibling, as the PUT path does (§10c) — a tag that
@@ -276,24 +298,48 @@ impl<'a> Vfs<'a> {
         crate::services::tag_metadata::bust_cache(self.state.cache.as_ref(), self.user_id).await;
     }
 
-    // `user_id`/`picture_id` are already on the calling span (put_file/move_/copy record
-    // `picture_id` before reaching here) — no fields of our own to add.
-    /// Returns whether the picture actually gained a tag (≥1 row inserted)
+    // `user_id`/`picture_id` are already on the calling span (the verbs record `picture_id`
+    // before reaching here) — no fields of our own to add.
+    /// Apply `leave` then `enter` ops in one transaction, `manual` rows only (feature 39 §3.3);
+    /// `restore` first clears `deleted_at` (§6). 409 if a removed tag is still service-asserted.
+    /// Returns whether the picture actually gained a tag (≥1 row inserted).
     #[tracing::instrument(skip_all)]
-    pub(super) async fn apply_add_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<bool, AppError> {
-        let (assigns, removes) = split_ops(ops);
+    pub(super) async fn apply_transition(
+        &self,
+        pid: Uuid,
+        leave: &[TagOp],
+        enter: &[TagOp],
+        restore: bool,
+    ) -> Result<bool, AppError> {
+        let (leave_assigns, leave_removes) = split_ops(leave);
+        let (enter_assigns, enter_removes) = split_ops(enter);
+        trace!(?leave_removes, ?leave_assigns, ?enter_removes, ?enter_assigns, "vfs: apply transition");
+        if TagRepository::has_non_manual_tag_under(&self.state.db, pid, &leave_removes).await? {
+            trace!("vfs: onRemove rejected — non-manual tag still asserted (409)");
+            return Err(AppError::Conflict(
+                "a tagging service still asserts this tag — cannot remove via WebDAV".into(),
+            ));
+        }
         // Case-insensitive write-side reuse (§10c): fold each assigned tag onto an existing
         // case-variant sibling so a case-insensitive client never mints a case-only duplicate.
-        let assigns = self.fold_case(assigns).await?;
-        trace!(?assigns, ?removes, "vfs: apply onAdd ops");
-        let mut inserted = 0u64;
-        if !assigns.is_empty() {
-            inserted =
-                TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
+        let split = leave_assigns.len();
+        let mut assigns = self
+            .fold_case(leave_assigns.into_iter().chain(enter_assigns).collect())
+            .await?;
+        let enter_assigns = assigns.split_off(split);
+        let leave_assigns = assigns;
+
+        let db = &self.state.db;
+        let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+        if restore {
+            PictureRepository::set_deleted(&mut *tx, self.user_id, pid, false).await?;
         }
-        if !removes.is_empty() {
-            TagRepository::batch_remove(&self.state.db, self.user_id, &[pid], &removes).await?;
-        }
+        TagRepository::batch_remove(&mut *tx, self.user_id, &[pid], &leave_removes).await?;
+        TagRepository::batch_assign(&mut *tx, self.user_id, &[pid], &leave_assigns).await?;
+        TagRepository::batch_remove(&mut *tx, self.user_id, &[pid], &enter_removes).await?;
+        let inserted =
+            TagRepository::batch_assign(&mut *tx, self.user_id, &[pid], &enter_assigns).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
         Ok(inserted > 0)
     }
 
@@ -313,30 +359,6 @@ impl<'a> Vfs<'a> {
             .into_iter()
             .map(|p| crate::domain::hierarchy::reuse_existing_case(&p, &existing))
             .collect())
-    }
-
-    /// Apply `onRemove` ops, rejecting with 409 if a removed tag would survive because a live
-    /// service still asserts it (§7.2).
-    // `user_id`/`picture_id` are already on the calling span (delete/move_ record `picture_id`
-    // before reaching here) — no fields of our own to add.
-    #[tracing::instrument(skip_all)]
-    pub(super) async fn apply_remove_ops(&self, ops: &[TagOp], pid: Uuid) -> Result<(), AppError> {
-        let (assigns, removes) = split_ops(ops);
-        trace!(?removes, ?assigns, "vfs: apply onRemove ops");
-        if TagRepository::has_non_manual_tag_under(&self.state.db, pid, &removes).await? {
-            trace!("vfs: onRemove rejected — non-manual tag still asserted (409)");
-            return Err(AppError::Conflict(
-                "a tagging service still asserts this tag — cannot remove via WebDAV".into(),
-            ));
-        }
-        if !removes.is_empty() {
-            TagRepository::batch_remove(&self.state.db, self.user_id, &[pid], &removes).await?;
-        }
-        let assigns = self.fold_case(assigns).await?;
-        if !assigns.is_empty() {
-            TagRepository::batch_assign(&self.state.db, self.user_id, &[pid], &assigns).await?;
-        }
-        Ok(())
     }
 
     // ── OS-junk sidecars (§11) ────────────────────────────────────────────────────

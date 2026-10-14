@@ -24,7 +24,7 @@ export function NewMappingDialog({open, onOpenChange, mappedShareIds, onCreated}
     const pick = (incomingShareId: string) => {
         const config: SharedTagMappingConfig = {incoming_share_id: incomingShareId, assign_tags: []}
         create.mutate(
-            {service_type: 'shared_tag_mapping', config},
+            {service_type: 'shared_tag_mapping', config, prune_shadowed_manual_tags: true},
             {
                 onSuccess: (svc) => {
                     onOpenChange(false)

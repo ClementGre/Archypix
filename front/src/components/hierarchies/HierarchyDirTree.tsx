@@ -12,16 +12,19 @@ function DirRow({
                     entry,
                     path,
                     depth,
+                    preview,
                 }: {
     hierarchyId: string
     entry: DirEntry
     path: string // full path of this directory (slash-separated names)
     depth: number
+    preview: boolean
 }) {
     const {params, update} = useGalleryParams()
     const [open, setOpen] = useState(false)
     const hasChildren = entry.child_count > 0
-    const isActive = params.hpath === path
+    const isActive = !preview && params.hpath === path
+    const navigate = () => (preview ? hasChildren && setOpen((o) => !o) : update({hierarchy: hierarchyId, hpath: path, hedit: null}))
 
     const {data, isPending, isError, error} = useHierarchyTree(hierarchyId, path, {
         enabled: open && hasChildren,
@@ -30,13 +33,13 @@ function DirRow({
     return (
         <div>
             <div
-                onClick={() => update({hierarchy: hierarchyId, hpath: path, hedit: null})}
+                onClick={navigate}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        update({hierarchy: hierarchyId, hpath: path, hedit: null})
+                        navigate()
                     }
                 }}
                 title={entry.writable ? undefined : 'Read-only directory'}
@@ -91,6 +94,7 @@ function DirRow({
                             entry={child}
                             path={path ? `${path}/${child.name}` : child.name}
                             depth={depth + 1}
+                            preview={preview}
                         />
                     ))}
                 </div>
@@ -99,14 +103,17 @@ function DirRow({
     )
 }
 
-/** The navigable directory tree of one hierarchy; clicking a folder drives the center grid. */
-export function HierarchyDirTree({hierarchyId}: { hierarchyId: string }) {
+/**
+ * The navigable directory tree of one hierarchy; clicking a folder drives the center grid. In
+ * `preview` mode (the editor's resolved tree, feature 39 §9) clicks only expand.
+ */
+export function HierarchyDirTree({hierarchyId, preview = false}: { hierarchyId: string; preview?: boolean }) {
     const {params, update} = useGalleryParams()
     const {data, isPending, isError, error} = useHierarchyTree(hierarchyId, '')
 
     return (
         <div className="px-1 py-1">
-            <button
+            {!preview && <button
                 onClick={() => update({hierarchy: hierarchyId, hpath: '', hedit: null})}
                 className={cn(
                     'mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium',
@@ -115,7 +122,7 @@ export function HierarchyDirTree({hierarchyId}: { hierarchyId: string }) {
             >
                 <FolderOpen className="h-4 w-4"/>
                 All directories
-            </button>
+            </button>}
 
             {isPending && (
                 <div className="flex items-center justify-center py-6 text-muted-foreground">
@@ -129,7 +136,7 @@ export function HierarchyDirTree({hierarchyId}: { hierarchyId: string }) {
                 </p>
             )}
             {data?.directories.map((entry) => (
-                <DirRow key={entry.name} hierarchyId={hierarchyId} entry={entry} path={entry.name} depth={0}/>
+                <DirRow key={entry.name} hierarchyId={hierarchyId} entry={entry} path={entry.name} depth={0} preview={preview}/>
             ))}
         </div>
     )

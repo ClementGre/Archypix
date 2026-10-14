@@ -2,7 +2,8 @@ use crate::api::middleware::auth_user::AuthUser;
 use crate::domain::segmentation::SegmentationConfig;
 use crate::domain::tag::TagPath;
 use crate::domain::tagging::{
-    RuleItem, ServiceConfig, ServiceType, SharedMappingConfig, TaggingService,
+    NewService, RuleItem, ServiceConfig, ServicePatch, ServiceType, SharedMappingConfig,
+    TaggingService,
 };
 use crate::repository::share::IncomingShareRepository;
 use crate::repository::tagging::TaggingServiceRepository;
@@ -39,6 +40,8 @@ pub struct ServiceResponse {
     pub excludes: Vec<String>,
     pub enabled: bool,
     pub position: i32,
+    pub prune_shadowed_manual_tags: bool,
+    pub keep_manual_tags: Vec<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -84,6 +87,8 @@ fn service_to_response(s: &TaggingService) -> ServiceResponse {
         excludes: s.excludes.clone(),
         enabled: s.enabled,
         position: s.position,
+        prune_shadowed_manual_tags: s.prune_shadowed_manual_tags,
+        keep_manual_tags: s.keep_manual_tags.clone(),
         created_at: s.created_at,
         updated_at: s.updated_at,
     }
@@ -194,6 +199,10 @@ pub struct CreateServiceRequest {
     pub requires: Vec<String>,
     #[serde(default)]
     pub excludes: Vec<String>,
+    #[serde(default)]
+    pub prune_shadowed_manual_tags: bool,
+    #[serde(default)]
+    pub keep_manual_tags: Vec<String>,
     /// Type-specific config (validated per `service_type`). Defaults to that type's empty config.
     #[serde(default)]
     pub config: Option<serde_json::Value>,
@@ -207,24 +216,22 @@ pub async fn create_service(
     Json(payload): Json<CreateServiceRequest>,
 ) -> Result<Json<ServiceDetailResponse>, AppError> {
     let user_id = auth.user_id()?;
-    let requires = parse_tags_allowing_protected(&payload.requires)?;
-    let excludes = parse_tags_allowing_protected(&payload.excludes)?;
+    let fields = NewService {
+        name: payload.name.trim().to_string(),
+        requires: parse_tags_allowing_protected(&payload.requires)?,
+        excludes: parse_tags_allowing_protected(&payload.excludes)?,
+        prune_shadowed_manual_tags: payload.prune_shadowed_manual_tags,
+        keep_manual_tags: parse_tags_allowing_protected(&payload.keep_manual_tags)?,
+    };
 
     let raw = payload
         .config
         .unwrap_or_else(|| default_config(payload.service_type));
     let config = validate_config(&state, user_id, payload.service_type, &raw).await?;
 
-    let service = TaggingServiceRepository::create(
-        &state.db,
-        user_id,
-        payload.service_type,
-        payload.name.trim(),
-        &requires,
-        &excludes,
-        &config,
-    )
-    .await?;
+    let service =
+        TaggingServiceRepository::create(&state.db, user_id, payload.service_type, &fields, &config)
+            .await?;
     // New service: last_invalidated_at = NOW() by default, so all existing pictures are dirty.
     state.routines.pipeline.trigger(user_id);
 
@@ -263,9 +270,14 @@ pub struct UpdateServiceRequest {
     pub enabled: Option<bool>,
     pub requires: Option<Vec<String>>,
     pub excludes: Option<Vec<String>>,
+    pub prune_shadowed_manual_tags: Option<bool>,
+    pub keep_manual_tags: Option<Vec<String>>,
+    /// With `enabled: false`: promote the service's tags to `manual` instead of dropping them.
+    #[serde(default)]
+    pub promote_tags: bool,
 }
 
-/// PATCH /tagging-services/{id} — update a service's name / enabled / gates.
+/// PATCH /tagging-services/{id} — update a service's name / enabled / gates / prune options.
 #[tracing::instrument(skip(auth, state, payload), fields(user = %auth.claims.sub, user_id = %auth.claims.uid.unwrap_or_default(), service_id = %service_id
 ))]
 pub async fn update_service(
@@ -275,25 +287,22 @@ pub async fn update_service(
     Json(payload): Json<UpdateServiceRequest>,
 ) -> Result<Json<ServiceResponse>, AppError> {
     let user_id = auth.user_id()?;
-    let requires = payload
-        .requires
-        .as_deref()
-        .map(parse_tags_allowing_protected)
-        .transpose()?;
-    let excludes = payload
-        .excludes
-        .as_deref()
-        .map(parse_tags_allowing_protected)
-        .transpose()?;
+    let parse = |v: &Option<Vec<String>>| v.as_deref().map(parse_tags_allowing_protected).transpose();
+    let patch = ServicePatch {
+        name: payload.name.as_deref().map(|n| n.trim().to_string()),
+        enabled: payload.enabled,
+        requires: parse(&payload.requires)?,
+        excludes: parse(&payload.excludes)?,
+        prune_shadowed_manual_tags: payload.prune_shadowed_manual_tags,
+        keep_manual_tags: parse(&payload.keep_manual_tags)?,
+    };
     let service = services::tagging::update_service(
         &state.db,
         state.cache.as_ref(),
         user_id,
         service_id,
-        payload.name.as_deref().map(str::trim),
-        payload.enabled,
-        requires.as_deref(),
-        excludes.as_deref(),
+        &patch,
+        payload.promote_tags,
     )
     .await?
     .ok_or(AppError::NotFound)?;

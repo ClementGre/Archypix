@@ -1,5 +1,11 @@
 # Feature 39: Hierarchy write-back & projection
 
+## 0. Status
+
+Implemented (backend, frontend, tests). Deviations and the choices the spec left open are in §15;
+flat `query` nodes (§5.5) stay recorded, not built, and the §8 verification hypothesis is still to be
+confirmed from an access log.
+
 ## 1. Overview & goals
 
 Three complaints, two of which share a cause:
@@ -282,10 +288,12 @@ own tag, so a write into the projection satisfies it.
 
 ### 5.2 `minDepth`
 
-Caps directory generation from the *top*: `minDepth: N` suppresses the first `N` tag levels below
-`tagRoot`, hoisting level `N+1` to the mirror node's level. `0`/absent = today's behaviour.
-Independent of `keepDir`, which only decides whether `tagRoot` itself is rendered, and composable with
-`maxDepth` (18 §7.1) — `minDepth: 2, maxDepth: 2` projects exactly one level.
+Caps directory generation from the *top*: `minDepth: N` makes level `N` below `tagRoot` (its direct
+children = level 1, as for `maxDepth`) the shallowest generated level, suppressing levels `1…N−1`
+and hoisting level `N` to the mirror node's level. `0`/`1`/absent = today's behaviour. Independent
+of `keepDir`, which only decides whether `tagRoot` itself is rendered (as a read-only container
+above the hoisted level), and composable with `maxDepth` (18 §7.1) — the two bound one range, so
+`minDepth: 2, maxDepth: 2` projects exactly one level.
 
 So `Era.<era>.<travel>` with `minDepth: 2` renders `<travel>/` directories, with no duplicated tags
 and the metadata still single-homed on the real `Era.<era>.<travel>` tag (34 §3).
@@ -380,8 +388,9 @@ A `drop` node lists nothing by design (18 §4). Many WebDAV clients verify a `PU
 resource, so that read fails every time and the client retries indefinitely — the likely cause of the
 original re-upload loop (§8).
 
-A drop node therefore lists the files it received within the last **N minutes** (default 10), keyed
-`webdav:recentdrop:{hierarchy_id}:{node_id}`, name → picture id.
+A drop node therefore lists the files it received within the last **N minutes** (default 10, runtime
+setting `WEBDAV_DROP_VERIFY_WINDOW_SECS`), keyed `webdav:recentdrop:{hierarchy_id}:{node_id}`, name →
+picture id.
 
 This is **not** the `WebdavPendingDir` pattern removed in 34 §8.1. That sidecar asserted a directory
 that did not exist; this one reports a file that does — the node simply chooses not to list it
@@ -522,6 +531,8 @@ Service-side (`domain::tagging`):
 
 ## 13. Doc updates
 
+All applied with the implementation (plus `05_FRONTEND_ARCHITECTURE.md` §7 for the editors).
+
 - `01_GENERAL_SPECIFICATIONS.md §3.5` — **the invariant change**: `manual` tags are no longer
   unconditionally untouched. `incoming_share` still never; `manual` only by an opted-in service, at
   an identical path, down to the derived anchor.
@@ -543,28 +554,51 @@ Service-side (`domain::tagging`):
 
 ## 14. Work breakdown
 
-1. Migration `0023_prune_shadowed_manual_tags` — the two `tagging_services` columns (§4.1).
-2. Gate history in `routines/pipeline/evaluation.rs` — fired flag, per-arm satisfiers, and the
-   not-fired reason, recorded in the existing per-picture/per-service loop (§4.3).
-3. The prune step — candidates, `anchors(M)`, `deepest()`, the exclude asymmetry; one statement with
-   `reconcile_pipeline_tags` (§4.4, §4.6, edge case 7).
-4. Service CRUD + domain validation for the two new fields (§11); the disable flow with
-   `promote_tags` (§4.7).
-5. `domain::hierarchy` — `mirror.include`, `mirror.minDepth`, `trashedDuplicate`, `version: 3`, the
-   §11 validation.
-6. Resolver (`services/hierarchy/resolver.rs`) — `minDepth` in `expand_mirror`; the foreign `include`
-   arm; precise empty-directory pruning for filtered mirrors (§5.3).
-7. Node-chain resolution: `A_src` / `A_dst` for a path and the §3.1 difference, in
-   `services/vfs/dirops.rs`; verb mapping per §3.2 including `singleBranch` deepest-only.
-8. `trashedDuplicate` resolution; split the `vfs/write.rs:198` un-delete branch; `drop` nodes created
-   with the explicit value (§6).
-9. Drop-node verification listing — Redis key, TTL, `PROPFIND` integration (§7). Confirm the
-   verification hypothesis from the access log first (§8).
-10. Frontend — `HierarchyEditor` master-detail, resolved-tree preview, the three node controls, the
-    §8.1 preset; the tagging-service controls and the disable dialog (§9).
-11. Tests: sibling move fires nothing; move-out fires the chain; `singleBranch` deepest-only;
-    `fullDelete` no ops; prune with no anchor; prune reducing to a gate arm; two gates at different
-    depths (edge case 3); not-fired-for-another-reason pruning freely; sole-blocker kept unreduced;
-    anchor + prune atomicity (edge case 7); backfill via `touch_invalidated`; `minDepth` projection;
-    foreign `include` with empty-directory pruning; sub-tag vs foreign `exclude`; `trashedDuplicate`
-    both ways; drop-node verification round-trip.
+1. [x] Migration `0023_prune_shadowed_manual_tags` — the two `tagging_services` columns (§4.1).
+2. [x] Gate history — `domain::pipeline::prune::GateHistory`, fed by the existing per-picture /
+   per-service loop (§4.3).
+3. [x] The prune step — `GateHistory::plan`; applied in the `reconcile_pipeline_tags` statement
+   (§4.4, §4.6, edge case 7).
+4. [x] Service CRUD + validation for the two fields (§11); disable with `promote_tags` (§4.7).
+5. [x] `domain::hierarchy` — `mirror.include`, `mirror.minDepth`, `trashedDuplicate`, `version: 3`.
+6. [x] Resolver — `minDepth`, the foreign `include`, filtered-mirror path sets (§5.3).
+7. [x] Node chains + the §3.1 difference (`resolver::node_chain` / `transition`), verb mapping in
+   `services/vfs`.
+8. [x] `trashedDuplicate` resolution and the split trashed-match branch; `drop` nodes created with
+   `ignore` (frontend).
+9. [x] Drop-node verification listing — Redis key, setting, listing/`GET`/`DELETE`/`MOVE`-out (§7).
+   *Not done:* confirming the hypothesis from an access log (§8).
+10. [x] Frontend — master-detail `HierarchyEditor` (`NodeTree` + `NodeSettings`), resolved-tree
+    preview, the node controls, the §8.1 preset; `PruneSettings` and the `ServiceActions` disable /
+    delete dialog.
+11. [x] Tests — `domain::pipeline::prune` and `resolver` unit tests; `back/tests/pipeline.rs`
+    (prune to an anchor and stable, no anchor, opt-in + backfill via `touch_invalidated`, keep-list,
+    disable with promote); `back/tests/vfs.rs` (sibling move, move-out, PUT chain, `singleBranch`
+    deepest-only, `fullDelete`, `trashedDuplicate` both ways, drop verification + zero window,
+    `minDepth` writes, foreign `include`); `back/tests/hierarchy.rs` (projection, precise pruning,
+    the two `exclude` meanings).
+
+## 15. Deviations & choices taken while implementing
+
+- **A satisfier from an upstream service survives the prune.** §4.4's "sole satisfier" is evaluated
+  per gating path *with its origin*: a path an earlier service produced keeps satisfying a later gate
+  after the manual row goes (that service keeps firing, since every fired gate is anchored), so it
+  frees the arm. Candidates never count for each other, so two competing shadows both anchor.
+- **Mirror chain nodes.** Each mirror *directory* is its own chain node (keyed by node id + tag), and
+  only the deepest level of one expansion counts — so moving between two mirror directories fires
+  their own ops, and moving out of `Era/2026/Vietnam/` removes `Era.2026.Vietnam`, not `Era`.
+- **The 409 stays.** A transition still rejects removing a tag a service asserts (06_webdav §7.2).
+- **Projection details.** Colliding projected leaves (case-insensitive) are all qualified by their
+  suppressed levels (`Paris (2025)`); a `keepDir` container above a projection is read-only and has
+  no direct files; a projected `keepDir: false` mirror is never a container's "first hoisted
+  mirror", so a new top-level directory there is `403`.
+- **Precise pruning by path set, not per-directory counts.** A filtered mirror expands from the paths
+  its matching pictures carry (`PictureRepository::tag_paths_under`, one query per filtered mirror,
+  ancestors' predicates included) plus `show_when_empty` tags. A filtered mirror also subtracts only
+  its *matching* pictures from a parent query's direct files.
+- **Drop inbox writes.** A same-named `PUT` into a drop node is never an overwrite (a new photo with
+  a reused camera name); `ignore` returns `201`; the verification entry is best-effort (a Redis
+  failure never fails the committed write).
+- **Disable is a `PATCH` field.** `promote_tags` rides `PATCH {enabled: false}`; delete and disable
+  share one checkbox dialog in the UI. The editor's "by gates" list is the enabled services'
+  `requires` arms related to this service's outputs — an approximation of the per-picture anchors.

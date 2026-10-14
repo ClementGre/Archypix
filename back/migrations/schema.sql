@@ -482,7 +482,9 @@ CREATE TABLE public.tagging_services (
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     name character varying(255) DEFAULT ''::character varying NOT NULL,
-    config jsonb DEFAULT '{}'::jsonb NOT NULL
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    prune_shadowed_manual_tags boolean DEFAULT false NOT NULL,
+    keep_manual_tags public.ltree[] DEFAULT '{}'::public.ltree[] NOT NULL
 );
 
 CREATE TABLE public.tags (

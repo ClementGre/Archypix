@@ -4,7 +4,7 @@
 mod common;
 
 use archypix_back::domain::tag::TagSource;
-use archypix_back::domain::tagging::ServiceType;
+use archypix_back::domain::tagging::{NewService, ServicePatch, ServiceType};
 use archypix_back::routines::RoutineHandle;
 use archypix_back::routines::pipeline;
 use archypix_back::infra::settings::test_settings_with;
@@ -50,7 +50,7 @@ async fn seed_picture_2024(db: &PgPool, user_id: Uuid) -> Uuid {
 /// Create an empty Rule service.
 async fn create_rule_service(db: &PgPool, owner: Uuid) -> Uuid {
     let config = serde_json::json!({ "rules": [] });
-    TaggingServiceRepository::create(db, owner, ServiceType::Rule, "", &[], &[], &config)
+    TaggingServiceRepository::create(db, owner, ServiceType::Rule, &NewService::default(), &config)
         .await
         .unwrap()
         .id
@@ -188,7 +188,11 @@ async fn pipeline_leaves_manual_tags_untouched(db: PgPool) {
     run_pipeline(&db, user).await;
 
     // Disable the service → its tags go, manual survives.
-    TaggingServiceRepository::update(&db, user, svc, None, Some(false), None, None)
+    let disable = ServicePatch {
+        enabled: Some(false),
+        ..Default::default()
+    };
+    TaggingServiceRepository::update(&db, user, svc, &disable)
         .await
         .unwrap();
     TagRepository::remove_service_tags(&db, svc).await.unwrap();
@@ -422,7 +426,7 @@ async fn segmentation_assigns_single_band_tag(db: PgPool) {
               "parts": { "month": { "format": { "numeric": false } } } }
         ]
     });
-    TaggingServiceRepository::create(&db, user, ServiceType::Segmentation, "", &[], &[], &config)
+    TaggingServiceRepository::create(&db, user, ServiceType::Segmentation, &NewService::default(), &config)
         .await
         .unwrap();
 
@@ -438,4 +442,166 @@ async fn segmentation_assigns_single_band_tag(db: PgPool) {
         .collect();
     assert_eq!(seg.len(), 1, "exactly one segment tag");
     assert_eq!(seg[0].tag_path, "Photos.Travel.2024.June");
+}
+
+// ─── feature 39: shadowed manual tag pruning ──────────────────────────────────────
+
+/// A rule service with `fields`, whose single "captured in 2024" rule assigns `tag`.
+async fn seed_gated_rule(db: &PgPool, owner: Uuid, fields: NewService, tag: &str) -> Uuid {
+    let config = serde_json::json!({ "rules": [{
+        "predicate": {"field": "captured_at", "year": 2024}, "assign_tag": tag
+    }]});
+    let config = archypix_back::domain::tagging::ServiceConfig::parse(ServiceType::Rule, &config)
+        .unwrap()
+        .to_value();
+    TaggingServiceRepository::create(db, owner, ServiceType::Rule, &fields, &config)
+        .await
+        .unwrap()
+        .id
+}
+
+/// `(path, source)` of every tag row on `pic`, sorted.
+async fn rows(db: &PgPool, user: Uuid, pic: Uuid) -> Vec<(String, TagSource)> {
+    let mut out: Vec<(String, TagSource)> = TagRepository::list_for_picture(db, user, pic)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| (t.tag_path, t.source))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn pruning(requires: &[&str]) -> NewService {
+    NewService {
+        requires: requires.iter().map(|s| s.to_string()).collect(),
+        prune_shadowed_manual_tags: true,
+        ..Default::default()
+    }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn prune_reduces_a_shadow_to_its_gate_anchor(db: PgPool) {
+    // §4.4 worked example: gated on Era, the service produces Era.2026 over a manual Era.2026
+    // (as WebDAV write-back leaves it). The anchor + prune must land in one statement (edge 7).
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await;
+    TagRepository::batch_assign(&db, user, &[pic], &["Era.2026".to_string()])
+        .await
+        .unwrap();
+    seed_gated_rule(&db, user, pruning(&["Era"]), "Era.2026").await;
+
+    run_pipeline(&db, user).await;
+    let expected = vec![
+        ("Era".to_string(), TagSource::Manual),
+        ("Era.2026".to_string(), TagSource::Rule),
+    ];
+    assert_eq!(rows(&db, user, pic).await, expected);
+
+    // Stable: the next run's gate decisions are unchanged (§4.6).
+    archypix_back::repository::pipeline::PipelineRepository::invalidate(&db, &[pic])
+        .await
+        .unwrap();
+    run_pipeline(&db, user).await;
+    assert_eq!(rows(&db, user, pic).await, expected);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn prune_without_anchor_drops_the_manual_row(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await;
+    TagRepository::batch_assign(&db, user, &[pic], &["Travel".to_string(), "Keep".to_string()])
+        .await
+        .unwrap();
+    seed_gated_rule(&db, user, pruning(&[]), "Travel").await;
+
+    run_pipeline(&db, user).await;
+    assert_eq!(
+        rows(&db, user, pic).await,
+        vec![
+            ("Keep".to_string(), TagSource::Manual),
+            ("Travel".to_string(), TagSource::Rule),
+        ]
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn prune_is_opt_in_and_backfills_on_toggle(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await;
+    TagRepository::batch_assign(&db, user, &[pic], &["Travel".to_string()])
+        .await
+        .unwrap();
+    let svc = seed_gated_rule(&db, user, NewService::default(), "Travel").await;
+
+    run_pipeline(&db, user).await;
+    assert!(
+        rows(&db, user, pic).await.contains(&("Travel".to_string(), TagSource::Manual)),
+        "DEFAULT false leaves the shadow alone"
+    );
+
+    // Toggling the option invalidates the service, which dirties the picture (§4.6).
+    let (_, cache) = common::make_federation(&test_settings_with(&[]));
+    let patch = ServicePatch {
+        prune_shadowed_manual_tags: Some(true),
+        ..Default::default()
+    };
+    services::tagging::update_service(&db, cache.as_ref(), user, svc, &patch, false)
+        .await
+        .unwrap()
+        .unwrap();
+    run_pipeline(&db, user).await;
+    assert_eq!(
+        rows(&db, user, pic).await,
+        vec![("Travel".to_string(), TagSource::Rule)]
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn keep_list_floors_the_prune(db: PgPool) {
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await;
+    TagRepository::batch_assign(&db, user, &[pic], &["Era.2026.Vietnam".to_string()])
+        .await
+        .unwrap();
+    let fields = NewService {
+        keep_manual_tags: vec!["Era.2026".to_string()],
+        ..pruning(&["Era"])
+    };
+    seed_gated_rule(&db, user, fields, "Era.2026.Vietnam").await;
+
+    run_pipeline(&db, user).await;
+    assert_eq!(
+        rows(&db, user, pic).await,
+        vec![
+            ("Era.2026".to_string(), TagSource::Manual),
+            ("Era.2026.Vietnam".to_string(), TagSource::Rule),
+        ]
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn disabling_with_promote_keeps_a_pruned_tag(db: PgPool) {
+    // §4.7: with the shadow gone, disabling drops the tag unless it is promoted.
+    let user = common::seed_user(&db, "alice", "pass").await;
+    let pic = seed_picture_2024(&db, user).await;
+    TagRepository::batch_assign(&db, user, &[pic], &["Travel".to_string()])
+        .await
+        .unwrap();
+    let svc = seed_gated_rule(&db, user, pruning(&[]), "Travel").await;
+    run_pipeline(&db, user).await;
+
+    let (_, cache) = common::make_federation(&test_settings_with(&[]));
+    let disable = ServicePatch {
+        enabled: Some(false),
+        ..Default::default()
+    };
+    services::tagging::update_service(&db, cache.as_ref(), user, svc, &disable, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rows(&db, user, pic).await,
+        vec![("Travel".to_string(), TagSource::Manual)]
+    );
 }

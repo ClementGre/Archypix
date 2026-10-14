@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, owner_id, name,\n                      service_type as \"service_type: ServiceType\",\n                      requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                      enabled, position, config as \"config!: serde_json::Value\",\n                      last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at\n               FROM tagging_services\n               WHERE owner_id = $1\n               ORDER BY CASE WHEN service_type = 'shared_tag_mapping' THEN 0 ELSE 1 END,\n                        position, created_at",
+  "query": "SELECT id, owner_id, name,\n                      service_type as \"service_type: ServiceType\",\n                      requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                      enabled, position, config as \"config!: serde_json::Value\",\n                      prune_shadowed_manual_tags, keep_manual_tags::text[] as \"keep_manual_tags!\",\n                      last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at\n               FROM tagging_services\n               WHERE owner_id = $1 AND enabled = true\n               ORDER BY CASE WHEN service_type = 'shared_tag_mapping' THEN 0 ELSE 1 END,\n                        position, created_at",
   "describe": {
     "columns": [
       {
@@ -105,6 +105,23 @@
       },
       {
         "ordinal": 9,
+        "name": "prune_shadowed_manual_tags",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "tagging_services",
+            "name": "prune_shadowed_manual_tags"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "keep_manual_tags!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
         "name": "last_invalidated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -115,7 +132,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "last_error_at",
         "type_info": "Timestamp",
         "origin": {
@@ -126,7 +143,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "last_error_msg",
         "type_info": "Text",
         "origin": {
@@ -137,7 +154,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -148,7 +165,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -175,11 +192,13 @@
       false,
       false,
       false,
+      null,
+      false,
       true,
       true,
       false,
       false
     ]
   },
-  "hash": "8c67da71b8588bb49094996dfd66ed803abf6db29792494e7728573b2893de91"
+  "hash": "2de0287f8e2a844d01f26a274f6caaf63e9d173719f5e0c87471bfd9293ee749"
 }
