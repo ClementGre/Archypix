@@ -37,7 +37,7 @@ interface ServiceEditorProps {
 
 /**
  * Right-pane editor for the selected service. Every field is one draft with one Save / Reset in a
- * sticky header: service-level fields go through `PATCH`, the type config through `PUT …/config`.
+ * fixed header: service-level fields go through `PATCH`, the type config through `PUT …/config`.
  */
 export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) {
     const {update, replaceConfig} = useTaggingMutations()
@@ -85,15 +85,14 @@ export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) 
     const typeLabel = SERVICE_TYPE_LABEL[service.service_type]
 
     return (
-        <div>
-            {/* Sticky header: identity + the one Save / Reset */}
-            {/* Below md the document scrolls under the sticky top bar, so sit right beneath it. */}
-            <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 border-b bg-background/95 px-5 py-3 backdrop-blur max-md:top-topbar">
-                <Button variant="ghost" size="sm" onClick={onBack} className="mb-2 -ml-2 gap-1.5 text-muted-foreground lg:hidden">
-                    <ArrowLeft className="h-4 w-4"/>
-                    All services
-                </Button>
-                <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col md:h-full">
+            {/* md+: outside the scrolling body. Below md the document scrolls, so it pins under the top bar. */}
+            <div className="sticky top-topbar z-[5] border-b bg-background/95 backdrop-blur md:static md:shrink-0">
+                <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 px-5 py-3">
+                    <Button variant="ghost" size="icon" onClick={onBack} className="-ml-2 h-8 w-8 text-muted-foreground lg:hidden"
+                            aria-label="All services">
+                        <ArrowLeft className="h-4 w-4"/>
+                    </Button>
                     <Badge variant="secondary" className={`border-0 font-medium ${SERVICE_TYPE_COLOR[service.service_type]}`}>
                         {typeLabel}
                     </Badge>
@@ -120,52 +119,54 @@ export function ServiceEditor({service, onBack, onDeleted}: ServiceEditorProps) 
                 </div>
             </div>
 
-            <div className="space-y-5">
-                {/* Gates */}
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Gates</h3>
-                    <div className="space-y-2 rounded-lg border p-3 text-sm">
-                        <TagListField
-                            label="Requires"
-                            values={settings.requires}
-                            onChange={(requires) => set({requires})}
-                            excludePaths={settings.excludes}
-                            color="emerald"
-                            allowCreate={false}
-                            emptyHint="None"
-                        />
-                        <TagListField
-                            label="Excludes"
-                            values={settings.excludes}
-                            onChange={(excludes) => set({excludes})}
-                            excludePaths={settings.requires}
-                            color="red"
-                            allowCreate={false}
-                            emptyHint="None"
-                        />
-                    </div>
-                </section>
+            <div className="md:min-h-0 md:flex-1 md:overflow-y-auto">
+                <div className="mx-auto max-w-3xl space-y-5 p-5">
+                    {/* Gates */}
+                    <section>
+                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Gates</h3>
+                        <div className="space-y-2 rounded-lg border p-3 text-sm">
+                            <TagListField
+                                label="Requires"
+                                values={settings.requires}
+                                onChange={(requires) => set({requires})}
+                                excludePaths={settings.excludes}
+                                color="emerald"
+                                allowCreate={false}
+                                emptyHint="None"
+                            />
+                            <TagListField
+                                label="Excludes"
+                                values={settings.excludes}
+                                onChange={(excludes) => set({excludes})}
+                                excludePaths={settings.requires}
+                                color="red"
+                                allowCreate={false}
+                                emptyHint="None"
+                            />
+                        </div>
+                    </section>
 
-                {/* Manual tag pruning */}
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manual tags</h3>
-                    <div className="rounded-lg border p-3">
-                        <PruneSettings
-                            prune={settings.prune_shadowed_manual_tags}
-                            keep={settings.keep_manual_tags}
-                            onChange={set}
-                        />
-                    </div>
-                </section>
+                    {/* Manual tag pruning */}
+                    <section>
+                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Manual tags</h3>
+                        <div className="rounded-lg border p-3">
+                            <PruneSettings
+                                prune={settings.prune_shadowed_manual_tags}
+                                keep={settings.keep_manual_tags}
+                                onChange={set}
+                            />
+                        </div>
+                    </section>
 
-                <Separator/>
+                    <Separator/>
 
-                {/* Type-specific config */}
-                <section key={resetKey}>
-                    {service.service_type === 'rule' && <RuleEditor rules={service.rules} onDraft={onDraft}/>}
-                    {service.service_type === 'segmentation' && <SegmentEditor service={service} onDraft={onDraft}/>}
-                    {service.service_type === 'shared_tag_mapping' && <MappingEditor service={service} onDraft={onDraft}/>}
-                </section>
+                    {/* Type-specific config */}
+                    <section key={resetKey}>
+                        {service.service_type === 'rule' && <RuleEditor rules={service.rules} onDraft={onDraft}/>}
+                        {service.service_type === 'segmentation' && <SegmentEditor service={service} onDraft={onDraft}/>}
+                        {service.service_type === 'shared_tag_mapping' && <MappingEditor service={service} onDraft={onDraft}/>}
+                    </section>
+                </div>
             </div>
         </div>
     )

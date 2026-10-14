@@ -92,7 +92,7 @@ The **register page** keeps the account/instance editor (and the health warning)
 | `/`                                  | `GalleryPage`       | required             | the main three-pane workspace                                                                                                                             |
 | `/tags`                              | `TagsPage`          | required             | placeholder (tag tree lives in the gallery panel)                                                                                                         |
 | `/tagging`                           | `TaggingPage`       | required             | tagging-services editor                                                                                                                                   |
-| `/tagging/:id`                       | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
+| `/tagging/:id`                       | `TaggingPage`       | required             | same page, with that service open in the editor pane                                                                                                      |
 | `/shares`                            | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
 | `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention + seasons + sensitive display mode, one explicit Save; the tab-only show-all button is never saved), storage, invites + invitation graph (via user menu, labelled "Profile") |
 | `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Rate limiting** / **Invites** (+ Fleet link, cache-clear refresh)                |
@@ -414,8 +414,8 @@ editor page, so the list stays short with many services). `ServiceActions` (feat
 disable and delete share one confirmation dialog with a "promote tags to manual" checkbox (pre-checked on delete, and on disable when the
 service prunes manual shadows).
 `RequiresExcludesEditor`
-`ServiceEditor` keeps **one draft** for the whole service under a sticky header (type badge, name input, the single Save / Reset,
-`ServiceActions`): gates (two `TagListField`s), `PruneSettings` (feature 39: the `prune_shadowed_manual_tags` checkbox and the
+`ServiceEditor` keeps **one draft** for the whole service under a fixed header (type badge, name input, the single Save / Reset,
+`ServiceActions`; outside the scrolling body on md+, pinned under the top bar below md): gates (two `TagListField`s), `PruneSettings` (feature 39: the `prune_shadowed_manual_tags` checkbox and the
 `keep_manual_tags` floor; new services are created with pruning on) and the type editor. `RuleEditor`, `SegmentEditor` and `MappingEditor` keep
 their own draft and report it up through `useReportDraft`; Save sends the changed service fields (`PATCH`) then the config (`PUT …/config`), and
 Reset remounts the type editor. The editor registers with the unsaved-changes guard, so switching service or page asks first. `NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested

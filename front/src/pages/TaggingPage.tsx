@@ -53,9 +53,9 @@ export default function TaggingPage() {
     const selected = all.find((s) => s.id === selectedId) ?? null
 
     return (
-        <div className="flex h-full">
-            {/* Left pane — service list */}
-            <div className={`${selected ? 'hidden lg:flex' : 'flex'} w-full shrink-0 flex-col overflow-y-auto border-r lg:w-96`}>
+        <div className="flex md:h-full">
+            {/* Panes scroll on md+ only: below md the document scrolls, which sticky headers rely on. */}
+            <div className={`${selected ? 'hidden lg:flex' : 'flex'} w-full shrink-0 flex-col border-r md:overflow-y-auto lg:w-96`}>
                 <div className="flex items-center justify-between gap-2 border-b p-4">
                     <div>
                         <h1 className="text-base font-semibold">Tagging services</h1>
@@ -114,16 +114,14 @@ export default function TaggingPage() {
             </div>
 
             {/* Right pane — editor */}
-            <div className={`${selected ? 'block' : 'hidden lg:block'} flex-1 overflow-y-auto`}>
+            <div className={`${selected ? 'block' : 'hidden lg:block'} min-w-0 flex-1`}>
                 {selected ? (
-                    <div className="mx-auto max-w-3xl p-5">
-                        <ServiceEditor
-                            key={selected.id}
-                            service={selected}
-                            onBack={() => select(null)}
-                            onDeleted={() => navigate('/tagging')}
-                        />
-                    </div>
+                    <ServiceEditor
+                        key={selected.id}
+                        service={selected}
+                        onBack={() => select(null)}
+                        onDeleted={() => navigate('/tagging')}
+                    />
                 ) : (
                     <div className="hidden h-full items-center justify-center text-sm text-muted-foreground lg:flex">Select a service to edit
                         it.</div>
