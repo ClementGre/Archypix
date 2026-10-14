@@ -1,5 +1,5 @@
-import type {ReactNode} from 'react'
-import {ChevronDown, ChevronUp, FolderPlus, Plus, Trash2} from 'lucide-react'
+import {type ReactNode, useState} from 'react'
+import {ChevronDown, ChevronRight, ChevronUp, FolderPlus, Plus, Trash2} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {Button} from '@/components/ui/button'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '@/components/ui/dropdown-menu'
@@ -19,7 +19,7 @@ import {
 
 const KINDS: NodeKind[] = ['mirror', 'query', 'static', 'drop']
 
-/** "Add a directory of kind …" menu around `trigger`. */
+/** "Add a folder of kind …" menu around `trigger`. */
 function AddNodeMenu({trigger, onAdd}: { trigger: ReactNode; onAdd: (node: HierarchyNode) => void }) {
     return (
         <DropdownMenu>
@@ -43,17 +43,15 @@ interface TreeOps {
     onChange: (nodes: HierarchyNode[]) => void
 }
 
-function NodeRow({node, index, count, depth, ops}: {
-    node: HierarchyNode
-    index: number
-    count: number
-    depth: number
-    ops: TreeOps
-}) {
+function NodeRow({node, index, count, ops}: { node: HierarchyNode; index: number; count: number; ops: TreeOps }) {
+    const [open, setOpen] = useState(true)
     const kids = childrenOf(node)
+    const hasKids = !!kids?.length
+    const selected = ops.selectedId === node.id
     const add = (child: HierarchyNode) => {
         ops.onChange(addChild(ops.root, node.id, child))
         ops.onSelect(child.id)
+        setOpen(true)
     }
     const icon = 'h-6 w-6 text-muted-foreground'
     return (
@@ -64,16 +62,32 @@ function NodeRow({node, index, count, depth, ops}: {
                 onClick={() => ops.onSelect(node.id)}
                 onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && ops.onSelect(node.id)}
                 className={cn(
-                    'group flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-1 text-sm',
-                    ops.selectedId === node.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted',
+                    'group flex cursor-pointer items-center gap-1 rounded-md py-1 pr-1 text-sm',
+                    selected ? 'bg-primary/10 text-primary' : 'hover:bg-muted',
                 )}
-                style={{paddingLeft: depth * 14 + 6}}
             >
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        setOpen((o) => !o)
+                    }}
+                    className={cn('flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground', !hasKids && 'invisible')}
+                    aria-label={open ? 'Collapse' : 'Expand'}
+                >
+                    {open ? <ChevronDown className="h-3.5 w-3.5"/> : <ChevronRight className="h-3.5 w-3.5"/>}
+                </button>
                 <Badge variant="secondary" className={cn('h-4 shrink-0 border-0 px-1 text-[10px] font-medium', KIND_COLOR[node.kind])}>
                     {KIND_LABEL[node.kind]}
                 </Badge>
                 <span className="min-w-0 flex-1 truncate">{nodeDisplayName(node)}</span>
-                <span className="flex shrink-0 opacity-0 group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
+                {/* Touch screens have no hover: below md the actions always show. */}
+                <span
+                    className={cn(
+                        'flex shrink-0 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100',
+                        selected && 'md:opacity-100',
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                >
                     <Button variant="ghost" size="icon" className={icon} disabled={index === 0}
                             onClick={() => ops.onChange(moveNode(ops.root, node.id, -1))} aria-label="Move up">
                         <ChevronUp className="h-3.5 w-3.5"/>
@@ -98,14 +112,20 @@ function NodeRow({node, index, count, depth, ops}: {
                     </Button>
                 </span>
             </div>
-            {kids?.map((child, i) => (
-                <NodeRow key={child.id} node={child} index={i} count={kids.length} depth={depth + 1} ops={ops}/>
-            ))}
+            {hasKids && open && (
+                <div className="ml-2 border-l border-border pl-2">
+                    <NodeRows nodes={kids} ops={ops}/>
+                </div>
+            )}
         </div>
     )
 }
 
-/** The authored node tree — the master half of the hierarchy editor (feature 39 §9). */
+function NodeRows({nodes, ops}: { nodes: HierarchyNode[]; ops: TreeOps }) {
+    return nodes.map((node, i) => <NodeRow key={node.id} node={node} index={i} count={nodes.length} ops={ops}/>)
+}
+
+/** The authored node tree: the master half of the hierarchy editor (feature 39 §9). */
 export function NodeTree({nodes, selectedId, onSelect, onChange}: {
     nodes: HierarchyNode[]
     selectedId: string | null
@@ -116,10 +136,8 @@ export function NodeTree({nodes, selectedId, onSelect, onChange}: {
     return (
         <div className="space-y-2">
             <div>
-                {nodes.map((node, i) => (
-                    <NodeRow key={node.id} node={node} index={i} count={nodes.length} depth={0} ops={ops}/>
-                ))}
-                {nodes.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">No directories yet.</p>}
+                <NodeRows nodes={nodes} ops={ops}/>
+                {nodes.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">No folders yet.</p>}
             </div>
             <AddNodeMenu
                 onAdd={(node) => {
@@ -129,7 +147,7 @@ export function NodeTree({nodes, selectedId, onSelect, onChange}: {
                 trigger={
                     <Button variant="outline" size="sm" className="w-full gap-1.5">
                         <FolderPlus className="h-4 w-4"/>
-                        Add directory
+                        Add folder
                     </Button>
                 }
             />

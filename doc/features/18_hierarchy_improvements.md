@@ -155,8 +155,8 @@ effective_enabled(node):
 - With the master on, `writeBackEnabled` is a tri-state: `null` inherits the nearest explicit
   ancestor (or the root's `true`); `true`/`false` overrides for the node **and its subtree**
   (until a deeper node overrides again).
-- Feature 39's `trashedDuplicate` (`restore|ignore`, root seed `restore`) resolves the same way
-  (no master ceiling) — see [`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §6.
+- Feature 39's `trashedDuplicate` (`restore|ignore`, root seed = the hierarchy-level
+  `trashedDuplicate`, default `restore`) resolves the same way (no master ceiling) — see [`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §6.
 
 ### 5.2 Writability matrix (replaces §7.5 of 05)
 

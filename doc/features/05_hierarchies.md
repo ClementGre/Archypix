@@ -141,8 +141,10 @@ Validation: every `collapsed`/`exclude` entry must be `<@ tagRoot`.
 >
 > **Extended in [`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §5:**
 > `include` (foreign arms every directory requires; also assigned by the implicit op-list) and
-> `minDepth` (the shallowest generated level below `tagRoot` — shallower levels are suppressed and
-> level `minDepth` is hoisted to the node's level; pictures above the cut are dropped). Projected
+> `minDepth` (the shallowest generated level below `tagRoot`, from 1 = its children — shallower levels
+> are suppressed and level `minDepth` is hoisted to the node's level; pictures above the cut are dropped;
+> `keepDir` alone governs `tagRoot`'s own level). A top-level `trashedDuplicate` seeds the per-node
+> tri-state (§6 there). Projected
 > leaves that collide ignoring case are qualified by their suppressed levels (`Paris (2025)`).
 
 ### 4.4 `kind: "query"`

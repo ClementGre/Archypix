@@ -14,6 +14,7 @@ import {Section} from '@/components/photos/detail/Section'
 import {useTaggingMutations, useTaggingServices} from '@/hooks/useTaggingServices'
 import {wakePipeline} from '@/api/pictures'
 import {apiErrorMessage} from '@/api/client'
+import {useUnsavedChanges} from '@/stores/unsavedChanges'
 import type {RuleServiceDetail, SegmentationServiceDetail, ServiceType, SharedTagMappingServiceDetail} from '@/lib/types'
 
 export default function TaggingPage() {
@@ -23,7 +24,9 @@ export default function TaggingPage() {
     const {create} = useTaggingMutations()
     const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
 
-    const select = (id: string | null) => navigate(id ? `/tagging/${id}` : '/tagging')
+    // Switching service goes through the open editor's unsaved-changes guard.
+    const select = (id: string | null) =>
+        useUnsavedChanges.getState().guard(() => navigate(id ? `/tagging/${id}` : '/tagging'))
 
     const forceRun = useMutation({
         mutationFn: wakePipeline,
@@ -114,7 +117,12 @@ export default function TaggingPage() {
             <div className={`${selected ? 'block' : 'hidden lg:block'} flex-1 overflow-y-auto`}>
                 {selected ? (
                     <div className="mx-auto max-w-3xl p-5">
-                        <ServiceEditor service={selected} onBack={() => select(null)} onDeleted={() => select(null)}/>
+                        <ServiceEditor
+                            key={selected.id}
+                            service={selected}
+                            onBack={() => select(null)}
+                            onDeleted={() => navigate('/tagging')}
+                        />
                     </div>
                 ) : (
                     <div className="hidden h-full items-center justify-center text-sm text-muted-foreground lg:flex">Select a service to edit

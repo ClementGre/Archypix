@@ -12,12 +12,19 @@ import {useHierarchy, useHierarchyMutations} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
-import type {HierarchyConfig, NamingStrategy, SafeDeleteMode} from '@/lib/types'
+import {useRegisterUnsaved, useUnsavedChanges} from '@/stores/unsavedChanges'
+import type {HierarchyConfig, NamingStrategy, SafeDeleteMode, TrashedDuplicate} from '@/lib/types'
 import {NodeTree} from './NodeTree'
 import {NodeSettings} from './NodeSettings'
-import {HierarchyDirTree} from './HierarchyDirTree'
 import {JsonConfigDialog} from './JsonConfigDialog'
-import {findNode, inheritedFor, mapNode, NAMING_OPTIONS, SAFE_DELETE_OPTIONS} from './hierarchyUtils'
+import {
+    findNode,
+    inheritedFor,
+    mapNode,
+    NAMING_OPTIONS,
+    SAFE_DELETE_OPTIONS,
+    TRASHED_DUPLICATE_OPTIONS,
+} from './hierarchyUtils'
 
 interface Draft {
     name: string
@@ -43,6 +50,7 @@ export function HierarchyEditor({id}: { id: string }) {
         }
     }
 
+    // Closing goes through `updateParams`, which asks about unsaved changes first.
     const close = () => updateParams({hedit: null})
 
     const serverSnapshot = data ? JSON.stringify({name: data.name, enabled: data.enabled, config: data.config}) : ''
@@ -51,21 +59,24 @@ export function HierarchyEditor({id}: { id: string }) {
     const setConfig = (patch: Partial<HierarchyConfig>) =>
         setDraft((d) => (d ? {...d, config: {...d.config, ...patch}} : d))
 
-    const save = () => {
-        if (!draft) return
-        update.mutate(
-            {id, body: {name: draft.name.trim(), enabled: draft.enabled, config: draft.config}},
-            {
-                onSuccess: () => toast.success('Hierarchy saved'),
-                onError: (e) => toast.error(apiErrorMessage(e)),
-            },
-        )
+    const save = async (): Promise<boolean> => {
+        if (!draft) return false
+        try {
+            await update.mutateAsync({id, body: {name: draft.name.trim(), enabled: draft.enabled, config: draft.config}})
+            toast.success('Hierarchy saved')
+            return true
+        } catch (e) {
+            toast.error(apiErrorMessage(e))
+            return false
+        }
     }
+    useRegisterUnsaved(`hierarchy:${id}`, dirty, save)
 
     const del = () =>
         remove.mutate(id, {
             onSuccess: () => {
                 toast.success('Hierarchy deleted')
+                useUnsavedChanges.getState().register(null, null)
                 updateParams({hedit: null, hierarchy: null, hpath: ''})
             },
             onError: (e) => toast.error(apiErrorMessage(e)),
@@ -115,7 +126,7 @@ export function HierarchyEditor({id}: { id: string }) {
                                 Reset
                             </Button>
                         )}
-                        <Button size="sm" className="h-8 gap-1.5" onClick={save} disabled={!dirty || update.isPending}>
+                        <Button size="sm" className="h-8 gap-1.5" onClick={() => void save()} disabled={!dirty || update.isPending}>
                             {update.isPending ? <Loader2 className="h-4 w-4 animate-spin"/> : <Save className="h-4 w-4"/>}
                             Save
                         </Button>
@@ -139,10 +150,10 @@ export function HierarchyEditor({id}: { id: string }) {
             {draft && data && (() => {
                 const nodes = draft.config.nodes
                 const selected = selectedId ? findNode(nodes, selectedId) : null
-                const inherited = selected ? inheritedFor(nodes, selected.id, draft.config.writeBack) : null
+                const inherited = selected ? inheritedFor(draft.config, selected.id) : null
                 return (
                     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-                        {/* Master: the authored tree, then what it resolves to (feature 39 §9). */}
+                        {/* Master: the authored tree (feature 39 §9). */}
                         <aside className="space-y-4 overflow-y-auto border-b border-border p-3 md:w-72 md:shrink-0 md:border-b-0 md:border-r">
                             <button
                                 onClick={() => setSelectedId(null)}
@@ -162,15 +173,6 @@ export function HierarchyEditor({id}: { id: string }) {
                                     onSelect={setSelectedId}
                                     onChange={(next) => setConfig({nodes: next})}
                                 />
-                            </section>
-                            <section className="space-y-1">
-                                <h2 className="px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                    Resolved directories
-                                </h2>
-                                <p className="px-2 text-[11px] text-muted-foreground">
-                                    {dirty ? 'As last saved — save to refresh.' : 'What the nodes render to, empty folders hidden.'}
-                                </p>
-                                <HierarchyDirTree hierarchyId={id} preview/>
                             </section>
                         </aside>
 
@@ -246,15 +248,37 @@ export function HierarchyEditor({id}: { id: string }) {
                                             <span>
                                                 Allow write-back
                                                 <span className="ml-1 text-xs text-muted-foreground">
-                                                    (master switch; off ⇒ entire hierarchy read-only)
+                                                    (off makes the whole hierarchy read-only)
                                                 </span>
                                             </span>
                                         </label>
 
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-muted-foreground">Default re-upload of a trashed photo</Label>
+                                            <Select
+                                                value={draft.config.trashedDuplicate ?? 'restore'}
+                                                disabled={!draft.config.writeBack}
+                                                onValueChange={(v) => setConfig({trashedDuplicate: v as TrashedDuplicate})}
+                                            >
+                                                <SelectTrigger className="h-9 sm:w-1/2">
+                                                    <SelectValue/>
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {TRASHED_DUPLICATE_OPTIONS.map((o) => (
+                                                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Applies when an upload has the same bytes as a photo in the trash. Folders
+                                                can override it.
+                                            </p>
+                                        </div>
+
                                         <p className="text-xs text-muted-foreground">
-                                            Each node renders to a directory. Mirror expands a tag subtree; query filters by a
-                                            predicate and may nest; static is a plain container; drop is a write-only inbox.
-                                            Select a node on the left to edit it.
+                                            Each node is a folder. A mirror turns a tag subtree into folders. A query shows
+                                            the pictures matching some tags. A static folder only holds sub-folders. A drop
+                                            folder is an upload inbox. Select a node on the left to edit it.
                                         </p>
                                     </section>
                                 )}

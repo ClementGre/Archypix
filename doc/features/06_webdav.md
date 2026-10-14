@@ -299,7 +299,7 @@ How a written file maps to a picture:
       target directory's `onAdd` / mirror auto-tag to the existing picture.
     - **Hash matches a trashed (`deleted_at` set) owned picture** → per the target's
       **`trashedDuplicate`** policy (feature 39 §6, a tri-state resolved like `writeBackEnabled`,
-      root seed `restore`): `restore` **un-deletes** it and applies the target tags in one
+      seeded by the hierarchy-level default, `restore` unless set): `restore` **un-deletes** it and applies the target tags in one
       transaction (a naive client implementing a rename under `fullDelete` as `DELETE old` + `PUT
       new`); `ignore` leaves it trashed, applies nothing, and still succeeds — so a sync client
       re-sending a photo deleted in the webapp does not bring it back. `drop` nodes are created

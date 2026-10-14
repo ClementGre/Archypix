@@ -1,6 +1,5 @@
 import {useMemo, useState} from 'react'
-import {AlertTriangle, ChevronDown, ChevronRight, GripVertical, Plus, Save, Scissors, Trash2, Undo2} from 'lucide-react'
-import {toast} from 'sonner'
+import {AlertTriangle, ChevronDown, ChevronRight, GripVertical, Plus, Scissors, Trash2} from 'lucide-react'
 import type {DragEndEvent} from '@dnd-kit/core'
 import {closestCenter, DndContext, PointerSensor, useSensor, useSensors} from '@dnd-kit/core'
 import {SortableContext, useSortable, verticalListSortingStrategy} from '@dnd-kit/sortable'
@@ -13,9 +12,8 @@ import {NumberInput} from '@/components/ui/number-input'
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select'
 import {DateRangePicker} from '@/components/common/DateRangePicker'
 import {TagPicker} from '@/components/tags/TagPicker'
-import {useTaggingMutations} from '@/hooks/useTaggingServices'
-import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
+import {type ConfigDraft, useReportDraft} from './useReportDraft'
 import {
     displayDepths,
     lintConfig,
@@ -75,16 +73,16 @@ const KNOWN_PLACEHOLDERS = ['year', 'iso_year', 'quarter', 'season', 'month', 'w
 
 interface SegmentEditorProps {
     service: SegmentationServiceDetail
+    onDraft: (d: ConfigDraft) => void
 }
 
 /**
- * Band-list editor for a calendar-segmentation service (feature 20). Edits a local draft and
- * commits the whole `SegmentationConfig` via `PUT …/config`. A clickable timeline previews the
+ * Band-list editor for a calendar-segmentation service (feature 20). Edits a local draft of the
+ * whole `SegmentationConfig`, reported to the service editor's Save. A clickable timeline previews the
  * buckets the bands produce; bands are shown indented under the band they subdivide (presentation
  * only — the model is a flat ordered list, array order = precedence).
  */
-export function SegmentEditor({service}: SegmentEditorProps) {
-    const {replaceConfig} = useTaggingMutations()
+export function SegmentEditor({service, onDraft}: SegmentEditorProps) {
     const cfg = service.config
 
     const [rootTag, setRootTag] = useState(cfg.root_tag)
@@ -124,15 +122,7 @@ export function SegmentEditor({service}: SegmentEditorProps) {
     const depths = useMemo(() => displayDepths(bands), [bands])
     const lints = useMemo(() => lintConfig(draft), [draft])
 
-    const save = () => {
-        replaceConfig.mutate({id: service.id, config: draft}, {onError: (err) => toast.error(apiErrorMessage(err))})
-    }
-    const reset = () => {
-        setRootTag(cfg.root_tag)
-        setHemisphere(cfg.hemisphere ?? 'north')
-        setCatchAll(cfg.catch_all)
-        setBands(cfg.bands.map((b) => ({...b, _key: nextKey()})))
-    }
+    useReportDraft(onDraft, draft, dirty)
 
     const patchBand = (key: string, patch: Partial<SegmentationBand>) =>
         setBands((bs) => bs.map((b) => (b._key === key ? {...b, ...patch} : b)))
@@ -210,7 +200,7 @@ export function SegmentEditor({service}: SegmentEditorProps) {
             <div>
                 <div className="mb-2 flex items-center justify-between">
                     <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Bands <span className="normal-case">— first match wins (top = highest precedence)</span>
+                        Bands <span className="normal-case">(first match wins, top first)</span>
                     </span>
                     <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => addBand(undefined, 0)}>
                         <Plus className="h-3.5 w-3.5"/>
@@ -218,7 +208,7 @@ export function SegmentEditor({service}: SegmentEditorProps) {
                     </Button>
                 </div>
 
-                {bands.length === 0 && <p className="text-sm text-muted-foreground">No bands yet — add one to start partitioning by date.</p>}
+                {bands.length === 0 && <p className="text-sm text-muted-foreground">No bands yet. Add one to split pictures by date.</p>}
 
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                     <SortableContext items={bands.map((b) => b._key)} strategy={verticalListSortingStrategy}>
@@ -242,18 +232,6 @@ export function SegmentEditor({service}: SegmentEditorProps) {
                 </DndContext>
             </div>
 
-            {dirty && (
-                <div className="flex items-center gap-2 border-t pt-3">
-                    <Button size="sm" className="h-8 gap-1.5" onClick={save} disabled={replaceConfig.isPending}>
-                        <Save className="h-3.5 w-3.5"/>
-                        Save segmentation
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-8 gap-1.5" onClick={reset} disabled={replaceConfig.isPending}>
-                        <Undo2 className="h-3.5 w-3.5"/>
-                        Reset
-                    </Button>
-                </div>
-            )}
         </div>
     )
 }
@@ -464,7 +442,7 @@ function BandConfig({band, hemisphere, onChange}: {
                     placeholder="Any date"
                 />
                 <span className="text-[11px] text-muted-foreground">
-                    Half-open [from, to) — the <strong>To</strong> day is not included (To = 2010-01-01 stops at 2009-12-31).
+                    Half-open [from, to). The <strong>To</strong> day is not included (To = 2010-01-01 stops at 2009-12-31).
                     Set a single end (Start/End toggle) for open-ended.
                 </span>
             </div>

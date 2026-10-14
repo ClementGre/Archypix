@@ -402,6 +402,8 @@ export interface HierarchyConfig {
     safeDeleteMode: SafeDeleteMode
     naming: NamingStrategy
     writeBack: boolean
+    /** Root seed of the per-node `trashedDuplicate` tri-state (feature 39 §6). */
+    trashedDuplicate?: TrashedDuplicate
     nodes: HierarchyNode[]
 }
 

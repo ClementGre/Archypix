@@ -1,6 +1,5 @@
 import {useState} from 'react'
-import {Check, GripVertical, Pencil, Plus, Save, Trash2, Undo2} from 'lucide-react'
-import {toast} from 'sonner'
+import {Check, GripVertical, Pencil, Plus, Trash2} from 'lucide-react'
 import type {DragEndEvent} from '@dnd-kit/core'
 import {closestCenter, DndContext, PointerSensor, useSensor, useSensors} from '@dnd-kit/core'
 import {SortableContext, useSortable, verticalListSortingStrategy} from '@dnd-kit/sortable'
@@ -8,10 +7,9 @@ import {CSS} from '@dnd-kit/utilities'
 import {Button} from '@/components/ui/button'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {PredicateBuilder} from './PredicateBuilder'
-import {useTaggingMutations} from '@/hooks/useTaggingServices'
+import {type ConfigDraft, useReportDraft} from './useReportDraft'
 import {TagPath} from '@/lib/utils'
 import {type BNode, describePredicate, deserialize, newRootNode, serialize} from '@/lib/predicate'
-import {apiErrorMessage} from '@/api/client'
 import type {RuleConfig, RuleTaggingRule} from '@/lib/types'
 
 // Local draft rule — keeps a stable key so React/dnd can track unsaved rows.
@@ -25,16 +23,15 @@ interface DraftRule {
 const nextKey = () => crypto.randomUUID()
 
 interface RuleEditorProps {
-    serviceId: string
     rules: RuleTaggingRule[]
+    onDraft: (d: ConfigDraft) => void
 }
 
 /**
- * Edits the whole `rules[]` array as a local draft and commits via `PUT …/config`.
+ * Edits the whole `rules[]` array as a local draft, reported to the service editor's Save.
  * Array order = display/precedence order; reordering is just reordering then saving.
  */
-export function RuleEditor({serviceId, rules}: RuleEditorProps) {
-    const {replaceConfig} = useTaggingMutations()
+export function RuleEditor({rules, onDraft}: RuleEditorProps) {
     const [draft, setDraft] = useState<DraftRule[]>(() => rules.map((r) => ({key: nextKey(), ...r})))
     const [editingKey, setEditingKey] = useState<string | null>(null)
 
@@ -48,20 +45,10 @@ export function RuleEditor({serviceId, rules}: RuleEditorProps) {
     }
 
     const dirty = JSON.stringify(draft.map((r) => [r.id, r.assign_tag, r.predicate])) !== serverKey
-
-    const save = () => {
-        const config: RuleConfig = {
-            rules: draft.map((r) => ({...(r.id ? {id: r.id} : {}), predicate: r.predicate, assign_tag: r.assign_tag})),
-        }
-        replaceConfig.mutate(
-            {id: serviceId, config},
-            {onSuccess: () => setEditingKey(null), onError: (err) => toast.error(apiErrorMessage(err))},
-        )
+    const config: RuleConfig = {
+        rules: draft.map((r) => ({...(r.id ? {id: r.id} : {}), predicate: r.predicate, assign_tag: r.assign_tag})),
     }
-    const reset = () => {
-        setDraft(rules.map((r) => ({key: nextKey(), ...r})))
-        setEditingKey(null)
-    }
+    useReportDraft(onDraft, config, dirty)
 
     const sensors = useSensors(useSensor(PointerSensor, {activationConstraint: {distance: 4}}))
     const handleDragEnd = (e: DragEndEvent) => {
@@ -106,25 +93,10 @@ export function RuleEditor({serviceId, rules}: RuleEditorProps) {
                 </SortableContext>
             </DndContext>
 
-            <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={addRule}>
-                    <Plus className="h-3.5 w-3.5"/>
-                    Add rule
-                </Button>
-                <div className="flex-1"/>
-                {dirty && (
-                    <>
-                        <Button size="sm" className="h-7 gap-1.5" onClick={save} disabled={replaceConfig.isPending}>
-                            <Save className="h-3.5 w-3.5"/>
-                            Save rules
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-7 gap-1.5" onClick={reset} disabled={replaceConfig.isPending}>
-                            <Undo2 className="h-3.5 w-3.5"/>
-                            Reset
-                        </Button>
-                    </>
-                )}
-            </div>
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={addRule}>
+                <Plus className="h-3.5 w-3.5"/>
+                Add rule
+            </Button>
         </div>
     )
 }

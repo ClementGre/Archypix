@@ -23,6 +23,7 @@ export function emptyConfig(): HierarchyConfig {
         safeDeleteMode: 'singleBranch',
         naming: 'original',
         writeBack: true,
+        trashedDuplicate: 'restore',
         nodes: [],
     }
 }
@@ -156,8 +157,9 @@ export function addChild(nodes: HierarchyNode[], parentId: string | null, child:
     return mapNode(nodes, parentId, (p) => withChildren(p, [...(childrenOf(p) ?? []), child]))
 }
 
-/** What node `id` inherits, resolved down from the root seeds; null if absent. */
-export function inheritedFor(nodes: HierarchyNode[], id: string, master: boolean): Inherited | null {
+/** What node `id` inherits, resolved down from the hierarchy's root seeds; null if absent. */
+export function inheritedFor(config: HierarchyConfig, id: string): Inherited | null {
+    const master = config.writeBack
     const walk = (list: HierarchyNode[], up: Inherited): Inherited | null => {
         for (const n of list) {
             if (n.id === id) return up
@@ -173,7 +175,7 @@ export function inheritedFor(nodes: HierarchyNode[], id: string, master: boolean
         }
         return null
     }
-    return walk(nodes, {master, writeBack: true, trashedDuplicate: 'restore'})
+    return walk(config.nodes, {master, writeBack: true, trashedDuplicate: config.trashedDuplicate ?? 'restore'})
 }
 
 export const NAMING_OPTIONS: { value: NamingStrategy; label: string }[] = [
@@ -207,10 +209,10 @@ export const KIND_COLOR: Record<NodeKind, string> = {
 }
 
 export const KIND_HINT: Record<NodeKind, string> = {
-    mirror: 'Expands the live tag subtree under a tag root into directories.',
-    query: 'A tag predicate; may nest sub-folders. Writable when write-back is on.',
-    static: 'A pure container folder — holds sub-folders, no pictures of its own.',
-    drop: 'A write-only inbox: tags every upload, lists only recent ones. Always writable.',
+    mirror: 'Turns the tags under a tag root into folders.',
+    query: 'Shows the pictures matching some tags. Can hold sub-folders.',
+    static: 'A plain folder that only holds sub-folders.',
+    drop: 'An upload inbox. Tags every upload and lists only recent ones.',
 }
 
 /** The display name a node renders as (mirror defaults to its tagRoot leaf). */

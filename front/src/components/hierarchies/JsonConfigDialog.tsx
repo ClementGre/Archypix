@@ -41,7 +41,7 @@ export function JsonConfigDialog({
                 <DialogHeader>
                     <DialogTitle>Config JSON (debug)</DialogTitle>
                     <DialogDescription>
-                        Raw <code>config</code> blob. For debugging — the server validates it on save. Applying only
+                        Raw <code>config</code> blob. For debugging. The server validates it on save. Applying only
                         updates the draft; remember to Save.
                     </DialogDescription>
                 </DialogHeader>

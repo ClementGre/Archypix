@@ -13,6 +13,7 @@ export function TagListField({
                                  allowCreate = true,
                                  placeholder,
                                  emptyHint,
+                                 excludePaths = [],
                              }: {
     label: string
     values: string[]
@@ -22,6 +23,8 @@ export function TagListField({
     allowCreate?: boolean
     placeholder?: string
     emptyHint?: string
+    /** More paths the picker hides, besides the field's own values. */
+    excludePaths?: string[]
 }) {
     const chipClass = {
         muted: 'bg-muted text-foreground',
@@ -56,7 +59,7 @@ export function TagListField({
             ))}
             <TagPicker
                 onSelect={(wire) => !values.includes(wire) && onChange([...values, wire])}
-                excludePaths={values}
+                excludePaths={[...values, ...excludePaths]}
                 allowCreate={allowCreate}
                 allowProtected={allowProtected}
                 triggerLabel="Add"

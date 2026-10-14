@@ -265,7 +265,7 @@ pub fn resolve(
     let root = Inherited {
         master: config.write_back,
         enabled: true,
-        trashed_duplicate: TrashedDuplicate::Restore,
+        trashed_duplicate: config.trashed_duplicate,
         sdm: config.safe_delete_mode,
         naming: config.naming,
     };
@@ -981,5 +981,17 @@ mod tests {
         assert_eq!(s.children[0].trashed_duplicate, TrashedDuplicate::Ignore);
         let inbox = find_dir(&root, &seg(&["Inbox"])).unwrap();
         assert_eq!(inbox.trashed_duplicate, TrashedDuplicate::Restore, "root seed");
+    }
+
+    #[test]
+    fn trashed_duplicate_root_seed_comes_from_the_config() {
+        let root = tree(
+            &cfg(serde_json::json!({"trashedDuplicate": "ignore", "nodes": [
+                {"id": "d", "kind": "drop", "name": "Inbox", "onAdd": []}
+            ]})),
+            ERAS,
+        );
+        let inbox = find_dir(&root, &seg(&["Inbox"])).unwrap();
+        assert_eq!(inbox.trashed_duplicate, TrashedDuplicate::Ignore);
     }
 }

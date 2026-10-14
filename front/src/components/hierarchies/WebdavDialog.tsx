@@ -65,7 +65,7 @@ function WebdavBody({hierarchyId}: { hierarchyId: string }) {
         <div className="space-y-4">
             {!data.enabled && (
                 <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                    This hierarchy is disabled — the mount will not respond until you enable it.
+                    This hierarchy is disabled. The mount will not respond until you enable it.
                 </p>
             )}
 
@@ -146,7 +146,7 @@ function WebdavBody({hierarchyId}: { hierarchyId: string }) {
                         regenerate.mutate(undefined, {
                             onSuccess: () => {
                                 setShowToken(true)
-                                toast.success('Token regenerated — re-mount any connected clients')
+                                toast.success('Token regenerated. Re-mount any connected clients.')
                             },
                             onError: (e) => toast.error(apiErrorMessage(e)),
                         })

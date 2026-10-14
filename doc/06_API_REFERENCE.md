@@ -1794,12 +1794,13 @@ interface HierarchyConfig {
     safeDeleteMode: "singleBranch" | "fullDelete"; // hierarchy default
     naming: "original" | "date" | "id";           // hierarchy default (WebDAV file naming)
     writeBack: boolean;                            // master switch (hard ceiling); false ⇒ read-only
+    trashedDuplicate?: "restore" | "ignore";       // root seed of the node tri-state (default restore)
     nodes: Node[];                                 // ordered root-level tree
 }
 
 // Common node fields + a kind discriminator. Both tri-states inherit the nearest explicit ancestor:
 // writeBackEnabled: true | false | null (root seed = master);
-// trashedDuplicate: "restore" | "ignore" | null (root seed = "restore") — a PUT whose bytes match a
+// trashedDuplicate: "restore" | "ignore" | null (root seed = config.trashedDuplicate) — a PUT whose bytes match a
 // trashed picture restores + tags it, or leaves the delete standing (feature 39 §6).
 interface NodeCommon {
     id: string; name?: string; naming?; safeDeleteMode?;
@@ -1811,7 +1812,7 @@ type Node = NodeCommon & (
         collapsed?: string[];       // must be <@ tagRoot
         exclude?: string[];         // <@ tagRoot prunes the subtree; foreign = picture-membership cut
         include?: string[];         // foreign arms every directory requires (+ assigned on write)
-        minDepth?: number;          // shallowest generated level below tagRoot; 0/1 = unrestricted
+        minDepth?: number;          // shallowest generated level below tagRoot (1 = its children); 0/absent = 1
         maxDepth?: number;          // 0/absent = unrestricted; cap N levels below tagRoot
         deeperMode?: "collapse" | "exclude"; } // pictures below the cut (default collapse)
     | { name: string; kind: "query"; match?: "all" | "any"; include?: string[]; exclude?: string[];

@@ -230,8 +230,8 @@ It exists for the two things the derived set genuinely cannot infer: a pruned ta
 hand-removable (`PATCH /tags` only removes `manual` rows), and it no longer survives a disable (§4.7).
 Both are per-tag judgements, not properties of the config.
 
-The editor shows the derived anchors read-only beside the list, so a user can see what is already
-being kept for them and does not duplicate it.
+The derived anchors are not shown in the editor: they depend on which services fire for each
+picture, in pipeline order, so no static list is accurate (§15).
 
 ### 4.6 Timing and backfill
 
@@ -290,10 +290,11 @@ own tag, so a write into the projection satisfies it.
 
 Caps directory generation from the *top*: `minDepth: N` makes level `N` below `tagRoot` (its direct
 children = level 1, as for `maxDepth`) the shallowest generated level, suppressing levels `1…N−1`
-and hoisting level `N` to the mirror node's level. `0`/`1`/absent = today's behaviour. Independent
-of `keepDir`, which only decides whether `tagRoot` itself is rendered (as a read-only container
-above the hoisted level), and composable with `maxDepth` (18 §7.1) — the two bound one range, so
-`minDepth: 2, maxDepth: 2` projects exactly one level.
+and hoisting level `N` to the mirror node's level. The range starts at 1 (the editor's minimum and
+default; a stored `0`/absent reads as 1 = today's behaviour), so level 0 — `tagRoot` itself — is
+governed by `keepDir` alone, rendered as a read-only container above a hoisted level. Composable
+with `maxDepth` (18 §7.1) — the two bound one range, so `minDepth: 2, maxDepth: 2` projects exactly
+one level.
 
 So `Era.<era>.<travel>` with `minDepth: 2` renders `<travel>/` directories, with no duplicated tags
 and the metadata still single-homed on the real `Era.<era>.<travel>` tag (34 §3).
@@ -303,7 +304,7 @@ this mirror — the projection is a view of level `N+1` and below, not of everyt
 deliberately no `shallowerMode` counterpart to `deeperMode`: rolling a picture *down* into an
 arbitrary descendant has no sensible choice of target.
 
-Validation: `minDepth ≥ 0`; when both are set, `minDepth ≤ maxDepth`.
+Validation: when both are set, `minDepth ≤ maxDepth`.
 
 ### 5.3 Precise empty-directory pruning
 
@@ -366,8 +367,10 @@ comment names the case: a client that renames by DELETE + `PUT` under a new name
 Both behaviours are wanted, by different nodes, so it becomes a policy:
 
 **`trashedDuplicate: inherit | restore | ignore`** — what to do when a `PUT`'s bytes match a trashed
-owned picture. Resolved like `writeBackEnabled` (18 §5.1), **root seed `restore`**, so today's
-behaviour and the naive-rename case are preserved.
+owned picture. Resolved like `writeBackEnabled` (18 §5.1), from a hierarchy-level root seed
+(`config.trashedDuplicate`, default **`restore`**), so today's behaviour and the naive-rename case are
+preserved. The editor disables the select where nothing can be written (effective write-back off,
+`drop` nodes excepted).
 
 - **`restore`** — clear `deleted_at` and apply `onAdd`.
 - **`ignore`** — leave the picture trashed, apply no ops, return success. The client is satisfied and
@@ -438,37 +441,38 @@ from the phone's own gallery; with §7 it no longer needs the client to delete.
 adds three node fields. Restructure `HierarchyEditor` as master-detail: the authored node tree on the
 left, the selected node's settings on the right.
 
-Alongside it, show the **resolved directory tree** next to the authored one, reusing
-`HierarchyDirTree.tsx` and the existing `tree` endpoint (05 §9.2). With `minDepth` and a foreign
-`include` the two already differ — and if flat queries land (§5.5) an authored row can produce no
-directory at all, at which point a single tree view would actively mislead. A flat node would then
-render as a **wrapper** around its children with its filter as a chip, not as a sibling row.
+A resolved-tree preview beside the authored one was built and then dropped: the `tree` endpoint only
+reflects the saved config, which the sidebar already shows after a save. If flat queries land (§5.5),
+a flat node should render as a **wrapper** around its children with its filter as a chip, not as a
+sibling row.
 
 New node controls: `mirror.include` (a `TagListField`), `mirror.minDepth`, `trashedDuplicate` (a
 tri-state select beside `writeBackEnabled`), plus the §8.1 preset in `CreateHierarchyDialog`.
 
-**Tagging-service editor.** `prune_shadowed_manual_tags` as a checkbox with the §4.1 copy,
-`keep_manual_tags` as a `TagListField` beneath it, and the derived anchors rendered read-only beside
-the list (§4.5). Replace the enable/disable switch with a menu action plus the §4.7 confirmation
-dialog.
+**Tagging-service editor.** `prune_shadowed_manual_tags` as a checkbox, `keep_manual_tags` as a
+`TagListField` beneath it. Replace the enable/disable switch with a menu action plus the §4.7
+confirmation dialog.
 
 ## 10. Config & schema changes
 
 ```jsonc
 // hierarchies.config — version: 3
+// Top level
+{ "trashedDuplicate": "restore" } // root seed of the tri-state — §6
+
 // Node — common fields
 { "trashedDuplicate": null }    // "restore" | "ignore" | null (inherit) — §6
 
 // kind: "mirror"
 { "include":  [],               // foreign include arms — §5.1
-  "minDepth": 0 }               // §5.2
+  "minDepth": 1 }               // §5.2 (0/absent reads as 1)
 
 // kind: "drop" — created with an explicit value
 { "trashedDuplicate": "ignore" }
 ```
 
 `hierarchies.config` is JSONB, so v2 blobs deserialize forward unchanged (`include` empty, `minDepth`
-0, `trashedDuplicate` null). `version` 2 → 3 signals the new shapes, per 18 §2.
+0, node `trashedDuplicate` null, top-level `trashedDuplicate` `restore`). `version` 2 → 3 signals the new shapes, per 18 §2.
 
 One migration, `0023_prune_shadowed_manual_tags`, for the two `tagging_services` columns in §4.1.
 38's `0022_sensitive_pictures` is the current head.
@@ -520,8 +524,7 @@ Service-side (`domain::tagging`):
 10. **`minDepth` plus `collapsed`.** `collapsed` entries above the cut are moot — those levels
     generate no directories anyway. Entries below it behave normally.
 11. **Foreign `include` with no matching pictures.** Every directory prunes to empty and the mirror
-    renders nothing. Correct, and visible in the resolved-tree preview (§9) rather than a surprise on
-    the phone.
+    renders nothing. Correct, and visible in the sidebar tree after saving.
 12. **`trashedDuplicate: ignore` on a node whose client renames by delete + create.** The rename
     silently fails to restore the picture and the client sees a new file where the old one was. This
     is why the root seed is `restore` and only `drop` nodes default to `ignore`.
@@ -568,9 +571,10 @@ All applied with the implementation (plus `05_FRONTEND_ARCHITECTURE.md` §7 for 
    `ignore` (frontend).
 9. [x] Drop-node verification listing — Redis key, setting, listing/`GET`/`DELETE`/`MOVE`-out (§7).
    *Not done:* confirming the hypothesis from an access log (§8).
-10. [x] Frontend — master-detail `HierarchyEditor` (`NodeTree` + `NodeSettings`), resolved-tree
-    preview, the node controls, the §8.1 preset; `PruneSettings` and the `ServiceActions` disable /
-    delete dialog.
+10. [x] Frontend — master-detail `HierarchyEditor` (`NodeTree` + `NodeSettings`), the node controls,
+    the hierarchy-level `trashedDuplicate`, the §8.1 preset; `PruneSettings`, the `ServiceActions`
+    disable / delete dialog and a single Save in the service editor; an unsaved-changes guard for both
+    editors; session-kept sidebar tree expansion.
 11. [x] Tests — `domain::pipeline::prune` and `resolver` unit tests; `back/tests/pipeline.rs`
     (prune to an anchor and stable, no anchor, opt-in + backfill via `touch_invalidated`, keep-list,
     disable with promote); `back/tests/vfs.rs` (sibling move, move-out, PUT chain, `singleBranch`
@@ -600,5 +604,8 @@ All applied with the implementation (plus `05_FRONTEND_ARCHITECTURE.md` §7 for 
   a reused camera name); `ignore` returns `201`; the verification entry is best-effort (a Redis
   failure never fails the committed write).
 - **Disable is a `PATCH` field.** `promote_tags` rides `PATCH {enabled: false}`; delete and disable
-  share one checkbox dialog in the UI. The editor's "by gates" list is the enabled services'
-  `requires` arms related to this service's outputs — an approximation of the per-picture anchors.
+  share one checkbox dialog in the UI.
+- **No derived-anchor list in the editor.** §4.5's read-only anchors were dropped after review: which
+  arms anchor depends, per picture, on the services that fire before the producer and on `excludes`,
+  so a static list was wrong more often than right.
+- **No resolved-tree preview** (§9), and a **hierarchy-level `trashedDuplicate`** default (§6, §10).

@@ -2,23 +2,8 @@ import type {CSSProperties, ReactNode} from 'react'
 import {AlertTriangle} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {ServiceActions} from './ServiceActions'
-import type {ServiceDetailResponse, ServiceType} from '@/lib/types'
-
-const TYPE_LABEL: Record<ServiceType, string> = {
-    rule: 'Rule',
-    segmentation: 'Segmentation',
-    shared_tag_mapping: 'Mapping',
-}
-
-const TYPE_COLOR: Record<ServiceType, string> = {
-    rule: 'bg-violet-500/15 text-violet-500',
-    segmentation: 'bg-sky-500/15 text-sky-500',
-    shared_tag_mapping: 'bg-amber-500/15 text-amber-500',
-}
-
-export function serviceTypeLabel(t: ServiceType): string {
-    return TYPE_LABEL[t]
-}
+import type {ServiceDetailResponse} from '@/lib/types'
+import {SERVICE_TYPE_COLOR as TYPE_COLOR, SERVICE_TYPE_LABEL as TYPE_LABEL} from './serviceTypes'
 
 function itemCount(service: ServiceDetailResponse): string {
     switch (service.service_type) {

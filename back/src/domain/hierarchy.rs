@@ -210,6 +210,9 @@ pub struct HierarchyConfig {
     /// Master switch; `false` ⇒ entire hierarchy read-only (fullDelete still allowed).
     #[serde(default = "default_write_back")]
     pub write_back: bool,
+    /// Root seed of the per-node `trashedDuplicate` tri-state (feature 39 §6).
+    #[serde(default)]
+    pub trashed_duplicate: TrashedDuplicate,
     #[serde(default)]
     pub nodes: Vec<Node>,
 }
@@ -221,6 +224,7 @@ impl Default for HierarchyConfig {
             safe_delete_mode: SafeDeleteMode::default(),
             naming: NamingStrategy::default(),
             write_back: true,
+            trashed_duplicate: TrashedDuplicate::default(),
             nodes: vec![],
         }
     }
