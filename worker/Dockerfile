@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libclang-dev \
     libmagickwand-dev \
-    libgexiv2-dev \
     && rm -rf /var/lib/apt/lists/*
 ENV MAGICKCORE_QUANTUM_DEPTH=16 \
     MAGICKCORE_HDRI_ENABLE=1
@@ -38,7 +37,6 @@ RUN apt-get update && \
     MAGICKWAND_PKG=$(apt-cache pkgnames | grep -E '^libmagickwand-7\.' | sort -V | tail -n1) && \
     apt-get install -y \
     "$MAGICKWAND_PKG" \
-    libgexiv2-2 \
     libimage-exiftool-perl \
     ffmpeg \
     ca-certificates \
@@ -62,7 +60,6 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libclang-dev \
     libmagickwand-dev \
-    libgexiv2-dev \
     libimage-exiftool-perl \
     ffmpeg \
     curl \

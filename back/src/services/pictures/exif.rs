@@ -47,7 +47,7 @@ pub async fn override_received_exif(
 
     // Same normalisation + set-based merge as batch editing: `set` claims a field, `empty` claims it
     // as empty (null), `clear` drops the claim.
-    let (empty, clear) = crate::domain::validation::validate_exif_edit(&set, empty, clear)
+    let (set, empty, clear) = crate::domain::validation::validate_exif_edit(set, empty, clear)
         .map_err(AppError::BadRequest)?;
     let (patch, clear_keys) = received_exif::override_patch(&set, &empty, &clear);
     let sel = ResolvedSelection::explicit(vec![picture_id]);

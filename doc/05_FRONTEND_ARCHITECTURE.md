@@ -739,7 +739,8 @@ block alone, so it never renders twice.
   (`only`), the backend does the filtering (`GET /pictures?trash=…` — no client-side `deleted_at` filtering), and trashed items render dimmed with a
   purge/owner-deletion badge inline in the same grid + `SelectionPanel` (single or batch **Restore** there). The Profile storage card's "Open trash"
   button deep-links to `/?trash=only`.
-- **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates at display time using
+- **Orientation rendering:** thumbnails/originals are raw pixels (EXIF orientation not baked in). `OrientedImage` rotates — and, for 2/4/5/7,
+  mirrors (`scaleX(-1)` before the rotation, feature 37 §4) — at display time using
   `orientedCoverStyle` (absolute positioning + CSS transform; sets `max-w-none` to escape Tailwind's `img { max-width: 100% }` which otherwise
   collapses 90°/270° images). `OrientedContainImage` fits a rotated image into a variable-aspect container — it measures its box (seeding from
   `clientWidth` on mount, then a `ResizeObserver`), **clamps the computed image box to the available width/height**, and clips (`overflow-hidden`) so a

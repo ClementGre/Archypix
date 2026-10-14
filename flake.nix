@@ -35,10 +35,7 @@
         buildInputs = with pkgs; [
           # Worker imaging deps
           imagemagick       # libMagickWand — thumbnail generation
-          gexiv2            # libgexiv2 — EXIF read/write via GExiv2/Exiv2
-          exiv2             # required by gexiv2
-          glib              # required by gexiv2 (GLib/GObject)
-          exiftool          # BMFF EXIF writes (HEIC/HEIF/AVIF) via stay-open process
+          exiftool          # metadata read/write via stay-open processes
           ffmpeg            # ffprobe/ffmpeg — video metadata + frame-grab thumbnails
 
           # Back / resolver TLS
@@ -59,14 +56,13 @@
           inherit nativeBuildInputs buildInputs;
 
           # Expose pkg-config paths for the native imaging libraries so cargo
-          # can find them when compiling rexiv2 and magick_rust.
+          # can find them when compiling magick_rust.
           shellHook = ''
-            export PKG_CONFIG_PATH="${pkgs.gexiv2.dev}/lib/pkgconfig:${pkgs.glib.dev}/lib/pkgconfig:${pkgs.exiv2.dev}/lib/pkgconfig:${pkgs.imagemagick.dev}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+            export PKG_CONFIG_PATH="${pkgs.imagemagick.dev}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
             echo "Archypix dev shell ready."
             echo "  Rust:        $(rustc --version)"
             echo "  sqlx-cli:    $(sqlx --version 2>/dev/null || echo 'not found')"
             echo "  ImageMagick: $(magick --version | head -1)"
-            echo "  GExiv2:      ${pkgs.gexiv2.version}"
             echo "  exiftool:    $(exiftool -ver 2>/dev/null || echo 'not found')"
             echo "  ffmpeg:      $(ffmpeg -version 2>/dev/null | head -1 || echo 'not found')"
           '';

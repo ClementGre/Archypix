@@ -33,6 +33,9 @@ because its EXIF block is corrupt — the thumbnail, hash and content-hash work 
 
 ## 2. Decisions
 
+> Decisions 1–3 and §3.1/§3.4 are superseded by [feature 37](37_exiftool_engine_and_heif_orientation.md):
+> ExifTool is the only engine, so there is no dispatch or fallback; the §3.3 normalization stands.
+
 1. **Dispatch by MIME first, fall back on failure.** BMFF (`image/heic|heif|avif`) reads go to
    ExifTool directly, mirroring `use_exiftool_for_write`; every other format tries rexiv2 and falls
    back to ExifTool only when rexiv2 fails. Reads and writes then use the same engine for the format

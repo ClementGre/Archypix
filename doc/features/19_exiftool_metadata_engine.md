@@ -1,8 +1,8 @@
 # ExifTool as the Unified Metadata Engine (Sketch)
 
-> **Status: sketch of a possible improvement — not a committed plan.** This document records the
-> idea, the trade-offs, and a rough migration shape so it isn't lost. Nothing here is implemented;
-> none of it should be treated as a decision. Revisit if/when the costs below are judged worth it.
+> **Status: images done by [feature 37](37_exiftool_engine_and_heif_orientation.md)** — ExifTool is
+> the only image metadata engine (a process pool lifted §4's serialization cost). Video (ffprobe read,
+> no write-back) is unchanged; the rest of this sketch still applies to it.
 
 ## 1. Motivation
 

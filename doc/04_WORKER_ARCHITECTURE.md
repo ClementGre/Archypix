@@ -19,7 +19,7 @@ backend.rs           — BackendClient (one per backend): two separate HTTP clie
 jobs.rs              — run_job_loop(): shared semaphore → poll → spawn; dispatch()
 jobs/thumbnail.rs    — gen_thumbnail: download → metadata → file_size + hash → content_hash →
                        thumbnails → complete. Metadata runs first so a retriable read failure costs
-                       one download and nothing else (feature 33 §6.1). Branches on MIME: image (GExiv2 EXIF + ImageMagick
+                       one download and nothing else (feature 33 §6.1). Branches on MIME: image (ExifTool metadata + ImageMagick
                        thumbnail), video (ffprobe metadata + ffmpeg frame-grab thumbnail), or neither.
                        A non-thumbnailable format is not an error: it still reports size/hash and
                        completes with thumbnails skipped, so every ingested picture gets an ETag/size
@@ -31,16 +31,19 @@ jobs/edit_picture.rs — edit_picture: download → EXIF target write → read b
                        `file_exif`. Uploading the original last keeps the file untouched on failure.
 jobs/ml.rs           — stub for ml_* jobs (log + complete with empty result)
 
-imaging/exif.rs      — read_metadata() / write_exif_target(). Reads dispatch by MIME and fall back
-                       on a format verdict (feature 33 §3): BMFF goes straight to exiftool_read,
-                       everything else tries rexiv2_read and retries with ExifTool only when rexiv2
-                       cannot open the file — an IO or tool fault propagates as-is, so a transient
-                       outage never becomes a file verdict. Both engines map onto the same FullExif;
-                       a differential test pins the four normalization points (§3.3). Writes rewrite
-                       the file's editable EXIF to a FullExif target: every Some field written, every
-                       absent one deleted (target_clear_fields; GPS and exposure clear only as whole
-                       groups). rexiv2 by default, ExifTool stay-open for BMFF (HEIC/HEIF/AVIF).
-                       Blocking.
+imaging/metadata.rs  — read() / write_target() (feature 37), blocking. ExifTool is the only engine;
+                       a HEIF's orientation then comes from / goes to its container.
+  metadata/exiftool.rs — pool of stay-open processes (a call takes an idle one or spawns one; a
+                       faulted child is dropped). Read maps onto FullExif with the 33 §3.3
+                       normalization (a corpus pins rexiv2's former reads); an IO or tool fault is
+                       retriable, a readable file ExifTool rejects is the verdict; values are rounded
+                       by FullExif::normalize, as edits are. Write rewrites the editable EXIF to a
+                       FullExif target in one pass — every Some set, every None deleted, the IPTC and
+                       differently named XMP date copies dropped — with control characters stripped
+                       from text values.
+  metadata/bmff.rs     — HEIF `irot`/`imir` (viewers ignore EXIF Orientation there): reads the primary
+                       item's composition, rewrites `ipco`/`ipma` in ImageIO's encoding for the
+                       primary and its thumbnails, shifts `iloc`. Sniffed from the bytes, not the MIME.
 imaging/video.rs     — extract_video_metadata() / extract_frame() (ffprobe/ffmpeg, blocking).
                        Maps container tags onto the image ExtractedExif/FullExif shape: capture date,
                        GPS (ISO 6709), make/model, and the read-only tech fields (duration,

@@ -179,7 +179,7 @@ pub async fn edit_pictures_exif(
     if picture_ids.is_empty() {
         return Err(AppError::BadRequest("picture_ids must not be empty".into()));
     }
-    let (_empty, clear) = crate::domain::validation::validate_exif_edit(&set, vec![], clear)
+    let (set, _empty, clear) = crate::domain::validation::validate_exif_edit(set, vec![], clear)
         .map_err(AppError::BadRequest)?;
 
     // ── Validate the whole batch before any mutation (reject on first violation) ──
@@ -520,7 +520,7 @@ pub async fn batch_edit_exif_selection(
     mode: BatchExifMode,
     dry_run: bool,
 ) -> Result<ExifBatchOutcome, AppError> {
-    let (empty, clear) = crate::domain::validation::validate_exif_edit(&set, empty, clear)
+    let (set, empty, clear) = crate::domain::validation::validate_exif_edit(set, empty, clear)
         .map_err(AppError::BadRequest)?;
     // Where emptying == nulling the column — owned write-through and propose-to-owner — `empty` folds
     // into `clear`. Only the received-local override keeps the empty/clear distinction (empty = a

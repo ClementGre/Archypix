@@ -29,12 +29,13 @@ pub fn couple_gps(mut fields: Vec<ExifField>) -> Vec<ExifField> {
 
 /// Normalise an EXIF edit delta shared by every edit path (owned write-through, recipient-local
 /// override, batch): GPS-couple `empty`/`clear`, reject a field claimed in both `set` and
-/// `empty`/`clear`, and range-check `set`. Returns the normalised `(empty, clear)`.
+/// `empty`/`clear`, range-check `set` and round it to what the file holds. Returns the normalised
+/// `(set, empty, clear)`.
 pub fn validate_exif_edit(
-    set: &FullExif,
+    mut set: FullExif,
     empty: Vec<ExifField>,
     clear: Vec<ExifField>,
-) -> Result<(Vec<ExifField>, Vec<ExifField>), String> {
+) -> Result<(FullExif, Vec<ExifField>, Vec<ExifField>), String> {
     let empty = couple_gps(empty);
     let clear = couple_gps(clear);
 
@@ -67,7 +68,8 @@ pub fn validate_exif_edit(
             return Err("orientation must be 1..=8".into());
         }
     }
-    Ok((empty, clear))
+    set.normalize();
+    Ok((set, empty, clear))
 }
 
 /// Minimum acceptable password length.
@@ -225,57 +227,70 @@ mod tests {
     fn exif_edit() {
         use crate::domain::job::ExifField;
         // GPS-couples empty/clear; a lone coordinate pulls in the location and its accuracy.
-        let (empty, clear) =
-            validate_exif_edit(&FullExif::default(), vec![ExifField::GpsLat], vec![]).unwrap();
+        let (_, empty, clear) =
+            validate_exif_edit(FullExif::default(), vec![ExifField::GpsLat], vec![]).unwrap();
         assert_eq!(empty.len(), 4, "empty GPS is coupled to all four components");
         assert!(clear.is_empty());
         // …but the accuracy alone can be dropped without losing the location.
-        let (_, clear) =
-            validate_exif_edit(&FullExif::default(), vec![], vec![ExifField::GpsAccuracyM])
-                .unwrap();
+        let (_, _, clear) =
+            validate_exif_edit(FullExif::default(), vec![], vec![ExifField::GpsAccuracyM]).unwrap();
         assert_eq!(clear, vec![ExifField::GpsAccuracyM]);
         // Range checks.
         let bad = FullExif {
             gps_lat: Some(120.0),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        assert!(validate_exif_edit(bad, vec![], vec![]).is_err());
         for acc in [-1.0, MAX_GPS_ACCURACY_M + 1.0, f64::NAN] {
             let bad = FullExif {
                 gps_accuracy_m: Some(acc),
                 ..Default::default()
             };
-            assert!(validate_exif_edit(&bad, vec![], vec![]).is_err(), "{acc}");
+            assert!(validate_exif_edit(bad, vec![], vec![]).is_err(), "{acc}");
         }
         let exact = FullExif {
             gps_accuracy_m: Some(0.0),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&exact, vec![], vec![]).is_ok(), "0 m = exact");
+        assert!(validate_exif_edit(exact, vec![], vec![]).is_ok(), "0 m = exact");
         let bad = FullExif {
             orientation: Some(9),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        assert!(validate_exif_edit(bad, vec![], vec![]).is_err());
         // The no-fix sentinel is rejected, but a single zero axis is a real coordinate.
         let bad = FullExif {
             gps_lat: Some(0.0),
             gps_lng: Some(0.0),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&bad, vec![], vec![]).is_err());
+        assert!(validate_exif_edit(bad, vec![], vec![]).is_err());
         let ok = FullExif {
             gps_lat: Some(0.0),
             gps_lng: Some(9.4),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&ok, vec![], vec![]).is_ok());
+        assert!(validate_exif_edit(ok, vec![], vec![]).is_ok());
         // A field cannot be both set and emptied/cleared.
         let set = FullExif {
             orientation: Some(3),
             ..Default::default()
         };
-        assert!(validate_exif_edit(&set, vec![ExifField::Orientation], vec![]).is_err());
+        assert!(validate_exif_edit(set, vec![ExifField::Orientation], vec![]).is_err());
+        // Rounded to what the file holds, so the edit reads back unchanged.
+        let typed = FullExif {
+            gps_accuracy_m: Some(12.346),
+            camera: crate::domain::job::CameraExif {
+                focal_length_mm: Some(52.42),
+                f_number: Some(2.467343),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (set, _, _) = validate_exif_edit(typed, vec![], vec![]).unwrap();
+        assert_eq!(set.gps_accuracy_m, Some(12.35));
+        assert_eq!(set.camera.focal_length_mm, Some(52.0));
+        assert_eq!(set.camera.f_number, Some(2.47));
     }
 
     #[test]

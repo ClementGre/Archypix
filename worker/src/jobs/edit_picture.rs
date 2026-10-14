@@ -1,6 +1,6 @@
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{content_hash as content_hash_mod, exif as exif_mod, thumbnailer};
+use crate::imaging::{content_hash as content_hash_mod, metadata, thumbnailer};
 use archypix_common::job::EditPictureConfig;
 use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
 use tempfile::TempDir;
@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 ///    back so the backend can record the physical state (`file_exif`). A file the metadata library
 ///    cannot open at all is `Failed` (terminal `unsupported_file`); a write that fails on an
 ///    openable file is a retryable `write_failed`, and a missing tool is retried (feature 31 §6).
-///    BMFF images (HEIC/HEIF/AVIF) are written via ExifTool; other formats keep using rexiv2.
+///    A HEIF's orientation is written to its container too (feature 37).
 /// 4. Regenerate + upload thumbnails (and BlurHash) — a no-op for an EXIF-only edit.
 /// 5. Compute file_size and file_hash from the (modified) file.
 /// 6. Upload the modified original to the `output` presigned URL — the last fallible step.
@@ -86,11 +86,10 @@ pub async fn handle(
     if let Some(ref edit) = config.exif {
         let path = file_path.clone();
         let target = edit.target.clone();
-        let mime_type = mime_type.clone();
         let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
-            exif_mod::write_exif_target(&path, &target, mime_type.as_deref())
+            metadata::write_target(&path, &target)
         })
         .await
         .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))??
@@ -133,12 +132,11 @@ pub async fn handle(
     // Read back the physical file EXIF after the write so the backend can record `file_exif`.
     work.exif = if config.exif.is_some() {
         let path = file_path.clone();
-        let mime = mime_type.clone();
         let span = tracing::Span::current();
         ExifExtraction::Extracted(
             tokio::task::spawn_blocking(move || {
                 let _guard = span.enter();
-                exif_mod::read_metadata(&path, mime.as_deref())
+                metadata::read(&path)
             })
             .await
             .map_err(|e| WorkerError::Imaging(format!("spawn_blocking panicked: {e}")))?

@@ -2,29 +2,19 @@ import {useLayoutEffect, useRef, useState} from 'react'
 import {cn} from '@/lib/utils'
 import {Blurhash} from './Blurhash'
 
-/**
- * Decompose an EXIF orientation value (1–8) into the CSS rotation needed to
- * display the raw stored pixels correctly. Mirrored states (2/4/5/7) are
- * collapsed to their rotation component — the app only ever produces rotation
- * via the rotate buttons, matching the worker's orientation handling.
- */
+// EXIF orientation 1–8 as [clockwise rotation, left-right flip applied first].
+const ORIENTATIONS: [number, boolean][] = [
+    [0, false], [0, true], [180, false], [180, true], [270, true], [90, false], [90, true], [270, false],
+]
+
+/** The CSS transform displaying the raw stored pixels at an EXIF orientation (1–8). */
 export function orientationTransform(orientation?: number | null): {
-    rotation: 0 | 90 | 180 | 270
+    transform?: string
     swap: boolean
 } {
-    switch (orientation ?? 1) {
-        case 3:
-        case 4:
-            return {rotation: 180, swap: false}
-        case 5:
-        case 6:
-            return {rotation: 90, swap: true}
-        case 7:
-        case 8:
-            return {rotation: 270, swap: true}
-        default:
-            return {rotation: 0, swap: false}
-    }
+    const [rotation, mirror] = ORIENTATIONS[(orientation ?? 1) - 1] ?? ORIENTATIONS[0]
+    const parts = [rotation ? `rotate(${rotation}deg)` : '', mirror ? 'scaleX(-1)' : ''].filter(Boolean)
+    return {transform: parts.join(' ') || undefined, swap: rotation % 180 !== 0}
 }
 
 /** Display (post-rotation) dimensions for a picture, swapping for 90°/270° orientations. */
@@ -50,11 +40,11 @@ export function orientedCoverStyle(
     width: number | null | undefined,
     height: number | null | undefined,
 ): { className: string; style?: React.CSSProperties } {
-    const {rotation, swap} = orientationTransform(orientation)
+    const {transform, swap} = orientationTransform(orientation)
     if (!swap) {
         return {
             className: 'absolute inset-0 h-full w-full',
-            style: rotation ? {transform: `rotate(${rotation}deg)`} : undefined,
+            style: transform ? {transform} : undefined,
         }
     }
     const w = width || 1
@@ -64,7 +54,7 @@ export function orientedCoverStyle(
         style: {
             width: `${(w / h) * 100}%`,
             height: `${(h / w) * 100}%`,
-            transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+            transform: `translate(-50%, -50%) ${transform}`,
         },
     }
 }
@@ -116,14 +106,14 @@ export function OrientedFillImage({src, alt, orientation, className, loading = '
     className?: string
     loading?: 'lazy' | 'eager'
 }) {
-    const {rotation, swap} = orientationTransform(orientation)
+    const {transform, swap} = orientationTransform(orientation)
     const img = (
         <img
             src={src}
             alt={alt}
             loading={loading}
             className={cn('h-full w-full max-w-none object-cover', className)}
-            style={rotation ? {transform: `rotate(${rotation}deg)`} : undefined}
+            style={transform ? {transform} : undefined}
         />
     )
     if (!swap) return <span className="absolute inset-0">{img}</span>

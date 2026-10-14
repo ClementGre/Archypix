@@ -1,7 +1,7 @@
 //! Handler for `gen_thumbnail` jobs.
 //!
 //! Sequence: download → file_size + file_hash → metadata extraction (initial only) → thumbnail
-//! generation (only when the MIME supports it) → upload → complete. Images use GExiv2 EXIF +
+//! generation (only when the MIME supports it) → upload → complete. Images use ExifTool metadata +
 //! ImageMagick thumbnails; videos use ffprobe metadata + an ffmpeg frame-grab fed to the same WebP
 //! thumbnail pipeline (`imaging::video`).
 //!
@@ -20,9 +20,7 @@
 
 use crate::backend::BackendClient;
 use crate::error::{Result, WorkerError};
-use crate::imaging::{
-    content_hash as content_hash_mod, exif as exif_mod, thumbnailer, video as video_mod,
-};
+use crate::imaging::{content_hash as content_hash_mod, metadata, thumbnailer, video as video_mod};
 use archypix_common::job::GenThumbnailConfig;
 use archypix_common::mime::{supports_exif, supports_image_thumbnail, supports_video};
 use archypix_common::transfer::{ExifExtraction, PictureWork, PresignedWrites};
@@ -46,7 +44,7 @@ pub async fn handle(
     })?;
 
     // ── MIME pre-flight (decides which path to take, not whether to fail) ─────
-    // Three disjoint cases: image (GExiv2 EXIF + ImageMagick thumbnail), video (ffprobe metadata +
+    // Three disjoint cases: image (ExifTool metadata + ImageMagick thumbnail), video (ffprobe metadata +
     // ffmpeg frame-grab thumbnail), or neither (still download/size/hash, skip thumbnails). An
     // unknown MIME defaults to the image path. A format we cannot thumbnail is not an error.
     let is_video = mime_type.as_deref().map(supports_video).unwrap_or(false);
@@ -79,12 +77,11 @@ pub async fn handle(
 
     // ── Metadata extraction (initial jobs only, blocking) ─────────────────────
     // Runs before the thumbnails/hashes so a retriable failure costs one download (feature 33 §6.1).
-    // Image EXIF via the two-engine read path, or video container metadata via ffprobe; both map
-    // onto ExtractedExif. The outcome — not a silent skip — is what settles the picture's state.
+    // Image metadata via ExifTool, or video container metadata via ffprobe; both map onto
+    // ExtractedExif. The outcome — not a silent skip — is what settles the picture's state.
     // Written into the caller's product so a failure *after* this point still reports it (33 §6.5).
     work.exif = if extract_image_exif || (config.is_initial && is_video) {
         let path = original_path.clone();
-        let mime = mime_type.clone();
         let span =
             tracing::info_span!("metadata_extract", file = ?path.file_name(), video = is_video);
         let result = tokio::task::spawn_blocking(move || {
@@ -92,7 +89,7 @@ pub async fn handle(
             if is_video {
                 video_mod::extract_video_metadata(&path)
             } else {
-                exif_mod::read_metadata(&path, mime.as_deref())
+                metadata::read(&path)
             }
         })
         .await

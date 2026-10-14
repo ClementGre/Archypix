@@ -245,6 +245,16 @@ pub struct FullExif {
 }
 
 impl FullExif {
+    /// Round each field to what its EXIF tag holds and the reader reports, so an edit reads back
+    /// unchanged: an integer 35 mm focal length, an f-number and a GPS accuracy to 2 decimals
+    /// (feature 37 §3.2).
+    pub fn normalize(&mut self) {
+        let cents = |v: f64| (v * 100.0).round() / 100.0;
+        self.gps_accuracy_m = self.gps_accuracy_m.map(cents);
+        self.camera.focal_length_mm = self.camera.focal_length_mm.map(f64::round);
+        self.camera.f_number = self.camera.f_number.map(cents);
+    }
+
     /// Overwrite each field that is `Some` in `set`; leave the rest unchanged. Used for an edit
     /// `set` (`Some` = write) and, via [`Self::merged_with`], for the received-row merge.
     pub fn apply_set(&mut self, set: &FullExif) {

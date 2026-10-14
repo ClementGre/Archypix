@@ -30,6 +30,8 @@ built), and showing the radius on the gallery map.
 
 ## 3. Read & write paths (worker)
 
+rexiv2 has since been removed (feature 37); the ExifTool half below is what remains.
+
 - **Read.** rexiv2 `Exif.GPSInfo.GPSHPositioningError`, ExifTool `-GPSHPositioningError#`; not gated
   on the coordinates, so an accuracy-only file round-trips exactly. `drop_null_island` drops it with
   the rest of the group (30 §12.11).

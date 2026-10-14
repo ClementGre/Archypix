@@ -43,11 +43,11 @@ async fn main() -> anyhow::Result<()> {
              skipped (install ffmpeg or rebuild the worker image)"
         );
     }
-    if imaging::exif::exiftool_available() {
-        info!("exiftool:          available (BMFF EXIF writes enabled)");
+    if imaging::metadata::exiftool_available() {
+        info!("exiftool:          available");
     } else {
         warn!(
-            "exiftool not found on PATH — BMFF EXIF writes (HEIC/HEIF/AVIF) will fail until \
+            "exiftool not found on PATH — image metadata reads and writes will be retried until \
              exiftool is installed"
         );
     }

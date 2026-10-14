@@ -13,8 +13,7 @@ For a full overview of the project, see the [root README](https://github.com/Cle
 | Async runtime       | [Tokio](https://tokio.rs/)                                                                            |
 | HTTP client         | [reqwest](https://github.com/seanmonstar/reqwest)                                                     |
 | Image processing    | [magick_rust](https://github.com/nlfiedler/magick-rust) (ImageMagick bindings)                        |
-| EXIF extraction     | [rexiv2](https://gitlab.gnome.org/GNOME/gexiv2) (GExiv2 / Exiv2 bindings)                             |
-| BMFF EXIF writes    | [exiftool](https://exiftool.org/) via [exiftool](https://crates.io/crates/exiftool) stay-open wrapper |
+| Metadata read/write | [exiftool](https://exiftool.org/) via [exiftool](https://crates.io/crates/exiftool) stay-open wrapper |
 | BlurHash generation | [blurhash](https://github.com/nicowillis/blurhash)                                                    |
 | File hashing        | [sha2](https://github.com/RustCrypto/hashes) (SHA-256)                                                |
 | Auth                | [jsonwebtoken](https://github.com/Keats/jsonwebtoken)                                                 |
@@ -46,22 +45,7 @@ pkg-config --modversion MagickWand
 
 The `magick_rust` crate version in `Cargo.toml` must match your system ImageMagick version.
 
-### GExiv2 / Exiv2 (for EXIF extraction)
-
-GExiv2 is a GLib/GObject wrapper around Exiv2.
-
-```bash
-# macOS
-brew install gexiv2
-
-# Debian / Ubuntu
-apt-get install libgexiv2-dev
-
-# Fedora / RHEL
-dnf install gexiv2-devel
-```
-
-### ExifTool (for BMFF EXIF writes: HEIC/HEIF/AVIF)
+### ExifTool (for metadata reads and writes)
 
 ```bash
 # macOS
@@ -123,7 +107,7 @@ docker compose up
 Downloads the original picture (streaming, no full memory buffer), then:
 
 1. Runs a MIME pre-flight check — rejects unsupported formats before downloading thumbnails.
-2. Extracts EXIF metadata via rexiv2 (when `is_initial: true` in the job config).
+2. Extracts metadata via ExifTool (when `is_initial: true` in the job config).
 3. Computes the SHA-256 `file_hash` and reads `file_size` from disk.
 4. Generates WebP thumbnails at three sizes using ImageMagick.
 5. Computes a BlurHash from the original image.
@@ -145,8 +129,7 @@ Width is derived from the original aspect ratio. The `THUMBNAIL_VARIANTS` consta
 Downloads the original picture, then:
 
 1. Applies EXIF overrides into the file's embedded metadata.
-   Writes use rexiv2 for regular image formats and ExifTool (stay-open process) for BMFF
-   containers (`image/heic`, `image/heif`, `image/avif`).
+   Writes use ExifTool; a HEIF's orientation also goes to its `irot`/`imir` properties.
    A write failure is a **permanent error** — the job is immediately marked failed without retry.
 2. Computes `file_hash` (SHA-256) and `file_size` from the modified file.
 3. Uploads the modified file via the `output` presigned PUT URL.
@@ -184,8 +167,8 @@ src/
                          claim_next_job / complete_job / fail_job(claim_token)
                          download_presigned (streaming) / upload_presigned
   imaging/
-    exif.rs            extract_exif() via rexiv2; write_exif_overrides() via rexiv2 or ExifTool
-                       (BMFF only), blocking.
+    metadata.rs        read() / write_target(): ExifTool (metadata/exiftool.rs) + HEIF
+                       orientation boxes (metadata/bmff.rs), blocking.
     hash.rs            hash_file() — SHA-256 hex in 64 KiB chunks, blocking.
     resize.rs          generate_thumbnail() (ImageMagick/WebP), generate_blurhash();
                        THUMBNAIL_VARIANTS: single source of truth for sizes.

@@ -4,7 +4,7 @@
 /// or thumbnail generation to avoid feeding unsupported formats to native libraries.
 pub const APPLICATION_OCTET_STREAM: &str = "application/octet-stream";
 
-/// MIME types that GExiv2 (rexiv2) can read and write EXIF metadata for.
+/// MIME types whose EXIF metadata the worker reads and writes (ExifTool).
 pub const MIME_TYPES_EXIF: &[&str] = &[
     "image/jpeg",
     "image/jpg", // non-standard alias, common in the wild
@@ -17,7 +17,7 @@ pub const MIME_TYPES_EXIF: &[&str] = &[
     "image/avif",
     "image/bmp",
     "image/x-bmp",
-    // Common camera raw formats (GExiv2 reads EXIF from many raw formats)
+    // Common camera raw formats
     "image/x-nikon-nef",
     "image/x-canon-cr2",
     "image/x-canon-cr3",
@@ -52,7 +52,7 @@ pub const MIME_TYPES_IMAGE_THUMBNAIL: &[&str] = &[
 /// Video MIME types handled via ffmpeg/ffprobe: container metadata extraction (capture date, GPS,
 /// rotation, make/model, duration, codecs) and a frame-grab feeding the WebP thumbnail pipeline.
 /// Deliberately disjoint from `MIME_TYPES_EXIF`/`MIME_TYPES_IMAGE_THUMBNAIL` — videos take a separate
-/// worker path (ffmpeg, not GExiv2/ImageMagick) and a DB-only EXIF edit (no embedded-metadata write).
+/// worker path (ffmpeg, not ExifTool/ImageMagick) and a DB-only EXIF edit (no embedded-metadata write).
 pub const MIME_TYPES_VIDEO: &[&str] = &[
     "video/mp4",
     "video/quicktime", // .mov
@@ -65,7 +65,7 @@ pub const MIME_TYPES_VIDEO: &[&str] = &[
     "video/ogg",
 ];
 
-/// Returns `true` when GExiv2 supports EXIF extraction for this MIME type.
+/// Returns `true` when the worker reads and writes EXIF for this MIME type.
 pub fn supports_exif(mime_type: &str) -> bool {
     let lower = mime_type.to_lowercase();
     MIME_TYPES_EXIF.contains(&lower.as_str())

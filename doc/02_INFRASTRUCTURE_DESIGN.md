@@ -57,7 +57,7 @@
     - Implemented job types:
         - `gen_thumbnail` — download original, compute `file_size` + SHA-256 `file_hash` + metadata-stripped `content_hash` (feature 11), extract
           metadata, generate small/medium/large WebP thumbnails (skipped, not failed, for non-thumbnailable formats so size/hash are still reported),
-          upload, report `exif`/`blurhash`/`file_size`/`file_hash`/`content_hash`/`thumbnails_generated` to backend. Images use GExiv2 EXIF +
+          upload, report `exif`/`blurhash`/`file_size`/`file_hash`/`content_hash`/`thumbnails_generated` to backend. Images use ExifTool metadata +
           ImageMagick; **videos** use ffprobe metadata (capture date, GPS, codecs, duration) + an ffmpeg frame-grab feeding the same WebP pipeline.
           `content_hash` is forwarded downstream in share announcements (`AnnouncedPicture`) so recipients can group byte-identical copies across
           owners.

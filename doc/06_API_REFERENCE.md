@@ -725,8 +725,10 @@ A `set` of exactly `gps_lat: 0, gps_lng: 0` is rejected `400`: the read path tre
 "receiver had no fix" sentinel and drops it (30 §12.11), so it cannot also mean a location. One
 zero axis (equator, prime meridian) is a normal coordinate. `gps_accuracy_m` outside
 `[0, 20 000 000]` is `400`. Clearing any coordinate also clears `gps_accuracy_m`; clearing
-`gps_accuracy_m` alone keeps the location (feature 36 §2). Shared by every EXIF write path (owned,
-recipient override, batch).
+`gps_accuracy_m` alone keeps the location (feature 36 §2). A `set` is rounded to what the file holds
+— `focal_length_mm` to an integer, `f_number` and `gps_accuracy_m` to 2 decimals (feature 37 §3.2) —
+so the stored value is what a re-read returns. Shared by every EXIF write path (owned, recipient
+override, batch).
 
 **Response `200`:**
 

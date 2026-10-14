@@ -86,7 +86,8 @@ What each one is, since that is not derivable from its headings. Use the grep ab
 - **16_trace_sampling_and_collector** — sampling + OTel Collector deployment hardening (not built).
 - **17_unified_routine_framework** — the routine framework the other mechanisms migrated onto.
 - **18_hierarchy_improvements** — `drop` nodes, per-node write-back tri-state, mirror depth/excludes.
-- **19_exiftool_metadata_engine** — evaluation of replacing rexiv2 with ExifTool (recommendation).
+- **19_exiftool_metadata_engine** — the ExifTool-as-only-engine sketch; done for images by 37, still
+  the plan for video.
 - **20_calendar_segmentation** — Calendar partition operator, template grammar, unified service config.
 - **21_photos_fix_tools** — **superseded** by 29 + 30 (rough stub, kept for the trail).
 - **22_storage_quotas** — per-user counters, delta accounting, enforcement points, reconcile.
@@ -111,3 +112,5 @@ What each one is, since that is not derivable from its headings. Use the grep ab
   (spec-only; depends on 34).
 - **36_gps_accuracy** — `gps_accuracy_m` / `GPSHPositioningError`, fix-tool suggestion, and the
   `synced` metadata-only EXIF recheck that populates it.
+- **37_exiftool_engine_and_heif_orientation** — ExifTool as the only engine (process pool), HEIF
+  orientation in `irot`/`imir` (the box writer), mirrored-orientation display.
