@@ -4,13 +4,10 @@ import {queryKeys} from '@/lib/constants'
 import {useGridItems} from '@/stores/gridItems'
 import {deriveGps, type GpsAnchor, type GpsResult} from '@/lib/gpsInterpolation'
 import {gridGpsNeighbours} from '@/lib/gridAnchors'
-import type {PictureDetail} from '@/lib/types'
+import type {PictureDetail, ThumbRef} from '@/lib/types'
 
-export interface FixAnchor extends GpsAnchor {
-    id: string
+export interface FixAnchor extends GpsAnchor, ThumbRef {
     filename: string | null
-    thumbnail_url: string | null
-    orientation: number | null
 }
 
 export interface FixAnchors {
@@ -36,6 +33,8 @@ function toAnchor(p: PictureDetail): FixAnchor | null {
         filename: p.filename,
         thumbnail_url: null,
         orientation: p.orientation,
+        blurhash: p.blurhash,
+        sensitive: p.sensitive,
         lat: p.gps_lat,
         lng: p.gps_lng,
         alt: p.gps_alt,

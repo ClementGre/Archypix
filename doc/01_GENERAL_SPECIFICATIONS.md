@@ -32,6 +32,10 @@ Tags are hierarchical paths. A picture can carry any number of tags.
   *naming* and the *existence* of an empty directory (both presentation of the path set, not
   membership). Metadata also lets a tag exist with no pictures at all. See
   `doc/features/34_tag_metadata.md`.
+- A tag may be marked **sensitive**: every picture at or under it is veiled in the web viewer
+  (blurred, redacted or hidden, per the viewer's setting) until revealed for the tab. It is a curtain,
+  not access control — sharing, WebDAV and downloads are unaffected, and the flag never leaves the
+  instance. See `doc/features/38_sensitive_pictures.md`.
 
  --- 
 

@@ -1,4 +1,6 @@
-use crate::domain::user_settings::{Hemisphere, UserSettings, VersioningMode};
+use crate::domain::user_settings::{
+    Hemisphere, SensitiveDisplayMode, UserSettings, UserSettingsPatch, VersioningMode,
+};
 use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
@@ -40,6 +42,7 @@ impl UserSettingsRepository {
             UserSettings,
             r#"SELECT user_id, versioning_mode as "versioning_mode: VersioningMode",
                       trash_retention_days, hemisphere as "hemisphere: Hemisphere",
+                      sensitive_display_mode as "sensitive_display_mode: SensitiveDisplayMode",
                       created_at, updated_at
                FROM user_settings
                WHERE user_id = $1"#,
@@ -55,26 +58,28 @@ impl UserSettingsRepository {
     pub async fn upsert(
         db: &PgPool,
         user_id: Uuid,
-        versioning_mode: Option<VersioningMode>,
-        trash_retention_days: Option<i32>,
-        hemisphere: Option<Hemisphere>,
+        patch: &UserSettingsPatch,
     ) -> Result<UserSettings, AppError> {
         sqlx::query_as!(
             UserSettings,
-            r#"INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days, hemisphere)
+            r#"INSERT INTO user_settings
+                   (user_id, versioning_mode, trash_retention_days, hemisphere, sensitive_display_mode)
                VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30),
-                       COALESCE($4, 'north'::hemisphere))
+                       COALESCE($4, 'north'::hemisphere), COALESCE($5, 'blurred'::sensitive_display_mode))
                ON CONFLICT (user_id) DO UPDATE SET
                    versioning_mode = COALESCE($2, user_settings.versioning_mode),
                    trash_retention_days = COALESCE($3, user_settings.trash_retention_days),
-                   hemisphere = COALESCE($4, user_settings.hemisphere)
+                   hemisphere = COALESCE($4, user_settings.hemisphere),
+                   sensitive_display_mode = COALESCE($5, user_settings.sensitive_display_mode)
                RETURNING user_id, versioning_mode as "versioning_mode: VersioningMode",
                          trash_retention_days, hemisphere as "hemisphere: Hemisphere",
+                         sensitive_display_mode as "sensitive_display_mode: SensitiveDisplayMode",
                          created_at, updated_at"#,
             user_id,
-            versioning_mode as Option<VersioningMode>,
-            trash_retention_days,
-            hemisphere as Option<Hemisphere>,
+            patch.versioning_mode as Option<VersioningMode>,
+            patch.trash_retention_days,
+            patch.hemisphere as Option<Hemisphere>,
+            patch.sensitive_display_mode as Option<SensitiveDisplayMode>,
         )
         .fetch_one(db)
         .await

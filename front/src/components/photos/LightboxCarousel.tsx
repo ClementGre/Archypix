@@ -7,6 +7,8 @@ import {usePictureSource} from './pictureSource'
 import {displayDimensions, OrientedImage} from './OrientedImage'
 import {FileTypeIcon} from './FileTypeIcon'
 import {PlayBadge} from './PlayBadge'
+import {VeilFill} from './SensitiveVeil'
+import {useVeil} from '@/hooks/useSensitive'
 
 /** Filmstrip thumbnail height (px). */
 const THUMB_H = 60
@@ -50,8 +52,9 @@ function CarouselThumb({item, gridVariant, active, rootRef, onClick}: {
     const loaded = useMemo(() => bestLoaded(entry, 'large'), [entry])
 
     const source = usePictureSource()
+    const veil = useVeil(item.id, item.sensitive)
     const useListThumb = !loaded && gridVariant !== 'large' && !!item.thumbnail_url
-    const needSmall = inView && !loaded && !useListThumb && !!item.thumbnail_url
+    const needSmall = veil === 'visible' && inView && !loaded && !useListThumb && !!item.thumbnail_url
     const {data: small} = useQuery({
         queryKey: source.urlKey(item.id, 'small'),
         queryFn: () => source.presign(item.id, 'small'),
@@ -74,10 +77,13 @@ function CarouselThumb({item, gridVariant, active, rootRef, onClick}: {
             className={cn(
                 'group relative shrink-0 snap-center overflow-hidden rounded bg-checkerboard ring-1 ring-white/10 transition-all',
                 active ? 'ring-2 ring-primary' : 'opacity-60 hover:opacity-100',
+                item.sensitive && !active && 'ring-red-500/70',
             )}
             style={{height: THUMB_H, width: THUMB_H * ratio}}
         >
-            {inView && src ? (
+            {veil !== 'visible' ? (
+                <VeilFill veil={veil} blurhash={item.blurhash} orientation={item.orientation} width={item.width} height={item.height}/>
+            ) : inView && src ? (
                 <>
                     <OrientedImage
                         src={src}

@@ -40,6 +40,7 @@ fn browse_params() -> BrowseParams {
         gps: PresenceFilter::default(),
         capture_date: PresenceFilter::default(),
         missing_any: false,
+        sensitive: PresenceFilter::default(),
         near_time: None,
         near_lat: None,
         near_lng: None,

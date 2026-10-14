@@ -1,6 +1,8 @@
 import {useCallback, useMemo} from 'react'
 import {useSearchParams} from 'react-router-dom'
 import type {FixMode, PictureFilters, PresenceFilter, SortField, SortOrder, TrashFilter,} from '@/lib/types'
+import {scopeParams} from '@/lib/scopeParams'
+import {useSensitiveListFilter} from '@/hooks/useSensitive'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
@@ -171,6 +173,9 @@ export function useGalleryParams() {
         )
     }, [update])
 
+    // Hierarchy listings have no primary tag, so the flagged-scope exception never applies (§3.2).
+    const sensitive = useSensitiveListFilter(params.hierarchy ? null : params.tag)
+
     const filters: PictureFilters = useMemo(
         () => ({
             tag: params.tag,
@@ -188,10 +193,11 @@ export function useGalleryParams() {
             nearTime: params.nearTime,
             nearLat: params.nearLat,
             nearLng: params.nearLng,
+            sensitive,
             // Date-fix mode floats undated pictures to the top so they surface for fixing (feature 30 §4).
             undatedFirst: params.fix === 'date',
         }),
-        [params],
+        [params, sensitive],
     )
 
     const hasActiveFilters =
@@ -208,22 +214,7 @@ export function useGalleryParams() {
 
     /** The scope arm shared by both `PictureFilter` kinds. Proximity sorts don't apply to a
      *  selection (§7); only presence filters carry over. */
-    const scopeFilter = useMemo(
-        () => ({
-            owned_only: params.scope === 'owned' || undefined,
-            shared_with_me: params.scope === 'shared' || undefined,
-            trash: params.trash !== 'exclude' ? params.trash : undefined,
-            captured_after: params.capturedAfter ?? undefined,
-            captured_before: params.capturedBefore ?? undefined,
-            ...(params.missingAny
-                ? {missing_any: true}
-                : {
-                    gps: params.gps !== 'any' ? params.gps : undefined,
-                    capture_date: params.captureDate !== 'any' ? params.captureDate : undefined,
-                }),
-        }),
-        [params],
-    )
+    const scopeFilter = useMemo(() => scopeParams(filters), [filters])
 
     return {params, filters, scopeFilter, update, clearFilters, hasActiveFilters}
 }

@@ -12,6 +12,7 @@ import {
     updateHierarchy,
 } from '@/api/hierarchies'
 import {queryKeys} from '@/lib/constants'
+import {scopeParams} from '@/lib/scopeParams'
 import type {HierarchyConfig, PictureFilters, PictureVariant, WebdavResponse} from '@/lib/types'
 
 export function useHierarchies() {
@@ -56,19 +57,7 @@ export function useHierarchyBrowse(
                 thumbnail: variant,
                 sort: filters.sort ?? 'ingested_at',
                 order: filters.order ?? 'desc',
-                ...(filters.scope === 'owned' ? {owned_only: true} : {}),
-                ...(filters.scope === 'shared' ? {shared_with_me: true} : {}),
-                ...(filters.trash && filters.trash !== 'exclude' ? {trash: filters.trash} : {}),
-                ...(filters.capturedAfter ? {captured_after: filters.capturedAfter} : {}),
-                ...(filters.capturedBefore ? {captured_before: filters.capturedBefore} : {}),
-                ...(filters.missingAny
-                    ? {missing_any: true}
-                    : {
-                        ...(filters.gps && filters.gps !== 'any' ? {gps: filters.gps} : {}),
-                        ...(filters.captureDate && filters.captureDate !== 'any'
-                            ? {capture_date: filters.captureDate}
-                            : {}),
-                    }),
+                ...scopeParams(filters),
                 ...(filters.sort === 'time_near' && filters.nearTime
                     ? {near_time: filters.nearTime}
                     : {}),

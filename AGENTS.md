@@ -114,3 +114,5 @@ What each one is, since that is not derivable from its headings. Use the grep ab
   `synced` metadata-only EXIF recheck that populates it.
 - **37_exiftool_engine_and_heif_orientation** — ExifTool as the only engine (process pool), HEIF
   orientation in `irot`/`imir` (the box writer), mirrored-orientation display.
+- **38_sensitive_pictures** — `tag_metadata.sensitive` viewer curtain: display modes, tab-scoped
+  reveals, `sensitive` filter (WebDAV postponed).

@@ -164,6 +164,8 @@ interface OrientedContainImageProps {
      * pixels with no EXIF) keep the app's rotation.
      */
     srcOriented?: boolean
+    /** Rendered in the sized box **instead of** the image and its placeholders (a sensitive veil). */
+    cover?: React.ReactNode
 }
 
 /**
@@ -187,6 +189,7 @@ export function OrientedContainImage({
                                          onError,
                                          onClick,
                                          srcOriented,
+                                         cover: coverNode,
                                      }: OrientedContainImageProps) {
     const {width: dW, height: dH} = displayDimensions(width, height, orientation)
     const aspect = dW && dH ? dW / dH : 1
@@ -251,6 +254,7 @@ export function OrientedContainImage({
         >
             {boxW > 0 && (
                 <div className="relative max-w-full overflow-hidden bg-checkerboard" style={{width: boxW, height: boxH}} onClick={onClick}>
+                    {coverNode ?? <>
                     {blurhash && (
                         <Blurhash
                             hash={blurhash}
@@ -287,6 +291,7 @@ export function OrientedContainImage({
                             onError={onError}
                         />
                     )}
+                    </>}
                 </div>
             )}
         </div>

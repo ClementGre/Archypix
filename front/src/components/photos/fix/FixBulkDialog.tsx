@@ -12,7 +12,6 @@ import {Button} from '@/components/ui/button'
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '@/components/ui/dropdown-menu'
 import {GpsPickerPopover} from '@/components/photos/detail/GpsPickerPopover'
 import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
-import {OrientedContainImage} from '@/components/photos/OrientedImage'
 import {MapView} from '@/components/common/MapView'
 import {ReceivedModeToggle} from './ReceivedModeToggle'
 import {type FixReceivedMode, type FixValue, useFixApply} from '@/hooks/useFixApply'
@@ -20,7 +19,8 @@ import {formatAccuracy, formatLatLng} from '@/lib/gpsInterpolation'
 import {type BulkRow, type Provenance, PROVENANCE_LABEL} from '@/lib/fixBulk'
 import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
-import type {FixMode} from '@/lib/types'
+import type {FixMode, ThumbRef} from '@/lib/types'
+import {RefThumb} from './fixShared'
 
 type RowStatus = 'idle' | 'saving' | 'done' | 'error' | 'grant_missing'
 
@@ -35,10 +35,10 @@ function valueLabel(field: FixMode, v: FixValue | null): string {
 }
 
 /** A tiny reference thumbnail (a GPS before/after anchor) shown in a row. */
-function MiniThumb({anchor, label}: { anchor: { thumbnail_url: string | null; orientation: number | null } | null; label: string }) {
+function MiniThumb({anchor, label}: { anchor: ThumbRef | null; label: string }) {
     return (
         <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded bg-checkerboard ring-1 ring-sky-400/50" title={label}>
-            {anchor?.thumbnail_url && <OrientedContainImage src={anchor.thumbnail_url} alt="" orientation={anchor.orientation} className="h-7 w-7"/>}
+            <RefThumb thumb={anchor} className="h-7 w-7"/>
         </div>
     )
 }
@@ -170,8 +170,7 @@ export function FixBulkDialog({open, onOpenChange, field, title, initialRows, ha
                                     {row.include && <Check className="h-3 w-3"/>}
                                 </button>
                                 <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded bg-checkerboard">
-                                    {row.thumbnail_url &&
-                                        <OrientedContainImage src={row.thumbnail_url} alt="" orientation={row.orientation} className="h-9 w-9"/>}
+                                    <RefThumb thumb={row} className="h-9 w-9"/>
                                 </div>
 
                                 {/* GPS: the before/after references it was interpolated from. */}

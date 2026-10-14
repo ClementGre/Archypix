@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                      trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                      created_at, updated_at\n               FROM user_settings\n               WHERE user_id = $1",
+  "query": "SELECT user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                      trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                      sensitive_display_mode as \"sensitive_display_mode: SensitiveDisplayMode\",\n                      created_at, updated_at\n               FROM user_settings\n               WHERE user_id = $1",
   "describe": {
     "columns": [
       {
@@ -70,6 +70,29 @@
       },
       {
         "ordinal": 4,
+        "name": "sensitive_display_mode: SensitiveDisplayMode",
+        "type_info": {
+          "Custom": {
+            "name": "sensitive_display_mode",
+            "kind": {
+              "Enum": [
+                "visible",
+                "blurred",
+                "redacted",
+                "hidden"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "sensitive_display_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -80,7 +103,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -102,8 +125,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "7d32b118d2615d5e8608be439af31d4ece9b5edfdf69c77f388cabd55bf9765d"
+  "hash": "63c0cdca15db58cb1db544029faf42ccb881653813ca2a6b0e68a5856a0d70f5"
 }

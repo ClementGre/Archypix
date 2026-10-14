@@ -1,5 +1,5 @@
 import {memo, type MouseEvent, type PointerEvent, type ReactNode, useRef, useState} from 'react'
-import {AlertTriangle, CalendarClock, CalendarOff, Check, Clock, CloudOff, MapPin, MapPinOff, RefreshCw, Trash2} from 'lucide-react'
+import {AlertTriangle, CalendarClock, CalendarOff, Check, Clock, CloudOff, Lock, MapPin, MapPinOff, RefreshCw, Trash2} from 'lucide-react'
 import {useQueryClient} from '@tanstack/react-query'
 import type {FixMode, PictureListItem} from '@/lib/types'
 import {getPictureUrl} from '@/api/pictures'
@@ -12,6 +12,8 @@ import {Blurhash} from './Blurhash'
 import {FileTypeIcon} from './FileTypeIcon'
 import {PlayBadge} from './PlayBadge'
 import {displayDimensions, orientedCoverStyle, OrientedImage} from './OrientedImage'
+import {VeilFill} from './SensitiveVeil'
+import {useVeil} from '@/hooks/useSensitive'
 
 /** Compact magnitude of a time span (ms) with an auto unit: s / min / h / d / mo / y. */
 function formatDuration(ms: number): string {
@@ -196,8 +198,9 @@ export const PhotoCard = memo(function PhotoCard({
         ? ownedPurgeAt(item.deleted_at, retentionDays ?? 30)
         : null
     const purgeCountdown = purgeAt ? countdown(purgeAt) : null
+    const veil = useVeil(item.id, item.sensitive)
     // Play badge only over a real video frame thumbnail — never over the fallback file-type icon.
-    const showPlayBadge = isVideoMime(item.mime_type) && !!item.thumbnail_url
+    const showPlayBadge = veil === 'visible' && isVideoMime(item.mime_type) && !!item.thumbnail_url
     // Proximity badges (feature 29 §6), at most one active at a time. Geo distance comes from the
     // backend (`distance_m`); the time delta is computed client-side from the reference instant
     // (both timestamps are naive — `new Date()` shifts both by the same offset, so the delta holds).
@@ -247,6 +250,8 @@ export const PhotoCard = memo(function PhotoCard({
                 !selected && anchorRole && 'ring-2 ring-sky-400/80',
                 !selected && fixMissing && 'ring-2 ring-amber-400/80',
                 trashed && 'opacity-60',
+                // The sensitive marker (feature 38 §3) is an outline, so it composes with every ring.
+                item.sensitive && 'outline outline-2 -outline-offset-2 outline-red-500/80',
                 // A photo that can't be a reference (no GPS/date while picking) is dimmed + inert.
                 dimmed && 'cursor-not-allowed opacity-30 grayscale',
             )}
@@ -266,7 +271,9 @@ export const PhotoCard = memo(function PhotoCard({
             onPointerCancel={cancelPress}
             onContextMenu={(e) => e.preventDefault()}
         >
-            {item.blurhash && (
+            {veil !== 'visible' ? (
+                <VeilFill veil={veil} blurhash={item.blurhash} orientation={item.orientation} width={item.width} height={item.height}/>
+            ) : item.blurhash && (
                 <Blurhash
                     hash={item.blurhash}
                     className={cn(blurhash.className, 'transition-opacity duration-200', loaded && 'opacity-0')}
@@ -274,7 +281,7 @@ export const PhotoCard = memo(function PhotoCard({
                 />
             )}
 
-            {thumbSrc ? (
+            {veil !== 'visible' ? null : thumbSrc ? (
                 <OrientedImage
                     src={thumbSrc}
                     alt={item.filename ?? ''}
@@ -358,6 +365,12 @@ export const PhotoCard = memo(function PhotoCard({
             {trashed && (
                 <CornerLabel top left={false} title="In trash" className="justify-center py-0.5">
                     <Trash2 className="h-3 w-3"/>
+                </CornerLabel>
+            )}
+
+            {item.sensitive && !trashed && !fixMissing && !anchorRole && (
+                <CornerLabel top left={false} title="Sensitive" className="justify-center bg-red-600/85 py-0.5">
+                    <Lock className="h-3 w-3"/>
                 </CornerLabel>
             )}
 

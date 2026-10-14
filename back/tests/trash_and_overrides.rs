@@ -408,9 +408,10 @@ async fn find_purgeable_respects_retention_and_owner_only(db: PgPool) {
     archypix_back::repository::user_settings::UserSettingsRepository::upsert(
         &db,
         alice_id,
-        None,
-        Some(1),
-        None,
+        &archypix_back::domain::user_settings::UserSettingsPatch {
+            trash_retention_days: Some(1),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();

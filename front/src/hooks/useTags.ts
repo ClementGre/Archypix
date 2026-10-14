@@ -101,7 +101,17 @@ export function useRootTagMeta(): TagMeta | null {
  * never waits on the debounce. Pass only the fields that changed.
  */
 export function useWriteTagMeta() {
-    return (patch: TagMetaPatch) => queueTagMeta(patch)
+    const queryClient = useQueryClient()
+    return (patch: TagMetaPatch, opts?: { now?: boolean }) => {
+        queueTagMeta(patch)
+        if (!opts?.now) return
+        // The sensitive flag is derived server-side on every listing (feature 38 §5): a veil
+        // cannot wait out the debounce.
+        void flushTagMeta().then(() => {
+            void queryClient.invalidateQueries({queryKey: ['pictures']})
+            void queryClient.invalidateQueries({queryKey: ['hierarchies']})
+        })
+    }
 }
 
 /** Merge one queued patch onto the served payload. */
@@ -123,6 +133,7 @@ function applyPatch(items: TagListItem[], patch: TagMetaPatch): TagListItem[] {
         subtag_placement: null,
         grouping: {},
         webdav_dir_name: null,
+        sensitive: false,
     }
     const found = items.find((i) => i.path === tag_path)
     const merged: TagMeta = {...(found?.meta ?? base), ...fields, tag_path}

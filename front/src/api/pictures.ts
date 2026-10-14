@@ -16,9 +16,8 @@ import type {
     PictureListResponse,
     PictureSelection,
     PictureVariant,
-    PresenceFilter,
+    ScopeParams,
     SetCreatorResponse,
-    TrashFilter,
     TrashResponse,
 } from '@/lib/types'
 
@@ -57,7 +56,7 @@ export interface CompleteUploadBody {
     defer_pipeline?: boolean
 }
 
-export interface ListPicturesParams {
+export interface ListPicturesParams extends ScopeParams {
     page: number
     page_size: number
     sort?: string
@@ -69,17 +68,6 @@ export interface ListPicturesParams {
     exact?: string
     match?: 'all' | 'any'
     untagged?: boolean
-    owned_only?: boolean
-    shared_with_me?: boolean
-    /** Trash-membership state: `exclude` (default) | `include` | `only`. Omitted when `exclude`. */
-    trash?: TrashFilter
-    captured_after?: string
-    captured_before?: string
-    /** Presence filters (feature 29 §4): `any` (omit) | `present` | `missing`. */
-    gps?: PresenceFilter
-    capture_date?: PresenceFilter
-    /** OR convenience; 400 if combined with a non-`any` `gps`/`capture_date`. */
-    missing_any?: boolean
     /** Proximity-sort references (feature 29 §6). */
     near_time?: string
     near_lat?: number

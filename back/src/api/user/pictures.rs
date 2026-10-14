@@ -239,6 +239,7 @@ pub async fn details(
         "gps_alt": d.picture.gps_alt,
         "gps_accuracy_m": d.picture.gps_accuracy_m,
         "orientation": d.picture.orientation,
+        "blurhash": d.picture.blurhash,
         "exif_data": d.picture.exif_data,
         "exif_sync_status": d.picture.exif_sync_status,
         "file_exif": d.picture.file_exif,
@@ -265,6 +266,7 @@ pub async fn details(
         "copy_source_owner_username": d.picture.copy_source_owner_username,
         "copy_source_owner_instance": d.picture.copy_source_owner_instance,
         "copy_source_picture_id": d.picture.copy_source_picture_id,
+        "sensitive": d.sensitive,
         "versions": d.versions,
     })))
 }

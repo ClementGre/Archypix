@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react'
 import {useNavigate} from 'react-router-dom'
-import {HardDrive, Loader2, Ticket, Trash2, UserCog, Users} from 'lucide-react'
+import {Eye, HardDrive, Loader2, Ticket, Trash2, UserCog, Users} from 'lucide-react'
 import {toast} from 'sonner'
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card'
 import {Input} from '@/components/ui/input'
@@ -11,12 +11,13 @@ import {Skeleton} from '@/components/ui/skeleton'
 import {NumberInput} from '@/components/ui/number-input'
 import {STORAGE_SEGMENT_CLASS, StorageBar} from '@/components/StorageBar'
 import {InvitesManager} from '@/components/admin/InvitesManager'
+import {ShowAllMenu} from '@/components/photos/SensitiveVeil'
 import {useAuthStore} from '@/stores/auth'
 import {apiErrorMessage} from '@/api/client'
 import {useSettings, useStorage, useUpdateProfile, useUpdateSettings} from '@/hooks/useSettings'
 import {useInvitations, useInviteMutations, useInvites, useRegistrationInfo} from '@/hooks/useInvites'
 import {cn, formatBytes} from '@/lib/utils'
-import type {Hemisphere, VersioningMode} from '@/lib/types'
+import type {Hemisphere, SensitiveDisplayMode, VersioningMode} from '@/lib/types'
 
 // ---------- Account (profile + library) — one form, explicit Save ----------
 
@@ -24,6 +25,14 @@ const VERSIONING_OPTIONS: { value: VersioningMode; label: string; description: s
     {value: 'none', label: 'No versioning', description: 'Never keep previous versions.'},
     {value: 'original_copy', label: 'Original copy', description: 'Snapshot the original once, on first edit.'},
     {value: 'full_versioning', label: 'Full versioning', description: 'Snapshot before every visual edit.'},
+]
+
+// Feature 38 §3. A curtain against accidental viewing, not access control — the copy says so.
+const SENSITIVE_OPTIONS: { value: SensitiveDisplayMode; label: string; description: string }[] = [
+    {value: 'visible', label: 'Visible', description: 'Show them like any other picture, with a red marker.'},
+    {value: 'blurred', label: 'Blurred', description: 'A blurred placeholder until you reveal them.'},
+    {value: 'redacted', label: 'Redacted', description: 'A dark tile — not even the colours show.'},
+    {value: 'hidden', label: 'Hidden', description: 'Left out of the gallery; shown redacted inside a sensitive tag.'},
 ]
 
 function AccountCard() {
@@ -39,6 +48,7 @@ function AccountCard() {
     const [versioning, setVersioning] = useState<VersioningMode>('none')
     const [retention, setRetention] = useState(30)
     const [hemisphere, setHemisphere] = useState<Hemisphere>('north')
+    const [sensitiveMode, setSensitiveMode] = useState<SensitiveDisplayMode>('blurred')
 
     useEffect(() => {
         if (user) {
@@ -51,6 +61,7 @@ function AccountCard() {
             setVersioning(settings.versioning_mode)
             setRetention(settings.trash_retention_days)
             setHemisphere(settings.hemisphere)
+            setSensitiveMode(settings.sensitive_display_mode)
         }
     }, [settings])
 
@@ -59,7 +70,8 @@ function AccountCard() {
         !!settings &&
         (versioning !== settings.versioning_mode ||
             retention !== settings.trash_retention_days ||
-            hemisphere !== settings.hemisphere)
+            hemisphere !== settings.hemisphere ||
+            sensitiveMode !== settings.sensitive_display_mode)
     const dirty = profileDirty || settingsDirty
     const busy = updateProfile.isPending || updateSettings.isPending
 
@@ -74,6 +86,7 @@ function AccountCard() {
                     versioning_mode: versioning,
                     trash_retention_days: retention,
                     hemisphere,
+                    sensitive_display_mode: sensitiveMode,
                 })
             }
             toast.success('Changes saved')
@@ -91,6 +104,7 @@ function AccountCard() {
             setVersioning(settings.versioning_mode)
             setRetention(settings.trash_retention_days)
             setHemisphere(settings.hemisphere)
+            setSensitiveMode(settings.sensitive_display_mode)
         }
     }
 
@@ -174,6 +188,33 @@ function AccountCard() {
                     <p className="text-xs text-muted-foreground">
                         Which months count as which season when photos are grouped by season.
                     </p>
+                </div>
+
+                <div className="space-y-3">
+                    <Label>Sensitive pictures</Label>
+                    <p className="text-xs text-muted-foreground">
+                        Pictures under a tag marked <em>Sensitive</em>. This only changes how this app shows
+                        them: they are still shared, synced over WebDAV, and downloadable.
+                    </p>
+                    <RadioGroup value={sensitiveMode} onValueChange={(v) => setSensitiveMode(v as SensitiveDisplayMode)}>
+                        {SENSITIVE_OPTIONS.map((opt) => (
+                            <div key={opt.value} className="flex items-start gap-3">
+                                <RadioGroupItem value={opt.value} id={`sensitive-${opt.value}`} className="mt-0.5"/>
+                                <div>
+                                    <Label htmlFor={`sensitive-${opt.value}`} className="font-medium">{opt.label}</Label>
+                                    <p className="text-xs text-muted-foreground">{opt.description}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </RadioGroup>
+                    {/* Tab-only and never saved (§4) — the countdown lives in the top bar. */}
+                    {settings?.sensitive_display_mode !== 'visible' && (
+                        <ShowAllMenu>
+                            <Button variant="outline" size="sm">
+                                <Eye className="mr-1.5 h-4 w-4"/> Show them in this tab for a while…
+                            </Button>
+                        </ShowAllMenu>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-2">

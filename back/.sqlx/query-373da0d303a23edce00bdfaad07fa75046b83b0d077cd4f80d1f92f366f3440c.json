@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO user_settings (user_id, versioning_mode, trash_retention_days, hemisphere)\n               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30),\n                       COALESCE($4, 'north'::hemisphere))\n               ON CONFLICT (user_id) DO UPDATE SET\n                   versioning_mode = COALESCE($2, user_settings.versioning_mode),\n                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days),\n                   hemisphere = COALESCE($4, user_settings.hemisphere)\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                         trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                         created_at, updated_at",
+  "query": "INSERT INTO user_settings\n                   (user_id, versioning_mode, trash_retention_days, hemisphere, sensitive_display_mode)\n               VALUES ($1, COALESCE($2, 'none'::versioning_mode), COALESCE($3, 30),\n                       COALESCE($4, 'north'::hemisphere), COALESCE($5, 'blurred'::sensitive_display_mode))\n               ON CONFLICT (user_id) DO UPDATE SET\n                   versioning_mode = COALESCE($2, user_settings.versioning_mode),\n                   trash_retention_days = COALESCE($3, user_settings.trash_retention_days),\n                   hemisphere = COALESCE($4, user_settings.hemisphere),\n                   sensitive_display_mode = COALESCE($5, user_settings.sensitive_display_mode)\n               RETURNING user_id, versioning_mode as \"versioning_mode: VersioningMode\",\n                         trash_retention_days, hemisphere as \"hemisphere: Hemisphere\",\n                         sensitive_display_mode as \"sensitive_display_mode: SensitiveDisplayMode\",\n                         created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -70,6 +70,29 @@
       },
       {
         "ordinal": 4,
+        "name": "sensitive_display_mode: SensitiveDisplayMode",
+        "type_info": {
+          "Custom": {
+            "name": "sensitive_display_mode",
+            "kind": {
+              "Enum": [
+                "visible",
+                "blurred",
+                "redacted",
+                "hidden"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "sensitive_display_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -80,7 +103,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -117,6 +140,19 @@
               ]
             }
           }
+        },
+        {
+          "Custom": {
+            "name": "sensitive_display_mode",
+            "kind": {
+              "Enum": [
+                "visible",
+                "blurred",
+                "redacted",
+                "hidden"
+              ]
+            }
+          }
         }
       ]
     },
@@ -126,8 +162,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "2f466a96679232f1bdb6b1b94c5d6ed78ff3766c228e9dea91d653da76323a53"
+  "hash": "373da0d303a23edce00bdfaad07fa75046b83b0d077cd4f80d1f92f366f3440c"
 }

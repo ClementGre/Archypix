@@ -302,7 +302,10 @@ Public pages are `noindex`; token lookup is constant-time-ish via the unique ind
   widget (contributor name + files) when `allow_upload`. The header renders the covered tag's
   **display name, description and colour** when the owner set them (`tag_meta` on the meta payload,
   feature 34 §10.1) instead of a bare slug — a purely local read, no protocol involved. The share's
-  own `name`/`message` stay separate: they are about *this act of sharing*.
+  own `name`/`message` stay separate: they are about *this act of sharing*. Pictures under one of
+  the **owner's** sensitive tags render blurred with a per-picture reveal and the tab-scoped
+  show-all, whatever the owner's own display mode (feature 38 §7.1); the create dialog warns when the
+  tag covers any.
 - **Authed visitor** — the convert menu (save a copy / subscribe / subscribe + share-back with a tag
   picker and the consent warning).
 

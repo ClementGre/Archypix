@@ -12,6 +12,7 @@ import {Switch} from '@/components/ui/switch'
 import {Label} from '@/components/ui/label'
 import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger} from '@/components/ui/dialog'
 import {TagPicker} from '@/components/tags/TagPicker'
+import {SensitiveShareWarning} from './SensitiveShareWarning'
 import {DateTimePickerPopover, formatNaive} from '@/components/photos/detail/DateTimePickerPopover'
 
 /**
@@ -166,6 +167,7 @@ export function PublicShareDialog({
                                 )}
                             </div>
                         )}
+                        {!editing && <SensitiveShareWarning tag={tag} audience="visitors"/>}
                     </div>
 
                     <div className="space-y-1.5">

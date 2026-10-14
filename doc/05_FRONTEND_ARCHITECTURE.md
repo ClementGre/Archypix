@@ -94,7 +94,7 @@ The **register page** keeps the account/instance editor (and the health warning)
 | `/tagging`                           | `TaggingPage`       | required             | tagging-services editor                                                                                                                                   |
 | `/tagging/:id`                       | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
 | `/shares`                            | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
-| `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention, one explicit Save), storage, invites + invitation graph (via user menu, labelled "Profile") |
+| `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention + seasons + sensitive display mode, one explicit Save; the tab-only show-all button is never saved), storage, invites + invitation graph (via user menu, labelled "Profile") |
 | `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Rate limiting** / **Invites** (+ Fleet link, cache-clear refresh)                |
 | `/admin/resolver`                    | `ResolverAdminPage` | **resolver session** | fleet dashboard — operator-token login, not `ProtectedRoute` (feature 24)                                                                                 |
 | `/s/:global_domain/:username/:token` | `PublicSharePage`   | **public**           | link-gated public share (feature 27): resolves the owner backend from the URL, renders the gallery/lightbox/detail; no login required                     |
@@ -124,6 +124,7 @@ session exists.
 | `tagDrag.ts`      | the in-flight drag-to-tag (feature 34 §9): `selection, count, sourceTag` + `start`/`end`. Desktop only — HTML5 `draggable` does not fire on touch, so it cannot collide with the long-press multi-select.                                                                                                                                                                                                                                                                                                       | none (session only)                                                            |
 | `lightbox.ts`     | Lightbox chrome: top-bar / carousel visibility kept **separately per fullscreen vs non-fullscreen** (`toggleTopBar`/`toggleCarousel` flip the current mode's flag), `fullscreen` (mirrors `document.fullscreenElement`), `originalQuality` (session-only, defaults off — presign the `original` instead of `large`); `topBarVisible`/`carouselVisible` selectors resolve the mode.                                                                                                                            | `archypix_lightbox` (visibility flags only; quality + fullscreen session-only) |
 | `imageCache.ts`   | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                                                                                                                                                  | none (session only)                                                            |
+| `sensitive.ts`    | tab-scoped reveals of sensitive pictures (feature 38 §4): `revealed` (per-picture), `showAllUntil` (the timed show-all override) + `setRevealed`/`startShowAll`/`stopShowAll`. The base display mode is the user setting, provided by `AppShell` through `SensitiveModeProvider` (public pages get the `blurred` default); `hooks/useSensitive.ts` resolves the render precedence (`useVeil`) and the Hidden-mode list param. | none (never persisted — a reload re-veils) |
 
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
@@ -151,6 +152,11 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 | `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                                                  |
 | `view`                 | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                                                       |
 | `fix`                  | photos-fix mode (feature 30): `gps` \| `date` \| absent — highlights problem pictures, swaps the right panel for the fix surface, and (date) floats undated pictures to the top |
+
+`filters` also carries one **derived** field that is never URL state: `sensitive: 'missing'` while the effective sensitive
+display mode is Hidden (setting, minus the tab's show-all override, minus a view rooted in a sensitive tag — feature 38 §3.2).
+`lib/scopeParams.ts` maps `filters` to the shared wire scope arm (`ScopeParams`) used by `GET /pictures`, hierarchy `browse` and
+selection queries alike.
 
 ---
 
@@ -201,8 +207,12 @@ Incoming / Outgoing / Hierarchies, synced to the `panel` URL param — chrome-le
 **`photos/`** — `PhotoGrid` (justified flex grid + infinite scroll + selection + renders the Lightbox), `PhotoCard` (`flex-basis`/`flex-grow` from the
 picture's **display** aspect ratio + `aspect-ratio` on the cell → uniform row height, no crop; sits on a **`.bg-checkerboard`** backdrop (see §9) and
 **fades its blurhash out once the thumbnail loads** so transparent PNG areas read as transparent, not blurry), `OrientedImage`/`OrientedContainImage`
-(render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`), `Blurhash`
-(loading placeholder only — faded out on load).
+(render raw thumbnails at their correct EXIF orientation — see §9; `OrientedContainImage`'s sized box also carries `.bg-checkerboard`, and its
+`cover` slot replaces the image), `Blurhash` (loading placeholder only — faded out on load). `SensitiveVeil` (feature 38): `VeilFill` (the blurhash
+or the `.bg-redacted` tile, plus Reveal / Show-all controls on single-picture surfaces), `RevealToggle` (Reveal / Hide again in a toolbar),
+`SensitiveBadge`, `ShowAllMenu` and the `ShowAllChip` countdown in `TopBar`/`PublicTopBar`. Every picture surface (`PhotoCard`, `Lightbox` +
+carousel, `SelectionPanel`, `CoverThumb`, the fix panels' `RefThumb`, `PublicDetailPanel`) asks `useVeil` and never mounts or presigns a veiled
+image; sensitive tiles always carry a red outline + lock.
 
 **Gallery toolbar (grid header).** All view controls live in one wrapping row at the top of the centre grid (no longer in the `TopBar`): the
 breadcrumb/tag-chips on the left (content-sized `flex-1`, wraps internally) and a control cluster on the right that **drops to the next line when
@@ -371,7 +381,8 @@ deeper tint, solid accent, bolder text, and a label `color-mix`ed toward `--colo
 `TagFilterBar` breadcrumb (not in the tree). Rows are also **drop targets** for photos dragged from the grid (§9 below), and reorder mode swaps the `…`
 menu for up/down buttons — each move is an ordinary `sort_index` write through the queue, not a reorder endpoint),
 `TagMetaFields` (the shared `tag_metadata` form — description, colour palette + custom picker, cover, date-range overrides with per-side
-reset-to-derived, *show when empty*, WebDAV folder name — plus `TagNameField`, `TagPathField` (live-validated display-form path: `TagPath.sanitize`
+reset-to-derived, *show when empty*, WebDAV folder name, *Sensitive* (checked-and-disabled under a sensitive ancestor; a change is flushed
+at once rather than debounced, since veiling is derived server-side — feature 38) — plus `TagNameField`, `TagPathField` (live-validated display-form path: `TagPath.sanitize`
 notes the auto-fixes in amber and `TagPath.invalidChars` blocks in red, the validation `TagPicker` used to apply to its own input) and the
 `TagMetaDraft` ⇄ `TagMetaPatch` helpers; the display name is its
 own field because the create dialog shows it above the fold), `EditTagDialog` (the one tag dialog, absorbing the old `RenameTagDialog`: the read-only

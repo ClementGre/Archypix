@@ -3,7 +3,7 @@
 // by source. Date rows expose all available sources (filename / file date / upload); GPS rows carry
 // the before/after anchors they were interpolated from.
 
-import type {PictureDetail, PictureListItem} from '@/lib/types'
+import type {PictureDetail, PictureListItem, ThumbRef} from '@/lib/types'
 import {type FixValue, gpsFixValue} from '@/hooks/useFixApply'
 import {dateSuggestions} from '@/lib/dateSuggestions'
 import {deriveGps, type GpsAnchor} from '@/lib/gpsInterpolation'
@@ -30,17 +30,8 @@ export interface DateSource {
     lowConfidence?: boolean
 }
 
-/** A thumbnail reference (a GPS before/after anchor) shown in a bulk GPS row. */
-export interface RowAnchor {
-    thumbnail_url: string | null
-    orientation: number | null
-}
-
-export interface BulkRow {
-    id: string
+export interface BulkRow extends ThumbRef {
     filename: string | null
-    thumbnail_url: string | null
-    orientation: number | null
     owned: boolean
     include: boolean
     value: FixValue | null
@@ -48,12 +39,16 @@ export interface BulkRow {
     /** Date only: the candidate sources the user can switch between. */
     dateSources?: DateSource[]
     /** GPS only: the before/after anchors the value was interpolated from. */
-    before?: RowAnchor | null
-    after?: RowAnchor | null
+    before?: ThumbRef | null
+    after?: ThumbRef | null
 }
 
-function base(it: PictureListItem): Pick<BulkRow, 'id' | 'filename' | 'thumbnail_url' | 'orientation' | 'owned' | 'include'> {
-    return {id: it.id, filename: it.filename, thumbnail_url: it.thumbnail_url, orientation: it.orientation, owned: it.owned, include: true}
+const thumbRef = (it: PictureListItem): ThumbRef => ({
+    id: it.id, thumbnail_url: it.thumbnail_url, orientation: it.orientation, blurhash: it.blurhash, sensitive: it.sensitive,
+})
+
+function base(it: PictureListItem): Pick<BulkRow, keyof ThumbRef | 'filename' | 'owned' | 'include'> {
+    return {...thumbRef(it), filename: it.filename, owned: it.owned, include: true}
 }
 
 /** Per-target date rows with every available source; the best (filename → file date → upload) is picked. */
@@ -70,8 +65,7 @@ export function dateBulkRows(items: PictureListItem[]): BulkRow[] {
     })
 }
 
-const anchorView = (it: PictureListItem | null): RowAnchor | null =>
-    it ? {thumbnail_url: it.thumbnail_url, orientation: it.orientation} : null
+const anchorView = (it: PictureListItem | null): ThumbRef | null => (it ? thumbRef(it) : null)
 
 /**
  * Per-target GPS rows via grid-local interpolation. Anchor coordinates are fetched once per unique

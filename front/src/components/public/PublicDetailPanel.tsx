@@ -16,6 +16,8 @@ import {displayDimensions, OrientedContainImage} from '@/components/photos/Orien
 import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
 import {PlayBadge} from '@/components/photos/PlayBadge'
 import {Section} from '@/components/photos/detail/Section'
+import {RevealToggle, SensitiveBadge, VeilFill} from '@/components/photos/SensitiveVeil'
+import {useVeil} from '@/hooks/useSensitive'
 import {ReadOnlyRow} from '@/components/photos/detail/ExifInlineEditor'
 import {usePublicShare} from '@/components/public/context'
 
@@ -55,10 +57,12 @@ function SingleDetail({id}: { id: string }) {
         queryFn: () => getPublicPictureDetail(backendUrl, token, id, session),
         retry: false,
     })
+    const veil = useVeil(id, detailQ.data?.sensitive)
     const previewQ = useQuery({
         queryKey: ['publicUrl', token, id, 'medium'],
         queryFn: () => getPublicPictureUrl(backendUrl, token, id, 'medium', session),
         retry: false,
+        enabled: !!detailQ.data && veil === 'visible',
     })
 
     if (detailQ.isPending) return <PanelLoader/>
@@ -102,7 +106,17 @@ function SingleDetail({id}: { id: string }) {
                 onClick={openLightbox}
                 title="Open full screen"
             >
-                {isVideo && previewUrl ? (
+                {veil !== 'visible' ? (
+                    <OrientedContainImage
+                        alt={d.filename ?? ''}
+                        orientation={d.orientation}
+                        width={d.width}
+                        height={d.height}
+                        maxHeight={PREVIEW_MAX_HEIGHT}
+                        cover={<VeilFill veil={veil} blurhash={d.blurhash} orientation={d.orientation}
+                                         width={d.width} height={d.height} revealId={id}/>}
+                    />
+                ) : isVideo && previewUrl ? (
                     <div className="relative flex items-center justify-center bg-black">
                         <img src={previewUrl} alt={d.filename ?? ''} className="max-h-52 w-full object-contain"/>
                         <PlayBadge hover/>
@@ -139,7 +153,10 @@ function SingleDetail({id}: { id: string }) {
                             .filter(Boolean)
                             .join(' · ')}
                     </p>
+                    {d.sensitive && <SensitiveBadge className="mt-0.5"/>}
                 </div>
+                <RevealToggle id={id} sensitive={d.sensitive}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"/>
                 {canOriginals && (
                     <Button
                         variant="ghost"

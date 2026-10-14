@@ -48,6 +48,13 @@ CREATE TYPE public.safe_delete_mode AS ENUM (
     'fullDelete'
 );
 
+CREATE TYPE public.sensitive_display_mode AS ENUM (
+    'visible',
+    'blurred',
+    'redacted',
+    'hidden'
+);
+
 CREATE TYPE public.service_type AS ENUM (
     'shared_tag_mapping',
     'rule',
@@ -457,7 +464,8 @@ CREATE TABLE public.tag_metadata (
     webdav_dir_name character varying(255),
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    children_order_desc boolean DEFAULT false NOT NULL
+    children_order_desc boolean DEFAULT false NOT NULL,
+    sensitive boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE public.tagging_services (
@@ -500,7 +508,8 @@ CREATE TABLE public.user_settings (
     trash_retention_days integer DEFAULT 30 NOT NULL,
     created_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
     updated_at timestamp without time zone DEFAULT (now() AT TIME ZONE 'utc'::text) NOT NULL,
-    hemisphere public.hemisphere DEFAULT 'north'::public.hemisphere NOT NULL
+    hemisphere public.hemisphere DEFAULT 'north'::public.hemisphere NOT NULL,
+    sensitive_display_mode public.sensitive_display_mode DEFAULT 'blurred'::public.sensitive_display_mode NOT NULL
 );
 
 CREATE TABLE public.user_storage (

@@ -28,7 +28,8 @@ import {
     useTagTree,
     useWriteTagMeta,
 } from '@/hooks/useTags'
-import {display} from '@/lib/tagTree'
+import {display, displayPath} from '@/lib/tagTree'
+import {flaggedAncestors, useSensitiveTags} from '@/hooks/useSensitive'
 import {apiErrorMessage} from '@/api/client'
 import {TagPath} from '@/lib/utils'
 import type {TagListItem} from '@/lib/types'
@@ -82,9 +83,13 @@ export function EditTagDialog({
     const isEmptyTag = (item?.count ?? 0) === 0 && !!meta?.show_when_empty
 
     const save = () => {
-        write(draftToPatch(tagPath, draft))
+        write(draftToPatch(tagPath, draft), {now: draft.sensitive !== (meta?.sensitive ?? false)})
         onOpenChange(false)
     }
+
+    // The nearest flagged strict ancestor — the flag inherits and cannot be cleared below it (38 §2).
+    const flagged = useSensitiveTags()
+    const inheritedFrom = flaggedAncestors(tagPath, flagged).filter((p) => p !== tagPath).sort((a, b) => b.length - a.length)[0]
 
     const submitRename = () => {
         rename.mutate(
@@ -138,6 +143,7 @@ export function EditTagDialog({
                         onChange={patch}
                         label={label}
                         derived={{from: toNaive(item?.date_from), to: toNaive(item?.date_to)}}
+                        sensitiveInheritedFrom={inheritedFrom ? displayPath(inheritedFrom, metaByPath) : null}
                     />
 
                     {/* The rename control — the path is the identity, so this is the async cascade. */}
@@ -184,7 +190,7 @@ export function EditTagDialog({
                         description={
                             isEmptyTag
                                 ? 'This tag has no photos, so deleting it removes it entirely, along with its display name, description, cover and dates. There is no undo.'
-                                : 'The display name, description, cover and dates are removed. The tag and its photos stay. There is no undo.'
+                                : `The display name, description, cover and dates are removed${meta?.sensitive ? ', and its photos are no longer veiled as sensitive' : ''}. The tag and its photos stay. There is no undo.`
                         }
                         confirmLabel={isEmptyTag ? 'Delete tag' : 'Reset'}
                         destructive

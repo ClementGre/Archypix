@@ -297,6 +297,8 @@ pub struct PublicPictureDetail {
     pub gps_alt: Option<i32>,
     pub gps_accuracy_m: Option<f64>,
     pub exif_data: Option<Value>,
+    /// Against the **owner's** tags (feature 38 §7.1) — visitors see it blurred.
+    pub sensitive: bool,
 }
 
 /// Fetch a covered picture's detail (coverage-checked), resolving the creator against the album owner
@@ -322,6 +324,7 @@ pub async fn public_picture_detail(
         .map(|u| u.username)
         .unwrap_or_default();
     let creator = p.propagated_creator(&owner_username, &settings.get(keys::GLOBAL_DOMAIN));
+    let sensitive = PictureRepository::sensitive_ids(db, &[p.id]).await?.contains(&p.id);
     let view_only = share.view_only();
     Ok(PublicPictureDetail {
         id: p.id,
@@ -340,6 +343,7 @@ pub async fn public_picture_detail(
         gps_alt: (!view_only).then_some(p.gps_alt).flatten(),
         gps_accuracy_m: (!view_only).then_some(p.gps_accuracy_m).flatten(),
         exif_data: (!view_only).then(|| serde_json::to_value(&p.exif_data).unwrap_or(Value::Null)),
+        sensitive,
     })
 }
 

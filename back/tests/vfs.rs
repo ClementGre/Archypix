@@ -6,7 +6,7 @@
 
 mod common;
 
-use archypix_back::domain::user_settings::VersioningMode;
+use archypix_back::domain::user_settings::{UserSettingsPatch, VersioningMode};
 use archypix_back::infra::s3;
 use archypix_back::infra::settings::keys;
 use archypix_back::repository::picture::PictureRepository;
@@ -327,7 +327,11 @@ async fn put_overwrite_replaces_bytes_no_version_when_none(db: PgPool) {
         "Photos.Travel",
     )
     .await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None, None)
+    UserSettingsRepository::upsert(
+        &state.db,
+        user,
+        &UserSettingsPatch { versioning_mode: Some(VersioningMode::None), ..Default::default() },
+    )
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;
@@ -384,9 +388,7 @@ async fn put_overwrite_snapshots_version_full_versioning(db: PgPool) {
     UserSettingsRepository::upsert(
         &state.db,
         user,
-        Some(VersioningMode::FullVersioning),
-        None,
-        None,
+        &UserSettingsPatch { versioning_mode: Some(VersioningMode::FullVersioning), ..Default::default() },
     )
         .await
         .unwrap();
@@ -448,9 +450,7 @@ async fn put_overwrite_identical_hash_is_noop(db: PgPool) {
     UserSettingsRepository::upsert(
         &state.db,
         user,
-        Some(VersioningMode::FullVersioning),
-        None,
-        None,
+        &UserSettingsPatch { versioning_mode: Some(VersioningMode::FullVersioning), ..Default::default() },
     )
         .await
         .unwrap();
@@ -1681,9 +1681,7 @@ async fn macos_safe_save_resolves_to_a_single_versioned_overwrite(db: PgPool) {
     UserSettingsRepository::upsert(
         &state.db,
         user,
-        Some(VersioningMode::FullVersioning),
-        None,
-        None,
+        &UserSettingsPatch { versioning_mode: Some(VersioningMode::FullVersioning), ..Default::default() },
     )
         .await
         .unwrap();
@@ -1978,7 +1976,11 @@ async fn overwrite_put_moves_last_modified_and_identical_reput_does_not(db: PgPo
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
     seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"v1", "Photos.Travel").await;
-    UserSettingsRepository::upsert(&state.db, user, Some(VersioningMode::None), None, None)
+    UserSettingsRepository::upsert(
+        &state.db,
+        user,
+        &UserSettingsPatch { versioning_mode: Some(VersioningMode::None), ..Default::default() },
+    )
         .await
         .unwrap();
     let h = make_hierarchy(&state.db, user, mirror_config("singleBranch")).await;

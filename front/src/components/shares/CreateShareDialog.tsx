@@ -19,6 +19,7 @@ import {GLOBAL_DOMAIN} from '@/lib/constants'
 import {useIncomingShares} from '@/hooks/useShares'
 import {useTagTree} from '@/hooks/useTags'
 import {useAuthStore} from '@/stores/auth'
+import {SensitiveShareWarning} from './SensitiveShareWarning'
 import type {IncomingShareResponse} from '@/lib/types'
 
 const NAME_MAX = 64
@@ -362,6 +363,7 @@ export function CreateShareDialog({
                                 )}
                             </div>
                         )}
+                        <SensitiveShareWarning tag={tag} audience="recipients"/>
                     </div>
 
                     {/* Recipients */}

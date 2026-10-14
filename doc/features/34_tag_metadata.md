@@ -24,10 +24,12 @@ gaps:
 
 - **Metadata is decorative, never engine input.** No pipeline gate, hierarchy resolver or federation
   path may read `tag_metadata`. The moment it becomes engine input, tags stop being the single
-  primitive and every subsystem grows a second dependency. There is **one** deliberate exception,
+  primitive and every subsystem grows a second dependency. There are **two** deliberate exceptions.
   WebDAV (§8): directory *naming*, and the *existence* of an empty directory. Both are presentation
   of the path set, not membership — no picture's tags change either way — but the second one does mean
-  the VFS enumerates from `tag_metadata`, so it is named here rather than left implied.
+  the VFS enumerates from `tag_metadata`, so it is named here rather than left implied. And the
+  picture listing (feature 38 §5): it derives a per-picture `sensitive` flag from `sensitive` rows and
+  filters on it — again presentation, never coverage, sharing or membership.
 - **The ltree path stays the identity.** Display names are additive. Cosmetic renames become one
   `UPDATE`; slug renames keep the existing async cascade (§12).
 - **Reserved prefixes are allowed here**, unlike manual tag assignment. A user may name

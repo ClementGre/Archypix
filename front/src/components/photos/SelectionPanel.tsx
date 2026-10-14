@@ -11,6 +11,7 @@ import {
     ImageIcon,
     List,
     Loader2,
+    Lock,
     MapPin,
     MoreHorizontal,
     Plus,
@@ -48,6 +49,8 @@ import {displayDimensions, OrientedContainImage} from '@/components/photos/Orien
 import {FileTypeIcon} from '@/components/photos/FileTypeIcon'
 import {PlayBadge} from '@/components/photos/PlayBadge'
 import {MediaPlayer} from '@/components/photos/MediaPlayer'
+import {RevealToggle, VeilFill} from '@/components/photos/SensitiveVeil'
+import {flaggedAncestors, useSensitiveTags, useVeil} from '@/hooks/useSensitive'
 import {ExifInlineEditor} from '@/components/photos/detail/ExifInlineEditor'
 import {MultiSelectionPanel} from '@/components/photos/batch/MultiSelectionPanel'
 import {FixSection} from '@/components/photos/fix/FixSection'
@@ -231,11 +234,12 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     // decode for a small preview.
     const cached = useMemo(() => bestLoaded(entry, 'large'), [entry])
     const reuseCached = !!cached && VARIANT_RANK[cached.variant] >= VARIANT_RANK[previewVariant]
+    const veil = useVeil(id, picture.sensitive)
     // Images and videos both have thumbnails (video's is a frame-grab); audio has none.
     const {data: preview, refetch: refetchPreview} = useQuery({
         queryKey: ['pictures', 'url', id, previewVariant],
         queryFn: () => getPictureUrl(id, previewVariant),
-        enabled: !isAudio && !reuseCached,
+        enabled: !isAudio && !reuseCached && veil === 'visible',
         staleTime: 10 * 60 * 1000,
     })
     const previewUrl = reuseCached ? cached!.url : preview?.url
@@ -341,8 +345,14 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
             return next
         })
 
-    const tags = plainTags ?? []
+    const tags = useMemo(() => plainTags ?? [], [plainTags])
     const regularTags = useMemo(() => tags.filter((t) => !TagPath.isProtected(t)), [tags])
+    const flagged = useSensitiveTags()
+    // Which sensitive tags make this picture sensitive (feature 38 §6).
+    const sensitiveVia = useMemo(
+        () => [...new Set(tags.flatMap((t) => flaggedAncestors(t, flagged)))],
+        [tags, flagged],
+    )
     const sharedToMeTags = useMemo(() => tags.filter((t) => TagPath.isProtected(t)), [tags])
 
     const relatedShares = useMemo(() => {
@@ -391,7 +401,17 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                     onClick={openLightbox}
                     title="Open full screen"
                 >
-                    {isVideo && previewUrl ? (
+                    {veil !== 'visible' ? (
+                        <OrientedContainImage
+                            alt={picture.filename ?? ''}
+                            orientation={draftOrientation}
+                            width={picture.width}
+                            height={picture.height}
+                            maxHeight={PREVIEW_MAX_HEIGHT}
+                            cover={<VeilFill veil={veil} blurhash={picture.blurhash} orientation={draftOrientation}
+                                             width={picture.width} height={picture.height} revealId={id}/>}
+                        />
+                    ) : isVideo && previewUrl ? (
                         // Frame-grab thumbnail poster + play badge; playback happens in the Lightbox.
                         <div className="relative flex items-center justify-center bg-black">
                             <img
@@ -497,8 +517,18 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                             .filter(Boolean)
                             .join(' · ')}
                     </p>
+                    {picture.sensitive && (
+                        <p className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                            <Lock className="h-3 w-3 shrink-0"/>
+                            <span className="truncate">
+                                Sensitive{sensitiveVia.length > 0 && ` — via ${sensitiveVia.map((p) => displayPath(p, allTagMeta)).join(', ')}`}
+                            </span>
+                        </p>
+                    )}
                 </div>
                 <div className="flex shrink-0 items-center">
+                    <RevealToggle id={id} sensitive={picture.sensitive}
+                                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"/>
                     {/* Overflow menu: download + the feature-29 "Nearby in time/place" explore actions
                         (which reorder the flat gallery by proximity to this picture, clearing tag,
                         hierarchy and presence filters). Keeps the header row compact. */}

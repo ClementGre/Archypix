@@ -21,6 +21,7 @@ struct Row {
     subtag_placement: Option<TagSubtagPlacement>,
     grouping: serde_json::Value,
     webdav_dir_name: Option<String>,
+    sensitive: bool,
 }
 
 impl From<Row> for TagMetadata {
@@ -43,6 +44,7 @@ impl From<Row> for TagMetadata {
             // the default rather than failing the whole listing.
             grouping: serde_json::from_value(r.grouping).unwrap_or_default(),
             webdav_dir_name: r.webdav_dir_name,
+            sensitive: r.sensitive,
         }
     }
 }
@@ -91,7 +93,7 @@ impl TagMetadataRepository {
                       children_order as "children_order!: TagOrder", children_order_desc,
                       view_mode as "view_mode!: TagViewMode",
                       subtag_placement as "subtag_placement?: TagSubtagPlacement",
-                      grouping, webdav_dir_name
+                      grouping, webdav_dir_name, sensitive
                FROM tag_metadata
                WHERE user_id = $1
                  AND ($2::text[] IS NULL OR tag_path = ANY($2::text[]::ltree[]))"#,
@@ -143,24 +145,25 @@ impl TagMetadataRepository {
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         let webdav_dir_name: Vec<Option<String>> =
             rows.iter().map(|r| r.webdav_dir_name.clone()).collect();
+        let sensitive: Vec<bool> = rows.iter().map(|r| r.sensitive).collect();
 
         let res = sqlx::query!(
             r#"INSERT INTO tag_metadata
                    (user_id, tag_path, display_name, description, cover_picture_id, color,
                     date_from, date_to, show_when_empty, sort_index, children_order,
                     children_order_desc, view_mode, subtag_placement, grouping, webdav_dir_name,
-                    updated_at)
+                    sensitive, updated_at)
                SELECT $1, t.path::ltree, t.display_name, t.description, t.cover, t.color,
                       t.date_from, t.date_to, t.show_when_empty, t.sort_index,
                       t.children_order, t.children_order_desc, t.view_mode, t.subtag_placement,
-                      t.grouping, t.webdav_dir_name, now() AT TIME ZONE 'utc'
+                      t.grouping, t.webdav_dir_name, t.sensitive, now() AT TIME ZONE 'utc'
                FROM unnest($2::text[], $3::text[], $4::text[], $5::uuid[], $6::text[],
                            $7::timestamp[], $8::timestamp[], $9::bool[], $10::int[],
                            $11::tag_order[], $12::bool[], $13::tag_view_mode[],
-                           $14::tag_subtag_placement[], $15::jsonb[], $16::text[])
+                           $14::tag_subtag_placement[], $15::jsonb[], $16::text[], $17::bool[])
                     AS t(path, display_name, description, cover, color, date_from, date_to,
                          show_when_empty, sort_index, children_order, children_order_desc,
-                         view_mode, subtag_placement, grouping, webdav_dir_name)
+                         view_mode, subtag_placement, grouping, webdav_dir_name, sensitive)
                ON CONFLICT (user_id, tag_path) DO UPDATE SET
                    display_name        = EXCLUDED.display_name,
                    description         = EXCLUDED.description,
@@ -176,6 +179,7 @@ impl TagMetadataRepository {
                    subtag_placement    = EXCLUDED.subtag_placement,
                    grouping            = EXCLUDED.grouping,
                    webdav_dir_name     = EXCLUDED.webdav_dir_name,
+                   sensitive           = EXCLUDED.sensitive,
                    updated_at          = EXCLUDED.updated_at"#,
             user_id,
             &paths,
@@ -193,6 +197,7 @@ impl TagMetadataRepository {
             &subtag_placement as &[Option<TagSubtagPlacement>],
             &grouping,
             &webdav_dir_name as &[Option<String>],
+            &sensitive,
         )
         .execute(ex)
         .await
