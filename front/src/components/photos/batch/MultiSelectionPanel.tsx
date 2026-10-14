@@ -6,10 +6,11 @@ import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip'
 import {Section} from '@/components/photos/detail/Section'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {BatchConfirmDialog} from './BatchConfirmDialog'
+import {BatchTrashDialog} from './BatchTrashDialog'
 import {BatchExifSection, BatchMetadataSection} from './BatchExifSection'
 import {BatchCreatorControl} from './BatchCreatorControl'
 import {FixBulkSection} from '@/components/photos/fix/FixBulkSection'
-import {batchRestore, batchTrash} from '@/api/pictures'
+import {batchRestore} from '@/api/pictures'
 import {batchEditTags} from '@/api/tags'
 import {useAggregate} from '@/hooks/useAggregate'
 import {useBatchMutations} from '@/hooks/useBatch'
@@ -109,7 +110,7 @@ export function MultiSelectionPanel() {
 
     const selection = useMemo(() => toApiSelection({query, includeIds, excludeIds}), [query, includeIds, excludeIds])
 
-    const {trash, restore, tags: tagsMutation} = useBatchMutations()
+    const {restore, tags: tagsMutation} = useBatchMutations()
 
     // Per-section laziness (§4): only request `tags`/`exif` when their panel is open. The Info and
     // EXIF sections both read the `exif` aggregate.
@@ -166,22 +167,17 @@ export function MultiSelectionPanel() {
 
             {/* Batch trash / restore — same line (wrap if tight). Disabled when nothing would change. */}
             <div className="flex flex-wrap gap-2 pb-2">
-                <BatchConfirmDialog
+                <BatchTrashDialog
+                    selection={selection}
                     trigger={
                         <Button
                             variant="outline"
                             className="min-w-[8rem] flex-1 justify-center gap-2 text-destructive"
-                            disabled={trash.isPending || total - trashedCount === 0}
+                            disabled={total - trashedCount === 0}
                         >
                             <Trash2 className="h-4 w-4"/> Trash
                         </Button>
                     }
-                    title="Move selection to trash?"
-                    description="Owned photos are purged after your retention window; received photos are only hidden locally."
-                    confirmLabel="Move to trash"
-                    destructive
-                    dryRun={() => batchTrash(selection, true)}
-                    onConfirm={() => trash.mutate(selection, {onSuccess: clear})}
                 />
                 <BatchConfirmDialog
                     trigger={

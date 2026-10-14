@@ -5,14 +5,11 @@ import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover'
 import {Button} from '@/components/ui/button'
 import {RevokePublicLinkButton, RevokeShareButton} from '@/components/shares/RevokeControls'
 import {useOutgoingShares} from '@/hooks/useShares'
-import {usePublicShares} from '@/hooks/usePublicShares'
-import {publicShareUrl} from '@/api/publicShares'
+import {usePublicShares, usePublicShareUrl} from '@/hooks/usePublicShares'
 import {outgoingEntry, ShareInfoPopover} from '@/components/shares/ShareInfoPopover'
 import {PublicShareInfoPopover} from '@/components/shares/PublicShareInfoPopover'
 import {ShareStatusBadge} from '@/components/shares/ShareStatusBadge'
-import {useAuthStore} from '@/stores/auth'
-import {GLOBAL_DOMAIN} from '@/lib/constants'
-import {cn, TagPath} from '@/lib/utils'
+import {cn, copyText, TagPath} from '@/lib/utils'
 import type {ShareResponse} from '@/lib/types'
 import type {PublicShareSummary} from '@/api/publicShares'
 
@@ -77,8 +74,7 @@ export function TagShareBadge({
     info: TagShareInfo
     onShare: (path: string) => void
 }) {
-    const username = useAuthStore((s) => s.user?.username ?? '')
-    const domain = useAuthStore((s) => s.instance) || GLOBAL_DOMAIN
+    const shareUrl = usePublicShareUrl()
     const hasOwn = info.own.length > 0 || info.links.length > 0
     if (!hasOwn && !info.inherited) return null
 
@@ -147,9 +143,9 @@ export function TagShareBadge({
                         <button
                             className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
                             title="Copy link"
-                            onClick={() => {
-                                void navigator.clipboard.writeText(publicShareUrl(domain, username, l.token))
-                                toast.success('Link copied')
+                            onClick={async () => {
+                                if (await copyText(shareUrl(l.token))) toast.success('Link copied')
+                                else toast.error('Could not copy the link.')
                             }}
                         >
                             <Copy className="h-3.5 w-3.5"/>

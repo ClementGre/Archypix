@@ -27,6 +27,7 @@ import {SortMenu} from './SortMenu'
 import {ViewMenu} from './ViewMenu'
 import {DateFilter} from './DateFilter'
 import {SelectionActionBar} from './batch/SelectionActionBar'
+import {TrashShortcut} from './batch/TrashShortcut'
 import {ReferenceBar} from './fix/ReferenceBar'
 import {toast} from 'sonner'
 
@@ -268,9 +269,11 @@ export function PhotoGrid() {
     // padded scrollport leaves a strip of scrolling photos above it. Here the padding scrolls away
     // instead, and headers bleed back out of it horizontally (`PAD_ROOT`). `min-h-full` keeps the
     // click-to-clear target covering the whole viewport even when the grid is short.
+    // Below md the document scrolls under the app bar: headers pin beneath it, `isolate` keeps them under it.
     const body = (
         <div className="md:h-full md:overflow-y-auto">
-            <div className="min-h-full p-3" onMouseDown={(e) => e.target === e.currentTarget && clear()}>
+            <div className="isolate min-h-full p-3 max-md:[--sticky-base:var(--spacing-topbar)]"
+                 onMouseDown={(e) => e.target === e.currentTarget && clear()}>
                 {isBrowsing ? (
                     <HierarchyStream filters={filters}/>
                 ) : (
@@ -319,6 +322,7 @@ export function PhotoGrid() {
                 </div>
             </div>
             <TagDropDialog drop={drop} onClose={() => setDrop(null)}/>
+            <TrashShortcut/>
             {referenceActive ? <ReferenceBar/> : <SelectionActionBar selectionFilter={view.selectionFilter} collapsedGroups={collapsedGroups}/>}
         </>
     )

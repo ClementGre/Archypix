@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import type {PictureDetail, PictureListItem, PictureVariant} from '@/lib/types'
 import {apiErrorMessage} from '@/api/client'
-import {cn, formatBytes, isAudioMime, isPlayableMedia} from '@/lib/utils'
+import {cn, formatBytes, isAudioMime, isPlayableMedia, isTrashShortcut} from '@/lib/utils'
 import {usePictureSource} from './pictureSource'
 import {MediaPlayer} from './MediaPlayer'
 import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
@@ -438,7 +438,7 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
             else if (e.key === 'ArrowRight') goNext()
                 // Delete / ⌘+Backspace trashes the picture currently in view, no confirmation —
             // a deliberate keyboard shortcut doesn't need the mouse-click confirm gate.
-            else if (!source.readOnly && !current.deleted_at && (e.key === 'Delete' || (e.metaKey && e.key === 'Backspace'))) {
+            else if (!source.readOnly && !current.deleted_at && isTrashShortcut(e)) {
                 e.preventDefault()
                 trashAndAdvance()
             }

@@ -1,7 +1,16 @@
+import {useCallback} from 'react'
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
-import {queryKeys} from '@/lib/constants'
+import {GLOBAL_DOMAIN, queryKeys} from '@/lib/constants'
+import {useAuthStore} from '@/stores/auth'
 import type {PublicShareBody} from '@/api/publicShares'
-import {createPublicShare, listPublicShares, revokePublicShare, trashContributions, updatePublicShare,} from '@/api/publicShares'
+import {
+    createPublicShare,
+    listPublicShares,
+    publicShareUrl,
+    revokePublicShare,
+    trashContributions,
+    updatePublicShare,
+} from '@/api/publicShares'
 
 /** The owner's public links (feature 27 management surface). */
 export function usePublicShares() {
@@ -9,6 +18,13 @@ export function usePublicShares() {
         queryKey: queryKeys.publicShares(),
         queryFn: listPublicShares,
     })
+}
+
+/** Builds the signed-in owner's public link for a share token. */
+export function usePublicShareUrl() {
+    const username = useAuthStore((s) => s.user?.username ?? '')
+    const domain = useAuthStore((s) => s.instance) || GLOBAL_DOMAIN
+    return useCallback((token: string) => publicShareUrl(domain, username, token), [domain, username])
 }
 
 export function usePublicShareMutations() {

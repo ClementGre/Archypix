@@ -1,6 +1,6 @@
-import {useEffect, useMemo, useState} from 'react'
+import {useMemo, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
-import {useQuery, useQueryClient} from '@tanstack/react-query'
+import {useQuery} from '@tanstack/react-query'
 import {toast} from 'sonner'
 import {
     AlertTriangle,
@@ -831,28 +831,6 @@ export function SelectionPanel() {
     // selection on the view change and re-selects the target once the restored grid is in, so bridge
     // that gap here to keep the target shown rather than briefly blanking the sidebar (§8).
     const pendingLand = useSelectionStore((s) => s.pendingLand)
-
-    const [sp] = useSearchParams()
-    const queryClient = useQueryClient()
-    const {trash} = useTrashMutations()
-
-    // Delete / ⌘+Backspace trashes the single selected picture directly, no confirmation. The
-    // Lightbox handles the same shortcut itself while open, so skip here to avoid double-firing.
-    useEffect(() => {
-        if (!single || sp.has('view')) return
-        const id = includeIds[0]
-        const onKey = (e: KeyboardEvent) => {
-            const t = e.target as HTMLElement | null
-            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-            if (e.key !== 'Delete' && !(e.metaKey && e.key === 'Backspace')) return
-            const picture = queryClient.getQueryData<PictureDetail>(queryKeys.picture(id))
-            if (picture?.deleted_at) return
-            e.preventDefault()
-            trash.mutate(id)
-        }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
-    }, [single, sp, includeIds, queryClient, trash])
 
     if (referenceActive && referenceTargetIds.length > 0) {
         // Single target: keep its full sidebar (its fix pane shows reference mode inline). Multiple:

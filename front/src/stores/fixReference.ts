@@ -1,5 +1,5 @@
 import {create} from 'zustand'
-import type {FixMode} from '@/lib/types'
+import type {FixMode, PictureListItem} from '@/lib/types'
 
 /**
  * The two-step selection model of the fix tools (feature 30 §7). Pressing **Pick references**
@@ -17,6 +17,8 @@ interface FixReferenceState {
     field: FixMode | null
     /** The stashed target picture ids the derived value applies to. */
     targetIds: string[]
+    /** The targets' grid rows, snapshotted on entry: navigating to find references unloads them. */
+    targetItems: PictureListItem[]
     /** The chosen reference picture ids (persist across tag navigation while the phase is on). */
     refIds: string[]
     /** URL search string captured on entry, restored on exit (the phase lets the user freely
@@ -27,7 +29,7 @@ interface FixReferenceState {
     entrySig: string | null
 
     /** Enter the phase for a field, stashing the target ids + the URL/signature to restore on exit. */
-    enter: (field: FixMode, targetIds: string[], savedSearch: string, entrySig: string) => void
+    enter: (field: FixMode, targetIds: string[], targetItems: PictureListItem[], savedSearch: string, entrySig: string) => void
     /** Toggle a reference in/out of the set. */
     toggleRef: (id: string) => void
     clearRefs: () => void
@@ -39,12 +41,13 @@ export const useFixReference = create<FixReferenceState>((set, get) => ({
     active: false,
     field: null,
     targetIds: [],
+    targetItems: [],
     refIds: [],
     savedSearch: null,
     entrySig: null,
 
-    enter: (field, targetIds, savedSearch, entrySig) =>
-        set({active: true, field, targetIds, refIds: [], savedSearch, entrySig}),
+    enter: (field, targetIds, targetItems, savedSearch, entrySig) =>
+        set({active: true, field, targetIds, targetItems, refIds: [], savedSearch, entrySig}),
 
     toggleRef: (id) => {
         const {refIds} = get()
@@ -53,5 +56,5 @@ export const useFixReference = create<FixReferenceState>((set, get) => ({
 
     clearRefs: () => set({refIds: []}),
 
-    cancel: () => set({active: false, field: null, targetIds: [], refIds: [], savedSearch: null, entrySig: null}),
+    cancel: () => set({active: false, field: null, targetIds: [], targetItems: [], refIds: [], savedSearch: null, entrySig: null}),
 }))

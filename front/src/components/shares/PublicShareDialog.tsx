@@ -2,8 +2,8 @@ import {useEffect, useState} from 'react'
 import {CalendarClock, Link2} from 'lucide-react'
 import {toast} from 'sonner'
 import {apiErrorMessage} from '@/api/client'
-import {TagPath} from '@/lib/utils'
-import {usePublicShareMutations} from '@/hooks/usePublicShares'
+import {copyText, TagPath} from '@/lib/utils'
+import {usePublicShareMutations, usePublicShareUrl} from '@/hooks/usePublicShares'
 import type {PublicShareBody, PublicShareSummary} from '@/api/publicShares'
 import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
@@ -40,6 +40,7 @@ export function PublicShareDialog({
     const open = openProp ?? internalOpen
     const setOpen = onOpenChange ?? setInternalOpen
     const {create, update} = usePublicShareMutations()
+    const shareUrl = usePublicShareUrl()
 
     const [tag, setTag] = useState(share?.tag_path ?? initialTag ?? '')
     const [name, setName] = useState(share?.name ?? '')
@@ -110,14 +111,27 @@ export function PublicShareDialog({
             conv_future: convFuture,
         }
         try {
-            if (editing) await update.mutateAsync({id: share!.id, body})
-            else await create.mutateAsync(body)
-            toast.success(editing ? 'Public share link updated.' : 'Public share link created.')
-            if (!editing) reset()
+            if (editing) {
+                await update.mutateAsync({id: share!.id, body})
+                toast.success('Public share link updated.')
+            } else {
+                const url = shareUrl((await create.mutateAsync(body)).token)
+                reset()
+                void announceCreated(url)
+            }
             setOpen(false)
         } catch (e) {
             toast.error(apiErrorMessage(e))
         }
+    }
+
+    // The clipboard can refuse once the request outlives the click's user activation: offer a Copy action then.
+    const announceCreated = async (url: string) => {
+        const copied = await copyText(url)
+        toast.success(copied ? 'Public share link created and copied.' : 'Public share link created.', {
+            description: url,
+            action: copied ? undefined : {label: 'Copy', onClick: () => void copyText(url)},
+        })
     }
 
     return (
