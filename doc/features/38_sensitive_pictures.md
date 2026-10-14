@@ -2,7 +2,8 @@
 
 ## 0. Status
 
-Spec only — nothing built.
+Implemented (migration `0022_sensitive_pictures`). WebDAV filtering is postponed (§2.1). Deviations
+from this spec are listed in §12.
 
 ## 1. Overview & goals
 
@@ -111,16 +112,18 @@ A small `sensitive` Zustand store, **not persisted**:
 
 ## 5. Derivation & filter (backend)
 
-Per request, load the caller's flagged paths once
-(`SELECT tag_path FROM tag_metadata WHERE user_id = $1 AND sensitive` — a PK-prefix scan) and bind
-them as `ltree[]`:
+One SQL fragment, joined against the row holder's flagged rows, serves both the filter and the
+derived field:
 
 ```sql
-EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ $flagged)  -- ltree <@ ltree[]
+EXISTS (SELECT 1 FROM tags t JOIN tag_metadata m
+          ON m.user_id = p.local_user_id AND m.sensitive AND nlevel(m.tag_path) > 0
+         AND t.tag_path <@ m.tag_path
+        WHERE t.picture_id = p.id)
 ```
 
-- **Derived field.** `sensitive: bool` on `PictureListItem` and `PictureDetail`, like `has_gps`. An
-  empty `$flagged` short-circuits to `false` with no subquery.
+- **Derived field.** `sensitive: bool` on `PictureListItem` and `PictureDetail`, like `has_gps`,
+  computed per page by `PictureRepository::sensitive_ids` (one query over the page's ids).
 - **Filter.** `ScopeParams.sensitive: PresenceFilter` (`any` default | `present` | `missing`) → a
   `PictureListFilter.sensitive` arm, AND-composed like `gps`. Shared by the flat and hierarchy filter
   kinds, so `GET /pictures`, every batch endpoint and the share-warning count (§7) speak it.
@@ -132,8 +135,7 @@ EXISTS (SELECT 1 FROM tags t WHERE t.picture_id = p.id AND t.tag_path <@ $flagge
 The backend applies `sensitive=missing` only when the request carries it; it is a plain, stateless
 filter, never inferred from the user's mode. The client sends it when its **effective** mode is
 Hidden — the stored setting, minus the tab's show-all override, minus the §3.2 flagged-scope
-exception. The backend's only extra read is the flagged-path list above, which the derived field
-needs anyway.
+exception. The backend never reads `user_settings` here; its only extra read is the join above.
 
 ## 6. Frontend surfaces
 
@@ -184,7 +186,8 @@ ALTER TABLE user_settings
 
 - `GET /tags` `meta.sensitive`; `PUT /tags/meta` accepts `sensitive`.
 - `GET`/`PATCH /settings` gain `sensitive_display_mode`.
-- `PictureListItem.sensitive`, `PictureDetail.sensitive` — authenticated and public endpoints.
+- `PictureListItem.sensitive`, `PictureDetail.sensitive` (+ `blurhash`, so a veiled cover has its
+  placeholder) — authenticated and public endpoints.
 - `sensitive=any|present|missing` on `GET /pictures` and in `ScopeParams` (selections, aggregates).
 
 ## 9. Edge cases
@@ -202,30 +205,50 @@ ALTER TABLE user_settings
 
 ## 10. Doc updates
 
-- [ ] `01_GENERAL_SPECIFICATIONS.md §1` — tag metadata can mark a subtree sensitive (viewer curtain).
-- [ ] `features/34_tag_metadata.md §2` — the second named exception (listing derivation + filter).
-- [ ] `06_API_REFERENCE.md` — §6.1 settings, §6.3 `sensitive` field + filter, §6.7 tag meta,
+- [x] `01_GENERAL_SPECIFICATIONS.md §1` — tag metadata can mark a subtree sensitive (viewer curtain).
+- [x] `features/34_tag_metadata.md §2` — the second named exception (listing derivation + filter).
+- [x] `06_API_REFERENCE.md` — §6.1 settings, §6.3 `sensitive` field + filter, §6.7 tag meta,
   public-share listing/detail.
-- [ ] `05_FRONTEND_ARCHITECTURE.md` — §5 the `sensitive` store and derived param, §7 the veil, TopBar
+- [x] `05_FRONTEND_ARCHITECTURE.md` — §5 the `sensitive` store and derived param, §7 the veil, TopBar
   chip, Settings, Edit tag dialog.
-- [ ] `features/27_public_shares.md §15` — veiled sensitive pictures on public pages.
-- [ ] `99_ROADMAP.md` — entry moved to Done; WebDAV filtering stays under Later.
+- [x] `features/27_public_shares.md §15` — veiled sensitive pictures on public pages.
+- [x] `99_ROADMAP.md` — entry moved to Done; WebDAV filtering stays under Later.
 
 ## 11. Work breakdown
 
-1. [ ] Migration — `tag_metadata.sensitive`, `sensitive_display_mode` enum, `user_settings` column.
-2. [ ] `TagMetadataRepository` — the field in upsert/list; `flagged_paths(user_id)`.
-3. [ ] Listing — flagged paths once per request, derived `sensitive` on list item and detail,
-   `ScopeParams.sensitive` → `PictureListFilter` arm; public listing/detail against the owner.
-4. [ ] Settings API field; `GET`/`PUT` tag meta field.
-5. [ ] Front: `sensitive` store, render-precedence hook, veil + Redacted tile + marker in the shared
+1. [x] Migration — `tag_metadata.sensitive`, `sensitive_display_mode` enum, `user_settings` column.
+2. [x] `TagMetadataRepository` — the field in upsert/list; root rejected at the patch.
+3. [x] Listing — one `SENSITIVE_EXISTS` fragment for the filter arm and `sensitive_ids` (§12),
+   derived `sensitive` on list item and detail, `ScopeParams.sensitive` → `PictureListFilter`;
+   public listing/detail against the owner.
+4. [x] Settings API field; `GET`/`PUT` tag meta field.
+5. [x] Front: `sensitive` store, render-precedence hook, veil + Redacted tile + marker in the shared
    image path; `CoverThumb` gating; video guard.
-6. [ ] Front: effective-mode `sensitive=missing` in the gallery/selection filter builder with the
+6. [x] Front: effective-mode `sensitive=missing` in the gallery/selection filter builder with the
    flagged-scope exception (§3.2, §5.1).
-7. [ ] Front: lightbox Reveal / Hide again + show-all start; TopBar countdown chip; Settings mode +
+7. [x] Front: lightbox Reveal / Hide again + show-all start; TopBar countdown chip; Settings mode +
    show-all; details-panel "via" row.
-8. [ ] Front: Edit tag dialog checkbox (inherited state, reset wording); tag-tree lock icon.
-9. [ ] Front: share-dialog warnings; public pages (Blurred default, override in header).
-10. [ ] Tests: derivation (ancestor flag, rule/`incoming_share` sources, a flagged `SharedToMe`
-    node), `sensitive` filter through selection resolution, prune-if-default with the new field,
-    public listing flagged against the owner.
+8. [x] Front: Edit tag dialog checkbox (inherited state, reset wording); tag-tree lock icon.
+9. [x] Front: share-dialog warnings; public pages (Blurred default, override in header).
+10. [x] Tests (`back/tests/sensitive_pictures.rs`): derivation across a subtree and a `rule`-source
+    tag, flags scoped to the row holder, root rejection and prune-on-unflag, the presence filter on the
+    listing, Hidden *select all* vs explicit ids through selection resolution, the settings default and
+    patch. The veil itself is frontend-only and covered by the build (34 §15.12).
+
+## 12. Deviations taken while implementing
+
+- **Derivation by join, not a preloaded path list.** §5 first bound the caller's flagged paths as an
+  `ltree[]`. Joining `tag_metadata` on `p.local_user_id` instead keeps `PictureListFilter` free of a
+  resolution step (selections, counts and the public listing need no extra plumbing) and makes "whose
+  flags" automatic — the row holder's.
+- **The root is rejected at the patch** (`400`), and the SQL also skips `nlevel = 0` rows, since
+  `'' @> anything` would veil the whole library.
+- **A sensitive change is flushed at once.** The §4.1 queue debounces for 60 s; a flag change from the
+  tag dialogs flushes immediately and invalidates the picture and hierarchy lists.
+- **`blurhash` on the picture detail**, so a veiled tag cover (which only has a detail) renders the
+  Blurred placeholder instead of falling back to Redacted.
+- **One wire scope arm.** The frontend's three copies of the scope/presence → query mapping (list,
+  hierarchy browse, selections) became `lib/scopeParams.ts` with a shared `ScopeParams` type, which is
+  where `sensitive` is added once.
+- **Settings patch struct.** `UserSettingsPatch` replaces the positional `Option` arguments through
+  the settings API, service and repository.

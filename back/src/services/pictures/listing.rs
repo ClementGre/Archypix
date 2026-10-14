@@ -32,7 +32,14 @@ pub async fn get_picture_details(
         return Err(AppError::NotFound);
     }
     let versions = PictureVersionRepository::list_by_picture(db, picture_id).await?;
-    Ok(PictureDetails { picture, versions })
+    let sensitive = PictureRepository::sensitive_ids(db, &[picture_id])
+        .await?
+        .contains(&picture_id);
+    Ok(PictureDetails {
+        picture,
+        versions,
+        sensitive,
+    })
 }
 
 /// Build the flat `TagPredicate` from the public list params (§6.3). Returns `None` when no flat
@@ -114,6 +121,7 @@ pub async fn list_pictures(
         gps: params.gps,
         capture_date: params.capture_date,
         missing_any: params.missing_any,
+        sensitive: params.sensitive,
         near_time: params.near_time,
         near_lat: params.near_lat,
         near_lng: params.near_lng,
@@ -180,9 +188,13 @@ pub async fn list_with_filter(
         None
     };
 
+    let ids: Vec<Uuid> = pictures.iter().map(|p| p.id).collect();
+    let sensitive = PictureRepository::sensitive_ids(db, &ids).await?;
+
     let items = pictures
         .into_iter()
         .map(|pic| PictureListItem {
+            sensitive: sensitive.contains(&pic.id),
             id: pic.id,
             creator: pic.display_creator(&owner_username, &global_domain),
             filename: pic.filename,
@@ -430,6 +442,7 @@ mod tests {
             gps: Default::default(),
             capture_date: Default::default(),
             missing_any: false,
+            sensitive: Default::default(),
             near_time: None,
             near_lat: None,
             near_lng: None,

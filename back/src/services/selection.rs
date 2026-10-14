@@ -41,6 +41,9 @@ pub struct ScopeParams {
     pub capture_date: PresenceFilter,
     #[serde(default)]
     pub missing_any: bool,
+    /// Sensitive presence (feature 38 §5.1): a Hidden-mode *select all* never reaches a veiled row.
+    #[serde(default)]
+    pub sensitive: PresenceFilter,
 }
 
 /// The flat gallery filter — the `GET /pictures` tag-set params. Tag lists are arrays here (JSON
@@ -179,6 +182,7 @@ fn filter_from(predicate: Option<TagPredicate>, scope: &ScopeParams) -> PictureL
         gps: scope.gps,
         capture_date: scope.capture_date,
         missing_any: scope.missing_any,
+        sensitive: scope.sensitive,
         ..Default::default()
     }
 }

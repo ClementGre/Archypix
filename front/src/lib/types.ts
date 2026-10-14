@@ -57,6 +57,8 @@ export interface PictureListItem {
     original_file_created_at: string | null
     /** Derived GPS presence (feature 29 §3) — owned + received. Drives highlight/scan without a fetch. */
     has_gps: boolean
+    /** At or under one of the holder's sensitive tags (feature 38) — the viewer veils it. */
+    sensitive: boolean
     /** Great-circle metres from `near_lat`/`near_lng`; present ONLY under `sort=geo_near` (§6). */
     distance_m?: number
     blurhash: string | null
@@ -81,6 +83,9 @@ export interface PictureListItem {
      */
     owner_reachable: boolean
 }
+
+/** What a small reference thumbnail needs (fix panels, bulk preview) — veiled when sensitive. */
+export type ThumbRef = Pick<PictureListItem, 'id' | 'thumbnail_url' | 'orientation' | 'blurhash' | 'sensitive'>
 
 export interface PictureListResponse {
     total: number
@@ -146,6 +151,10 @@ export interface PictureDetail {
     copy_source_owner_username: string | null
     copy_source_owner_instance: string | null
     copy_source_picture_id: string | null
+    /** BlurHash placeholder; `null` until the thumbnail worker runs. */
+    blurhash: string | null
+    /** At or under one of the holder's sensitive tags (feature 38). */
+    sensitive: boolean
     versions: PictureVersion[]
 }
 
@@ -199,6 +208,8 @@ export interface TagMeta {
     subtag_placement: TagSubtagPlacement | null
     grouping: Grouping
     webdav_dir_name: string | null
+    /** Veils every picture at or under this tag in the web viewer (feature 38). Never on the root. */
+    sensitive: boolean
 }
 
 /** Live-or-trashed counts and derived date range for one tag path (§4). */
@@ -300,6 +311,8 @@ export interface PictureFilters {
     gps?: PresenceFilter
     captureDate?: PresenceFilter
     missingAny?: boolean
+    /** Sensitive presence (feature 38 §5.1) — derived from the effective display mode, never URL state. */
+    sensitive?: PresenceFilter
     /** Proximity-sort references (feature 29 §6): required by `sort=time_near` / `geo_near`. */
     nearTime?: string | null
     nearLat?: number | null
@@ -480,6 +493,8 @@ export type RulePredicate =
 // ---------- Calendar segmentation config (feature 20 §3) ----------
 
 export type Hemisphere = 'north' | 'south'
+
+export type SensitiveDisplayMode = 'visible' | 'blurred' | 'redacted' | 'hidden'
 export type PartBound = 'start' | 'end' | 'range'
 export type PartCase = 'lower' | 'upper' | 'pascal'
 
@@ -597,6 +612,8 @@ export interface UserSettings {
     trash_retention_days: number
     /** Season-grouping convention (feature 34 §3) — the *viewer's*, applied to every photo. */
     hemisphere: Hemisphere
+    /** How the web viewer renders sensitive pictures (feature 38 §3). */
+    sensitive_display_mode: SensitiveDisplayMode
     created_at: string
     updated_at: string
 }
@@ -890,11 +907,31 @@ export interface TrashResponse {
 // ---------- Batch editing (feature 14) ----------
 
 /**
+ * The scope/date/presence arm shared by the list, browse and both `PictureFilter` kinds — mirrors
+ * the backend `ScopeParams`. Built from `PictureFilters` by `scopeParams`.
+ */
+export interface ScopeParams {
+    owned_only?: boolean
+    shared_with_me?: boolean
+    /** Trash-membership state: `exclude` (default) | `include` | `only`. Omitted when `exclude`. */
+    trash?: TrashFilter
+    captured_after?: string
+    captured_before?: string
+    /** Presence filters (feature 29 §4): `any` (omit) | `present` | `missing`. */
+    gps?: PresenceFilter
+    capture_date?: PresenceFilter
+    /** OR convenience; 400 if combined with a non-`any` `gps`/`capture_date`. */
+    missing_any?: boolean
+    /** Sensitive presence (feature 38 §5.1): a Hidden-mode client sends `missing`. */
+    sensitive?: PresenceFilter
+}
+
+/**
  * The homogenized picture filter (§3): the flat gallery or a hierarchy directory. Mirrors the
  * backend `PictureFilter` enum (tagged on `kind`). Scope/date params are shared by both kinds.
  */
 export type PictureFilter =
-    | {
+    | ({
     kind: 'flat'
     include_tags?: string[]
     exclude_tags?: string[]
@@ -902,28 +939,12 @@ export type PictureFilter =
     exact?: string[]
     match?: 'all' | 'any'
     untagged?: boolean
-    owned_only?: boolean
-    shared_with_me?: boolean
-    trash?: TrashFilter
-    captured_after?: string
-    captured_before?: string
-    gps?: PresenceFilter
-    capture_date?: PresenceFilter
-    missing_any?: boolean
-}
-    | {
+} & ScopeParams)
+    | ({
     kind: 'hierarchy'
     hierarchy_id: string
     path: string
-    owned_only?: boolean
-    shared_with_me?: boolean
-    trash?: TrashFilter
-    captured_after?: string
-    captured_before?: string
-    gps?: PresenceFilter
-    capture_date?: PresenceFilter
-    missing_any?: boolean
-}
+} & ScopeParams)
 
 /**
  * The selection descriptor (§2). Effective set = `(resolve(query) ∪ include_ids) \ exclude_ids`,

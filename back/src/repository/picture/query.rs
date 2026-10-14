@@ -2,6 +2,7 @@ use crate::domain::hierarchy::TagPredicate;
 use crate::domain::picture::Picture;
 use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{PgPool, Postgres};
+use std::collections::HashSet;
 use uuid::Uuid;
 use super::*;
 
@@ -61,6 +62,22 @@ impl PictureRepository {
         };
 
         Ok((items, total))
+    }
+
+    /// The subset of `ids` that are sensitive for the user holding each row (feature 38 §5).
+    #[tracing::instrument(skip(db, ids), fields(count = ids.len()))]
+    pub async fn sensitive_ids(db: &PgPool, ids: &[Uuid]) -> Result<HashSet<Uuid>, AppError> {
+        if ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut q = sqlx::QueryBuilder::<Postgres>::new("SELECT p.id FROM pictures p WHERE p.id = ANY(");
+        q.push_bind(ids).push("::uuid[]) AND ").push(SENSITIVE_EXISTS);
+        let rows: Vec<Uuid> = q
+            .build_query_scalar()
+            .fetch_all(db)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Count pictures matching `filter` (no pagination). Used by the hierarchy `tree` endpoint's
@@ -189,6 +206,15 @@ impl PictureRepository {
                 PresenceFilter::Missing => {
                     q.push(" AND p.captured_at IS NULL");
                 }
+            }
+        }
+        match filter.sensitive {
+            PresenceFilter::Any => {}
+            PresenceFilter::Present => {
+                q.push(" AND ").push(SENSITIVE_EXISTS);
+            }
+            PresenceFilter::Missing => {
+                q.push(" AND NOT ").push(SENSITIVE_EXISTS);
             }
         }
         // A proximity sort is meaningless for rows missing its field — exclude them entirely

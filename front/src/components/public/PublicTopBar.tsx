@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {UploadDialog} from '@/components/photos/UploadDialog'
 import {usePublicShare} from '@/components/public/context'
+import {ShowAllChip} from '@/components/photos/SensitiveVeil'
 import {usePublicUploadSource} from '@/components/public/publicUploadSource'
 
 /**
@@ -137,6 +138,7 @@ export function PublicTopBar() {
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center gap-1 sm:gap-2">
+                <ShowAllChip/>
                 {perms.allow_upload && !isOwner && (
                     <Button size="sm" variant="secondary" onClick={() => setUploadOpen(true)}>
                         <Upload className="mr-1.5 h-4 w-4"/> Upload

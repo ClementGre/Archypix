@@ -79,7 +79,7 @@ export function NewTagDialog({
 
     const submit = () => {
         if (invalid) return
-        write(draftToPatch(path, draft))
+        write(draftToPatch(path, draft), {now: draft.sensitive})
         toast.success(`Created ${TagPath.toDisplay(path)}`)
         onCreated?.(path)
         onOpenChange(false)

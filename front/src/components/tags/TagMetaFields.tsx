@@ -2,7 +2,7 @@
 // `NewTagDialog` — so a tag can be configured at creation time instead of created then edited.
 
 import type {ReactNode} from 'react'
-import {AlertTriangle, Calendar as CalendarIcon, Check, RotateCcw} from 'lucide-react'
+import {AlertTriangle, Calendar as CalendarIcon, Check, Lock, RotateCcw} from 'lucide-react'
 import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {Label} from '@/components/ui/label'
@@ -29,6 +29,7 @@ export interface TagMetaDraft {
     showWhenEmpty: boolean
     webdavDirName: string
     cover: string | null
+    sensitive: boolean
 }
 
 /** The API speaks naive timestamps; the picker wants `YYYY-MM-DDTHH:MM:SS`. */
@@ -46,6 +47,7 @@ export function draftFromMeta(meta: TagMeta | null | undefined, showWhenEmpty = 
         showWhenEmpty: meta?.show_when_empty ?? showWhenEmpty,
         webdavDirName: meta?.webdav_dir_name ?? '',
         cover: meta?.cover_picture_id ?? null,
+        sensitive: meta?.sensitive ?? false,
     }
 }
 
@@ -62,6 +64,7 @@ export function draftToPatch(tagPath: string, draft: TagMetaDraft): TagMetaPatch
         show_when_empty: draft.showWhenEmpty,
         cover_picture_id: draft.cover,
         webdav_dir_name: draft.webdavDirName.trim() || null,
+        sensitive: draft.sensitive,
     }
 }
 
@@ -164,15 +167,17 @@ function DateOverrideField({label, value, derived, onChange}: {
     )
 }
 
-/** Everything but the display name: description, colour, cover, date overrides, empty visibility and
- *  the WebDAV folder name. */
-export function TagMetaFields({draft, onChange, label, derived}: {
+/** Everything but the display name: description, colour, cover, date overrides, empty visibility,
+ *  the WebDAV folder name and the sensitive flag. */
+export function TagMetaFields({draft, onChange, label, derived, sensitiveInheritedFrom}: {
     draft: TagMetaDraft
     onChange: (patch: Partial<TagMetaDraft>) => void
     /** The ltree leaf label a blank name or folder name falls back to. */
     label: string
     /** Derived MIN/MAX(captured_at); a tag with no photos yet has neither. */
     derived?: { from: string | null; to: string | null }
+    /** A flagged ancestor (display form): the flag is inherited and cannot be cleared here (38 §2). */
+    sensitiveInheritedFrom?: string | null
 }) {
     return (
         <>
@@ -240,6 +245,22 @@ export function TagMetaFields({draft, onChange, label, derived}: {
                 </div>
                 <Switch id="tag-show-empty" checked={draft.showWhenEmpty}
                         onCheckedChange={(showWhenEmpty) => onChange({showWhenEmpty})}/>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+                <div>
+                    <Label htmlFor="tag-sensitive" className="flex items-center gap-1">
+                        <Lock className="h-3 w-3"/> Sensitive
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                        {sensitiveInheritedFrom
+                            ? `Inherited from ${sensitiveInheritedFrom}.`
+                            : 'Veil its photos in this app until revealed. They are still shared and synced.'}
+                    </p>
+                </div>
+                <Switch id="tag-sensitive" checked={draft.sensitive || !!sensitiveInheritedFrom}
+                        disabled={!!sensitiveInheritedFrom}
+                        onCheckedChange={(sensitive) => onChange({sensitive})}/>
             </div>
 
             <div className="space-y-1.5">

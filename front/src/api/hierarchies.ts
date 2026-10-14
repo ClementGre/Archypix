@@ -6,8 +6,7 @@ import type {
     HierarchyTreeResponse,
     PictureListResponse,
     PictureVariant,
-    PresenceFilter,
-    TrashFilter,
+    ScopeParams,
     WebdavResponse,
 } from '@/lib/types'
 
@@ -85,21 +84,13 @@ export async function getHierarchyTree(
     return data
 }
 
-export interface BrowseParams {
+export interface BrowseParams extends ScopeParams {
     path?: string
     page: number
     page_size: number
     sort?: string
     order?: string
-    trash?: TrashFilter
-    owned_only?: boolean
-    shared_with_me?: boolean
-    captured_after?: string
-    captured_before?: string
-    /** Presence + proximity params (feature 29 §4, §6). */
-    gps?: PresenceFilter
-    capture_date?: PresenceFilter
-    missing_any?: boolean
+    /** Proximity params (feature 29 §6). */
     near_time?: string
     near_lat?: number
     near_lng?: number

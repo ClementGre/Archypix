@@ -1,5 +1,5 @@
 import {apiClient} from '@/api/client'
-import type {Hemisphere, StorageInfo, UserProfile, UserSettings, VersioningMode} from '@/lib/types'
+import type {Hemisphere, SensitiveDisplayMode, StorageInfo, UserProfile, UserSettings, VersioningMode} from '@/lib/types'
 
 export async function getSettings(): Promise<UserSettings> {
     const {data} = await apiClient.get<UserSettings>('/api/authenticated/settings')
@@ -16,6 +16,7 @@ export async function updateSettings(body: {
     versioning_mode?: VersioningMode
     trash_retention_days?: number
     hemisphere?: Hemisphere
+    sensitive_display_mode?: SensitiveDisplayMode
 }): Promise<UserSettings> {
     const {data} = await apiClient.patch<UserSettings>('/api/authenticated/settings', body)
     return data

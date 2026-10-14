@@ -86,6 +86,8 @@ pub struct PictureListFilter {
     /// "Any issue" OR convenience (§4): `(gps IS NULL OR captured_at IS NULL)`. Mutually exclusive
     /// with a non-`Any` `gps`/`capture_date` (rejected at construction).
     pub missing_any: bool,
+    /// Sensitive-presence filter (feature 38 §5): `missing` is how a Hidden-mode client drops them.
+    pub sensitive: PresenceFilter,
     /// Reference instant for `PictureSortField::TimeNear`.
     pub near_time: Option<NaiveDateTime>,
     /// Reference point for `PictureSortField::GeoNear`.
@@ -223,6 +225,12 @@ pub struct BatchExifCounts {
 }
 
 pub struct PictureRepository;
+
+/// `p` carries a tag at or under one of its **holder's** sensitive tags (feature 38 §5). The root
+/// row is never sensitive, but `'' @> anything`, so it is excluded defensively.
+const SENSITIVE_EXISTS: &str = "EXISTS (SELECT 1 FROM tags t JOIN tag_metadata m \
+     ON m.user_id = p.local_user_id AND m.sensitive AND nlevel(m.tag_path) > 0 \
+     AND t.tag_path <@ m.tag_path WHERE t.picture_id = p.id)";
 
 /// One row of an EXIF recheck worklist, carrying its keyset-cursor position.
 #[derive(Debug, sqlx::FromRow)]

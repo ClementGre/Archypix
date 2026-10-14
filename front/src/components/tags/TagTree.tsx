@@ -13,6 +13,7 @@ import {
     Images,
     Link2,
     Loader2,
+    Lock,
     MoreHorizontal,
     Pencil,
     Plus,
@@ -329,6 +330,9 @@ function TreeRow({
                         />
                     )}
                     <span className={cn('truncate', empty && 'text-muted-foreground')}>{node.name}</span>
+                    {node.meta?.sensitive && (
+                        <Lock className="h-3 w-3 shrink-0 text-red-500" aria-label="Sensitive"/>
+                    )}
                     {/* Two identically-named siblings must not be indistinguishable (§5) — that is
                         the one case where the ltree label still shows on the row. */}
                     {collisions.has(node.name) && (

@@ -39,6 +39,8 @@ import {FileTypeIcon} from './FileTypeIcon'
 import {OrientedContainImage} from './OrientedImage'
 import {ZoomableArea} from './ZoomableArea'
 import {LightboxCarousel} from './LightboxCarousel'
+import {RevealToggle, SensitiveBadge, VeilFill} from './SensitiveVeil'
+import {useVeil} from '@/hooks/useSensitive'
 
 // Keyboard shortcuts for the full-screen player (Vidstack `keyTarget="document"`, so they work
 // without focusing the player). ArrowLeft/Right are deliberately left unbound — the Lightbox uses
@@ -456,10 +458,12 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
     // otherwise the `large` thumbnail. `urlData.url` is null for non-thumbnailable formats.
     // Read-only shares without originals must never request the `original` variant (403); cap at `large`.
     const variant: PictureVariant = originalQuality && source.canDownload ? 'original' : 'large'
+    // A veiled picture's image is never fetched (feature 38 §3.1).
+    const veil = useVeil(current?.id ?? '', current?.sensitive)
     const {data: urlData, refetch: refetchUrl} = useQuery({
         queryKey: source.urlKey(current?.id ?? '', variant),
         queryFn: () => source.presign(current!.id, variant),
-        enabled: !!current,
+        enabled: !!current && veil === 'visible',
         staleTime: 10 * 60 * 1000,
     })
     // Re-presign a fresh URL if the current one expired / 403s while the image was rendered (§10).
@@ -539,8 +543,11 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                         {!current.owned && current.owner_deleted_at && (
                             <span className="rounded bg-destructive/80 px-1 text-[10px] font-medium text-white">Owner deleting</span>
                         )}
+                        {current.sensitive && <SensitiveBadge/>}
                     </span>
                 </div>
+
+                <RevealToggle id={current.id} sensitive={current.sensitive} className={ICON_BTN}/>
 
                 {/* View controls: original quality, carousel, top-bar pin, fullscreen. */}
                 {source.canDownload && (
@@ -641,8 +648,20 @@ export function Lightbox({items, gridVariant = 'medium', loadMore}: {
                     <ChevronLeft className="h-6 w-6"/>
                 </button>
 
-                <LightboxImage item={current} url={url} variant={shownVariant} loading={urlData === undefined}
-                               showRotate={showRotate} onError={onImgError}/>
+                {veil === 'visible' ? (
+                    <LightboxImage item={current} url={url} variant={shownVariant} loading={urlData === undefined}
+                                   showRotate={showRotate} onError={onImgError}/>
+                ) : (
+                    <OrientedContainImage
+                        alt={current.filename ?? ''}
+                        orientation={current.orientation}
+                        width={current.width}
+                        height={current.height}
+                        onClick={(e) => e.stopPropagation()}
+                        cover={<VeilFill veil={veil} blurhash={current.blurhash} orientation={current.orientation}
+                                         width={current.width} height={current.height} revealId={current.id}/>}
+                    />
+                )}
 
                 <button
                     onClick={(e) => {

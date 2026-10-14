@@ -1,7 +1,7 @@
 //! Tag metadata (feature 34): the decorative side-table row, its wire patch, and validation.
 //!
-//! Nothing in the engine reads these values — see 34_tag_metadata.md §2 for why, and §8 for the one
-//! WebDAV exception.
+//! Nothing in the engine reads these values — see 34_tag_metadata.md §2 for why, §8 for the WebDAV
+//! exception, and 38_sensitive_pictures.md §5 for the picture listing's `sensitive` read.
 
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -141,6 +141,9 @@ pub struct TagMetadata {
     pub subtag_placement: Option<TagSubtagPlacement>,
     pub grouping: Grouping,
     pub webdav_dir_name: Option<String>,
+    /// Veils every picture at or under this tag in the web viewer (feature 38). Never on the root.
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 impl TagMetadata {
@@ -232,6 +235,7 @@ pub struct TagMetadataPatch {
     pub grouping: Option<Grouping>,
     #[serde(default, deserialize_with = "present_field")]
     pub webdav_dir_name: Option<Option<String>>,
+    pub sensitive: Option<bool>,
 }
 
 /// serde helper: a present field (value or `null`) deserializes to `Some(...)`, an absent one to
@@ -291,6 +295,13 @@ impl TagMetadataPatch {
         }
         if let Some(v) = self.webdav_dir_name {
             base.webdav_dir_name = v.map(|s| validate_webdav_dir_name(&s)).transpose()?;
+        }
+        if let Some(v) = self.sensitive {
+            // `'' @> anything` — a sensitive root would veil the whole library.
+            if v && base.tag_path.is_empty() {
+                return Err("the root view cannot be sensitive".to_string());
+            }
+            base.sensitive = v;
         }
         if let (Some(from), Some(to)) = (base.date_from, base.date_to) {
             if from > to {
@@ -443,6 +454,17 @@ mod tests {
         .apply(base)
         .unwrap_err();
         assert!(err.contains("date_from"));
+    }
+
+    #[test]
+    fn sensitive_is_rejected_on_the_root_only() {
+        let root = patch(serde_json::json!({ "tag_path": "", "sensitive": true }))
+            .apply(TagMetadata::new(String::new()));
+        assert!(root.is_err());
+        let tag = patch(serde_json::json!({ "tag_path": "Medical", "sensitive": true }))
+            .apply(TagMetadata::new("Medical".into()))
+            .unwrap();
+        assert!(tag.sensitive && !tag.is_all_default());
     }
 
     // ── validators (§3.2) ─────────────────────────────────────────────────────

@@ -7,7 +7,6 @@ import {useEffect, useMemo, useRef, useState} from 'react'
 import {AlertTriangle, Loader2, MapPin, Users} from 'lucide-react'
 import {toast} from 'sonner'
 import {MapView} from '@/components/common/MapView'
-import {OrientedContainImage} from '@/components/photos/OrientedImage'
 import {useFixAnchors} from '@/hooks/useFixAnchors'
 import {type FixReceivedMode, useFixApply} from '@/hooks/useFixApply'
 import {useReferencePhase} from '@/hooks/useReferencePhase'
@@ -29,8 +28,8 @@ import {apiErrorMessage} from '@/api/client'
 import {cn} from '@/lib/utils'
 import {ReceivedModeToggle} from './ReceivedModeToggle'
 import {ApplyControls} from './ApplyControls'
-import {CancelReferencesButton, GpsAccuracyControl, NearbyReferenceSort, PickReferencesButton} from './fixShared'
-import type {PictureDetail} from '@/lib/types'
+import {CancelReferencesButton, GpsAccuracyControl, NearbyReferenceSort, PickReferencesButton, RefThumb} from './fixShared'
+import type {PictureDetail, ThumbRef} from '@/lib/types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -50,7 +49,7 @@ function gapLabel(a: string | null | undefined, b: string | null | undefined): {
 
 function AnchorThumb({label, anchor, loading, gap}: {
     label: string
-    anchor: { thumbnail_url: string | null; orientation: number | null } | null
+    anchor: ThumbRef | null
     loading: boolean
     gap: { text: string; ms: number } | null
 }) {
@@ -71,8 +70,7 @@ function AnchorThumb({label, anchor, loading, gap}: {
         <div className="flex flex-1 flex-col items-center gap-1">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
             <div className="relative h-14 w-14 overflow-hidden rounded bg-checkerboard ring-1 ring-sky-400/60">
-                {anchor.thumbnail_url &&
-                    <OrientedContainImage src={anchor.thumbnail_url} alt="" orientation={anchor.orientation} className="h-14 w-14"/>}
+                <RefThumb thumb={anchor} className="h-14 w-14"/>
             </div>
             {gap && (
                 <span className={cn('flex items-center gap-0.5 text-[10px]', far ? 'text-amber-500' : 'text-muted-foreground')}>

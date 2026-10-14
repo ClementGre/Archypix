@@ -294,6 +294,8 @@ pub struct BrowseQuery {
     pub capture_date: PresenceFilter,
     #[serde(default)]
     pub missing_any: bool,
+    #[serde(default)]
+    pub sensitive: PresenceFilter,
     pub near_time: Option<NaiveDateTime>,
     pub near_lat: Option<f64>,
     pub near_lng: Option<f64>,
@@ -320,6 +322,7 @@ pub async fn browse(
         gps: query.gps,
         capture_date: query.capture_date,
         missing_any: query.missing_any,
+        sensitive: query.sensitive,
         near_time: query.near_time,
         near_lat: query.near_lat,
         near_lng: query.near_lng,

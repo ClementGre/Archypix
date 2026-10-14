@@ -10,7 +10,10 @@ import {NumberInput} from '@/components/ui/number-input'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {type AccuracyChoice, formatAccuracy, resolveAccuracy} from '@/lib/gpsInterpolation'
 import {cn} from '@/lib/utils'
-import type {FixMode, PictureDetail} from '@/lib/types'
+import type {FixMode, PictureDetail, ThumbRef} from '@/lib/types'
+import {useVeil} from '@/hooks/useSensitive'
+import {OrientedContainImage} from '@/components/photos/OrientedImage'
+import {VeilFill} from '@/components/photos/SensitiveVeil'
 
 /** The accuracy row of a GPS fix: a metre input plus Suggested / Exact / Same-as-photo presets. */
 export function GpsAccuracyControl({choice, onChoice, suggested, source, sourceCount}: {
@@ -132,4 +135,13 @@ export function FixPane({title, children}: { title: string; children: ReactNode 
             <div className="space-y-3 pb-3">{children}</div>
         </div>
     )
+}
+
+/** A small reference thumbnail filling a sized `relative` box; veiled when sensitive (feature 38). */
+export function RefThumb({thumb, className}: { thumb: ThumbRef | null | undefined; className?: string }) {
+    const veil = useVeil(thumb?.id ?? '', thumb?.sensitive)
+    if (!thumb) return null
+    if (veil !== 'visible') return <VeilFill veil={veil} blurhash={thumb.blurhash} orientation={thumb.orientation}/>
+    if (!thumb.thumbnail_url) return null
+    return <OrientedContainImage src={thumb.thumbnail_url} alt="" orientation={thumb.orientation} className={className}/>
 }

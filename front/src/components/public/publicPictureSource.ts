@@ -40,6 +40,8 @@ function toDetail(id: string, d: PublicPictureDetail): PictureDetail {
         copy_source_owner_username: null,
         copy_source_owner_instance: null,
         copy_source_picture_id: null,
+        blurhash: d.blurhash,
+        sensitive: d.sensitive,
         versions: [],
     }
 }

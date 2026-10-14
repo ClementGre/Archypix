@@ -143,6 +143,9 @@ pub struct PictureListParams {
     pub capture_date: PresenceFilter,
     #[serde(default)]
     pub missing_any: bool,
+    /// `?sensitive=present|missing` (feature 38 §5.1) — a Hidden-mode client sends `missing`.
+    #[serde(default)]
+    pub sensitive: PresenceFilter,
     /// Proximity-sort reference points (feature 29 §6): required by `sort=time_near` / `geo_near`.
     /// `near_time` is a **naive** instant (no offset), compared against the naive `captured_at`
     /// column — matches the `captured_at` string the client reads back from a picture detail.
@@ -175,6 +178,8 @@ pub struct PictureListItem {
     /// **and** received rows (received GPS lives in the promoted columns). Drives client-side
     /// highlight-in-context and the fix-tools grid-local anchor scan without a round-trip.
     pub has_gps: bool,
+    /// At or under one of the holder's sensitive tags (feature 38 §5) — the web viewer veils it.
+    pub sensitive: bool,
     /// Great-circle distance in metres from the `near_lat`/`near_lng` reference, populated **only**
     /// under a `geo_near` sort (feature 29 §6) so the client can show a "N km away" badge. `None`
     /// for other sorts and for ungeotagged rows. The list item never exposes raw coordinates, so
@@ -225,6 +230,7 @@ pub struct PictureListResult {
 pub struct PictureDetails {
     pub picture: Picture,
     pub versions: Vec<PictureVersion>,
+    pub sensitive: bool,
 }
 
 /// One requested upload slot in a batch presign: a filename and, optionally, the client-computed

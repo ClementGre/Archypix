@@ -18,6 +18,7 @@ import {useUIStore} from '@/stores/ui'
 import {useUploadStore} from '@/stores/upload'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {logout} from '@/api/auth'
+import {ShowAllChip} from '@/components/photos/SensitiveVeil'
 import {cn} from '@/lib/utils'
 
 interface NavItem {
@@ -121,6 +122,7 @@ export function TopBar() {
             <div className="min-w-0 flex-1"/>
 
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+                <ShowAllChip/>
                 {isGallery && (
                     <Button
                         variant="ghost"

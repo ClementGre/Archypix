@@ -245,9 +245,10 @@ token is `404` (no oracle). The frontend reaches these after resolving the owner
 - `POST /api/public/shares/{token}/unlock` `{ password }` → `{ token }` — a short-lived `PublicShare` JWT
   presented as `Authorization: Bearer` on subsequent calls (password-gated shares only).
 - `GET /api/public/shares/{token}/pictures?page=&page_size=&thumbnail=` → the standard picture-list page
-  with presigned thumbnails. A **view-only** share omits `captured_at`.
+  with presigned thumbnails. A **view-only** share omits `captured_at`. `sensitive` is derived from
+  the **owner's** tags (feature 38 §7.1).
 - `GET /api/public/shares/{token}/pictures/{id}` → coverage-checked detail (view-only strips
-  captured/GPS/`exif_data`); includes the resolved `creator`.
+  captured/GPS/`exif_data`); includes the resolved `creator` and `sensitive`.
 - `GET /api/public/shares/{token}/pictures/{id}/url?variant=` → coverage-checked presign (`{ url }`);
   a view-only share presigns thumbnail variants only (`403` for `original`). Received pictures in
   coverage proxy to the real owner.
@@ -309,6 +310,7 @@ Get the current user's settings.
     versioning_mode: VersioningMode;
   trash_retention_days: number;   // days a trashed owned picture is kept before physical purge (default 30)
   hemisphere: "north" | "south";  // season-grouping convention (feature 34 §3); the viewer's, not the photo's
+  sensitive_display_mode: "visible" | "blurred" | "redacted" | "hidden"; // feature 38 §3 (default "blurred")
     created_at: string;
     updated_at: string;
 }
@@ -327,6 +329,7 @@ Update settings. Every field is optional; an omitted field keeps its current val
   versioning_mode ? : VersioningMode;
   trash_retention_days ? : number;  // 1–3650; 400 if out of range
   hemisphere ? : "north" | "south";
+  sensitive_display_mode ? : "visible" | "blurred" | "redacted" | "hidden";
 }
 ```
 
@@ -535,6 +538,8 @@ NULL. AND-composed |
 | `capture_date` | `"any" \| "present" \| "missing"` | `"any"` | Presence filter over `captured_at`. AND-composed |
 | `missing_any` | `boolean` | `false` | OR convenience: `(gps missing OR capture_date missing)`. **400** if combined with a non-`any` `gps`/
 `capture_date` |
+| `sensitive` | `"any" \| "present" \| "missing"` | `"any"` | Presence filter over the derived `sensitive` flag (feature 38 §5). A Hidden-mode
+client sends `missing`; the server never infers it from the user's setting |
 | `near_time` | `string` | — | **Naive** datetime (no offset, e.g. `2025-09-17T23:06:20`) reference for `sort=time_near`, compared against the naive
 `captured_at` — pass a picture's `captured_at` straight through (**400** if that sort is set without it) |
 | `near_lat` / `near_lng` | `number` | — | Reference point. Required for `sort=geo_near` (**400** if that sort is set without both); may also be given
@@ -565,6 +570,7 @@ interface PictureListItem {
     file_size: number | null;      // bytes
     original_file_created_at: string | null; // source file creation time at ingest (feature 30 §10); suggestion-only
     has_gps: boolean;              // derived gps_lat & gps_lng presence (owned + received) — feature 29 §3
+    sensitive: boolean;            // at or under one of the holder's sensitive tags — feature 38 §5
     distance_m?: number;           // great-circle metres from near_lat/near_lng; present whenever a
                                    // near_lat/near_lng reference is given (any sort), omitted otherwise
     blurhash: string | null;
@@ -611,6 +617,8 @@ Full picture details including version history.
     gps_alt: number | null;        // metres (i32)
     gps_accuracy_m: number | null; // horizontal error radius, metres (feature 36); null = unstated, 0 = exact
     orientation: number | null;    // EXIF orientation value (i16), 1–8
+    blurhash: string | null;
+    sensitive: boolean;            // as on the list item (feature 38 §5)
   exif_data: object;             // arbitrary EXIF fields (camera make/model, focal length, etc.);
                                  // for video, read-only tech metadata: duration_s, video_codec,
                                  // audio_codec, frame_rate. Video EXIF edits are DB-only (unsupported sync)
@@ -1139,7 +1147,7 @@ at app start and on a 5-minute interval.
 `TagMeta` mirrors the `tag_metadata` columns: `tag_path`, `display_name`, `description`,
 `cover_picture_id`, `color`, `date_from`, `date_to`, `show_when_empty`, `sort_index`,
 `children_order`, `children_order_desc`, `view_mode`, `subtag_placement`, `grouping`,
-`webdav_dir_name`.
+`webdav_dir_name`, `sensitive`.
 
 Ancestors are expanded server-side. Tags with no live pictures appear iff they carry
 `show_when_empty = true` or have trashed pictures — the client hides the latter unless the trash
@@ -1237,6 +1245,7 @@ carry dots, so they travel in the body rather than a URL segment.
         subtag_placement?: "top" | "in_sections" | null;
         grouping?: Record<GroupingField, GroupingKind>;  // keys and kinds are validated per field
         webdav_dir_name?: string | null; // no "/", no control chars, ≤255
+        sensitive?: boolean;            // veil the subtree in the web viewer (feature 38); 400 on the root
     }>;
 }
 ```
@@ -1910,7 +1919,8 @@ node wins" predicate and reuses the picture list machinery — the client only e
 **Query params:** `path` (default root) plus the same pagination/filter params as
 `GET /pictures`: `page`, `page_size`, `sort`, `order`, `trash`, `owned_only`,
 `shared_with_me`, `captured_after`, `captured_before`, `gps`, `capture_date`, `missing_any`,
-`near_time`, `near_lat`, `near_lng`, `thumbnail` (same presence/proximity semantics and 400s).
+`sensitive`, `near_time`, `near_lat`, `near_lng`, `thumbnail` (same presence/proximity semantics and
+400s).
 
 **Response `200`:** identical shape to `GET /pictures` (`{ total, page, page_size, items }`). A
 `static` directory (no direct files) returns an empty page.
@@ -1981,7 +1991,8 @@ type PictureFilter =
   trash?: "exclude" | "include" | "only";
       captured_after?: string; captured_before?: string;
       gps?: "any" | "present" | "missing"; capture_date?: "any" | "present" | "missing";
-      missing_any?: boolean }  // e.g. target "everything missing GPS" for a batch action
+      missing_any?: boolean;   // e.g. target "everything missing GPS" for a batch action
+      sensitive?: "any" | "present" | "missing" }  // Hidden mode: select-all skips veiled rows (feature 38)
   | { kind: "hierarchy"; hierarchy_id: string; path: string;
       /* + the same shared scope/date/presence params */ };
 ```

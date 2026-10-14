@@ -1,4 +1,4 @@
-use crate::domain::user_settings::{Hemisphere, UserSettings, VersioningMode};
+use crate::domain::user_settings::{UserSettings, UserSettingsPatch};
 use crate::repository::user_settings::UserSettingsRepository;
 use archypix_common::error::AppError;
 use sqlx::PgPool;
@@ -13,23 +13,14 @@ pub async fn get(db: &PgPool, user_id: Uuid) -> Result<UserSettings, AppError> {
 pub async fn update(
     db: &PgPool,
     user_id: Uuid,
-    versioning_mode: Option<VersioningMode>,
-    trash_retention_days: Option<i32>,
-    hemisphere: Option<Hemisphere>,
+    patch: &UserSettingsPatch,
 ) -> Result<UserSettings, AppError> {
-    if let Some(days) = trash_retention_days {
+    if let Some(days) = patch.trash_retention_days {
         if !(1..=3650).contains(&days) {
             return Err(AppError::BadRequest(
                 "trash_retention_days must be between 1 and 3650".to_string(),
             ));
         }
     }
-    UserSettingsRepository::upsert(
-        db,
-        user_id,
-        versioning_mode,
-        trash_retention_days,
-        hemisphere,
-    )
-    .await
+    UserSettingsRepository::upsert(db, user_id, patch).await
 }

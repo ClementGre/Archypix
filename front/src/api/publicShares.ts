@@ -57,6 +57,8 @@ export interface PublicPictureDetail {
     gps_alt?: number | null
     gps_accuracy_m?: number | null
     exif_data?: Record<string, unknown> | null
+    /** Against the owner's tags (feature 38 §7.1) — visitors see it blurred. */
+    sensitive: boolean
 }
 
 export interface PublicUploadSlot {
