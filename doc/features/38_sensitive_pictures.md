@@ -46,7 +46,9 @@ Out of scope: encryption, propagating the flag to share recipients, blocking sha
 ### 2.1 Rejected / postponed
 
 - **WebDAV — postponed** to a separate feature. Until then a hierarchy can `exclude` a flagged tag by
-  hand, with the 05 §5.4 caveat that a picture also tagged outside it still surfaces there.
+  hand: a **foreign** exclude (the flagged tag not under the mirror's `tagRoot` — the usual shape)
+  is a full picture-membership cut, so the picture leaves that mirror whatever else it carries. Only a
+  **sub-tag** exclude leaks, per the 05 §5.4 caveat. See 39 §5.4.
 - **Encryption.** Workers need plaintext (thumbnails, EXIF, `content_hash` dedup), recipients fetch
   blobs straight from the owner's backend via presigned URLs, and WebDAV serves bytes. End-to-end
   encryption would move thumbnailing client-side and break dedup and EXIF rules; server-held keys

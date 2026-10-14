@@ -4,6 +4,7 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 
 ## Next
 
+-    **Hierarchy write-back & projection** — write-back becomes a transition between node chains (`A_src \ A_dst` / `A_dst \ A_src`); the pipeline prunes manual tags a service also produces, reducing them to the minimal anchor its gates need (opt-in per service); `mirror.include` + `minDepth` for flat projections; `trashedDuplicate`; drop-node verification listing. See `features/39_hierarchy_writeback_and_projection.md`.
 -    **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots.
 
 ## Toward a real product (adoption, mobile, hosting)

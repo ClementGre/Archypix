@@ -107,12 +107,15 @@ What each one is, since that is not derivable from its headings. Use the grep ab
 - **32_webdav_file_modified_at** — `pictures.file_modified_at`, the bytes-only WebDAV last-modified.
 - **33_exif_read_path_and_engine_fallback** — EXIF *read* path: ExifTool dispatch + fallback, observed
   sync states.
-- **34_tag_metadata** — decorative `(user_id, tag_path)` side table. Substrate for 35 (spec-only).
+- **34_tag_metadata** — decorative `(user_id, tag_path)` side table. Substrate for 35.
 - **35_timeline_view** — structured browse over any tag subtree + the gallery filter-param rewrite
-  (spec-only; depends on 34).
+  (depends on 34).
 - **36_gps_accuracy** — `gps_accuracy_m` / `GPSHPositioningError`, fix-tool suggestion, and the
   `synced` metadata-only EXIF recheck that populates it.
 - **37_exiftool_engine_and_heif_orientation** — ExifTool as the only engine (process pool), HEIF
   orientation in `irot`/`imir` (the box writer), mirrored-orientation display.
 - **38_sensitive_pictures** — `tag_metadata.sensitive` viewer curtain: display modes, tab-scoped
   reveals, `sensitive` filter (WebDAV postponed).
+- **39_hierarchy_writeback_and_projection** — write-back as a node-chain transition, pipeline-side
+  pruning of manual tags a service also produces (gate-derived anchors),
+  `mirror.include`/`minDepth`, `trashedDuplicate`, drop-node verification listing (spec-only).
