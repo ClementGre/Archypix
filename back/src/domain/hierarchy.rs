@@ -191,7 +191,7 @@ impl NodeKind {
 }
 
 fn default_version() -> u32 {
-    3
+    HierarchyConfig::VERSION
 }
 fn default_write_back() -> bool {
     true
@@ -220,7 +220,7 @@ pub struct HierarchyConfig {
 impl Default for HierarchyConfig {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: Self::VERSION,
             safe_delete_mode: SafeDeleteMode::default(),
             naming: NamingStrategy::default(),
             write_back: true,
@@ -305,35 +305,13 @@ pub fn reuse_existing_case(candidate: &str, existing: &[String]) -> String {
 // ─── Validation ─────────────────────────────────────────────────────────────────
 
 impl HierarchyConfig {
+    /// The config schema version this backend writes (feature 39 §10).
+    pub const VERSION: u32 = 3;
+
     /// Validate the full config (§11). Pure; called by the service on create/patch.
     pub fn validate(&self) -> Result<(), String> {
         let mut seen_ids = std::collections::HashSet::new();
         validate_nodes(&self.nodes, &mut seen_ids)
-    }
-
-    /// Resolve effective write-back for the node with `node_id` (feature 18 §5.1): the master
-    /// switch is a hard ceiling; otherwise the nearest explicit `writeBackEnabled` ancestor wins
-    /// (root seed = `true`). Returns `false` for an unknown id. Note: `drop` nodes are writable
-    /// regardless of this — callers special-case them by kind.
-    pub fn effective_enabled(&self, node_id: &str) -> bool {
-        if !self.write_back {
-            return false;
-        }
-        fn walk(nodes: &[Node], target: &str, inherited: bool) -> Option<bool> {
-            for n in nodes {
-                let here = n.write_back_enabled.unwrap_or(inherited);
-                if n.id == target {
-                    return Some(here);
-                }
-                if let Some(children) = n.kind.children() {
-                    if let Some(v) = walk(children, target, here) {
-                        return Some(v);
-                    }
-                }
-            }
-            None
-        }
-        walk(&self.nodes, node_id, true).unwrap_or(false)
     }
 }
 
@@ -747,7 +725,9 @@ mod tests {
         assert_eq!(c.version, 2);
         assert_eq!(c.nodes[0].trashed_duplicate, None);
         match &c.nodes[0].kind {
-            NodeKind::Mirror { include, min_depth, .. } => {
+            NodeKind::Mirror {
+                include, min_depth, ..
+            } => {
                 assert!(include.is_empty());
                 assert_eq!(*min_depth, 0);
             }
@@ -867,52 +847,6 @@ mod tests {
             }
             _ => panic!("expected mirror"),
         }
-    }
-
-    #[test]
-    fn effective_enabled_master_off_is_hard_ceiling() {
-        let json = serde_json::json!({
-            "writeBack": false,
-            "nodes": [
-                {"id": "a", "kind": "static", "name": "A", "writeBackEnabled": true, "children": [
-                    {"id": "b", "kind": "query", "name": "B", "include": ["X"], "writeBackEnabled": true}
-                ]}
-            ]
-        });
-        let c = cfg(json).unwrap();
-        assert!(!c.effective_enabled("a"));
-        assert!(!c.effective_enabled("b"));
-    }
-
-    #[test]
-    fn effective_enabled_nearest_ancestor_wins() {
-        let json = serde_json::json!({
-            "writeBack": true,
-            "nodes": [
-                {"id": "root_off", "kind": "static", "name": "Off", "writeBackEnabled": false,
-                 "children": [
-                    {"id": "mid", "kind": "static", "name": "Mid", "children": [
-                        {"id": "leaf_on", "kind": "query", "name": "On", "include": ["X"],
-                         "writeBackEnabled": true},
-                        {"id": "leaf_inherit", "kind": "query", "name": "Inh", "include": ["Y"]}
-                    ]}
-                ]}
-            ]
-        });
-        let c = cfg(json).unwrap();
-        assert!(!c.effective_enabled("mid")); // inherits the off ancestor
-        assert!(c.effective_enabled("leaf_on")); // explicit override
-        assert!(!c.effective_enabled("leaf_inherit")); // inherits off
-    }
-
-    #[test]
-    fn effective_enabled_root_seed_true() {
-        let json = serde_json::json!({
-            "writeBack": true,
-            "nodes": [{"id": "q", "kind": "query", "name": "Q", "include": ["X"]}]
-        });
-        let c = cfg(json).unwrap();
-        assert!(c.effective_enabled("q"));
     }
 
     #[test]

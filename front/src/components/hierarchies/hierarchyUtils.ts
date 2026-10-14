@@ -61,7 +61,7 @@ export function makeNode(kind: NodeKind): HierarchyNode {
 /**
  * Effective write-back for a node given the master switch and the nearest explicit ancestor
  * value (feature 18 §5.1). `master` off is a hard ceiling; otherwise the node's own
- * `writeBackEnabled` (if set) wins, else it inherits. Mirrors the backend `effective_enabled`.
+ * `writeBackEnabled` (if set) wins, else it inherits. Mirrors the backend resolver's `Inherited`.
  */
 export function effectiveWriteBack(
     master: boolean,

@@ -100,6 +100,22 @@ async fn create_get_update_delete(db: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn save_stamps_the_current_config_version(db: PgPool) {
+    // A v2 blob reads forward; once saved it carries the current version (feature 39 §10).
+    let user = common::seed_user(&db, "alice", "pw").await;
+    let id = create(
+        &db,
+        user,
+        "H",
+        serde_json::json!({"version": 2, "nodes": []}),
+    )
+    .await;
+    let row = hierarchy::get_hierarchy(&db, user, id).await.unwrap();
+    assert_eq!(row.config["version"], 3);
+    assert_eq!(row.config["trashedDuplicate"], "restore");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn create_rejects_invalid_config(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pw").await;
     // Duplicate sibling names.
@@ -724,7 +740,10 @@ async fn mirror_min_depth_projects_one_level(db: PgPool) {
 
     assert_eq!(tree_names(&db, user, id, "").await, ["Japan"]);
     let ids = browse_ids(&state, user, id, "Japan").await;
-    assert!(ids.contains(&japan) && !ids.contains(&above), "above the cut is dropped");
+    assert!(
+        ids.contains(&japan) && !ids.contains(&above),
+        "above the cut is dropped"
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -747,7 +766,10 @@ async fn foreign_include_prunes_directories_precisely(db: PgPool) {
     // Path presence alone would list 2026 and 2025/Home; neither holds a travel picture.
     assert_eq!(tree_names(&db, user, id, "").await, ["2025"]);
     assert_eq!(tree_names(&db, user, id, "2025").await, ["Japan"]);
-    assert_eq!(browse_ids(&state, user, id, "2025/Japan").await, HashSet::from([trip]));
+    assert_eq!(
+        browse_ids(&state, user, id, "2025/Japan").await,
+        HashSet::from([trip])
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

@@ -1,6 +1,5 @@
-//! Shadowed manual tag pruning (feature 39 §4): the gate history one picture accumulates through a
-//! pipeline run, and the prune plan derived from it. Pure — the evaluator records, the reconcile
-//! applies.
+//! Shadowed manual tag pruning (feature 39 §4): the gate history of one picture through a run, and
+//! the prune plan derived from it.
 
 use crate::domain::tag::TagPath;
 use crate::domain::tagging::{GateDecision, TaggingService};
@@ -17,14 +16,14 @@ pub enum Origin {
 /// A service's prune options, indexed like the run's service list.
 #[derive(Debug, Clone, Copy)]
 pub struct PruneOptions<'a> {
-    pub enabled: bool,
+    pub prune: bool,
     pub keep: &'a [String],
 }
 
 impl<'a> From<&'a TaggingService> for PruneOptions<'a> {
     fn from(s: &'a TaggingService) -> Self {
         Self {
-            enabled: s.prune_shadowed_manual_tags,
+            prune: s.prune_shadowed_manual_tags,
             keep: &s.keep_manual_tags,
         }
     }
@@ -35,6 +34,12 @@ impl<'a> From<&'a TaggingService> for PruneOptions<'a> {
 pub struct PrunePlan {
     pub remove: Vec<String>,
     pub assign: Vec<String>,
+}
+
+impl PrunePlan {
+    pub fn is_empty(&self) -> bool {
+        self.remove.is_empty() && self.assign.is_empty()
+    }
 }
 
 /// The gating set of one picture through a run, plus every gate decision and output on the way.
@@ -66,7 +71,7 @@ impl GateHistory {
         }
     }
 
-    /// Gate the service at `idx` against the current set, record the decision, return whether it fired.
+    /// Gate the service at `idx`, record the decision, and return whether it fired.
     pub fn gate(&mut self, idx: usize, service: &TaggingService) -> bool {
         let decision = service.gate(&self.tags);
         let fired = decision.fired();
@@ -92,7 +97,7 @@ impl GateHistory {
 
     /// The prune plan for this picture (§4.4). `opts` is indexed like the run's services.
     pub fn plan(&self, opts: &[PruneOptions]) -> PrunePlan {
-        let opted = |idx: usize| opts.get(idx).is_some_and(|o| o.enabled);
+        let opted = |idx: usize| opts.get(idx).is_some_and(|o| o.prune);
         let manual: Vec<&TagPath> = self
             .tags
             .iter()
@@ -114,9 +119,8 @@ impl GateHistory {
             return PrunePlan::default();
         }
 
-        // Whether `tag` still asserts itself to the service at `before` once every candidate's
-        // manual row is gone: another source holds it, or an upstream service (which keeps firing,
-        // since every fired gate is anchored) produces it.
+        // Whether `tag` still reaches the service at `before` once every candidate's manual row is
+        // gone: another source holds it, or an upstream service (anchored, so still firing) emits it.
         let survives = |tag: &TagPath, before: usize| {
             self.origins_of(tag).iter().any(|o| match o {
                 Origin::IncomingShare => true,
@@ -132,7 +136,10 @@ impl GateHistory {
                 continue;
             }
             let blocking = d.excludes.iter().filter(|(_, hits)| !hits.is_empty());
-            if blocking.clone().all(|(_, hits)| !hits.iter().any(|t| survives(t, *idx))) {
+            if blocking
+                .clone()
+                .all(|(_, hits)| !hits.iter().any(|t| survives(t, *idx)))
+            {
                 for (_, hits) in blocking {
                     kept.extend(candidates.iter().copied().filter(|c| hits.contains(c)));
                 }
@@ -191,10 +198,7 @@ fn normalize(manual: &[&TagPath], remove: Vec<TagPath>, assign: Vec<TagPath>) ->
         .collect();
     let mut assign = TagPath::fold_deepest(assign);
     assign.retain(|a| !remaining.iter().any(|r| a.is_ancestor_or_self(r)));
-    let mut remove: Vec<TagPath> = remove
-        .into_iter()
-        .filter(|r| !assign.contains(r))
-        .collect();
+    let mut remove: Vec<TagPath> = remove.into_iter().filter(|r| !assign.contains(r)).collect();
     // A manual ancestor of a new anchor would be redundant beside it.
     remove.extend(
         remaining
@@ -204,8 +208,14 @@ fn normalize(manual: &[&TagPath], remove: Vec<TagPath>, assign: Vec<TagPath>) ->
     );
     assign.retain(|a| !manual.contains(&a));
     PrunePlan {
-        remove: remove.into_iter().map(|t| t.as_ltree().to_string()).collect(),
-        assign: assign.into_iter().map(|t| t.as_ltree().to_string()).collect(),
+        remove: remove
+            .into_iter()
+            .map(|t| t.as_ltree().to_string())
+            .collect(),
+        assign: assign
+            .into_iter()
+            .map(|t| t.as_ltree().to_string())
+            .collect(),
     }
 }
 
@@ -309,7 +319,11 @@ mod tests {
         let mut h = manual(&["Era.2026.Vietnam"]);
         run(
             &mut h,
-            &[(&s1, &["A"]), (&s2, &["B"]), (&producer, &["Era.2026.Vietnam"])],
+            &[
+                (&s1, &["A"]),
+                (&s2, &["B"]),
+                (&producer, &["Era.2026.Vietnam"]),
+            ],
         );
         assert_eq!(
             h.plan(&opts(&[&s1, &s2, &producer])),
@@ -396,7 +410,10 @@ mod tests {
         let blocked = svc(&[], &["Travel"]);
         let mut h = manual(&["Travel.Asia", "Travel.Europe"]);
         run(&mut h, &[(&blocked, &["X"]), (&rule, &["Travel.Asia"])]);
-        assert_eq!(h.plan(&opts(&[&blocked, &rule])), plan(&["Travel.Asia"], &[]));
+        assert_eq!(
+            h.plan(&opts(&[&blocked, &rule])),
+            plan(&["Travel.Asia"], &[])
+        );
     }
 
     #[test]

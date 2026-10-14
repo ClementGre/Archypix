@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH produced AS (\n                 SELECT t.tag::ltree AS tag_path, t.src::tag_source AS source, t.sid AS source_id\n                 FROM unnest($2::text[], $3::text[], $4::uuid[]) AS t(tag, src, sid)\n               ),\n               cleanup AS (\n                 DELETE FROM tags\n                 WHERE picture_id = $1\n                   AND source IN ('rule'::tag_source, 'segment'::tag_source, 'share_mapping'::tag_source)\n                   AND NOT EXISTS (\n                     SELECT 1 FROM produced p\n                     WHERE p.tag_path = tags.tag_path\n                       AND p.source = tags.source\n                       AND p.source_id = tags.source_id\n                   )\n               )\n               INSERT INTO tags (picture_id, tag_path, source, source_id)\n               SELECT $1, p.tag_path, p.source, p.source_id FROM produced p\n               ON CONFLICT (picture_id, tag_path, source, source_id) WHERE source <> 'manual' DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2114d648c4cffcfd61ab555ca74951d18da0b0c7d67182a0b6c652ba1da7d014"
+}

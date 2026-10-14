@@ -1288,9 +1288,8 @@ async fn deleting_an_empty_mkcol_directory_drops_its_row(db: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn deleting_a_directory_emptied_by_an_exclude_keeps_the_tags_metadata(db: PgPool) {
-    // §8.1 drops the row that *is* an empty directory — but a kept-empty directory can also be
-    // empty because a foreign `exclude` (18 §7.3) cut every one of its pictures, and the tag's
-    // decoration must survive that. (Without the row the directory is pruned — 39 §5.3.)
+    // A kept-empty directory emptied by a foreign `exclude` (18 §7.3) keeps its tag decoration;
+    // `show_when_empty` keeps the directory listed past 39 §5.3 pruning.
     use archypix_back::domain::tag_metadata::TagMetadata;
     use archypix_back::repository::tag_metadata::TagMetadataRepository;
 
@@ -2106,7 +2105,15 @@ fn voyage_config(safe_delete: &str) -> serde_json::Value {
 
 /// Two travel pictures, `a.jpg` in Vietnam and `b.jpg` in Laos (so both directories exist).
 async fn seed_voyage(state: &AppState, user: Uuid) -> (Uuid, Uuid) {
-    let a = seed_full_picture(state, user, "a.jpg", "image/jpeg", b"aa", "Era.2026.Vietnam").await;
+    let a = seed_full_picture(
+        state,
+        user,
+        "a.jpg",
+        "image/jpeg",
+        b"aa",
+        "Era.2026.Vietnam",
+    )
+    .await;
     let b = seed_full_picture(state, user, "b.jpg", "image/jpeg", b"bb", "Era.2026.Laos").await;
     TagRepository::batch_assign(&state.db, user, &[a, b], &["Travel".to_string()])
         .await
@@ -2128,7 +2135,10 @@ async fn sibling_move_under_a_shared_query_fires_nothing_for_it(db: PgPool) {
     )
     .await
     .unwrap();
-    assert_eq!(tags_of(&state.db, user, a).await, ["Era.2026.Laos", "Travel"]);
+    assert_eq!(
+        tags_of(&state.db, user, a).await,
+        ["Era.2026.Laos", "Travel"]
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -2156,9 +2166,21 @@ async fn put_enters_every_node_of_the_chain(db: PgPool) {
     let h = make_hierarchy(&state.db, user, voyage_config("singleBranch")).await;
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    assert!(put(&vfs, &["Voyage", "2026", "Vietnam", "c.jpg"], b"cc", Some("image/jpeg")).await.unwrap());
+    assert!(
+        put(
+            &vfs,
+            &["Voyage", "2026", "Vietnam", "c.jpg"],
+            b"cc",
+            Some("image/jpeg")
+        )
+        .await
+        .unwrap()
+    );
     let c = pic_by_hash(&state.db, user, b"cc").await;
-    assert_eq!(tags_of(&state.db, user, c.id).await, ["Era.2026.Vietnam", "Travel"]);
+    assert_eq!(
+        tags_of(&state.db, user, c.id).await,
+        ["Era.2026.Vietnam", "Travel"]
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -2186,8 +2208,14 @@ async fn full_delete_mutates_no_tags(db: PgPool) {
     vfs.delete(&seg(&["Voyage", "2026", "Vietnam", "a.jpg"]))
         .await
         .unwrap();
-    assert_eq!(raw_tags_of(&state.db, a).await, ["Era.2026.Vietnam", "Travel"]);
-    let row = PictureRepository::find_by_id(&state.db, a).await.unwrap().unwrap();
+    assert_eq!(
+        raw_tags_of(&state.db, a).await,
+        ["Era.2026.Vietnam", "Travel"]
+    );
+    let row = PictureRepository::find_by_id(&state.db, a)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(row.deleted_at.is_some());
 }
 
@@ -2211,13 +2239,27 @@ async fn trashed_duplicate_ignore_leaves_the_delete_standing(db: PgPool) {
     let h = make_hierarchy(&state.db, user, inbox_config(Some("ignore"))).await;
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    assert!(put(&vfs, &["Inbox", "x.jpg"], b"xx", Some("image/jpeg")).await.unwrap());
-    let row = PictureRepository::find_by_id(&state.db, trashed).await.unwrap().unwrap();
+    assert!(
+        put(&vfs, &["Inbox", "x.jpg"], b"xx", Some("image/jpeg"))
+            .await
+            .unwrap()
+    );
+    let row = PictureRepository::find_by_id(&state.db, trashed)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(row.deleted_at.is_some(), "the delete stands");
-    assert_eq!(raw_tags_of(&state.db, trashed).await, ["Photos"], "no ops applied");
+    assert_eq!(
+        raw_tags_of(&state.db, trashed).await,
+        ["Photos"],
+        "no ops applied"
+    );
     // Still listed for verification, so the client stops retrying (§7).
     let listed = vfs.list_dir(&seg(&["Inbox"])).await.unwrap();
-    assert_eq!(listed.iter().map(|e| e.picture_id).collect::<Vec<_>>(), [Some(trashed)]);
+    assert_eq!(
+        listed.iter().map(|e| e.picture_id).collect::<Vec<_>>(),
+        [Some(trashed)]
+    );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -2231,8 +2273,13 @@ async fn trashed_duplicate_inherits_restore_from_the_root(db: PgPool) {
     let h = make_hierarchy(&state.db, user, inbox_config(None)).await;
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    put(&vfs, &["Inbox", "x.jpg"], b"xx", Some("image/jpeg")).await.unwrap();
-    let row = PictureRepository::find_by_id(&state.db, trashed).await.unwrap().unwrap();
+    put(&vfs, &["Inbox", "x.jpg"], b"xx", Some("image/jpeg"))
+        .await
+        .unwrap();
+    let row = PictureRepository::find_by_id(&state.db, trashed)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(row.deleted_at.is_none(), "restore and tag, or do neither");
     assert_eq!(tags_of(&state.db, user, trashed).await, ["Inbox", "Photos"]);
 }
@@ -2244,24 +2291,38 @@ async fn drop_lists_recent_uploads_for_verification(db: PgPool) {
     let h = make_hierarchy(&state.db, user, inbox_config(Some("ignore"))).await;
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    assert!(put(&vfs, &["Inbox", "IMG_1.jpg"], b"one", Some("image/jpeg")).await.unwrap());
+    assert!(
+        put(&vfs, &["Inbox", "IMG_1.jpg"], b"one", Some("image/jpeg"))
+            .await
+            .unwrap()
+    );
     let first = pic_by_hash(&state.db, user, b"one").await;
     let listed = vfs.list_dir(&seg(&["Inbox"])).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].name, "IMG_1.jpg");
     assert_eq!(listed[0].picture_id, Some(first.id));
-    assert_eq!(vfs.stat(&seg(&["Inbox", "IMG_1.jpg"])).await.unwrap().size, 3);
+    assert_eq!(
+        vfs.stat(&seg(&["Inbox", "IMG_1.jpg"])).await.unwrap().size,
+        3
+    );
     match vfs.read_file(&seg(&["Inbox", "IMG_1.jpg"])).await.unwrap() {
         ReadTarget::Bytes { data, .. } => assert_eq!(data, b"one"),
         ReadTarget::Redirect(_) => panic!("expected proxied bytes"),
     }
 
     // A same-named upload with other bytes is a new photo, not an overwrite.
-    assert!(put(&vfs, &["Inbox", "IMG_1.jpg"], b"two", Some("image/jpeg")).await.unwrap());
+    assert!(
+        put(&vfs, &["Inbox", "IMG_1.jpg"], b"two", Some("image/jpeg"))
+            .await
+            .unwrap()
+    );
     let second = pic_by_hash(&state.db, user, b"two").await;
     assert_ne!(first.id, second.id);
     let listed = vfs.list_dir(&seg(&["Inbox"])).await.unwrap();
-    assert_eq!(listed.iter().map(|e| e.picture_id).collect::<Vec<_>>(), [Some(second.id)]);
+    assert_eq!(
+        listed.iter().map(|e| e.picture_id).collect::<Vec<_>>(),
+        [Some(second.id)]
+    );
 
     // A delete acts on the picture and drops the entry.
     vfs.delete(&seg(&["Inbox", "IMG_1.jpg"])).await.unwrap();
@@ -2280,7 +2341,9 @@ async fn drop_verification_window_zero_lists_nothing(db: PgPool) {
     let h = make_hierarchy(&state.db, user, inbox_config(None)).await;
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
-    put(&vfs, &["Inbox", "IMG_1.jpg"], b"one", Some("image/jpeg")).await.unwrap();
+    put(&vfs, &["Inbox", "IMG_1.jpg"], b"one", Some("image/jpeg"))
+        .await
+        .unwrap();
     assert!(vfs.list_dir(&seg(&["Inbox"])).await.unwrap().is_empty());
 }
 
@@ -2298,8 +2361,13 @@ async fn min_depth_projection_writes_into_real_tags(db: PgPool) {
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
     let root = vfs.list_dir(&[]).await.unwrap();
-    assert_eq!(root.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Japan"]);
-    put(&vfs, &["Japan", "b.jpg"], b"bb", Some("image/jpeg")).await.unwrap();
+    assert_eq!(
+        root.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+        ["Japan"]
+    );
+    put(&vfs, &["Japan", "b.jpg"], b"bb", Some("image/jpeg"))
+        .await
+        .unwrap();
     let b = pic_by_hash(&state.db, user, b"bb").await;
     assert_eq!(tags_of(&state.db, user, b.id).await, ["Era.2025.Japan"]);
 
@@ -2315,7 +2383,8 @@ async fn min_depth_projection_writes_into_real_tags(db: PgPool) {
 async fn foreign_include_assigns_its_arm_and_prunes_empty_dirs(db: PgPool) {
     let (state, _storage) = state_with_storage(db);
     let user = common::seed_user(&state.db, "alice", "pw").await;
-    let trip = seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"aa", "Era.2025.Japan").await;
+    let trip =
+        seed_full_picture(&state, user, "a.jpg", "image/jpeg", b"aa", "Era.2025.Japan").await;
     TagRepository::batch_assign(&state.db, user, &[trip], &["Travel".to_string()])
         .await
         .unwrap();
@@ -2329,8 +2398,17 @@ async fn foreign_include_assigns_its_arm_and_prunes_empty_dirs(db: PgPool) {
     let vfs = Vfs::load(&state, user, h, false).await.unwrap();
 
     let root = vfs.list_dir(&[]).await.unwrap();
-    assert_eq!(root.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["2025"], "§5.3");
-    put(&vfs, &["2025", "Japan", "b.jpg"], b"bb", Some("image/jpeg")).await.unwrap();
+    assert_eq!(
+        root.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+        ["2025"],
+        "§5.3"
+    );
+    put(&vfs, &["2025", "Japan", "b.jpg"], b"bb", Some("image/jpeg"))
+        .await
+        .unwrap();
     let b = pic_by_hash(&state.db, user, b"bb").await;
-    assert_eq!(tags_of(&state.db, user, b.id).await, ["Era.2025.Japan", "Travel"]);
+    assert_eq!(
+        tags_of(&state.db, user, b.id).await,
+        ["Era.2025.Japan", "Travel"]
+    );
 }

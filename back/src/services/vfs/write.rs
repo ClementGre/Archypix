@@ -1,12 +1,12 @@
 
 use crate::domain::hierarchy::TagOp;
-use crate::services::hierarchy::{ChainNode, node_chain, transition};
 use crate::domain::tag::TagPath;
 use crate::infra::s3;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::user_settings::UserSettingsRepository;
+use crate::services::hierarchy::{ChainNode, node_chain, transition};
 use crate::services::pictures::{self};
 use archypix_common::error::AppError;
 use chrono::NaiveDateTime;
@@ -29,34 +29,30 @@ impl<'a> Vfs<'a> {
         content_type: Option<&str>,
         original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<bool, AppError> {
-        self.finalize_write(
-            segments,
-            ByteSource::LocalTemp(temp_path),
+        let file = NewFile {
+            source: ByteSource::LocalTemp(temp_path),
             hash,
             size,
             content_type,
-            original_file_created_at,
-        )
-        .await
+            created_at: original_file_created_at,
+        };
+        self.finalize_write(segments, file).await
     }
 
     /// Finalize a write to `segments` from either a local temp file or a staged object
     /// (08_webdav_issues.md §1.6): overwrite an existing picture (versioned), dedupe/relocate on a
     /// hash hit, or ingest a genuinely new picture and apply the target's tags.
     #[tracing::instrument(
-        skip(self, source),
-        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), hash = %hash, bytes = size, picture_id)
+        skip(self, file),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), hash = %file.hash, bytes = file.size, picture_id)
     )]
     pub(super) async fn finalize_write(
         &self,
         segments: &[String],
-        source: ByteSource<'_>,
-        hash: &str,
-        size: i64,
-        content_type: Option<&str>,
-        original_file_created_at: Option<NaiveDateTime>,
+        file: NewFile<'_>,
     ) -> Result<bool, AppError> {
         let (parent, name) = split_last(segments)?;
+        let (hash, size, content_type) = (file.hash, file.size, file.content_type);
 
         // A zero-byte PUT is never a valid picture — Finder/Explorer issue one to create a
         // placeholder before writing the real bytes in a second PUT. Accept it but ingest
@@ -145,7 +141,7 @@ impl<'a> Vfs<'a> {
                 .await?;
 
                 let key = s3::picture_key(pic.local_user_id, pic.id);
-                source
+                file.source
                     .copy_to(
                         self.state,
                         &self.state.settings.get(keys::S3_BUCKET_PICTURES),
@@ -183,20 +179,8 @@ impl<'a> Vfs<'a> {
         }
 
         // New file — every onAdd of the destination's node chain (feature 39 §3.2).
-        self.require_writable(&target)?;
-        let (_, enter) = transition(&[], &self.target_chain(parent, &target));
-        let (pid, created) = self
-            .land_new(
-                &target,
-                &enter,
-                source,
-                hash,
-                size,
-                content_type,
-                &name,
-                original_file_created_at,
-            )
-            .await?;
+        let (_, enter) = transition(&[], &self.writable_chain(parent, &target)?);
+        let (pid, created) = self.land_new(&target, &enter, &file, &name).await?;
         if let Some(dir) = target.drop_dir() {
             self.note_drop(dir, &name, pid).await;
         }
@@ -205,21 +189,16 @@ impl<'a> Vfs<'a> {
         Ok(created)
     }
 
-    /// Land a new file at `target`: retag a live duplicate, apply the `trashedDuplicate` policy to
-    /// a trashed one, or ingest a genuinely new picture. Returns the picture and whether a new
-    /// resource was created for this path.
-    #[allow(clippy::too_many_arguments)]
+    /// Land a new file: retag a live duplicate, apply `trashedDuplicate` to a trashed one, or ingest
+    /// it. Returns the picture and whether a new resource was created for this path.
     async fn land_new(
         &self,
         target: &PathResolution<'_>,
         enter: &[TagOp],
-        source: ByteSource<'_>,
-        hash: &str,
-        size: i64,
-        content_type: Option<&str>,
+        file: &NewFile<'_>,
         name: &str,
-        original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<(Uuid, bool), AppError> {
+        let (hash, size, content_type) = (file.hash, file.size, file.content_type);
         // Dedupe: a relocate/copy a dumb client expressed as a fresh upload (§8). If the picture
         // gains the directory's tag (it wasn't already here) it's a genuine new resource for this
         // path → 201 Created; if it already had the tag the PUT is a true no-op → 204 No Content.
@@ -269,7 +248,7 @@ impl<'a> Vfs<'a> {
         tracing::Span::current().record("picture_id", tracing::field::display(new_id));
         trace!("vfs put: ingest new picture");
         let key = s3::picture_key(self.user_id, new_id);
-        source
+        file.source
             .copy_to(
                 self.state,
                 &self.state.settings.get(keys::S3_BUCKET_PICTURES),
@@ -294,7 +273,7 @@ impl<'a> Vfs<'a> {
             None,
             None,
             None,
-            original_file_created_at,
+            file.created_at,
             crate::services::jobs::ingest_exif_status(content_type),
         )
         .await?;
@@ -330,19 +309,12 @@ impl<'a> Vfs<'a> {
             let Some(anc) = self.dir(&segments[..i]) else {
                 continue;
             };
-            // The base tag + its mirror: a `mirror` directory extends its own tag; a container
-            // hoisting a `keepDir=false` mirror (root/static/query) maps a brand-new child
-            // directory to that mirror's tagRoot (feature 18 §11).
-            let (base, mirror) = match (&anc.mirror_tag, &anc.mirror, &anc.new_child_mirror) {
-                (Some(t), Some(m), _) => (t.clone(), m.clone()),
-                (None, _, Some((t, m))) => (t.clone(), m.clone()),
-                _ => {
-                    return Err(AppError::Forbidden(
-                        "cannot create directories outside a mirror node".into(),
-                    ));
-                }
+            let Some(base) = anc.extension_base() else {
+                return Err(AppError::Forbidden(
+                    "cannot create directories outside a mirror node".into(),
+                ));
             };
-            if !mirror.writable {
+            if !base.writable {
                 return Err(AppError::Forbidden(
                     "this part of the hierarchy is read-only".into(),
                 ));
@@ -355,7 +327,7 @@ impl<'a> Vfs<'a> {
                 .map(|s| TagPath::slugify_label(s))
                 .collect::<Vec<_>>()
                 .join(".");
-            let candidate = format!("{base}.{labels}");
+            let candidate = format!("{}.{labels}", base.tag);
             // Slugified labels are valid; `parse` still rejects a reserved (`SharedToMe`) prefix.
             let tag = TagPath::parse(&candidate, false)
                 .map_err(AppError::Conflict)?
@@ -364,39 +336,37 @@ impl<'a> Vfs<'a> {
             return Ok(PathResolution::MirrorExtension {
                 tag,
                 base_len: i,
-                mirror,
+                base,
             });
         }
         Err(AppError::NotFound)
     }
 
-    /// Reject a write into a read-only target (a mirror extension was checked on resolution).
-    pub(super) fn require_writable(&self, target: &PathResolution<'_>) -> Result<(), AppError> {
+    /// The node chain a write enters (feature 39 §3.1); `403` on a read-only directory (a mirror
+    /// extension's writability was checked on resolution). An extension takes its mirror's step.
+    pub(super) fn writable_chain(
+        &self,
+        segments: &[String],
+        target: &PathResolution<'_>,
+    ) -> Result<Vec<ChainNode>, AppError> {
         match target {
             PathResolution::Existing(dir) if dir.write_back.is_none() => {
                 Err(AppError::Forbidden("directory is read-only".into()))
             }
-            _ => Ok(()),
-        }
-    }
-
-    /// The node chain of a write target (feature 39 §3.1). A mirror extension takes its mirror's
-    /// step — replacing the base directory's when the base is that mirror, else appended.
-    pub(super) fn target_chain(&self, segments: &[String], target: &PathResolution<'_>) -> Vec<ChainNode> {
-        match target {
-            PathResolution::Existing(_) => node_chain(&self.root, segments).unwrap_or_default(),
+            PathResolution::Existing(_) => Ok(node_chain(&self.root, segments).unwrap_or_default()),
             PathResolution::MirrorExtension {
                 tag,
                 base_len,
-                mirror,
+                base,
             } => {
-                let base = &segments[..*base_len];
-                let mut chain = node_chain(&self.root, base).unwrap_or_default();
-                if self.dir(base).and_then(|d| d.node_id.as_deref()) == Some(&mirror.node_id) {
+                let parent = &segments[..*base_len];
+                let mut chain = node_chain(&self.root, parent).unwrap_or_default();
+                // Under the mirror's own directory, the new tag replaces that directory's step.
+                if self.dir(parent).and_then(|d| d.node_id.as_deref()) == Some(&base.node_id) {
                     chain.pop();
                 }
-                chain.push(mirror.chain_node(tag));
-                chain
+                chain.push(base.chain_node(tag));
+                Ok(chain)
             }
         }
     }

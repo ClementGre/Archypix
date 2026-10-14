@@ -10,7 +10,7 @@ use crate::domain::tag_metadata::{
     TagMetadataPatch, validate_display_name, validate_webdav_dir_name,
 };
 use crate::infra::settings::keys;
-use crate::services::hierarchy::{MirrorWrite, ResolvedDir};
+use crate::services::hierarchy::{MirrorBase, ResolvedDir};
 use crate::state::AppState;
 use archypix_common::error::AppError;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -41,7 +41,7 @@ enum PathResolution<'d> {
         tag: String,
         /// How many leading segments name the nearest existing ancestor.
         base_len: usize,
-        mirror: MirrorWrite,
+        base: MirrorBase,
     },
 }
 
@@ -49,7 +49,7 @@ impl PathResolution<'_> {
     fn trashed_duplicate(&self) -> TrashedDuplicate {
         match self {
             PathResolution::Existing(dir) => dir.trashed_duplicate,
-            PathResolution::MirrorExtension { mirror, .. } => mirror.trashed_duplicate,
+            PathResolution::MirrorExtension { base, .. } => base.trashed_duplicate,
         }
     }
 
@@ -67,6 +67,16 @@ impl PathResolution<'_> {
 enum ByteSource<'p> {
     LocalTemp(&'p Path),
     Staging { key: String },
+}
+
+/// The bytes of a write and what was measured while streaming them (06_webdav.md §7).
+struct NewFile<'p> {
+    source: ByteSource<'p>,
+    hash: &'p str,
+    size: i64,
+    content_type: Option<&'p str>,
+    /// Source file creation time, a suggestion only (feature 30 §10).
+    created_at: Option<NaiveDateTime>,
 }
 
 impl ByteSource<'_> {

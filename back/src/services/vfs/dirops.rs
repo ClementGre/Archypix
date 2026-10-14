@@ -98,9 +98,8 @@ impl<'a> Vfs<'a> {
             return Err(AppError::Forbidden("source directory is read-only".into()));
         }
         let dst = self.resolve_path(to_parent)?;
-        self.require_writable(&dst)?;
         let src_chain = node_chain(&self.root, from_parent).unwrap_or_default();
-        let (leave, enter) = transition(&src_chain, &self.target_chain(to_parent, &dst));
+        let (leave, enter) = transition(&src_chain, &self.writable_chain(to_parent, &dst)?);
         self.apply_transition(pid, &leave, &enter, false).await?;
         if src.is_drop {
             let (_, name) = split_last(from)?;
@@ -127,10 +126,9 @@ impl<'a> Vfs<'a> {
         let (from_parent, _) = split_last(from)?;
         let (to_parent, to_name) = split_last(to)?;
         let dst = self.resolve_path(to_parent)?;
-        self.require_writable(&dst)?;
         // Only the nodes being entered fire; nothing is left (feature 39 §3.2).
         let src_chain = node_chain(&self.root, from_parent).unwrap_or_default();
-        let (_, enter) = transition(&src_chain, &self.target_chain(to_parent, &dst));
+        let (_, enter) = transition(&src_chain, &self.writable_chain(to_parent, &dst)?);
         trace!("vfs copy: add destination tags");
         self.apply_transition(pid, &[], &enter, false).await?;
         if let Some(dir) = dst.drop_dir() {
@@ -298,11 +296,8 @@ impl<'a> Vfs<'a> {
         crate::services::tag_metadata::bust_cache(self.state.cache.as_ref(), self.user_id).await;
     }
 
-    // `user_id`/`picture_id` are already on the calling span (the verbs record `picture_id`
-    // before reaching here) — no fields of our own to add.
-    /// Apply `leave` then `enter` ops in one transaction, `manual` rows only (feature 39 §3.3);
-    /// `restore` first clears `deleted_at` (§6). 409 if a removed tag is still service-asserted.
-    /// Returns whether the picture actually gained a tag (≥1 row inserted).
+    /// Apply `leave` then `enter` (`manual` rows only, 39 §3.3) in one transaction, after `restore`
+    /// clears `deleted_at` (§6); 409 if a removed tag is service-asserted. True if a tag was gained.
     #[tracing::instrument(skip_all)]
     pub(super) async fn apply_transition(
         &self,
@@ -313,7 +308,13 @@ impl<'a> Vfs<'a> {
     ) -> Result<bool, AppError> {
         let (leave_assigns, leave_removes) = split_ops(leave);
         let (enter_assigns, enter_removes) = split_ops(enter);
-        trace!(?leave_removes, ?leave_assigns, ?enter_removes, ?enter_assigns, "vfs: apply transition");
+        trace!(
+            ?leave_removes,
+            ?leave_assigns,
+            ?enter_removes,
+            ?enter_assigns,
+            "vfs: apply transition"
+        );
         if TagRepository::has_non_manual_tag_under(&self.state.db, pid, &leave_removes).await? {
             trace!("vfs: onRemove rejected — non-manual tag still asserted (409)");
             return Err(AppError::Conflict(

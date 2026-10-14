@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(shared.as_ltree(), "SharedToMe.alice_AT_example_DOT_com");
     }
 
-    // ── ancestor satisfaction (used by TaggingService::should_run) ─────────────────
+    // ── ancestor satisfaction (used by TaggingService::gate) ─────────────────
 
     #[test]
     fn ancestor_of_self_is_not_ancestor() {

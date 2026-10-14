@@ -1,7 +1,7 @@
 //! Per-user tag service evaluation + reconciliation, plus the announcement step.
 
 use crate::domain::pipeline::PipelineInput;
-use crate::domain::pipeline::prune::{GateHistory, Origin, PruneOptions};
+use crate::domain::pipeline::prune::{GateHistory, Origin, PruneOptions, PrunePlan};
 use crate::domain::tag::{TagPath, TagSource};
 use crate::domain::tagging::ServiceConfig;
 use crate::routines::pipeline::{PipelineRun, announcement, dedup};
@@ -9,8 +9,9 @@ use crate::infra::settings::keys;
 use crate::repository::pipeline::{PipelineRepository, PipelineTagAssignment};
 use crate::repository::tag::TagRepository;
 use crate::repository::tagging::TaggingServiceRepository;
-use archypix_common::error::AppError;
+use archypix_common::error::{AppError, map_sqlx_error};
 use chrono::Utc;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
@@ -192,16 +193,7 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
             }
             let prune = history.plan(&prune_opts);
 
-            // Atomically add the produced tags, remove stale pipeline tags, and prune shadows.
-            if let Err(e) = PipelineRepository::reconcile_pipeline_tags(
-                db,
-                picture.id,
-                &produced,
-                &prune.remove,
-                &prune.assign,
-            )
-            .await
-            {
+            if let Err(e) = apply_picture_tags(db, picture.id, &produced, &prune).await {
                 tracing::error!(
                     picture_id = %picture.id,
                     error = ?e,
@@ -234,4 +226,20 @@ pub async fn run_for_user(run: &PipelineRun<'_>, user_id: Uuid) -> Result<(), Ap
 
     tracing::debug!(user_id = %user_id, "pipeline: sweep complete for user");
     Ok(())
+}
+
+/// Reconcile one picture's pipeline tags and apply its prune plan in one transaction (39 §4.6).
+async fn apply_picture_tags(
+    db: &PgPool,
+    picture_id: Uuid,
+    produced: &[PipelineTagAssignment],
+    prune: &PrunePlan,
+) -> Result<(), AppError> {
+    if prune.is_empty() {
+        return PipelineRepository::reconcile_pipeline_tags(db, picture_id, produced).await;
+    }
+    let mut tx = db.begin().await.map_err(map_sqlx_error)?;
+    PipelineRepository::reconcile_pipeline_tags(&mut *tx, picture_id, produced).await?;
+    TagRepository::replace_manual_tags(&mut *tx, picture_id, &prune.remove, &prune.assign).await?;
+    tx.commit().await.map_err(map_sqlx_error)
 }

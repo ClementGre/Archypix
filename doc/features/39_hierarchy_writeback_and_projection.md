@@ -236,8 +236,9 @@ picture, in pipeline order, so no static list is accurate (§15).
 ### 4.6 Timing and backfill
 
 Pruning runs per picture after every service has been evaluated — the gate history must be complete —
-in the same transaction as `PipelineRepository::reconcile_pipeline_tags`. No re-dirty is needed: §4.4
-guarantees the next run's gate decisions are unchanged.
+via `TagRepository::replace_manual_tags`, in the same transaction as
+`PipelineRepository::reconcile_pipeline_tags`. No extra run is needed: §4.4 guarantees the next run's
+gate decisions are unchanged, and the run's `mark_run` clears the dirty mark the swap sets.
 
 Backfill is free. `update_service` already calls `TaggingServiceRepository::touch_invalidated`, and
 `find_dirty_for_user` treats a picture as dirty when any enabled service's `last_invalidated_at` is
@@ -560,10 +561,11 @@ All applied with the implementation (plus `05_FRONTEND_ARCHITECTURE.md` §7 for 
 1. [x] Migration `0023_prune_shadowed_manual_tags` — the two `tagging_services` columns (§4.1).
 2. [x] Gate history — `domain::pipeline::prune::GateHistory`, fed by the existing per-picture /
    per-service loop (§4.3).
-3. [x] The prune step — `GateHistory::plan`; applied in the `reconcile_pipeline_tags` statement
-   (§4.4, §4.6, edge case 7).
+3. [x] The prune step — `GateHistory::plan`; applied by `TagRepository::replace_manual_tags` in the
+   `reconcile_pipeline_tags` transaction (§4.4, §4.6, edge case 7).
 4. [x] Service CRUD + validation for the two fields (§11); disable with `promote_tags` (§4.7).
-5. [x] `domain::hierarchy` — `mirror.include`, `mirror.minDepth`, `trashedDuplicate`, `version: 3`.
+5. [x] `domain::hierarchy` — `mirror.include`, `mirror.minDepth`, `trashedDuplicate`, `version: 3`
+   (stamped on every save).
 6. [x] Resolver — `minDepth`, the foreign `include`, filtered-mirror path sets (§5.3).
 7. [x] Node chains + the §3.1 difference (`resolver::node_chain` / `transition`), verb mapping in
    `services/vfs`.

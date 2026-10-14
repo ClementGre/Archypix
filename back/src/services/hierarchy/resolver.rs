@@ -15,8 +15,8 @@ pub struct ResolvedDir {
     // Carried for the write-ready model; consumed by the WebDAV write layer (§13, future).
     #[allow(dead_code)]
     pub naming: NamingStrategy,
-    /// Direct-files predicate (`P(D) ∧ ⋀¬own(childᵢ)`). `None` for `static`/`drop` and a projected
-    /// mirror's `tagRoot` container (no direct files).
+    /// Direct-files predicate (`P(D) ∧ ⋀¬own(childᵢ)`). `None` for `static`/`drop` and the
+    /// `tagRoot` container of a projected mirror (no direct files).
     pub direct: Option<TagPredicate>,
     /// Subtree predicate, for counts / empty-dir hiding. `None` for containers (recurse children)
     /// and `drop` (always shown).
@@ -34,13 +34,11 @@ pub struct ResolvedDir {
     /// for `query`/`static`/root. The WebDAV write layer uses this to extend the mirror with a
     /// brand-new sub-path — appending the new segments as deeper tag labels (06_webdav.md §9).
     pub mirror_tag: Option<String>,
-    /// For `mirror` directories: the mirror node behind it, for writes that extend it.
-    pub mirror: Option<MirrorWrite>,
-    /// For a **container** directory (root/`static`/`query`) that hoists a `keepDir=false`
-    /// `mirror` child's expansion into its own level: that mirror's `tagRoot` and write info, so a
-    /// brand-new child directory created here maps to it (feature 18 §11 — the first hoisted
-    /// mirror wins).
-    pub new_child_mirror: Option<(String, MirrorWrite)>,
+    /// For `mirror` directories: the mirror's foreign `include` arms (feature 39 §5.1).
+    mirror_include: Vec<String>,
+    /// For a **container** directory (root/`static`/`query`) hoisting a `keepDir=false` mirror:
+    /// the mirror a brand-new child directory maps to (feature 18 §11, first hoisted wins).
+    new_child_mirror: Option<MirrorBase>,
     /// The authored node this directory renders; `None` for the synthetic root.
     pub node_id: Option<String>,
     /// Resolved `trashedDuplicate` policy (feature 39 §6).
@@ -48,9 +46,10 @@ pub struct ResolvedDir {
     pub children: Vec<ResolvedDir>,
 }
 
-/// What a write needs to know about the mirror node behind a directory.
+/// A mirror tag a new directory path can extend (06_webdav §9), with its node's write settings.
 #[derive(Debug, Clone)]
-pub struct MirrorWrite {
+pub struct MirrorBase {
+    pub tag: String,
     pub node_id: String,
     /// Foreign include arms, assigned alongside the directory's own tag (feature 39 §5.1).
     pub include: Vec<String>,
@@ -58,7 +57,7 @@ pub struct MirrorWrite {
     pub trashed_duplicate: TrashedDuplicate,
 }
 
-impl MirrorWrite {
+impl MirrorBase {
     /// The implicit op-list of the mirror directory mapping to `tag` (05 §7.1, 39 §5.1).
     pub fn write_back(&self, tag: &str) -> WriteBack {
         let assign = |path: &str| TagOp {
@@ -79,14 +78,21 @@ impl MirrorWrite {
     /// This mirror's step in a node chain for the directory mapping to `tag`.
     pub fn chain_node(&self, tag: &str) -> ChainNode {
         ChainNode {
-            key: format!("{}:{tag}", self.node_id),
+            key: chain_key(&self.node_id, Some(tag)),
             write_back: self.writable.then(|| self.write_back(tag)),
         }
     }
 }
 
-/// One step of a write-back node chain (feature 39 §3.1). Each mirror directory is its own step,
-/// keyed by its tag; other kinds are keyed by node id.
+/// Each mirror directory is its own chain step; other kinds are one step per node.
+fn chain_key(node_id: &str, mirror_tag: Option<&str>) -> String {
+    match mirror_tag {
+        Some(tag) => format!("{node_id}:{tag}"),
+        None => node_id.to_string(),
+    }
+}
+
+/// One step of a write-back node chain (feature 39 §3.1).
 #[derive(Debug, Clone)]
 pub struct ChainNode {
     pub key: String,
@@ -95,13 +101,24 @@ pub struct ChainNode {
 
 impl ResolvedDir {
     fn chain_node(&self) -> Option<ChainNode> {
-        let id = self.node_id.as_ref()?;
         Some(ChainNode {
-            key: match &self.mirror_tag {
-                Some(tag) => format!("{id}:{tag}"),
-                None => id.clone(),
-            },
+            key: chain_key(self.node_id.as_deref()?, self.mirror_tag.as_deref()),
             write_back: self.write_back.clone(),
+        })
+    }
+
+    /// The mirror a brand-new child path of this directory extends: its own tag for a mirror
+    /// directory, the hoisted mirror's root for a container.
+    pub fn extension_base(&self) -> Option<MirrorBase> {
+        let Some(tag) = &self.mirror_tag else {
+            return self.new_child_mirror.clone();
+        };
+        Some(MirrorBase {
+            tag: tag.clone(),
+            node_id: self.node_id.clone()?,
+            include: self.mirror_include.clone(),
+            writable: self.writable,
+            trashed_duplicate: self.trashed_duplicate,
         })
     }
 }
@@ -134,7 +151,10 @@ pub fn transition(src: &[ChainNode], dst: &[ChainNode]) -> (Vec<TagOp>, Vec<TagO
             .flat_map(|wb| pick(wb).iter().cloned())
             .collect::<Vec<_>>()
     };
-    (ops(src, dst, |wb| &wb.on_remove), ops(dst, src, |wb| &wb.on_add))
+    (
+        ops(src, dst, |wb| &wb.on_remove),
+        ops(dst, src, |wb| &wb.on_add),
+    )
 }
 
 fn depth_of(ltree: &str) -> usize {
@@ -143,7 +163,7 @@ fn depth_of(ltree: &str) -> usize {
 
 /// `a` is an ancestor of `b` or equal to it.
 fn under_or_eq(a: &str, b: &str) -> bool {
-    a == b || TagPath::from_ltree(a).is_ancestor_of(&TagPath::from_ltree(b))
+    TagPath::from_ltree(a).is_ancestor_or_self(&TagPath::from_ltree(b))
 }
 
 fn paths(raw: &[String]) -> Vec<TagPath> {
@@ -254,9 +274,8 @@ impl Inherited {
     }
 }
 
-/// Build the synthetic root directory for `config` against the user's `distinct_paths`.
-/// `filtered_paths` replaces the path set of each filtered mirror (by node id) with the paths its
-/// matching pictures actually carry — see [`mirror_filters`].
+/// Build the root directory of `config` from the user's `distinct_paths`; `filtered_paths` holds
+/// each filtered mirror's own path set, by node id (see [`mirror_filters`]).
 pub fn resolve(
     config: &HierarchyConfig,
     distinct_paths: &[String],
@@ -290,7 +309,7 @@ pub fn resolve(
         own_for_parent: None,
         write_back: None,
         mirror_tag: None,
-        mirror: None,
+        mirror_include: vec![],
         new_child_mirror: first_hoisted_mirror(&config.nodes, root),
         node_id: None,
         trashed_duplicate: root.trashed_duplicate,
@@ -312,10 +331,9 @@ impl Paths<'_> {
     }
 }
 
-/// The first `keepDir=false` `mirror` among `nodes` (its expansion is hoisted into the container's
-/// level, so a brand-new child directory of the container maps to it) — feature 18 §11. A
-/// projected mirror (`minDepth`) is skipped: a new top-level directory has no tag to map to.
-fn first_hoisted_mirror(nodes: &[Node], inherited: Inherited) -> Option<(String, MirrorWrite)> {
+/// The hoisted (`keepDir=false`) mirror a new child of the container maps to (feature 18 §11);
+/// a projected one (`minDepth > 1`) has no tag for a new top-level directory, so it is skipped.
+fn first_hoisted_mirror(nodes: &[Node], inherited: Inherited) -> Option<MirrorBase> {
     nodes.iter().find_map(|node| match &node.kind {
         NodeKind::Mirror {
             tag_root,
@@ -325,15 +343,13 @@ fn first_hoisted_mirror(nodes: &[Node], inherited: Inherited) -> Option<(String,
             ..
         } if *min_depth <= 1 => {
             let at = inherited.at(node);
-            Some((
-                tag_root.clone(),
-                MirrorWrite {
-                    node_id: node.id.clone(),
-                    include: include.clone(),
-                    writable: at.enabled,
-                    trashed_duplicate: at.trashed_duplicate,
-                },
-            ))
+            Some(MirrorBase {
+                tag: tag_root.clone(),
+                node_id: node.id.clone(),
+                include: include.clone(),
+                writable: at.enabled,
+                trashed_duplicate: at.trashed_duplicate,
+            })
         }
         _ => None,
     })
@@ -360,16 +376,19 @@ fn build_nodes(
             own_for_parent: None,
             write_back: None,
             mirror_tag: None,
-            mirror: None,
+            mirror_include: vec![],
             new_child_mirror: None,
             node_id: Some(node.id.clone()),
             trashed_duplicate: at.trashed_duplicate,
             children: vec![],
         };
         match &node.kind {
-            NodeKind::Mirror { .. } => {
-                out.extend(expand_mirror(node, paths.for_mirror(&node.id), and_terms, at))
-            }
+            NodeKind::Mirror { .. } => out.extend(expand_mirror(
+                node,
+                paths.for_mirror(&node.id),
+                and_terms,
+                at,
+            )),
             NodeKind::Query {
                 match_mode,
                 include,
@@ -551,9 +570,9 @@ fn expand_mirror(
         collapsed_arms,
         sub_excludes,
         foreign_excludes,
-        include: paths(include),
         and_terms,
-        mirror: MirrorWrite {
+        mirror: MirrorBase {
+            tag: tag_root.clone(),
             node_id: node.id.clone(),
             include: include.clone(),
             writable: at.enabled,
@@ -602,13 +621,10 @@ fn expand_mirror(
         direct: None,
         subtree: None,
         is_drop: false,
-        own_for_parent: Some(own_under(tag_root, &ctx.include)),
+        own_for_parent: Some(own_under(tag_root, &ctx.mirror.include)),
         write_back: None,
         mirror_tag: Some(tag_root.clone()),
-        mirror: Some(MirrorWrite {
-            writable: false,
-            ..ctx.mirror.clone()
-        }),
+        mirror_include: ctx.mirror.include.clone(),
         new_child_mirror: None,
         node_id: Some(node.id.clone()),
         trashed_duplicate: ctx.mirror.trashed_duplicate,
@@ -632,11 +648,10 @@ fn projected_names(tops: &[String], root_depth: usize) -> Vec<Option<String>> {
         .collect()
 }
 
-/// Membership under `tag` carrying every `include` arm — what a parent subtracts for a mirror
-/// directory.
-fn own_under(tag: &str, include: &[TagPath]) -> TagPredicate {
+/// Membership under `tag` carrying every `include` arm: what a parent subtracts for a mirror dir.
+fn own_under(tag: &str, include: &[String]) -> TagPredicate {
     let mut arms = vec![TagPath::from_ltree(tag.to_string())];
-    arms.extend(include.iter().cloned());
+    arms.extend(paths(include));
     TagPredicate {
         include: arms,
         match_all: true,
@@ -651,10 +666,10 @@ struct MirrorCtx {
     sub_excludes: Vec<String>,
     /// Foreign excludes (not under tagRoot) — a picture-membership cut on every directory.
     foreign_excludes: Vec<String>,
-    /// Foreign include arms (also folded into `and_terms`).
-    include: Vec<TagPath>,
+    /// Ancestor predicates plus the mirror's foreign `include` term.
     and_terms: Vec<TagPredicate>,
-    mirror: MirrorWrite,
+    /// The mirror node, its `tag` being `tagRoot`.
+    mirror: MirrorBase,
     sdm: SafeDeleteMode,
     naming: NamingStrategy,
 }
@@ -730,14 +745,11 @@ fn build_mirror_dir(path: &str, name_override: Option<String>, ctx: &MirrorCtx) 
         subtree: Some(subtree),
         is_drop: false,
         // Parent subtracts membership under this dir's tag (inclusive).
-        own_for_parent: Some(own_under(path, &ctx.include)),
+        own_for_parent: Some(own_under(path, &ctx.mirror.include)),
         // Mirror write-back is implicit: assign/remove the directory's own tag (§7.1).
-        write_back: ctx
-            .mirror
-            .writable
-            .then(|| ctx.mirror.write_back(path)),
+        write_back: ctx.mirror.writable.then(|| ctx.mirror.write_back(path)),
         mirror_tag: Some(path.to_string()),
-        mirror: Some(ctx.mirror.clone()),
+        mirror_include: ctx.mirror.include.clone(),
         new_child_mirror: None,
         node_id: Some(ctx.mirror.node_id.clone()),
         trashed_duplicate: ctx.mirror.trashed_duplicate,
@@ -835,7 +847,12 @@ mod tests {
         cfg(serde_json::json!({"nodes": [node]}))
     }
 
-    const ERAS: &[&str] = &["Era.2025.Japan", "Era.2026.Vietnam", "Era.2026.Laos.Hanoi", "Era.2027"];
+    const ERAS: &[&str] = &[
+        "Era.2025.Japan",
+        "Era.2026.Vietnam",
+        "Era.2026.Laos.Hanoi",
+        "Era.2027",
+    ];
 
     #[test]
     fn min_depth_hoists_the_projected_level() {
@@ -866,7 +883,12 @@ mod tests {
             ERAS,
         );
         assert_eq!(names(&root), ["Japan", "Laos", "Vietnam"]);
-        assert!(find_dir(&root, &seg(&["Laos"])).unwrap().children.is_empty());
+        assert!(
+            find_dir(&root, &seg(&["Laos"]))
+                .unwrap()
+                .children
+                .is_empty()
+        );
     }
 
     #[test]
@@ -892,11 +914,20 @@ mod tests {
         let root = tree(&mirror(serde_json::json!({"include": ["Travel"]})), ERAS);
         let japan = find_dir(&root, &seg(&["2025", "Japan"])).unwrap();
         let direct = japan.direct.as_ref().unwrap();
-        assert!(direct.and_terms.iter().any(|t| t.include == [TagPath::from("Travel")]));
+        assert!(
+            direct
+                .and_terms
+                .iter()
+                .any(|t| t.include == [TagPath::from("Travel")])
+        );
         let wb = japan.write_back.as_ref().unwrap();
         let assigned: Vec<&str> = wb.on_add.iter().map(|o| o.path.as_str()).collect();
         assert_eq!(assigned, ["Era.2025.Japan", "Travel"]);
-        assert_eq!(wb.on_remove.len(), 1, "onRemove only drops the directory's own tag");
+        assert_eq!(
+            wb.on_remove.len(),
+            1,
+            "onRemove only drops the directory's own tag"
+        );
     }
 
     #[test]
@@ -953,7 +984,10 @@ mod tests {
         let src = node_chain(&root, &seg(&["Voyage", "2026", "Vietnam"])).unwrap();
         let dst = node_chain(&root, &seg(&["Other"])).unwrap();
         let (leave, enter) = transition(&src, &dst);
-        assert_eq!(paths_of(&leave), ["Remove Travel", "Remove Era.2026.Vietnam"]);
+        assert_eq!(
+            paths_of(&leave),
+            ["Remove Travel", "Remove Era.2026.Vietnam"]
+        );
         assert_eq!(paths_of(&enter), ["Assign Other"]);
     }
 
@@ -962,7 +996,40 @@ mod tests {
         let root = tree(&voyage(), ERAS);
         let dst = node_chain(&root, &seg(&["Voyage", "2026", "Vietnam"])).unwrap();
         let (_, enter) = transition(&[], &dst);
-        assert_eq!(paths_of(&enter), ["Assign Travel", "Assign Era.2026.Vietnam"]);
+        assert_eq!(
+            paths_of(&enter),
+            ["Assign Travel", "Assign Era.2026.Vietnam"]
+        );
+    }
+
+    #[test]
+    fn write_back_nearest_explicit_ancestor_wins_under_the_master_ceiling() {
+        let nodes = serde_json::json!([
+            {"id": "off", "kind": "static", "name": "Off", "writeBackEnabled": false, "children": [
+                {"id": "on", "kind": "query", "name": "On", "include": ["X"], "writeBackEnabled": true,
+                 "writeBack": {"onAdd": [{"op": "assign", "path": "X"}],
+                               "onRemove": [{"op": "remove", "path": "X"}]}},
+                {"id": "inh", "kind": "query", "name": "Inh", "include": ["Y"],
+                 "writeBack": {"onAdd": [{"op": "assign", "path": "Y"}],
+                               "onRemove": [{"op": "remove", "path": "Y"}]}}
+            ]}
+        ]);
+        let writable = |master: bool, path: &[&str]| {
+            let root = tree(
+                &cfg(serde_json::json!({"writeBack": master, "nodes": nodes})),
+                &[],
+            );
+            find_dir(&root, &seg(path)).unwrap().writable
+        };
+        assert!(writable(true, &["Off", "On"]), "explicit override");
+        assert!(
+            !writable(true, &["Off", "Inh"]),
+            "inherits the off ancestor"
+        );
+        assert!(
+            !writable(false, &["Off", "On"]),
+            "master off is a hard ceiling"
+        );
     }
 
     #[test]
@@ -980,7 +1047,11 @@ mod tests {
         assert_eq!(s.trashed_duplicate, TrashedDuplicate::Ignore);
         assert_eq!(s.children[0].trashed_duplicate, TrashedDuplicate::Ignore);
         let inbox = find_dir(&root, &seg(&["Inbox"])).unwrap();
-        assert_eq!(inbox.trashed_duplicate, TrashedDuplicate::Restore, "root seed");
+        assert_eq!(
+            inbox.trashed_duplicate,
+            TrashedDuplicate::Restore,
+            "root seed"
+        );
     }
 
     #[test]

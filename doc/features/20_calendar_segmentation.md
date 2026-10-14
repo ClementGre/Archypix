@@ -433,7 +433,7 @@ The domain layer is organized for consistency across the three service types:
 - `domain/tagging.rs` — the service model and the **single** evaluation hub: `ServiceConfig` (a
   `Rule | Segmentation | SharedTagMapping` enum) with `parse` (validate + normalize raw JSON),
   `to_value` (storage-ready JSON), `source`, and one `evaluate(input, incoming_share_ids) ->
-  ServiceResult` dispatch. Gating is `TaggingService::should_run(current_tags)`. Calendar
+  ServiceResult` dispatch. Gating is `TaggingService::gate(current_tags)`. Calendar
   segmentation resolves to **zero or one** tag (§7); shared-tag-mapping drops the `!is_broken` filter
   (redundant — derived, §10.1).
 

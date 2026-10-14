@@ -23,14 +23,6 @@ pub enum ServiceType {
     Segmentation,
 }
 
-/// Used only in Hierarchy JSONB config, not a direct column type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SafeDeleteMode {
-    SingleBranch,
-    FullDelete,
-}
-
 /// A user-defined tagging service that assigns tags to pictures. Services are ordered into a
 /// pipeline; the type-specific payload lives in `config` (parse with [`ServiceConfig::parse`]).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -64,7 +56,8 @@ pub struct TaggingService {
 }
 
 /// The service-level fields a create sets (everything but the type-specific `config`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct NewService {
     pub name: String,
     pub requires: Vec<String>,
@@ -73,8 +66,21 @@ pub struct NewService {
     pub keep_manual_tags: Vec<String>,
 }
 
+impl NewService {
+    /// Trim the name and validate + normalize every tag list (feature 39 §11).
+    pub fn validated(self) -> Result<Self, String> {
+        Ok(Self {
+            name: self.name.trim().to_string(),
+            requires: parse_tag_list(&self.requires)?,
+            excludes: parse_tag_list(&self.excludes)?,
+            prune_shadowed_manual_tags: self.prune_shadowed_manual_tags,
+            keep_manual_tags: parse_tag_list(&self.keep_manual_tags)?,
+        })
+    }
+}
+
 /// Service-level fields to change on update; `None` leaves a field unchanged.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServicePatch {
     pub name: Option<String>,
     pub enabled: Option<bool>,
@@ -82,6 +88,29 @@ pub struct ServicePatch {
     pub excludes: Option<Vec<String>>,
     pub prune_shadowed_manual_tags: Option<bool>,
     pub keep_manual_tags: Option<Vec<String>>,
+}
+
+impl ServicePatch {
+    /// Trim the name and validate + normalize every supplied tag list.
+    pub fn validated(self) -> Result<Self, String> {
+        let parse = |v: Option<Vec<String>>| v.as_deref().map(parse_tag_list).transpose();
+        Ok(Self {
+            name: self.name.map(|n| n.trim().to_string()),
+            requires: parse(self.requires)?,
+            excludes: parse(self.excludes)?,
+            keep_manual_tags: parse(self.keep_manual_tags)?,
+            ..self
+        })
+    }
+}
+
+/// Validate + normalize a gate or keep-list; reserved prefixes (`SharedToMe`) are allowed — a
+/// received picture's tags gate like any other.
+fn parse_tag_list(paths: &[String]) -> Result<Vec<String>, String> {
+    paths
+        .iter()
+        .map(|p| TagPath::parse(p, true).map(|t| t.as_ltree().to_string()))
+        .collect()
 }
 
 /// One service's gate decision for a picture, with the tags behind it (feature 39 §4.3).
@@ -316,18 +345,6 @@ pub struct ServiceResult {
     pub tags_to_add: Vec<TagPath>,
 }
 
-/// Maps a filtered view of the tag graph to a WebDAV filesystem tree.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Hierarchy {
-    pub id: Uuid,
-    pub owner_id: Uuid,
-    pub name: String,
-    pub config: sqlx::types::Json<Value>,
-    pub enabled: bool,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +444,33 @@ mod tests {
         let svc = service(&["Photos", "Travel"], &[]);
         assert!(!svc.gate(&tags(&["Photos"])).fired());
         assert!(svc.gate(&tags(&["Photos", "Travel"])).fired());
+    }
+
+    // ── NewService / ServicePatch validation ───────────────────────────────────
+
+    #[test]
+    fn new_service_trims_name_and_allows_reserved_tags() {
+        let fields = NewService {
+            name: "  Trips ".into(),
+            requires: vec!["SharedToMe.bob".into()],
+            keep_manual_tags: vec![" Era ".into()],
+            ..Default::default()
+        }
+        .validated()
+        .unwrap();
+        assert_eq!(fields.name, "Trips");
+        assert_eq!(fields.requires, ["SharedToMe.bob"]);
+        assert_eq!(fields.keep_manual_tags, ["Era"]);
+    }
+
+    #[test]
+    fn service_patch_rejects_an_invalid_keep_tag() {
+        let patch = ServicePatch {
+            keep_manual_tags: Some(vec!["a b".into()]),
+            ..Default::default()
+        };
+        assert!(patch.validated().is_err());
+        assert!(ServicePatch::default().validated().is_ok());
     }
 
     // ── ServiceConfig::parse ────────────────────────────────────────────────────

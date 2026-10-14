@@ -50,10 +50,16 @@ async fn seed_picture_2024(db: &PgPool, user_id: Uuid) -> Uuid {
 /// Create an empty Rule service.
 async fn create_rule_service(db: &PgPool, owner: Uuid) -> Uuid {
     let config = serde_json::json!({ "rules": [] });
-    TaggingServiceRepository::create(db, owner, ServiceType::Rule, &NewService::default(), &config)
-        .await
-        .unwrap()
-        .id
+    TaggingServiceRepository::create(
+        db,
+        owner,
+        ServiceType::Rule,
+        &NewService::default(),
+        &config,
+    )
+    .await
+    .unwrap()
+    .id
 }
 
 /// Replace a rule service's whole config with `rules` (mirrors the `PUT /{id}/config` path).
@@ -426,9 +432,15 @@ async fn segmentation_assigns_single_band_tag(db: PgPool) {
               "parts": { "month": { "format": { "numeric": false } } } }
         ]
     });
-    TaggingServiceRepository::create(&db, user, ServiceType::Segmentation, &NewService::default(), &config)
-        .await
-        .unwrap();
+    TaggingServiceRepository::create(
+        &db,
+        user,
+        ServiceType::Segmentation,
+        &NewService::default(),
+        &config,
+    )
+    .await
+    .unwrap();
 
     run_pipeline(&db, user).await;
 
@@ -510,9 +522,14 @@ async fn prune_reduces_a_shadow_to_its_gate_anchor(db: PgPool) {
 async fn prune_without_anchor_drops_the_manual_row(db: PgPool) {
     let user = common::seed_user(&db, "alice", "pass").await;
     let pic = seed_picture_2024(&db, user).await;
-    TagRepository::batch_assign(&db, user, &[pic], &["Travel".to_string(), "Keep".to_string()])
-        .await
-        .unwrap();
+    TagRepository::batch_assign(
+        &db,
+        user,
+        &[pic],
+        &["Travel".to_string(), "Keep".to_string()],
+    )
+    .await
+    .unwrap();
     seed_gated_rule(&db, user, pruning(&[]), "Travel").await;
 
     run_pipeline(&db, user).await;
@@ -536,7 +553,9 @@ async fn prune_is_opt_in_and_backfills_on_toggle(db: PgPool) {
 
     run_pipeline(&db, user).await;
     assert!(
-        rows(&db, user, pic).await.contains(&("Travel".to_string(), TagSource::Manual)),
+        rows(&db, user, pic)
+            .await
+            .contains(&("Travel".to_string(), TagSource::Manual)),
         "DEFAULT false leaves the shadow alone"
     );
 

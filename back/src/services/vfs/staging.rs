@@ -261,12 +261,14 @@ impl<'a> Vfs<'a> {
         let created = self
             .finalize_write(
                 to,
-                ByteSource::Staging { key: key.clone() },
-                &hash,
-                f.size,
-                f.content_type.as_deref(),
-                // Preview-edit staging promotion (08_webdav_issues) carries no source mtime.
-                None,
+                NewFile {
+                    source: ByteSource::Staging { key: key.clone() },
+                    hash: &hash,
+                    size: f.size,
+                    content_type: f.content_type.as_deref(),
+                    // Preview-edit staging promotion (08_webdav_issues) carries no source mtime.
+                    created_at: None,
+                },
             )
             .await?;
         if remove_source {

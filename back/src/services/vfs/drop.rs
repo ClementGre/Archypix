@@ -1,3 +1,4 @@
+use super::*;
 use crate::infra::redis::{RedisKey, cache_get_json, cache_set_json_ex};
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
@@ -8,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{trace, warn};
 use uuid::Uuid;
-use super::*;
 
 /// A file a drop inbox received, listed for a short window so a client can verify the upload
 /// (feature 39 §7). Listing-only: the picture itself is a real one.
@@ -21,7 +21,9 @@ struct RecentDrop {
 
 impl<'a> Vfs<'a> {
     fn drop_window(&self) -> i64 {
-        self.state.settings.get(keys::WEBDAV_DROP_VERIFY_WINDOW_SECS) as i64
+        self.state
+            .settings
+            .get(keys::WEBDAV_DROP_VERIFY_WINDOW_SECS) as i64
     }
 
     async fn recent_drops(&self, node_id: &str) -> Result<HashMap<String, RecentDrop>, AppError> {
@@ -47,13 +49,21 @@ impl<'a> Vfs<'a> {
         if drops.is_empty() {
             return self.state.cache.del(key).await;
         }
-        cache_set_json_ex(self.state.cache.as_ref(), key, drops, self.drop_window() as u64).await
+        cache_set_json_ex(
+            self.state.cache.as_ref(),
+            key,
+            drops,
+            self.drop_window() as u64,
+        )
+        .await
     }
 
     /// Record that drop inbox `dir` received `name` (re-opening the window on a dedupe retry).
     /// Best-effort: the write itself already succeeded.
     pub(super) async fn note_drop(&self, dir: &ResolvedDir, name: &str, picture_id: Uuid) {
-        let Some(node_id) = dir.node_id.as_deref() else { return };
+        let Some(node_id) = dir.node_id.as_deref() else {
+            return;
+        };
         if self.drop_window() <= 0 {
             return;
         }
@@ -72,7 +82,9 @@ impl<'a> Vfs<'a> {
 
     /// Stop listing `name` in drop inbox `dir` (it was deleted or moved out). Best-effort.
     pub(super) async fn forget_drop(&self, dir: &ResolvedDir, name: &str) {
-        let Some(node_id) = dir.node_id.as_deref() else { return };
+        let Some(node_id) = dir.node_id.as_deref() else {
+            return;
+        };
         let res = async {
             let mut drops = self.recent_drops(node_id).await?;
             if drops.remove(name).is_some() {
@@ -88,7 +100,9 @@ impl<'a> Vfs<'a> {
 
     /// The files drop inbox `dir` received within the window, under the names they were written as.
     pub(super) async fn drop_files(&self, dir: &ResolvedDir) -> Result<Vec<VfsEntry>, AppError> {
-        let Some(node_id) = dir.node_id.as_deref() else { return Ok(vec![]) };
+        let Some(node_id) = dir.node_id.as_deref() else {
+            return Ok(vec![]);
+        };
         let drops = self.recent_drops(node_id).await?;
         if drops.is_empty() {
             return Ok(vec![]);

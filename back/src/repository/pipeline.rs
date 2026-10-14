@@ -244,11 +244,9 @@ impl PipelineRepository {
     /// is removed (always-on removal — covers gating changes, edited rules, and tags left by
     /// now-disabled or deleted services), and the produced tags are inserted idempotently.
     ///
-    /// `manual_remove` / `manual_assign` replace `manual` rows in the same statement — the shadow
-    /// prune (feature 39 §4.6). They must be disjoint and already antichain-normalized: one
-    /// statement cannot see its own deletes, so `assign_inner`'s ancestor rule is not re-run here.
-    /// `incoming_share` tags are never touched. Because tags are stored per-source, each source
-    /// owns its rows: removing one source's tag never disturbs another's.
+    /// `manual` and `incoming_share` tags are never touched. Because tags are stored per-source,
+    /// each source owns its rows: removing one source's tag never disturbs another's, so no
+    /// ancestor re-derivation is needed.
     ///
     /// Passing an empty `produced` is valid and clears all pipeline tags from the picture.
     #[tracing::instrument(skip(ex, produced), fields(picture_id = %picture_id))]
@@ -256,8 +254,6 @@ impl PipelineRepository {
         ex: E,
         picture_id: Uuid,
         produced: &[PipelineTagAssignment],
-        manual_remove: &[String],
-        manual_assign: &[String],
     ) -> Result<(), AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -281,17 +277,6 @@ impl PipelineRepository {
                        AND p.source = tags.source
                        AND p.source_id = tags.source_id
                    )
-               ),
-               manual_prune AS (
-                 DELETE FROM tags
-                 WHERE picture_id = $1
-                   AND source = 'manual'::tag_source
-                   AND tag_path = ANY($5::text[]::ltree[])
-               ),
-               manual_anchor AS (
-                 INSERT INTO tags (picture_id, tag_path, source)
-                 SELECT $1, a::ltree, 'manual'::tag_source FROM unnest($6::text[]) AS a
-                 ON CONFLICT (picture_id, tag_path) WHERE source = 'manual' DO NOTHING
                )
                INSERT INTO tags (picture_id, tag_path, source, source_id)
                SELECT $1, p.tag_path, p.source, p.source_id FROM produced p
@@ -300,8 +285,6 @@ impl PipelineRepository {
             &tags as &[&str],
             &sources as &[&str],
             &source_ids as &[Uuid],
-            manual_remove as &[String],
-            manual_assign as &[String],
         )
         .execute(ex)
         .await

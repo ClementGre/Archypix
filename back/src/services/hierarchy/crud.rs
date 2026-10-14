@@ -1,8 +1,8 @@
 use crate::domain::hierarchy::{
     HierarchyConfig, TagPredicate,
 };
-use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
 use crate::domain::tag::TagPath;
+use crate::repository::hierarchy::{HierarchyRepository, HierarchyRow};
 use crate::repository::picture::{PictureListFilter, PictureRepository};
 use crate::repository::tag::TagRepository;
 use crate::repository::tag_metadata::TagMetadataRepository;
@@ -18,6 +18,16 @@ pub(super) fn parse_config(value: &serde_json::Value) -> Result<HierarchyConfig,
         .map_err(|e| AppError::BadRequest(format!("invalid hierarchy config: {e}")))?;
     config.validate().map_err(AppError::BadRequest)?;
     Ok(config)
+}
+
+/// Validate a config and return its storage form: defaults filled, fields ordered, and stamped with
+/// the current schema version (older blobs read forward unchanged, feature 39 §10).
+fn normalize_config(value: &serde_json::Value) -> Result<serde_json::Value, AppError> {
+    let config = HierarchyConfig {
+        version: HierarchyConfig::VERSION,
+        ..parse_config(value)?
+    };
+    serde_json::to_value(&config).map_err(|e| AppError::InternalServerError(e.to_string()))
 }
 
 pub(super) async fn load_owned(
@@ -49,11 +59,8 @@ pub async fn load_resolved(
     Ok((row, config, root))
 }
 
-/// Resolve a config against the user's live tag set **plus** the feature-34 naming inputs: the
-/// deliberately-empty tags that must still render as directories (§8.1) and the custom
-/// `webdav_dir_name` overrides (§8). A filtered mirror (feature 39 §5.3) expands from the paths its
-/// matching pictures carry instead. The one place both the WebDAV VFS and the webapp directory
-/// tree go through, so they never disagree about a directory's name.
+/// Resolve a config against the user's tags, feature-34 naming inputs and filtered-mirror path sets
+/// (39 §5.3). The one entry point of both the WebDAV VFS and the webapp tree, so they never disagree.
 pub async fn resolve_for_user(
     db: &PgPool,
     user_id: Uuid,
@@ -127,10 +134,7 @@ pub async fn create_hierarchy(
     if name.trim().is_empty() {
         return Err(AppError::BadRequest("name must not be empty".to_string()));
     }
-    let config = parse_config(config_value)?;
-    // Store the normalized config (defaults filled, fields ordered) so reads are canonical.
-    let normalized =
-        serde_json::to_value(&config).map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    let normalized = normalize_config(config_value)?;
     HierarchyRepository::create(db, user_id, name.trim(), &normalized).await
 }
 
@@ -148,16 +152,7 @@ pub async fn update_hierarchy(
             return Err(AppError::BadRequest("name must not be empty".to_string()));
         }
     }
-    let normalized = match config_value {
-        Some(v) => {
-            let config = parse_config(v)?;
-            Some(
-                serde_json::to_value(&config)
-                    .map_err(|e| AppError::InternalServerError(e.to_string()))?,
-            )
-        }
-        None => None,
-    };
+    let normalized = config_value.map(normalize_config).transpose()?;
     HierarchyRepository::update(
         db,
         user_id,

@@ -3,7 +3,7 @@
 ## 0. Implementation status
 
 **Backend: done.** Domain config v2 (`drop` kind, `writeBackEnabled`, mirror
-`maxDepth`/`deeperMode`, foreign excludes), `HierarchyConfig::effective_enabled`, the resolver
+`maxDepth`/`deeperMode`, foreign excludes), effective write-back (`resolver::Inherited`), the resolver
 (`services::hierarchy` — always-shown drop dirs, tri-state writability inheritance, depth
 cut via synthetic collapsed/excluded roots, foreign-exclude arms), and the VFS/WebDAV layer
 (drop writes bypass the master ceiling, `safeDeleteMode` coupled to effective write-back,
@@ -262,8 +262,8 @@ two fields; feature 39 §5.4 records why, and §5.1 there adds the symmetric for
     - effective-enabled is computed during validation only where it gates a structural error
       (e.g. a `query` that is effectively enabled should carry an op-list — otherwise it silently
       falls to read-only, which is acceptable, so this stays a soft/UI concern, not a hard error).
-- **`effective_enabled`** helper (walks ancestor `writeBackEnabled`, root seed = `config.writeBack`),
-  used by the resolver and the VFS writability projection.
+- **Effective write-back** (walks ancestor `writeBackEnabled`, root seed = `config.writeBack`):
+  computed once per directory by the resolver (`resolver::Inherited`), read by the VFS.
 
 ### 8.2 Resolver (`services/hierarchy.rs`)
 
@@ -273,7 +273,7 @@ two fields; feature 39 §5.4 records why, and §5.1 there adds the symmetric for
     - drop dir → an "empty" predicate (matches nothing) for reads.
     - mirror dir at the cut → OR-fold deeper subtree (`collapse`) or add deeper `exclude` arm.
     - foreign excludes → extra `exclude` arms on every mirror directory predicate.
-- Writability projection (fed to `VfsEntry.writable`): use `effective_enabled` + the §5.2
+- Writability projection (fed to `VfsEntry.writable`): effective write-back + the §5.2
   matrix; drop is always writable.
 
 ### 8.3 VFS / WebDAV (`services/vfs.rs`, `api/webdav.rs`)
@@ -316,8 +316,8 @@ two fields; feature 39 §5.4 records why, and §5.1 there adds the symmetric for
 ## 10. Testing
 
 - **domain:** drop validation (leaf, `onAdd` parse); `writeBackEnabled` tri-state
-  `effective_enabled` resolution (master ceiling, nearest-ancestor-wins, static-propagates,
-  drop-exempt); `matchUntagged` + `writeBack` now valid (compliance skipped); mirror `maxDepth`
+  resolution (master ceiling, nearest-ancestor-wins, static-propagates, drop-exempt; resolver
+  tests since 39); `matchUntagged` + `writeBack` now valid (compliance skipped); mirror `maxDepth`
   bound + `deeperMode`; foreign vs sub-tag `exclude` classification.
 - **repository (`push_filters`):** depth `collapse` OR-fold and `exclude` cut; foreign-exclude
   `NOT EXISTS <@` arm.

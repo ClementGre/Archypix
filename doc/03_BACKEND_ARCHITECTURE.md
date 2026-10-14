@@ -41,7 +41,7 @@ domain/
                     #   the file's own snapshot, feature 31), PictureVersion, UploadSession
   tag.rs            # TagPath (newtype), TagSource, Tag
   hierarchy.rs      # HierarchyConfig + Node tree (mirror/query/static/drop), validation,
-                    #   per-node writeBackEnabled (feature 18 effective_enabled) /
+                    #   per-node writeBackEnabled (feature 18, resolved by the resolver) /
                     #   trashedDuplicate (feature 39), TagPredicate
   share.rs          # OutgoingShare, IncomingShare
   public_share.rs   # feature 27: PublicShare + PublicShareStatus, token gen, coverage/permission helpers
@@ -231,7 +231,7 @@ create/update, evaluated against the `PipelineInput` projection). See
 JSONB column (the per-type child tables are dropped). `domain::tagging::ServiceConfig` is the single
 hub: `parse` validates + normalizes raw JSON (rule predicates, assigned tags, segmentation bands),
 `to_value` is storage-ready, and one `evaluate(input, incoming_share_ids)` dispatch covers all three
-types (gating is `TaggingService::should_run`). The API edits config **uniformly** — create takes a
+types (gating is `TaggingService::gate`). The API edits config **uniformly** — create takes a
 `config`, `PUT /tagging-services/{id}/config` replaces it; there are no per-rule/segment/mapping
 sub-resources. `shared_tag_mapping` is **one service per incoming share** (scalar `incoming_share_id`
 
@@ -253,9 +253,10 @@ incoming share, an upstream service). After the last service, `GateHistory::plan
 prune plan: a `manual` row whose exact path an opted-in service (`prune_shadowed_manual_tags`)
 produced is deleted, re-anchored at the deepest `requires` arm of a fired service it alone
 satisfied (or a `keep_manual_tags` floor), or kept unreduced when it is the sole blocker of an
-otherwise-firing service. The plan rides the same `reconcile_pipeline_tags` statement, so the anchor
-and the delete land together and no re-dirty is needed; toggling the option invalidates the service,
-which backfills every pre-existing shadow on the next run. See
+otherwise-firing service. `TagRepository::replace_manual_tags` applies the plan in the same
+transaction as `reconcile_pipeline_tags`, so the anchor and the delete land together; the run's own
+`mark_run` follows, so no extra run is queued. Toggling the option invalidates the service, which
+backfills every pre-existing shadow on the next run. See
 `doc/features/39_hierarchy_writeback_and_projection.md` §4.
 
 **Announcement** — the pipeline is the single picture-announcement path, delivering inline (deliver-then-record). Handles
