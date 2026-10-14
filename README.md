@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/ClementGre/Archypix/blob/main/LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg"></a>
-  <a href="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml"><img alt="Build" src="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml"><img alt="Docker images" src="https://github.com/ClementGre/Archypix/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white">
   <a href="https://github.com/ClementGre/Archypix/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/ClementGre/Archypix?style=flat"></a>
 </p>
@@ -22,6 +22,7 @@
   <a href="#features">Features</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#self-hosting">Self-Hosting</a> •
+  <a href="#development">Development</a> •
   <a href="#the-story-of-archypix">Story</a> •
   <a href="#license">License</a>
 </p>
@@ -30,171 +31,202 @@
 
 ## Overview
 
-Archypix is a self-hosted, federated photo library. It gives you full ownership of your media while letting you interact with users on other
-instances, without any central authority. Instead of rigid album structures, Archypix organizes everything around **tags**: flexible, hierarchical
-labels you can assign manually or through automated rules. Your tag tree can be browsed as a virtual folder hierarchy that can be synced with any
-WebDAV-compatible client or OS file manager.
+Archypix is a self-hosted, federated photo library. It gives you full ownership of your media while letting you share with users on other
+instances, without any central authority.
 
-Archypix uses a federated identity model: users are identified as `@username:domain`, resolved across instances via a single-hop
-`/archypix-resolver/resolve` lookup.
-Multiple backend instances can share a single public domain through a lightweight Resolver service, or operate independently on their own domain.
+Instead of albums, Archypix organizes everything around **tags**: hierarchical labels such as `/Photos/Travel/Alps`, assigned by hand or by
+automated rules. Your tags can be browsed in the web app, or turned into virtual folder trees ("hierarchies") that you mount with any WebDAV
+client or OS file manager — moving a file between folders re-tags the picture.
 
-> The full feature specifications are available in [doc/01_GENERAL_SPECIFICATIONS.md](doc/01_GENERAL_SPECIFICATIONS.md).
+Users are identified as `@username:domain`, like an email address. Any instance can share with any other: the owner's backend is found with a
+single `/archypix-resolver/resolve` lookup on the user's domain. One domain can be served by a single backend, or by several backends behind a
+lightweight Resolver service.
+
+> **Status:** under active development (pre-1.0, tagged releases `0.1.x`). The core features below work today; expect breaking changes between
+> versions. The full specification is in [doc/01_GENERAL_SPECIFICATIONS.md](doc/01_GENERAL_SPECIFICATIONS.md).
 
 ## Features
 
 ### Tags
 
-Hierarchical, slash-delimited paths (`/Photos/Travel/Alps`), assigned manually or by rules.
+Hierarchical paths (`/Photos/Travel/Alps`), set by hand or by rules. A tag implies its parents.
 
-- Tagging a deep path implicitly tags all its parents too.
-- Deleted pictures go to a trash with a configurable retention period.
+- Display names, colours, covers and custom ordering.
+- Renaming a tag updates every picture, share, rule and hierarchy that uses it.
+- **Sensitive** tags blur or hide their pictures until revealed.
+- Trash with configurable retention.
 
 ### Automatic tagging
 
-Rules that tag pictures on their own, re-evaluated on every upload, edit, or received share.
+A pipeline of services that re-tags only the affected pictures on every upload, edit or received share.
 
-- **By date**: calendar segmentation: holidays, trips, nested periods.
-- **By metadata**: EXIF, GPS, filename, via a predicate builder (AND/OR/NOT).
-- **By shared content**: map received pictures into your own tags.
+- **Rules**: AND/OR/NOT conditions on date, GPS zone, camera, file and more.
+- **Calendar segmentation**: one date tag per picture (year, season, month…), with custom periods on top.
+- **Shared-tag mappings**: file received pictures into your own tags.
 
-### Hierarchies
+### Browsing and editing
 
-Configurable virtual folder trees built from your tags, syncable over **WebDAV**.
+Built to browse, not just list files: responsive grid, lightbox, mobile layout.
 
-- Choose which tags become folders; collapse or exclude subtrees.
-- Uploads, moves, and deletes through WebDAV write back to tags.
+- **Timeline view**: any tag, grouped by date, with its subtags as expandable blocks.
+- **Filters**: pictures missing GPS or a date, pictures nearest to another in time or place.
+- **Metadata editing**, written back into the file itself (EXIF, HEIC orientation).
+- **Batch editing** of tags, metadata and trash, with a dry-run preview.
+- **Photo fix tools**: guided GPS and date fixing, with suggestions and interpolation.
+- Inline video playback.
+
+### Hierarchies and WebDAV
+
+Virtual folder trees built from your tags, mountable in any WebDAV client or file manager.
+
+- Mirror tag subtrees, add query folders, collapse or exclude branches, use drop folders as tagging inboxes.
+- Uploads, moves and deletes become tag changes; a safe-delete mode protects against overzealous sync clients.
 
 ### Sharing
 
 Federated: every instance is a peer, no central server required.
 
-- Share a tag with a user that may be on another instance; files stay on your server.
-- New pictures auto-announce; sharing is transitive and revocable anytime.
-- Exif metadata can be overriden by recipient, or propagated to the original picture if permissions allows it.
+- Share a tag with any `@user:domain`; files stay on the owner's server.
+- New pictures are sent automatically; shares can be re-shared, shared back, and revoked anytime.
+- Recipients are warned before the owner deletes a picture, and duplicates across shares show once.
+- Recipients can override metadata for themselves or, if allowed, propose fixes to the owner.
+- A **creator** credit, distinct from the owner, follows pictures across shares.
+- **Public links**: view-only or full-quality, with optional anonymous contributions.
 
-**Public share links** can be created: unauthenticated, revocable links to a tag. Full originals or view-only, with optional anonymous contribution.
+### Storage and administration
 
-### A proper photo viewer
-
-Built to browse, not just list files: responsive grid, lightbox, mobile-tuned layout.
-
-- **Batch editing**: retag, edit EXIF, or trash a selection at once, with a dry-run preview.
-- **Photos fix tools**: guided GPS/date fixing, with interpolation and suggestions.
-
-### Versioning and storage
-
-Any S3-compatible store (MinIO, AWS S3, Backblaze B2...), presigned URLs for downloads, per-user versioning and storage quotas.
+- Any S3-compatible store, with direct browser uploads/downloads and dedup at upload.
+- Per-user versioning (original or every version) and storage quotas.
+- Open, invite-only or admin-invite registration.
+- Admin dashboard, plus a fleet dashboard for multi-backend deployments.
+- OpenTelemetry tracing.
 
 ### Roadmap
 
 Not yet implemented, full detail in [doc/99_ROADMAP.md](doc/99_ROADMAP.md):
 
-- **Versioning UI** — browsing and restoring picture versions.
-- **ML workers** — style, people, and location-grouping inference.
-- **Onboarding & opinionated defaults** — a fresh instance auto-organizes out of the box.
-- **Bulk library import** — Google Takeout.
-- **External shared-album import** — one-time import from Google Photos / iCloud.
-- **PWA & mobile apps** — mobile-friendly PWA, then a native iOS uploader.
-- **Advanced WebDAV** — directory-level move/copy/delete, real locking.
-- **Visual picture editing** — crop, rotate, brightness/contrast, resize.
-- **EXIF edit history** — per-picture metadata revision log.
-- **Video transcoding & HLS playback** — adaptive streaming beyond today's direct playback.
-- **Backup & recovery discipline** — object replication, Postgres point-in-time recovery.
+- **ML workers** — style, people and location-grouping inference.
+- **Onboarding & opinionated defaults** — a fresh account organizes itself out of the box.
+- **Bulk library import** — Google Takeout and local folders.
+- **External shared-album import** — one-time import from Google Photos and iCloud shared albums.
+- **PWA & mobile** — a mobile-friendly PWA, then a native iOS background uploader.
+- **Backup & recovery** — object replication, Postgres point-in-time recovery.
 - **Managed hosting** — a fully-managed `archypix.com` offering.
+- **Versions UI** — browsing and restoring previous versions of a picture.
+- **Metadata edit history** — a per-picture revision log for review and undo.
+- **Advanced WebDAV** — directory-level move/copy, real locking, hiding sensitive pictures.
+- **Visual picture editing** — crop, brightness/contrast, resize.
+- **Video transcoding & HLS** — adaptive streaming beyond today's direct playback.
+- **Time zones & GPX import** — know each photo's capture time zone, and geotag photos from a recorded GPS track.
 
 ## Architecture
 
-Single-backend architecture:
+Single backend:
 
 ```mermaid
 graph TB
-    client(["Client"])
+    client(["Web app / WebDAV client"])
     back["Backend<br>example.com"]
     worker["Worker(s)"]
     storage[("• Postgres<br>• Redis<br>• S3")]
     client -->|" REST / WebDAV "| back
+    client -->|" Presigned up/downloads "| storage
     back --- storage
-    worker -->|" Pools new jobs "| back
-    worker -->|" Submits job result "| back
+    worker -->|" • Polls jobs<br>• Submits results "| back
 ```
 
-Two-backend architecture:
+Several backends behind one domain:
 
 ```mermaid
 graph TB
-    client(["Client"])
+    client(["Web app / WebDAV client"])
     resolver["Resolver<br>example.com"]
     backA["Backend A<br>b1.example.com"]
     backB["Backend B<br>b2.example.com"]
     worker["Worker(s)"]
-    storage[("• Postgres<br>• Redis<br>• S3")]
+    storageA[("Storage A")]
+    storageB[("Storage B")]
+    client -->|Resolve| resolver
     client -->|" REST / WebDAV "| backA
     client -->|" REST / WebDAV "| backB
-    client -->|Resolve| resolver
-    backA --- storage
-    backB --- storage
+    backA --- storageA
+    backB --- storageB
     backA <-->|Federation| backB
     backA -->|" • self-register<br>• resolve "| resolver
     backB -->|" • self-register<br>• resolve "| resolver
-    worker -->|" • Pools new jobs<br>• Submits job result "| backA
-    worker -->|" • Pools new jobs<br>• Submits job result "| backB
+    worker -->|" • Polls jobs<br>• Submits results "| backA
+    worker -->|" • Polls jobs<br>• Submits results "| backB
 ```
 
-| Component                                                                 | Role                                                                                                                                                                                     |
-|---------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | Resolution service. Maps `@username:domain` to the owning backend, routes new registrations to the least-loaded backend, and serves a fleet admin dashboard for multi-backend operators. |
-| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Axum HTTP server. Authoritative store for users, pictures, tags, and shares. Serves the REST API and WebDAV.                                                                             |
-| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Async job pool for thumbnail generation, EXIF extraction, BlurHash, file hashing. ML inference planned.                                                                                  |
+Instances on different domains federate the same way backends A and B do.
 
-A single backend serves its own resolution endpoint, so the Resolver is only needed once you run more than one backend behind the same domain.
+| Component                                                                 | Role                                                                                                                                                                                                |
+|---------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [**Backend**](https://github.com/ClementGre/Archypix/tree/main/back)      | Rust (Axum) server. Authoritative for its users' pictures, tags, shares and settings. Serves the REST API and WebDAV, runs the tagging pipeline and background routines, and owns the job queue. |
+| [**Worker**](https://github.com/ClementGre/Archypix/tree/main/worker)     | Stateless Rust process polling backends for jobs: thumbnails, metadata extraction, BlurHash, file hashing (images and videos), and writing metadata edits into files. Never touches the database.   |
+| [**Resolver**](https://github.com/ClementGre/Archypix/tree/main/resolver) | Optional. Maps `@username:domain` to the backend that owns the user, places new registrations on a backend (least-loaded, round-robin…), and serves the fleet admin dashboard.                     |
+| [**Frontend**](https://github.com/ClementGre/Archypix/tree/main/front)    | Static React single-page app. Finds the user's backend through the resolution endpoint, then talks to it directly, so one frontend can serve users of any instance that allows it in CORS. |
+
+A lone backend answers the resolution endpoints itself, so the Resolver is only needed once you run more than one backend behind the same domain.
 
 ## Self-Hosting
 
-Archypix is deployed with Docker Compose. Every instance needs Postgres, Redis, and an S3-compatible object store, plus a reverse proxy (Traefik in
-the example)
-for TLS and routing.
+Archypix is deployed with Docker Compose, using the images CI publishes to `ghcr.io/clementgre/archypix-{back,worker,resolver,front}`. Every
+instance needs Postgres, Redis and an S3-compatible object store, plus a reverse proxy for TLS and routing (Traefik in the examples).
 
 ### Single backend (recommended)
 
 The simplest setup, and the right starting point for almost everyone: [`docker-compose.yml`](docker-compose.yml) at the repo root bundles
-Postgres, Redis, MinIO, one backend, one worker, and the frontend into a single stack (no Resolver needed, a lone backend answers its own
-`/archypix-resolver/info` and `/archypix-resolver/resolve`).
+Postgres, Redis, MinIO, one backend, one worker and the frontend into a single stack. No Resolver is needed.
 
-The example expects an existing Traefik reverse proxy reachable on an external `traefik` Docker network, and DNS records pointed at your host for
-three
-separate domains:
+It expects an existing Traefik reverse proxy on an external `traefik` Docker network, and four DNS records pointing at your host:
 
-- `GLOBAL_DOMAIN`: your federated identity domain (`@username:GLOBAL_DOMAIN`). Only the `/archypix-resolver` path is forwarded from it, straight
-  to the backend, so the rest of the domain is free for a landing page or anything else.
-- `FRONT_DOMAIN`: serves the web app.
-- `BACK_DOMAIN`: serves the backend API/WebDAV (everything except resolution). Can equal `GLOBAL_DOMAIN`, but a separate subdomain keeps your
-  identity domain free of infrastructure-looking URLs.
-
-Plus `S3_DOMAIN` for MinIO: presigned download/upload URLs are handed straight to the browser, so object storage needs to be publicly reachable
-too.
+| Variable        | Serves                                                                                                                                                                                                  |
+|-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GLOBAL_DOMAIN` | Your identity domain: users are `@username:GLOBAL_DOMAIN`. Only the `/archypix-resolver` path is forwarded to the backend, so the rest of the domain stays free for a website.                          |
+| `FRONT_DOMAIN`  | The web app.                                                                                                                                                                                            |
+| `BACK_DOMAIN`   | The backend API and WebDAV. Can equal `GLOBAL_DOMAIN`, but a separate subdomain keeps your identity domain clean.                                                                                       |
+| `S3_DOMAIN`     | MinIO. Browsers upload and download files directly from object storage, so it must be publicly reachable.                                                                                              |
 
 ```bash
 git clone https://github.com/ClementGre/Archypix.git
 cd Archypix
-cp .env.example .env   # fill in domains, passwords, and secrets
+cp .env.example .env   # fill in domains, passwords and secrets
 docker compose up -d
 ```
 
-Don't want to run your own frontend? Drop the `front` service from `docker-compose.yml` and use the hosted client at
-[archypix.com](https://archypix.com) instead — point it at your `BACK_DOMAIN`, and add `https://archypix.com` to `CORS_ORIGINS` so your backend
-accepts requests from it.
+Set `TAG` in `.env` to a release (e.g. `0.1.3`) rather than `main` for reproducible deployments. To use an external S3 provider instead of the
+bundled MinIO, follow the comments on the `minio` service in `docker-compose.yml`.
+
+**Using the hosted web app instead of your own:** remove the `front` service and add `https://archypix.com` to `CORS_ORIGINS`. On the login
+page at [archypix.com](https://archypix.com), click the instance next to your username and enter your `GLOBAL_DOMAIN`.
 
 See [`.env.example`](.env.example) for every variable, and [doc/02_INFRASTRUCTURE_DESIGN.md](doc/02_INFRASTRUCTURE_DESIGN.md) for what each
 component does.
 
 ### Multiple backends behind one domain
 
-Once a single backend's resource limits actually matter, add a
-Resolver in front of several backends sharing one public domain (`@user:example.com` resolves to whichever backend owns that user).
-[`docker/docker-compose.prod.yml`](docker/docker-compose.prod.yml) is a worked example of this topology: a resolver, two backends, a shared
-worker, and a frontend, all behind Traefik, using external Postgres/Redis/Traefik Docker networks and per-backend MinIO buckets. Adapt its
-environment variables and Traefik labels to your own domains and secrets.
+Once a single backend's resources become the limit, put a Resolver in front of several backends sharing one public domain
+(`@user:example.com` resolves to whichever backend owns that user). [`docker/docker-compose.prod.yml`](docker/docker-compose.prod.yml) is the
+`archypix.com` deployment and a worked example of this topology: a resolver, two backends, a shared worker and a frontend behind Traefik, with
+external Postgres/Redis/Traefik networks and per-backend MinIO buckets. Adapt its environment variables and Traefik labels to your own domains
+and secrets.
+
+## Development
+
+[`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml) runs a local federation from source: a resolver with two backends on
+`archypix.test`, a standalone third backend on `solo.archypix.test`, workers, Postgres, Redis, MinIO and Jaeger. Add the
+[`docker/hosts`](docker/hosts) entries to `/etc/hosts`, then:
+
+```bash
+docker compose -f docker/docker-compose.dev.yml up --build
+```
+
+Run the frontend with `pnpm install && pnpm dev` in [`front/`](front) (its `.env.example` targets `archypix.test`). A Nix flake provides the
+toolchain (`nix develop`).
+
+The [`doc/`](doc) folder holds the specification (`01`), the infrastructure (`02`) and per-component architecture docs (`03`–`07`, including the
+full API reference), the roadmap (`99`), and one design document per feature in [`doc/features/`](doc/features).
 
 ## The Story of Archypix
 
@@ -221,10 +253,11 @@ groundwork for the ambitions of the next phase.
 
 ### January 2026 — Archypix (current, from scratch)
 
-Development restarted from a blank slate with an entirely new specification. The central breakthrough: Archypix became **decentralized**. Instances
-are peers — any instance can share with any other, world-wide, without a central registry. A single public domain can host multiple backend instances
-for scaling or migration, and completely independent domains federate natively. The tagging model was redesigned around hierarchical paths and
-automated pipelines, and hierarchies were introduced as the primary way to browse and sync the library.
+Development restarted from a blank slate with an entirely new specification and a new stack: Rust ([Axum](https://github.com/tokio-rs/axum),
+[SQLx](https://github.com/launchbadge/sqlx)) on the server and [React](https://react.dev/) on the client. The central breakthrough: Archypix became
+**decentralized**. Instances are peers — any instance can share with any other, world-wide, without a central registry. A single public domain can
+host multiple backend instances for scaling or migration, and completely independent domains federate natively. The tagging model was redesigned
+around hierarchical paths and automated pipelines, and hierarchies were introduced as the primary way to browse and sync the library.
 
 This is the Archypix we are building today, and there is a lot left to implement. Contributions and ideas are very welcome.
 
