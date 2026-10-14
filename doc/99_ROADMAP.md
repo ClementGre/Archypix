@@ -27,6 +27,8 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 -    **Trace sampling + OpenTelemetry Collector** — deployment hardening. See `features/16_trace_sampling_and_collector.md`.
 -    **Split `back` into crates** — extract `domain` (pure) and `repository` (95% of the query macros) so an `api`/`services` edit re-expands none of them, and the §B layer table is enforced by the compiler rather than by prose. The `routines` extraction was the prerequisite.
 -   [~] **Video & audio playback** — Tier 1 done (inline `@vidstack/react`); Tier 2 ffmpeg transcode worker todo; Tier 3 HLS later. See `05_FRONTEND_ARCHITECTURE.md §9`.
+-    **Capture time zone** — know each photo's time zone, to order photos taken across time zones and align videos with photos.
+-    **GPX track import** — geotag photos without GPS from a recorded track, given the time zone and clock error of the camera that took them.
 
 ## Known issues
 
