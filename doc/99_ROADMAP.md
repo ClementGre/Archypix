@@ -5,6 +5,7 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 ## Next
 
 -    **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots.
+-    **Sensitive pictures** — a tag-metadata flag that veils pictures in the web viewer (blurred/redacted/hidden, tab-scoped reveal). See `features/38_sensitive_pictures.md`.
 
 ## Toward a real product (adoption, mobile, hosting)
 
@@ -22,6 +23,7 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 -    **EXIF edit history** — per-picture metadata revision history for review/undo.
 -    **Advanced WebDAV** — directory-level MOVE/COPY across parents, conditional/range requests, real LOCK/UNLOCK. Collection `MOVE` is `405` except for an in-place rename of a still-empty `show_when_empty` directory, which rewrites `webdav_dir_name` (Finder's create→rename flow, feature 34 §8).
     -    **Directory CTag** — derived per-collection change token; must key off `updated_at`, not `file_modified_at` (feature 32).
+-    **WebDAV sensitive filtering** — keep sensitive pictures (feature 38) out of WebDAV mounts; postponed from 38.
 -    **Visual picture editing** — crop, brightness/contrast, resize in the `edit_picture` worker.
 -    **Rate limiting & validators** — structured framework, limiters listed in the admin dashboard with window size + limit.
 -    **Trace sampling + OpenTelemetry Collector** — deployment hardening. See `features/16_trace_sampling_and_collector.md`.
