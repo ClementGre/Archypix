@@ -1,5 +1,5 @@
 import {apiClient} from './client'
-import type {ServiceConfig, ServiceDetailResponse, ServiceResponse, ServiceType} from '@/lib/types'
+import type {ServiceConfig, ServiceDetailResponse, ServicePatch, ServiceResponse, ServiceType} from '@/lib/types'
 
 const BASE = '/api/authenticated/tagging-services'
 
@@ -18,16 +18,15 @@ export async function createService(body: {
     name?: string
     requires?: string[]
     excludes?: string[]
+    prune_shadowed_manual_tags?: boolean
+    keep_manual_tags?: string[]
     config?: ServiceConfig
 }): Promise<ServiceDetailResponse> {
     const {data} = await apiClient.post<ServiceDetailResponse>(BASE, body)
     return data
 }
 
-export async function updateService(
-    id: string,
-    body: { name?: string; enabled?: boolean; requires?: string[]; excludes?: string[] },
-): Promise<ServiceResponse> {
+export async function updateService(id: string, body: ServicePatch): Promise<ServiceResponse> {
     const {data} = await apiClient.patch<ServiceResponse>(`${BASE}/${id}`, body)
     return data
 }

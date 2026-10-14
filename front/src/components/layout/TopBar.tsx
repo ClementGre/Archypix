@@ -16,6 +16,7 @@ import {useAuthStore} from '@/stores/auth'
 import {useThemeStore} from '@/stores/theme'
 import {useUIStore} from '@/stores/ui'
 import {useUploadStore} from '@/stores/upload'
+import {useUnsavedChanges} from '@/stores/unsavedChanges'
 import {useIsMobile} from '@/hooks/useMediaQuery'
 import {logout} from '@/api/auth'
 import {ShowAllChip} from '@/components/photos/SensitiveVeil'
@@ -56,6 +57,13 @@ export function TopBar() {
     const queryClient = useQueryClient()
     const isMobile = useIsMobile()
     const isGallery = useLocation().pathname === '/'
+    // Leaving the page goes through the unsaved-changes guard of an open editor.
+    const go = (to: string) => useUnsavedChanges.getState().guard(() => navigate(to))
+    const guardLink = (to: string) => (e: React.MouseEvent) => {
+        if (!useUnsavedChanges.getState().save) return
+        e.preventDefault()
+        go(to)
+    }
 
     // Manual catch-all refresh — for the residual cases proper invalidation can't cover
     // (asynchronous pipeline re-tagging / federated share delivery that lands after the settle pass).
@@ -93,7 +101,7 @@ export function TopBar() {
                 </Button>
             )}
 
-            <Link to="/" aria-label="Archypix home" className="shrink-0">
+            <Link to="/" aria-label="Archypix home" className="shrink-0" onClick={guardLink('/')}>
                 <Logo/>
             </Link>
 
@@ -104,6 +112,7 @@ export function TopBar() {
                         key={to}
                         to={to}
                         end={end}
+                        onClick={guardLink(to)}
                         title={label}
                         aria-label={label}
                         className={({isActive}) =>
@@ -191,7 +200,7 @@ export function TopBar() {
                         {/* Mobile-only nav + theme toggle (hidden once the in-bar controls are visible). */}
                         <div className="md:hidden">
                             {items.map(({to, label, icon: Icon}) => (
-                                <DropdownMenuItem key={to} onClick={() => navigate(to)}>
+                                <DropdownMenuItem key={to} onClick={() => go(to)}>
                                     <Icon className="mr-2 h-4 w-4"/>
                                     {label}
                                 </DropdownMenuItem>
@@ -204,18 +213,18 @@ export function TopBar() {
                             <DropdownMenuSeparator/>
                         </div>
 
-                        <DropdownMenuItem onClick={() => navigate('/settings')}>
+                        <DropdownMenuItem onClick={() => go('/settings')}>
                             <UserIcon className="mr-2 h-4 w-4"/>
                             Profile
                         </DropdownMenuItem>
                         {user?.is_admin && (
                             <>
-                                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                                <DropdownMenuItem onClick={() => go('/admin')}>
                                     <Shield className="mr-2 h-4 w-4"/>
                                     Admin
                                 </DropdownMenuItem>
                                 {isResolver && (
-                                    <DropdownMenuItem onClick={() => navigate('/admin/resolver')}>
+                                    <DropdownMenuItem onClick={() => go('/admin/resolver')}>
                                         <Network className="mr-2 h-4 w-4"/>
                                         Fleet dashboard
                                     </DropdownMenuItem>

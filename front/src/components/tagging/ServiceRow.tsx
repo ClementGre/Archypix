@@ -1,25 +1,9 @@
 import type {CSSProperties, ReactNode} from 'react'
 import {AlertTriangle} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
-import {Switch} from '@/components/ui/switch'
-import {DeleteServiceDialog} from './DeleteServiceDialog'
-import type {ServiceDetailResponse, ServiceType} from '@/lib/types'
-
-const TYPE_LABEL: Record<ServiceType, string> = {
-    rule: 'Rule',
-    segmentation: 'Segmentation',
-    shared_tag_mapping: 'Mapping',
-}
-
-const TYPE_COLOR: Record<ServiceType, string> = {
-    rule: 'bg-violet-500/15 text-violet-500',
-    segmentation: 'bg-sky-500/15 text-sky-500',
-    shared_tag_mapping: 'bg-amber-500/15 text-amber-500',
-}
-
-export function serviceTypeLabel(t: ServiceType): string {
-    return TYPE_LABEL[t]
-}
+import {ServiceActions} from './ServiceActions'
+import type {ServiceDetailResponse} from '@/lib/types'
+import {SERVICE_TYPE_COLOR as TYPE_COLOR, SERVICE_TYPE_LABEL as TYPE_LABEL} from './serviceTypes'
 
 function itemCount(service: ServiceDetailResponse): string {
     switch (service.service_type) {
@@ -42,10 +26,6 @@ interface ServiceRowProps {
     service: ServiceDetailResponse
     selected: boolean
     onSelect: () => void
-    onToggle: (enabled: boolean) => void
-    onDelete: (promoteTags: boolean) => void
-    togglePending: boolean
-    deletePending: boolean
     /** Drag-handle node (pipeline rows only); omitted for non-reorderable mappings. */
     dragHandle?: ReactNode
     setNodeRef?: (el: HTMLElement | null) => void
@@ -57,16 +37,11 @@ export function ServiceRow({
                                service,
                                selected,
                                onSelect,
-                               onToggle,
-                               onDelete,
-                               togglePending,
-                               deletePending,
                                dragHandle,
                                setNodeRef,
                                style
                            }: ServiceRowProps) {
     const broken = service.service_type === 'shared_tag_mapping' && service.is_broken
-    const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
     return (
         <div
@@ -82,11 +57,12 @@ export function ServiceRow({
                 {TYPE_LABEL[service.service_type]}
             </Badge>
             <div className="min-w-0 flex-1">
-                <div className={`truncate ${service.name ? '' : 'italic text-muted-foreground'}`}>
+                <div className={`truncate ${service.name ? '' : 'italic text-muted-foreground'} ${service.enabled ? '' : 'opacity-50'}`}>
                     {service.name || `Unnamed ${TYPE_LABEL[service.service_type].toLowerCase()}`}
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     {itemCount(service)}
+                    {!service.enabled && <span>· disabled</span>}
                     {broken && (
                         <span className="inline-flex items-center gap-0.5 text-red-500">
                             <AlertTriangle className="h-3 w-3"/> broken
@@ -94,10 +70,7 @@ export function ServiceRow({
                     )}
                 </div>
             </div>
-            <span onClick={stop} className="flex items-center gap-1">
-                <Switch checked={service.enabled} onCheckedChange={onToggle} disabled={togglePending} aria-label="Enable service"/>
-                <DeleteServiceDialog onDelete={onDelete} isPending={deletePending}/>
-            </span>
+            <ServiceActions service={service}/>
         </div>
     )
 }

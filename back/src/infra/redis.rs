@@ -62,6 +62,9 @@ pub enum RedisKey<'a> {
     /// value holds the staged sub-directory names + files (bytes live in the staging bucket) until a
     /// terminal MOVE promotes them (08_webdav_issues.md §1).
     WebdavStaging(Uuid, &'a str),
+    /// Files a `drop` inbox received recently, listed so a client can verify its upload. Keyed by
+    /// `(hierarchy_id, node_id)`; value is a map of name → picture (feature 39 §7).
+    WebdavRecentDrop(Uuid, &'a str),
     /// Cached mirror of `user_storage.billed_total` — the storage-quota fast path (feature 22 §5.2).
     StorageCommitted(Uuid),
     /// One in-flight presigned-upload reservation (declared size), keyed by `(user_id, picture_id)`.
@@ -92,6 +95,7 @@ impl<'a> RedisKey<'a> {
             Self::WebdavToken(hash) => format!("webdav:token:{hash}"),
             Self::WebdavSidecar(h, parent) => format!("webdav:sidecar:{h}:{parent}"),
             Self::WebdavStaging(h, parent) => format!("webdav:staging:{h}:{parent}"),
+            Self::WebdavRecentDrop(h, node) => format!("webdav:recentdrop:{h}:{node}"),
             Self::StorageCommitted(id) => format!("storage:committed:{id}"),
             Self::StorageReservation(user, pic) => format!("storage:reserved:{user}:{pic}"),
             Self::StorageAudit(id) => format!("storage:audit:{id}"),

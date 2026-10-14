@@ -126,7 +126,7 @@ export function WriteBackEditor({
 
             {enabled && !effectiveEnabled && (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    Write-back is off for this folder (see Advanced), so this op-list is inactive and the folder stays
+                    Write-back is off for this folder (see Advanced). These ops are inactive and the folder is
                     read-only.
                 </p>
             )}
@@ -135,8 +135,8 @@ export function WriteBackEditor({
                 <p className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                     <AlertTriangle className="mt-px h-3 w-3 shrink-0"/>
                     <span>
-                        “On add” can’t guarantee a picture becomes untagged — a live rule/segment/share tag keeps it out
-                        of this folder after the write (and may cause a conflict).
+                        “On add” can’t make a picture untagged if a tagging service still tags it. The picture then
+                        stays out of this folder, and the write may fail with a conflict.
                     </span>
                 </p>
             )}

@@ -20,7 +20,7 @@ interface PipelineListProps {
 
 /** The reorderable rule + segmentation services (execution order = drag order). */
 export function PipelineList({services, selectedId, onSelect}: PipelineListProps) {
-    const {reorder, update, remove} = useTaggingMutations()
+    const {reorder} = useTaggingMutations()
 
     // Keep only the ORDER locally for smooth drag; service objects are read fresh from props.
     const [order, setOrder] = useState<string[]>(() => services.map((s) => s.id))
@@ -60,16 +60,6 @@ export function PipelineList({services, selectedId, onSelect}: PipelineListProps
                             service={service}
                             selected={service.id === selectedId}
                             onSelect={() => onSelect(service.id)}
-                            onToggle={(enabled) => update.mutate({
-                                id: service.id,
-                                body: {enabled}
-                            }, {onError: (e) => toast.error(apiErrorMessage(e))})}
-                            onDelete={(promoteTags) => remove.mutate({
-                                id: service.id,
-                                promoteTags
-                            }, {onError: (e) => toast.error(apiErrorMessage(e))})}
-                            togglePending={update.isPending}
-                            deletePending={remove.isPending}
                         />
                     ))}
                 </div>
@@ -85,10 +75,6 @@ function SortableRow({
     service: PipelineService
     selected: boolean
     onSelect: () => void
-    onToggle: (enabled: boolean) => void
-    onDelete: (promoteTags: boolean) => void
-    togglePending: boolean
-    deletePending: boolean
 }) {
     const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({id: service.id})
     const style = {transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1}

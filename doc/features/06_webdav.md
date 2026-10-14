@@ -240,11 +240,11 @@ already in flight. A key is live-scoped (`uq_jobs_idempotency_live`), so it dedu
 |---------------------------|--------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `PUT` (new path)          | new picture, or a relocate as fresh upload | stream→staging + inline hash; dedupe (§8) → new picture (upload flow + target-dir `onAdd`/mirror auto-tag) or retag existing         |
 | `PUT` (existing path)     | overwrite                                  | new `picture_version` **iff** `versioning_mode` allows, else in-place; copy staging→pictures; enqueue `gen_thumbnail`; ETag changes  |
-| `MOVE` (across dirs)      | re-file                                    | source-dir `onRemove` + target-dir `onAdd` (or mirror auto-tag); no body; identity = source path                                     |
+| `MOVE` (across dirs)      | re-file                                    | the node-chain transition (§7.2): `onRemove` of nodes left, `onAdd` of nodes entered; no body; identity = source path                |
 | `MOVE` (same dir, rename) | rename                                     | rename `pictures.filename` (naming=`original`); it is a real sync endpoint, not just a view                                          |
 | `MOVE`/`COPY` (scratch)   | atomic-save terminal rename                | a scratch source (08_webdav_issues.md §1.4) → **promote** staged bytes as overwrite/new; a scratch destination → record a backup ref |
-| `COPY`                    | appear in two places                       | target-dir `onAdd` / mirror auto-tag (picture becomes multi-tagged); no byte copy                                                    |
-| `DELETE`                  | per `safeDeleteMode`                       | `singleBranch` → `onRemove` (may `409`, §7.2); `fullDelete` → `deleted_at` (received pictures always local-only)                     |
+| `COPY`                    | appear in two places                       | `onAdd` of the nodes entered / mirror auto-tag (picture becomes multi-tagged); no byte copy                                          |
+| `DELETE`                  | per `safeDeleteMode`                       | `singleBranch` → the directory's own `onRemove` only (may `409`, §7.2); `fullDelete` → `deleted_at` (received pictures local-only)   |
 | `MKCOL`                   | new directory                              | static/query → `405`; **drop → `405`** (leaf, feature 18 §4); mirror subtree → sidecar (§9); scratch temp dir → staging (08 §1.5)    |
 | `PROPPATCH`               | client sets mtime, etc.                    | accept as no-op (clients need a success)                                                                                             |
 | `LOCK`/`UNLOCK`           | Finder class 2                             | in-memory lock store                                                                                                                 |
@@ -252,7 +252,14 @@ already in flight. A key is live-scoped (`uq_jobs_idempotency_live`), so it dedu
 ### 7.2 Write-back & conflicts
 
 Write-back uses the node's `writeBack` op-list (`query`) or the implicit assign/remove of
-the directory's own tag (`mirror`), operating on **`manual`** tags only. Two hard failures:
+the directory's own tag (`mirror`), operating on **`manual`** tags only. A write is a
+**transition** between the source's and destination's node chains (self + ancestors, each mirror
+directory its own node): `onRemove` of every node left, then `onAdd` of every node entered, in one
+transaction — a node in both chains fires nothing, so a move between two directories under the
+same `query` leaves that query's tag alone. A `PUT` enters the whole destination chain; a
+`singleBranch` `DELETE` fires only the deepest node's `onRemove`. Full rule and verb table:
+[`39_hierarchy_writeback_and_projection.md`](39_hierarchy_writeback_and_projection.md) §3. Two hard
+failures:
 
 - **`409 Conflict`** when an `onRemove` would need to drop a tag that a **live
   `rule`/`segment`/`share_mapping` service still asserts** for that picture (the picture
@@ -290,9 +297,13 @@ How a written file maps to a picture:
     - **Hash matches an existing owned, non-deleted picture** → it's a relocate/copy a dumb
       client expressed as a fresh upload. **No new picture, no re-upload** — just apply the
       target directory's `onAdd` / mirror auto-tag to the existing picture.
-    - **Hash matches a recently-trashed (`deleted_at` set) owned picture** → **un-delete** it
-      (clear `deleted_at`) and apply the target tags. This covers a naive client implementing
-      a rename under `fullDelete` as `DELETE old` + `PUT new`.
+    - **Hash matches a trashed (`deleted_at` set) owned picture** → per the target's
+      **`trashedDuplicate`** policy (feature 39 §6, a tri-state resolved like `writeBackEnabled`,
+      seeded by the hierarchy-level default, `restore` unless set): `restore` **un-deletes** it and applies the target tags in one
+      transaction (a naive client implementing a rename under `fullDelete` as `DELETE old` + `PUT
+      new`); `ignore` leaves it trashed, applies nothing, and still succeeds — so a sync client
+      re-sending a photo deleted in the webapp does not bring it back. `drop` nodes are created
+      with an explicit `ignore`.
     - **No match** → genuine new picture: full upload flow + `gen_thumbnail` + target tags.
 - **ETag = `pictures.file_hash`.** Inline hashing makes it available immediately, so smart
   sync clients can detect "unchanged" and skip, and stateless clients (rclone) diff by
@@ -332,6 +343,24 @@ sub-paths) translate to tag assignment:
   sibling by path sort falls back to its label on a collision. Both the WebDAV VFS and the webapp
   directory tree resolve through `services::hierarchy::resolve_for_user`, so they never disagree.
 
+### 9.1 Drop inboxes & client compatibility (feature 39 §7–8)
+
+A `drop` node lists the files it received within `WEBDAV_DROP_VERIFY_WINDOW_SECS` (runtime
+setting, default 600) under the names they were written as (`webdav:recentdrop:{hierarchy}:{node}`
+→ name → picture), so a client that verifies a `PUT` by re-reading it succeeds instead of
+retrying forever. The entry is listing-only: `GET` serves the real picture, `DELETE`/`MOVE`-out act
+on it and drop the entry, and a same-named `PUT` with other bytes is a new picture, never an
+overwrite. An expired window self-heals: the retry re-`PUT`s, dedupes on `file_hash`, and re-opens
+it. Sync clients like FolderSync keep their own per-pair state, so a file vanishing from a listing
+does not by itself trigger a re-upload — post-write verification is the suspected loop cause
+(unconfirmed; look for a `PROPFIND`/`GET` right after each `PUT` in the access log).
+
+**Android camera recipe** (a `CreateHierarchyDialog` preset): a `query` node over a permanent
+provenance tag (`Camera`) whose `onAdd` assigns it, with `safeDeleteMode: singleBranch` — it lists
+its contents, so verification succeeds; a delete there only untags; moving a picture out (webapp
+untag, or a WebDAV `MOVE`) fires the node's `onRemove`. A `drop` node plus the client's
+delete-after-upload is the other workable shape.
+
 ## 10. Case-sensitivity
 
 Tags are case-sensitive ltree; macOS/Windows filesystems are case-insensitive. Three
@@ -370,7 +399,8 @@ it, but it never becomes a picture. The ignore-list is a small constant in the W
   **50 MB** file-size cap (registry-tunable). Documented limitation, not worked around.
 - **PROPFIND performance:** a large directory needs batched metadata (size, mtime, hash) —
   served from `list_pictures` and the cached expansion (§13).
-- **Trashed pictures** are excluded from all listings (`deleted_at IS NULL`), as elsewhere.
+- **Trashed pictures** are excluded from all listings (`deleted_at IS NULL`), as elsewhere — except
+  a drop inbox's short verification entry for an `ignore`d trashed duplicate (§9.1).
 - **Last-modified (feature 32):** `getlastmodified` reports `pictures.file_modified_at`, stamped by
   a DB trigger on `file_hash` transitions — it moves with the stored bytes (and so with the ETag)
   and never on a re-tag. Reporting `updated_at` made mtime-comparing sync clients (rclone, Finder)
@@ -402,6 +432,7 @@ No other schema changes (picture/tag/version model is already write-ready). Afte
 ## 15. Config
 
 - `WEBDAV_MAX_UPLOAD_BYTES` (default e.g. 5 GiB) — write body guard (§4).
+- `WEBDAV_DROP_VERIFY_WINDOW_SECS` (default 600) — how long a drop inbox lists an upload (§9.1).
 - The encryption key is derived from the existing `JWT_SECRET` (§3.2) — **no new secret
   env var**.
 

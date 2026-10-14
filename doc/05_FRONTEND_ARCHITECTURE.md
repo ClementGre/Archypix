@@ -92,7 +92,7 @@ The **register page** keeps the account/instance editor (and the health warning)
 | `/`                                  | `GalleryPage`       | required             | the main three-pane workspace                                                                                                                             |
 | `/tags`                              | `TagsPage`          | required             | placeholder (tag tree lives in the gallery panel)                                                                                                         |
 | `/tagging`                           | `TaggingPage`       | required             | tagging-services editor                                                                                                                                   |
-| `/tagging/:id`                       | `ServiceEditorPage` | required             | single tagging-service editor                                                                                                                             |
+| `/tagging/:id`                       | `TaggingPage`       | required             | same page, with that service open in the editor pane                                                                                                      |
 | `/shares`                            | `SharesPage`        | required             | placeholder (share UI lives in the gallery panel)                                                                                                         |
 | `/settings`                          | `SettingsPage`      | required             | **Profile** page — account (profile + versioning + retention + seasons + sensitive display mode, one explicit Save; the tab-only show-all button is never saved), storage, invites + invitation graph (via user menu, labelled "Profile") |
 | `/admin`                             | `AdminPage`         | admin only           | tabs: Overview / Users / Jobs / Shares / **Settings** / **Routines** / **Rate limiting** / **Invites** (+ Fleet link, cache-clear refresh)                |
@@ -126,6 +126,9 @@ session exists.
 | `imageCache.ts`   | Per-picture registry of image URLs + which variants the browser has actually **loaded** (`record`/`recordImage`, `bestLoaded(entry, cap?)`). Lets the carousel/lightbox/sidebar reuse an already-loaded higher-or-equal variant with no new presign, and paint a lower-res one as a progressive placeholder.                                                                                                                                                                                                  | none (session only)                                                            |
 | `sensitive.ts`    | tab-scoped reveals of sensitive pictures (feature 38 §4): `revealed` (per-picture), `showAllUntil` (the timed show-all override) + `setRevealed`/`startShowAll`/`stopShowAll`. The base display mode is the user setting, provided by `AppShell` through `SensitiveModeProvider` (public pages get the `blurred` default); `hooks/useSensitive.ts` resolves the render precedence (`useVeil`) and the Hidden-mode list param. | none (never persisted — a reload re-veils) |
 
+| `unsavedChanges.ts` | the editors' unsaved-changes guard (feature 39 review): `owner` (`hierarchy:<id>` / `service:<id>`), `save`, `pending` + `register`/`guard`/`settle`. An editor registers through `useRegisterUnsaved(owner, dirty, save)` (which also warns on tab close); a navigation that would close it calls `guard(go)`, held until `UnsavedChangesDialog` (mounted in `AppShell`) gets Save / Discard / Cancel. | none (session only) |
+| `treeExpansion.ts` | open rows per sidebar tree (`tags`, `hierarchy:<id>`) + `toggle`/`expand`; `useExpanded(tree)`. Survives leaving the gallery and coming back. | `sessionStorage` `archypix_tree_expansion` |
+
 `hooks/usePersistentBool.ts` persists individual booleans (used for foldable detail-section collapse under `archypix_ui_section_<id>`).
 
 ### URL as view state (`hooks/useGalleryParams.ts`)
@@ -149,7 +152,7 @@ The gallery view lives entirely in the URL so it is shareable and back/forward-f
 | `share`                | incoming share id to highlight (cross-link target)                                                                                                                              |
 | `hierarchy`            | active hierarchy id — center grid browses it (via `browse`) instead of the flat list                                                                                            |
 | `hpath`                | directory path within the active hierarchy (slash-separated names, `''` = root)                                                                                                 |
-| `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid)                                                                                                  |
+| `hedit`                | hierarchy id whose config editor occupies the center view (overrides the grid). A patch asking for a picture view (`tag`, `inc`, `exc`, `hierarchy`, `hpath`) without `hedit` drops it, through the unsaved-changes guard |
 | `view`                 | open the Lightbox on this picture id (set by `PhotoGrid`)                                                                                                                       |
 | `fix`                  | photos-fix mode (feature 30): `gps` \| `date` \| absent — highlights problem pictures, swaps the right panel for the fix surface, and (date) floats undated pictures to the top |
 
@@ -406,11 +409,16 @@ composes `PipelineList` (rule + segmentation services — the "queries" — show
 (shared-tag-mapping services, which still **run first** in the pipeline, in a **collapsed-by-default `Section`** below the queries so the user reads
 the rules/segments before expanding the mappings).
 `PipelineList` (**@dnd-kit reorder that never includes shared_tag_mapping ids**) of `ServiceCard`s (a compact row —
-type badge, name, item count, enabled switch, a prominent **Edit** button and delete; the requires/excludes **gates are not on the card**, only on the
-editor page, so the list stays short with many services).
+type badge, name, item count and a `ServiceActions` menu (type labels/colours in `serviceTypes.ts`); the requires/excludes **gates are not on the card**, only on the
+editor page, so the list stays short with many services). `ServiceActions` (feature 39 §4.7) is the enable / **Disable…** / **Delete…** menu:
+disable and delete share one confirmation dialog with a "promote tags to manual" checkbox (pre-checked on delete, and on disable when the
+service prunes manual shadows).
 `RequiresExcludesEditor`
-(gates as a **local draft committed on Save**, on the editor page), `RuleEditor`, `SegmentEditor`, `MappingEditor`, `DeleteServiceDialog` (promote-vs-remove),
-`NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
+`ServiceEditor` keeps **one draft** for the whole service under a fixed header (type badge, name input, the single Save / Reset,
+`ServiceActions`; outside the scrolling body on md+, pinned under the top bar below md): gates (two `TagListField`s), `PruneSettings` (feature 39: the `prune_shadowed_manual_tags` checkbox and the
+`keep_manual_tags` floor; new services are created with pruning on) and the type editor. `RuleEditor`, `SegmentEditor` and `MappingEditor` keep
+their own draft and report it up through `useReportDraft`; Save sends the changed service fields (`PATCH`) then the config (`PUT …/config`), and
+Reset remounts the type editor. The editor registers with the unsaved-changes guard, so switching service or page asks first. `NewServiceMenu`. `RuleEditor` builds the structured predicate tree (feature 13) with `PredicateBuilder` — a nested
 AND/OR/NOT block composer where **a single root @dnd-kit `DndContext` lets you drag a block between levels** (out of a
 group, into a sibling group) as well as reorder within one; field-condition leaves pick a field via a **grouped,
 searchable `FieldPicker`** (Dates / Camera / Location / File / Ownership) + a type-aware operator/value (numbers use the
@@ -495,17 +503,23 @@ tree), `WebdavDialog` (mount-info popup: copyable mount URL, username (`@user`),
 access),
 `HierarchyDirTree` (lazy recursive directory tree from `tree` — each row fetches its own children on expand; clicking a folder drives the
 center
-grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs), `CreateHierarchyDialog` (name → create empty →
-open editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
-name/enabled/Save/Reset/Delete + a small **Braces** JSON-debug button; hierarchy-level settings — naming, safeDeleteMode, write-back master switch —
-then the node tree; edits a local draft committed on Save via `PATCH`, re-validated server-side), `NodeEditor` (mutually-recursive `NodeListEditor` +
-per-node card; add/remove/reorder of `mirror`/`query`/`static`/`drop` nodes with their kind-specific fields and an Advanced disclosure for per-node
-naming/safeDeleteMode and the **write-back tri-state** `inherit|on|off` — feature 18; the master switch + parent chain are threaded down as a `wb`
-context so it labels "Inherit (on/off)", disables under a master-off ceiling, and gates the safe-delete control on the node's effective write-back;
-`mirror` fields include `maxDepth`/`deeperMode` and foreign-tag excludes; `drop` is a name + assign-tags inbox editor), `WriteBackEditor` (query-node
-write-back op-lists with a "suggest from predicate" helper — enabled on `matchUntagged` nodes too with a free-form op-list + the "can't guarantee
-untagged" warning, and an inactive-when-write-back-off note), `TagListField` (chips + `TagPicker`, reused for include/exclude/collapsed/drop-assign),
-`JsonConfigDialog` (raw `config` textarea; applies to the draft).
+grid via the `hierarchy`/`hpath` params; shows per-dir `picture_count` and a lock on read-only dirs; row expansion lives in the
+`treeExpansion` store), `CreateHierarchyDialog` (name + a starting preset — empty, or the feature-39 §8.1 phone-camera-sync `Camera` query → create → open
+editor). The **central-view editor** (shown in the gallery center when `hedit` is set, replacing the grid): `HierarchyEditor` (header with
+Save/Reset/Delete + a small **Braces** JSON-debug button; **master-detail** (feature 39 §9): the left column holds a "Hierarchy settings" entry
+and the authored `NodeTree`; the right pane edits the selection — hierarchy-level name/enabled/naming/safeDeleteMode/master switch/default
+`trashedDuplicate`, or a node via `NodeSettings`; edits a local draft committed on Save via `PATCH`, re-validated server-side; registered with
+the unsaved-changes guard, so closing it, or clicking a tag or a directory, asks first), `NodeTree` (rows with kind badges, a chevron and a
+vertical guide under nodes with children; add/remove/reorder of `mirror`/`query`/`static`/`drop` nodes and sub-folders, actions shown on hover
+from `md` up and always below it; tree edits are pure helpers in `hierarchyUtils` — `mapNode`, `moveNode`, `addChild`, `inheritedFor`),
+`NodeSettings` (the kind-specific fields and an always-visible Advanced section for per-node naming/safeDeleteMode and the **write-back** and
+**trashed-duplicate** tri-states — features 18/39; `inheritedFor` resolves the master switch, parent chain and hierarchy default so they label
+"Inherit (…)", disable where nothing can be written, and gate the safe-delete control on the node's effective write-back; `mirror` fields
+include `include`, `minDepth` (from 1: the tag root's sub-tags; `keepDir` alone decides the root level)/`maxDepth`/`deeperMode` and foreign-tag
+excludes; `drop` is a name + assign-tags inbox editor, created with `trashedDuplicate: ignore`), `WriteBackEditor` (query-node write-back op-lists with a "suggest from predicate" helper — enabled on
+`matchUntagged` nodes too with a free-form op-list + the "can't guarantee untagged" warning, and an inactive-when-write-back-off note),
+`JsonConfigDialog` (raw `config` textarea; applies to the draft). `tags/TagListField` (chips + `TagPicker`) is shared by the node fields and the
+tagging-service gates and keep-list.
 
 **`admin/`** (backend `/admin` + shared) — `OverviewTab`/`UsersTab`/`JobsTab` (thumbnail regeneration + the **Re-read EXIF**
 recheck sweep, one `scope` select, feature 33 §8 / 36 §5)/`SharesTab`, plus the feature-23/24 additions: **`SettingsPanel`** (the

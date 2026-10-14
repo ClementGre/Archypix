@@ -52,6 +52,17 @@ pub enum DeeperMode {
     Exclude,
 }
 
+/// What a `PUT` does when its bytes match a trashed owned picture (feature 39 §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrashedDuplicate {
+    /// Clear `deleted_at` and apply the destination's ops (a naive delete + re-create rename).
+    #[default]
+    Restore,
+    /// Leave the picture trashed and apply nothing; the write still succeeds.
+    Ignore,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TagOpKind {
@@ -98,6 +109,10 @@ pub struct Node {
     /// `drop` nodes (always writable).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_back_enabled: Option<bool>,
+    /// Tri-state like `write_back_enabled` (root seed `restore`); `drop` nodes are created with
+    /// an explicit `ignore` (feature 39 §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_duplicate: Option<TrashedDuplicate>,
     #[serde(flatten)]
     pub kind: NodeKind,
 }
@@ -117,8 +132,17 @@ pub enum NodeKind {
         keep_dir: bool,
         #[serde(default)]
         collapsed: Vec<String>,
+        /// `<@ tagRoot` prunes that subtree (05 §5.4); a foreign entry is a pure picture-membership
+        /// cut (18 §7.3). Both meanings stay (feature 39 §5.4).
         #[serde(default)]
         exclude: Vec<String>,
+        /// Foreign include arms: every directory also requires these tags (feature 39 §5.1).
+        #[serde(default)]
+        include: Vec<String>,
+        /// Shallowest generated directory level below `tag_root`; shallower levels are suppressed
+        /// and their pictures dropped. `0`/`1` = unrestricted (feature 39 §5.2).
+        #[serde(default)]
+        min_depth: u32,
         /// Cap directory generation to N tag levels below `tag_root`. `0`/absent = unrestricted
         /// (feature 18 §7.1).
         #[serde(default)]
@@ -167,7 +191,7 @@ impl NodeKind {
 }
 
 fn default_version() -> u32 {
-    2
+    HierarchyConfig::VERSION
 }
 fn default_write_back() -> bool {
     true
@@ -186,6 +210,9 @@ pub struct HierarchyConfig {
     /// Master switch; `false` ⇒ entire hierarchy read-only (fullDelete still allowed).
     #[serde(default = "default_write_back")]
     pub write_back: bool,
+    /// Root seed of the per-node `trashedDuplicate` tri-state (feature 39 §6).
+    #[serde(default)]
+    pub trashed_duplicate: TrashedDuplicate,
     #[serde(default)]
     pub nodes: Vec<Node>,
 }
@@ -193,10 +220,11 @@ pub struct HierarchyConfig {
 impl Default for HierarchyConfig {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: Self::VERSION,
             safe_delete_mode: SafeDeleteMode::default(),
             naming: NamingStrategy::default(),
             write_back: true,
+            trashed_duplicate: TrashedDuplicate::default(),
             nodes: vec![],
         }
     }
@@ -277,35 +305,13 @@ pub fn reuse_existing_case(candidate: &str, existing: &[String]) -> String {
 // ─── Validation ─────────────────────────────────────────────────────────────────
 
 impl HierarchyConfig {
+    /// The config schema version this backend writes (feature 39 §10).
+    pub const VERSION: u32 = 3;
+
     /// Validate the full config (§11). Pure; called by the service on create/patch.
     pub fn validate(&self) -> Result<(), String> {
         let mut seen_ids = std::collections::HashSet::new();
         validate_nodes(&self.nodes, &mut seen_ids)
-    }
-
-    /// Resolve effective write-back for the node with `node_id` (feature 18 §5.1): the master
-    /// switch is a hard ceiling; otherwise the nearest explicit `writeBackEnabled` ancestor wins
-    /// (root seed = `true`). Returns `false` for an unknown id. Note: `drop` nodes are writable
-    /// regardless of this — callers special-case them by kind.
-    pub fn effective_enabled(&self, node_id: &str) -> bool {
-        if !self.write_back {
-            return false;
-        }
-        fn walk(nodes: &[Node], target: &str, inherited: bool) -> Option<bool> {
-            for n in nodes {
-                let here = n.write_back_enabled.unwrap_or(inherited);
-                if n.id == target {
-                    return Some(here);
-                }
-                if let Some(children) = n.kind.children() {
-                    if let Some(v) = walk(children, target, here) {
-                        return Some(v);
-                    }
-                }
-            }
-            None
-        }
-        walk(&self.nodes, node_id, true).unwrap_or(false)
     }
 }
 
@@ -344,9 +350,21 @@ fn validate_node(
             tag_root,
             collapsed,
             exclude,
+            include,
+            min_depth,
+            max_depth,
             ..
         } => {
             let root = parse_path(tag_root)?;
+            if *max_depth > 0 && *min_depth > *max_depth {
+                return Err(format!(
+                    "node {:?}: minDepth must not exceed maxDepth",
+                    node.id
+                ));
+            }
+            for entry in include {
+                parse_path(entry)?;
+            }
             // `collapsed` must stay under tagRoot; `exclude` may be foreign now (feature 18 §7.3)
             // — a foreign exclude is a pure picture-membership cut, so it only needs to parse.
             for entry in collapsed {
@@ -691,9 +709,73 @@ mod tests {
     // ── feature 18: drop, tri-state write-back, foreign excludes, mirror depth ──────
 
     #[test]
-    fn default_version_is_2() {
+    fn default_version_is_3() {
         let c: HierarchyConfig = serde_json::from_value(serde_json::json!({"nodes": []})).unwrap();
+        assert_eq!(c.version, 3);
+    }
+
+    // ── feature 39: mirror include / minDepth, trashedDuplicate ──────────────────────
+
+    #[test]
+    fn v2_mirror_deserializes_with_v3_defaults() {
+        let json = serde_json::json!({"version": 2, "nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era"}
+        ]});
+        let c = cfg(json).unwrap();
         assert_eq!(c.version, 2);
+        assert_eq!(c.nodes[0].trashed_duplicate, None);
+        match &c.nodes[0].kind {
+            NodeKind::Mirror {
+                include, min_depth, ..
+            } => {
+                assert!(include.is_empty());
+                assert_eq!(*min_depth, 0);
+            }
+            _ => panic!("expected mirror"),
+        }
+    }
+
+    #[test]
+    fn mirror_min_depth_must_not_exceed_max_depth() {
+        let bad = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 3, "maxDepth": 2}
+        ]});
+        assert!(cfg(bad).is_err());
+        let equal = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 2, "maxDepth": 2}
+        ]});
+        assert!(cfg(equal).is_ok());
+        let unbounded = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "minDepth": 4}
+        ]});
+        assert!(cfg(unbounded).is_ok());
+    }
+
+    #[test]
+    fn mirror_include_may_be_foreign_but_must_parse() {
+        let ok = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "include": ["Travel", "SharedToMe.x"]}
+        ]});
+        assert!(cfg(ok).is_ok());
+        let bad = serde_json::json!({"nodes": [
+            {"id": "m", "kind": "mirror", "tagRoot": "Era", "include": ["a b"]}
+        ]});
+        assert!(cfg(bad).is_err());
+    }
+
+    #[test]
+    fn trashed_duplicate_parses_and_rejects_unknown() {
+        let ok = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "In", "trashedDuplicate": "ignore", "onAdd": []}
+        ]});
+        assert_eq!(
+            cfg(ok).unwrap().nodes[0].trashed_duplicate,
+            Some(TrashedDuplicate::Ignore)
+        );
+        let bad = serde_json::json!({"nodes": [
+            {"id": "d", "kind": "drop", "name": "In", "trashedDuplicate": "inherit", "onAdd": []}
+        ]});
+        assert!(cfg(bad).is_err());
     }
 
     #[test]
@@ -765,52 +847,6 @@ mod tests {
             }
             _ => panic!("expected mirror"),
         }
-    }
-
-    #[test]
-    fn effective_enabled_master_off_is_hard_ceiling() {
-        let json = serde_json::json!({
-            "writeBack": false,
-            "nodes": [
-                {"id": "a", "kind": "static", "name": "A", "writeBackEnabled": true, "children": [
-                    {"id": "b", "kind": "query", "name": "B", "include": ["X"], "writeBackEnabled": true}
-                ]}
-            ]
-        });
-        let c = cfg(json).unwrap();
-        assert!(!c.effective_enabled("a"));
-        assert!(!c.effective_enabled("b"));
-    }
-
-    #[test]
-    fn effective_enabled_nearest_ancestor_wins() {
-        let json = serde_json::json!({
-            "writeBack": true,
-            "nodes": [
-                {"id": "root_off", "kind": "static", "name": "Off", "writeBackEnabled": false,
-                 "children": [
-                    {"id": "mid", "kind": "static", "name": "Mid", "children": [
-                        {"id": "leaf_on", "kind": "query", "name": "On", "include": ["X"],
-                         "writeBackEnabled": true},
-                        {"id": "leaf_inherit", "kind": "query", "name": "Inh", "include": ["Y"]}
-                    ]}
-                ]}
-            ]
-        });
-        let c = cfg(json).unwrap();
-        assert!(!c.effective_enabled("mid")); // inherits the off ancestor
-        assert!(c.effective_enabled("leaf_on")); // explicit override
-        assert!(!c.effective_enabled("leaf_inherit")); // inherits off
-    }
-
-    #[test]
-    fn effective_enabled_root_seed_true() {
-        let json = serde_json::json!({
-            "writeBack": true,
-            "nodes": [{"id": "q", "kind": "query", "name": "Q", "include": ["X"]}]
-        });
-        let c = cfg(json).unwrap();
-        assert!(c.effective_enabled("q"));
     }
 
     #[test]

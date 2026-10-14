@@ -1,4 +1,4 @@
-use crate::domain::tagging::{ServiceType, TaggingService};
+use crate::domain::tagging::{NewService, ServicePatch, ServiceType, TaggingService};
 use archypix_common::error::{AppError, map_sqlx_error};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
@@ -20,6 +20,7 @@ impl TaggingServiceRepository {
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, config as "config!: serde_json::Value",
+                      prune_shadowed_manual_tags, keep_manual_tags::text[] as "keep_manual_tags!",
                       last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at
                FROM tagging_services
                WHERE owner_id = $1
@@ -49,6 +50,7 @@ impl TaggingServiceRepository {
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, config as "config!: serde_json::Value",
+                      prune_shadowed_manual_tags, keep_manual_tags::text[] as "keep_manual_tags!",
                       last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at
                FROM tagging_services
                WHERE owner_id = $1 AND enabled = true
@@ -76,6 +78,7 @@ impl TaggingServiceRepository {
                       service_type as "service_type: ServiceType",
                       requires::text[] as "requires!", excludes::text[] as "excludes!",
                       enabled, position, config as "config!: serde_json::Value",
+                      prune_shadowed_manual_tags, keep_manual_tags::text[] as "keep_manual_tags!",
                       last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at
                FROM tagging_services
                WHERE id = $1 AND owner_id = $2"#,
@@ -88,14 +91,12 @@ impl TaggingServiceRepository {
     }
 
     /// Create a service with an explicit `config` payload (type-specific, validated by the caller).
-    #[tracing::instrument(skip(ex, requires, excludes, config), fields(owner_id = %owner_id))]
+    #[tracing::instrument(skip(ex, fields, config), fields(owner_id = %owner_id))]
     pub async fn create<'e, E>(
         ex: E,
         owner_id: Uuid,
         service_type: ServiceType,
-        name: &str,
-        requires: &[String],
-        excludes: &[String],
+        fields: &NewService,
         config: &serde_json::Value,
     ) -> Result<TaggingService, AppError>
     where
@@ -103,37 +104,38 @@ impl TaggingServiceRepository {
     {
         sqlx::query_as!(
             TaggingService,
-            r#"INSERT INTO tagging_services (owner_id, service_type, name, requires, excludes, config, position)
-               VALUES ($1, $2, $5, $3::ltree[], $4::ltree[], $6,
+            r#"INSERT INTO tagging_services (owner_id, service_type, name, requires, excludes, config,
+                                             prune_shadowed_manual_tags, keep_manual_tags, position)
+               VALUES ($1, $2, $5, $3::ltree[], $4::ltree[], $6, $7, $8::ltree[],
                        COALESCE((SELECT MAX(position) FROM tagging_services WHERE owner_id = $1), -1) + 1)
                RETURNING id, owner_id, name,
                          service_type as "service_type: ServiceType",
                          requires::text[] as "requires!", excludes::text[] as "excludes!",
                          enabled, position, config as "config!: serde_json::Value",
+                         prune_shadowed_manual_tags, keep_manual_tags::text[] as "keep_manual_tags!",
                          last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at"#,
             owner_id,
             service_type as ServiceType,
-            requires as &[String],
-            excludes as &[String],
-            name,
+            &fields.requires as &[String],
+            &fields.excludes as &[String],
+            fields.name,
             config,
+            fields.prune_shadowed_manual_tags,
+            &fields.keep_manual_tags as &[String],
         )
         .fetch_one(ex)
         .await
         .map_err(map_sqlx_error)
     }
 
-    /// Update optional service-level fields; pass `None` to leave a field unchanged. `config` is
-    /// managed by the type-specific helpers below, not here.
-    #[tracing::instrument(skip(ex, requires, excludes), fields(owner_id = %owner_id))]
+    /// Update service-level fields (`None` leaves one unchanged). `config` is managed by
+    /// [`Self::set_config`], not here.
+    #[tracing::instrument(skip(ex, patch), fields(owner_id = %owner_id))]
     pub async fn update<'e, E>(
         ex: E,
         owner_id: Uuid,
         service_id: Uuid,
-        name: Option<&str>,
-        enabled: Option<bool>,
-        requires: Option<&[String]>,
-        excludes: Option<&[String]>,
+        patch: &ServicePatch,
     ) -> Result<Option<TaggingService>, AppError>
     where
         E: Executor<'e, Database = Postgres>,
@@ -145,19 +147,24 @@ impl TaggingServiceRepository {
                    requires   = COALESCE($4::ltree[], requires),
                    excludes   = COALESCE($5::ltree[], excludes),
                    name       = COALESCE($6, name),
+                   prune_shadowed_manual_tags = COALESCE($7, prune_shadowed_manual_tags),
+                   keep_manual_tags = COALESCE($8::ltree[], keep_manual_tags),
                    updated_at = now() AT TIME ZONE 'utc'
                WHERE id = $1 AND owner_id = $2
                RETURNING id, owner_id, name,
                          service_type as "service_type: ServiceType",
                          requires::text[] as "requires!", excludes::text[] as "excludes!",
                          enabled, position, config as "config!: serde_json::Value",
+                         prune_shadowed_manual_tags, keep_manual_tags::text[] as "keep_manual_tags!",
                          last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at"#,
             service_id,
             owner_id,
-            enabled as Option<bool>,
-            requires as Option<&[String]>,
-            excludes as Option<&[String]>,
-            name as Option<&str>,
+            patch.enabled as Option<bool>,
+            patch.requires.as_deref() as Option<&[String]>,
+            patch.excludes.as_deref() as Option<&[String]>,
+            patch.name.as_deref() as Option<&str>,
+            patch.prune_shadowed_manual_tags as Option<bool>,
+            patch.keep_manual_tags.as_deref() as Option<&[String]>,
         )
         .fetch_optional(ex)
         .await

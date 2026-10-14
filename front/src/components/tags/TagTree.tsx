@@ -46,6 +46,7 @@ import type {TagOrder} from '@/lib/types'
 import {flushTagMetaFor} from '@/lib/tagMetaQueue'
 import {areSiblings, useTagDragStore} from '@/stores/tagDrag'
 import {cn, TagPath} from '@/lib/utils'
+import {useExpanded, useTreeExpansion} from '@/stores/treeExpansion'
 import {toast} from 'sonner'
 
 /** Membership of a tag in the current compound filter. */
@@ -428,25 +429,15 @@ export function TagTree() {
     // on interaction so navigating the tree keeps it current.
     const refreshTags = () => void queryClient.invalidateQueries({queryKey: queryKeys.tags()})
 
-    const [expanded, setExpanded] = useState<Set<string>>(() => ancestorsOf(params.tag))
-    const toggle = (path: string) => {
-        setExpanded((prev) => {
-            const next = new Set(prev)
-            if (next.has(path)) next.delete(path)
-            else next.add(path)
-            return next
-        })
-    }
+    // Expansion lives in a session store, so it survives leaving the gallery and coming back.
+    const openRows = useExpanded('tags')
+    const expanded = useMemo(() => new Set(openRows), [openRows])
+    const toggle = (path: string) => useTreeExpansion.getState().toggle('tags', path)
 
     // When the active tag changes (e.g. via a cross-link), expand its ancestors so
     // it becomes visible without collapsing what the user has already opened.
     useEffect(() => {
-        if (!params.tag) return
-        setExpanded((prev) => {
-            const next = new Set(prev)
-            for (const anc of ancestorsOf(params.tag)) next.add(anc)
-            return next
-        })
+        if (params.tag) useTreeExpansion.getState().expand('tags', ancestorsOf(params.tag))
     }, [params.tag])
 
     // Scroll the active row into view once it (and its ancestors) are expanded.

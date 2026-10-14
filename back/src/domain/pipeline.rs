@@ -4,6 +4,8 @@
 //! rule predicate engine in [`crate::domain::predicate`]; calendar segmentation in
 //! [`crate::domain::segmentation`].
 
+pub mod prune;
+
 use chrono::NaiveDateTime;
 use uuid::Uuid;
 

@@ -1,10 +1,10 @@
-import {useState} from 'react'
 import {ChevronRight, Folder, FolderOpen, Loader2, Lock} from 'lucide-react'
 import {useHierarchyTree} from '@/hooks/useHierarchies'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
 import {apiErrorMessage} from '@/api/client'
 import type {DirEntry} from '@/lib/types'
 import {cn} from '@/lib/utils'
+import {useExpanded, useTreeExpansion} from '@/stores/treeExpansion'
 
 /** A single directory row that lazily loads its children when expanded. */
 function DirRow({
@@ -19,9 +19,12 @@ function DirRow({
     depth: number
 }) {
     const {params, update} = useGalleryParams()
-    const [open, setOpen] = useState(false)
+    const tree = `hierarchy:${hierarchyId}`
+    const open = useExpanded(tree).includes(path)
+    const toggle = () => useTreeExpansion.getState().toggle(tree, path)
     const hasChildren = entry.child_count > 0
     const isActive = params.hpath === path
+    const navigate = () => update({hierarchy: hierarchyId, hpath: path, hedit: null})
 
     const {data, isPending, isError, error} = useHierarchyTree(hierarchyId, path, {
         enabled: open && hasChildren,
@@ -30,13 +33,13 @@ function DirRow({
     return (
         <div>
             <div
-                onClick={() => update({hierarchy: hierarchyId, hpath: path, hedit: null})}
+                onClick={navigate}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        update({hierarchy: hierarchyId, hpath: path, hedit: null})
+                        navigate()
                     }
                 }}
                 title={entry.writable ? undefined : 'Read-only directory'}
@@ -49,7 +52,7 @@ function DirRow({
                 <button
                     onClick={(e) => {
                         e.stopPropagation()
-                        if (hasChildren) setOpen((o) => !o)
+                        if (hasChildren) toggle()
                     }}
                     className={cn('flex h-4 w-4 shrink-0 items-center justify-center', !hasChildren && 'invisible')}
                     aria-label={open ? 'Collapse' : 'Expand'}
@@ -125,7 +128,7 @@ export function HierarchyDirTree({hierarchyId}: { hierarchyId: string }) {
             {isError && <p className="px-3 py-4 text-xs text-muted-foreground">{apiErrorMessage(error)}</p>}
             {!isPending && !isError && data && data.directories.length === 0 && (
                 <p className="px-3 py-4 text-xs text-muted-foreground">
-                    No directories — this hierarchy has no nodes, or none match any pictures.
+                    No directories. This hierarchy has no nodes, or none match a picture.
                 </p>
             )}
             {data?.directories.map((entry) => (

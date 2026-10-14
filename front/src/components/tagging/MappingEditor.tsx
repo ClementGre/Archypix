@@ -1,14 +1,11 @@
 import {useState} from 'react'
-import {AlertTriangle, Save, Undo2, X} from 'lucide-react'
-import {toast} from 'sonner'
-import {Button} from '@/components/ui/button'
+import {AlertTriangle, X} from 'lucide-react'
 import {Badge} from '@/components/ui/badge'
 import {TagPicker} from '@/components/tags/TagPicker'
 import {type ShareInfoEntry, ShareInfoPopover} from '@/components/shares/ShareInfoPopover'
 import {useIncomingShares} from '@/hooks/useShares'
-import {useTaggingMutations} from '@/hooks/useTaggingServices'
 import {TagPath} from '@/lib/utils'
-import {apiErrorMessage} from '@/api/client'
+import {type ConfigDraft, useReportDraft} from './useReportDraft'
 import type {IncomingShareResponse, SharedTagMappingConfig, SharedTagMappingServiceDetail} from '@/lib/types'
 
 const shareHandle = (s: IncomingShareResponse) => `@${s.sender_username}:${s.sender_instance}`
@@ -30,15 +27,15 @@ function toEntry(s: IncomingShareResponse): ShareInfoEntry {
 
 interface MappingEditorProps {
     service: SharedTagMappingServiceDetail
+    onDraft: (d: ConfigDraft) => void
 }
 
 /**
  * A shared-tag-mapping service maps one incoming share → a list of local tags.
- * The share is fixed at creation; this edits `assign_tags` via `PUT …/config`.
+ * The share is fixed at creation; this edits `assign_tags`, reported to the service editor's Save.
  */
-export function MappingEditor({service}: MappingEditorProps) {
+export function MappingEditor({service, onDraft}: MappingEditorProps) {
     const {data: shares} = useIncomingShares()
-    const {replaceConfig} = useTaggingMutations()
 
     const [draft, setDraft] = useState<string[]>(service.assign_tags)
     const serverKey = service.assign_tags.join('|')
@@ -51,10 +48,8 @@ export function MappingEditor({service}: MappingEditorProps) {
     const dirty = draft.join('|') !== serverKey
     const share = (shares ?? []).find((s) => s.id === service.incoming_share_id)
 
-    const save = () => {
-        const config: SharedTagMappingConfig = {incoming_share_id: service.incoming_share_id, assign_tags: draft}
-        replaceConfig.mutate({id: service.id, config}, {onError: (err) => toast.error(apiErrorMessage(err))})
-    }
+    const config: SharedTagMappingConfig = {incoming_share_id: service.incoming_share_id, assign_tags: draft}
+    useReportDraft(onDraft, config, dirty)
 
     return (
         <div className="space-y-3 text-sm">
@@ -79,7 +74,7 @@ export function MappingEditor({service}: MappingEditorProps) {
 
             {service.is_broken && (
                 <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-500">
-                    The referenced incoming share is no longer active — this mapping assigns no tags until the share is restored.
+                    The incoming share is no longer active. This mapping assigns no tags until the share is restored.
                 </p>
             )}
 
@@ -104,19 +99,6 @@ export function MappingEditor({service}: MappingEditorProps) {
                 </div>
             </div>
 
-            {dirty && (
-                <div className="flex items-center gap-2 pt-1">
-                    <Button size="sm" className="h-7 gap-1.5" onClick={save} disabled={replaceConfig.isPending}>
-                        <Save className="h-3.5 w-3.5"/>
-                        Save mapping
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1.5" onClick={() => setDraft(service.assign_tags)}
-                            disabled={replaceConfig.isPending}>
-                        <Undo2 className="h-3.5 w-3.5"/>
-                        Reset
-                    </Button>
-                </div>
-            )}
         </div>
     )
 }

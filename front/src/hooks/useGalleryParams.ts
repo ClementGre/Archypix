@@ -3,6 +3,7 @@ import {useSearchParams} from 'react-router-dom'
 import type {FixMode, PictureFilters, PresenceFilter, SortField, SortOrder, TrashFilter,} from '@/lib/types'
 import {scopeParams} from '@/lib/scopeParams'
 import {useSensitiveListFilter} from '@/hooks/useSensitive'
+import {useUnsavedChanges} from '@/stores/unsavedChanges'
 
 export type Scope = 'all' | 'owned' | 'shared'
 export type LeftPanelTab = 'tags' | 'incoming' | 'outgoing' | 'hierarchies'
@@ -68,6 +69,12 @@ export interface GalleryParamsPatch {
     fix?: FixMode | null
 }
 
+/** Patch keys that ask for a picture view, so they close the hierarchy editor. */
+const VIEW_KEYS: (keyof GalleryParamsPatch)[] = ['tag', 'include', 'exclude', 'hierarchy', 'hpath']
+
+const closesEditor = (patch: GalleryParamsPatch) =>
+    'hedit' in patch ? true : VIEW_KEYS.some((k) => k in patch)
+
 const DEFAULT_SORT: SortField = 'captured_at'
 const DEFAULT_ORDER: SortOrder = 'desc'
 
@@ -114,9 +121,10 @@ export function useGalleryParams() {
 
     const update = useCallback(
         (patch: GalleryParamsPatch, opts?: { replace?: boolean }) => {
-            setSp(
+            const apply = () => setSp(
                 (prev) => {
                     const next = new URLSearchParams(prev)
+                    if (!('hedit' in patch) && closesEditor(patch)) next.delete('hedit')
                     const setOrDelete = (key: string, value: string | null | undefined, isDefault: boolean) => {
                         if (value == null || value === '' || isDefault) next.delete(key)
                         else next.set(key, value)
@@ -146,6 +154,10 @@ export function useGalleryParams() {
                 },
                 {replace: opts?.replace},
             )
+            const {owner, guard} = useUnsavedChanges.getState()
+            const leaving = owner?.startsWith('hierarchy:') && closesEditor(patch) && owner !== `hierarchy:${patch.hedit}`
+            if (leaving) guard(apply)
+            else apply()
         },
         [setSp],
     )

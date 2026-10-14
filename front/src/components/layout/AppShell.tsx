@@ -6,6 +6,7 @@ import {useUploadStore} from '@/stores/upload'
 import {useTagMetaQueue} from '@/hooks/useTags'
 import {useSettings} from '@/hooks/useSettings'
 import {SensitiveModeProvider} from '@/hooks/useSensitive'
+import {UnsavedChangesDialog} from '@/components/common/UnsavedChangesDialog'
 
 /** App chrome for authenticated routes: global top bar + routed content + status bar. */
 export function AppShell() {
@@ -30,6 +31,7 @@ export function AppShell() {
                     onOpenChange={(o) => !o && closeDialog()}
                     initialFiles={initialFiles}
                 />
+                <UnsavedChangesDialog/>
             </div>
         </SensitiveModeProvider>
     )

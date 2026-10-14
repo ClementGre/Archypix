@@ -410,6 +410,41 @@ impl TagRepository {
         Ok(())
     }
 
+    /// Swap one picture's `remove` manual rows for `assign` in one statement and re-dirty it. No
+    /// ancestor rule runs (unlike `batch_assign`): the caller keeps the rows an antichain (39 §12.7).
+    #[tracing::instrument(skip(ex), fields(picture_id = %picture_id))]
+    pub async fn replace_manual_tags<'e, E>(
+        ex: E,
+        picture_id: Uuid,
+        remove: &[String],
+        assign: &[String],
+    ) -> Result<(), AppError>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        sqlx::query!(
+            r#"WITH removed AS (
+                 DELETE FROM tags
+                 WHERE picture_id = $1
+                   AND source = 'manual'::tag_source
+                   AND tag_path = ANY($2::text[]::ltree[])
+               ),
+               invalidate AS (
+                 UPDATE pictures SET last_pipeline_run_at = NULL WHERE id = $1
+               )
+               INSERT INTO tags (picture_id, tag_path, source)
+               SELECT $1, a::ltree, 'manual'::tag_source FROM unnest($3::text[]) AS a
+               ON CONFLICT (picture_id, tag_path) WHERE source = 'manual' DO NOTHING"#,
+            picture_id,
+            remove as &[String],
+            assign as &[String],
+        )
+        .execute(ex)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
     /// Rename a `manual` tag subtree for one user (tag-rename cascade, edge case §7): every manual
     /// row whose `tag_path` is `old` or a descendant of it gets its `old` prefix swapped for `new`.
     /// Rows whose renamed path would collide with an existing manual tag on the same picture are

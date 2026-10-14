@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH removed AS (\n                 DELETE FROM tags\n                 WHERE picture_id = $1\n                   AND source = 'manual'::tag_source\n                   AND tag_path = ANY($2::text[]::ltree[])\n               ),\n               invalidate AS (\n                 UPDATE pictures SET last_pipeline_run_at = NULL WHERE id = $1\n               )\n               INSERT INTO tags (picture_id, tag_path, source)\n               SELECT $1, a::ltree, 'manual'::tag_source FROM unnest($3::text[]) AS a\n               ON CONFLICT (picture_id, tag_path) WHERE source = 'manual' DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b863c7f17a958a49c8d4be4798c4fd4b74acea93b927d36dc102f1eb8ee39719"
+}

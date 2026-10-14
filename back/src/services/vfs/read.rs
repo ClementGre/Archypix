@@ -46,8 +46,12 @@ impl<'a> Vfs<'a> {
         Ok((info.used_bytes, info.available_bytes))
     }
 
-    /// List the pictures that are direct files of `dir`, projected to entries.
+    /// List the pictures that are direct files of `dir`, projected to entries. A drop inbox lists
+    /// only what it received recently (feature 39 §7).
     pub(super) async fn dir_files(&self, dir: &ResolvedDir) -> Result<Vec<VfsEntry>, AppError> {
+        if dir.is_drop {
+            return self.drop_files(dir).await;
+        }
         let Some(direct) = dir.direct.as_ref() else {
             return Ok(vec![]);
         };

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE tagging_services\n               SET enabled    = COALESCE($3, enabled),\n                   requires   = COALESCE($4::ltree[], requires),\n                   excludes   = COALESCE($5::ltree[], excludes),\n                   name       = COALESCE($6, name),\n                   updated_at = now() AT TIME ZONE 'utc'\n               WHERE id = $1 AND owner_id = $2\n               RETURNING id, owner_id, name,\n                         service_type as \"service_type: ServiceType\",\n                         requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                         enabled, position, config as \"config!: serde_json::Value\",\n                         last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at",
+  "query": "INSERT INTO tagging_services (owner_id, service_type, name, requires, excludes, config,\n                                             prune_shadowed_manual_tags, keep_manual_tags, position)\n               VALUES ($1, $2, $5, $3::ltree[], $4::ltree[], $6, $7, $8::ltree[],\n                       COALESCE((SELECT MAX(position) FROM tagging_services WHERE owner_id = $1), -1) + 1)\n               RETURNING id, owner_id, name,\n                         service_type as \"service_type: ServiceType\",\n                         requires::text[] as \"requires!\", excludes::text[] as \"excludes!\",\n                         enabled, position, config as \"config!: serde_json::Value\",\n                         prune_shadowed_manual_tags, keep_manual_tags::text[] as \"keep_manual_tags!\",\n                         last_invalidated_at, last_error_at, last_error_msg, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -105,6 +105,23 @@
       },
       {
         "ordinal": 9,
+        "name": "prune_shadowed_manual_tags",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "tagging_services",
+            "name": "prune_shadowed_manual_tags"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "keep_manual_tags!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
         "name": "last_invalidated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -115,7 +132,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "last_error_at",
         "type_info": "Timestamp",
         "origin": {
@@ -126,7 +143,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "last_error_msg",
         "type_info": "Text",
         "origin": {
@@ -137,7 +154,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamp",
         "origin": {
@@ -148,7 +165,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "updated_at",
         "type_info": "Timestamp",
         "origin": {
@@ -162,7 +179,46 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
+        {
+          "Custom": {
+            "name": "service_type",
+            "kind": {
+              "Enum": [
+                "shared_tag_mapping",
+                "rule",
+                "segmentation"
+              ]
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "ltree[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ltree",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        },
+        "Varchar",
+        "Jsonb",
         "Bool",
         {
           "Custom": {
@@ -176,21 +232,7 @@
               }
             }
           }
-        },
-        {
-          "Custom": {
-            "name": "ltree[]",
-            "kind": {
-              "Array": {
-                "Custom": {
-                  "name": "ltree",
-                  "kind": "Simple"
-                }
-              }
-            }
-          }
-        },
-        "Varchar"
+        }
       ]
     },
     "nullable": [
@@ -204,11 +246,13 @@
       false,
       false,
       false,
+      null,
+      false,
       true,
       true,
       false,
       false
     ]
   },
-  "hash": "e3a9c31ad334436853de98e480fd0c6dfc000b3db56650ffbbfcefa9872d5fc9"
+  "hash": "22484798d027267f6f36f8172bbdfbd5ed8fd4f6a75c222e202d14e1b202c2ba"
 }

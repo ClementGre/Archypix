@@ -1,11 +1,12 @@
 
-use crate::domain::hierarchy::{TagOp, TagOpKind};
+use crate::domain::hierarchy::TagOp;
 use crate::domain::tag::TagPath;
 use crate::infra::s3;
 use crate::infra::settings::keys;
 use crate::repository::picture::PictureRepository;
 use crate::repository::picture_version::PictureVersionRepository;
 use crate::repository::user_settings::UserSettingsRepository;
+use crate::services::hierarchy::{ChainNode, node_chain, transition};
 use crate::services::pictures::{self};
 use archypix_common::error::AppError;
 use chrono::NaiveDateTime;
@@ -28,34 +29,30 @@ impl<'a> Vfs<'a> {
         content_type: Option<&str>,
         original_file_created_at: Option<NaiveDateTime>,
     ) -> Result<bool, AppError> {
-        self.finalize_write(
-            segments,
-            ByteSource::LocalTemp(temp_path),
+        let file = NewFile {
+            source: ByteSource::LocalTemp(temp_path),
             hash,
             size,
             content_type,
-            original_file_created_at,
-        )
-        .await
+            created_at: original_file_created_at,
+        };
+        self.finalize_write(segments, file).await
     }
 
     /// Finalize a write to `segments` from either a local temp file or a staged object
     /// (08_webdav_issues.md §1.6): overwrite an existing picture (versioned), dedupe/relocate on a
     /// hash hit, or ingest a genuinely new picture and apply the target's tags.
     #[tracing::instrument(
-        skip(self, source),
-        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), hash = %hash, bytes = size, picture_id)
+        skip(self, file),
+        fields(user_id = %self.user_id, hierarchy_id = %self.hierarchy_id, path = %segments.join("/"), hash = %file.hash, bytes = file.size, picture_id)
     )]
     pub(super) async fn finalize_write(
         &self,
         segments: &[String],
-        source: ByteSource<'_>,
-        hash: &str,
-        size: i64,
-        content_type: Option<&str>,
-        original_file_created_at: Option<NaiveDateTime>,
+        file: NewFile<'_>,
     ) -> Result<bool, AppError> {
         let (parent, name) = split_last(segments)?;
+        let (hash, size, content_type) = (file.hash, file.size, file.content_type);
 
         // A zero-byte PUT is never a valid picture — Finder/Explorer issue one to create a
         // placeholder before writing the real bytes in a second PUT. Accept it but ingest
@@ -69,8 +66,11 @@ impl<'a> Vfs<'a> {
         // whose new segments mint a deeper tag (06_webdav.md §9).
         let target = self.resolve_path(parent)?;
 
-        // Overwrite is only possible inside an existing directory.
-        if let PathResolution::Existing(dir) = &target {
+        // Overwrite is only possible inside an existing directory — not a drop inbox, whose listing
+        // is for verification only: a same-named upload there is a new photo (feature 39 §7).
+        if let PathResolution::Existing(dir) = &target
+            && !dir.is_drop
+        {
             let dir = *dir;
             if let Some(existing) = self
                 .dir_files(dir)
@@ -141,7 +141,7 @@ impl<'a> Vfs<'a> {
                 .await?;
 
                 let key = s3::picture_key(pic.local_user_id, pic.id);
-                source
+                file.source
                     .copy_to(
                         self.state,
                         &self.state.settings.get(keys::S3_BUCKET_PICTURES),
@@ -178,10 +178,27 @@ impl<'a> Vfs<'a> {
             }
         }
 
-        // New file — the destination's onAdd ops (existing writable dir's op-list, or the
-        // synthesized mirror auto-tag assign).
-        let on_add = self.on_add_ops(&target)?;
+        // New file — every onAdd of the destination's node chain (feature 39 §3.2).
+        let (_, enter) = transition(&[], &self.writable_chain(parent, &target)?);
+        let (pid, created) = self.land_new(&target, &enter, &file, &name).await?;
+        if let Some(dir) = target.drop_dir() {
+            self.note_drop(dir, &name, pid).await;
+        }
+        self.bust_tag_tree().await;
+        self.state.routines.pipeline.trigger_debounced(self.user_id);
+        Ok(created)
+    }
 
+    /// Land a new file: retag a live duplicate, apply `trashedDuplicate` to a trashed one, or ingest
+    /// it. Returns the picture and whether a new resource was created for this path.
+    async fn land_new(
+        &self,
+        target: &PathResolution<'_>,
+        enter: &[TagOp],
+        file: &NewFile<'_>,
+        name: &str,
+    ) -> Result<(Uuid, bool), AppError> {
+        let (hash, size, content_type) = (file.hash, file.size, file.content_type);
         // Dedupe: a relocate/copy a dumb client expressed as a fresh upload (§8). If the picture
         // gains the directory's tag (it wasn't already here) it's a genuine new resource for this
         // path → 201 Created; if it already had the tag the PUT is a true no-op → 204 No Content.
@@ -190,22 +207,25 @@ impl<'a> Vfs<'a> {
         {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
             trace!("vfs put: hash matched live picture — retag instead of new upload");
-            let added = self.apply_add_ops(&on_add, p.id).await?;
-            self.bust_tag_tree().await;
-            self.state.routines.pipeline.trigger_debounced(self.user_id);
-            return Ok(added);
+            let added = self.apply_transition(p.id, &[], enter, false).await?;
+            return Ok((p.id, added));
         }
-        // Un-delete a recently trashed match (naive rename under fullDelete, §8).
+        // A trashed match: a naive rename under fullDelete (restore), or a deleted photo a sync
+        // client re-sends (ignore) — feature 39 §6.
         if let Some(p) =
             PictureRepository::find_owned_by_hash(&self.state.db, self.user_id, hash, true).await?
         {
             tracing::Span::current().record("picture_id", tracing::field::display(p.id));
-            trace!("vfs put: hash matched trashed picture — un-delete and retag");
-            PictureRepository::set_deleted(&self.state.db, self.user_id, p.id, false).await?;
-            self.apply_add_ops(&on_add, p.id).await?;
-            self.bust_tag_tree().await;
-            self.state.routines.pipeline.trigger_debounced(self.user_id);
-            return Ok(true);
+            match target.trashed_duplicate() {
+                TrashedDuplicate::Restore => {
+                    trace!("vfs put: hash matched trashed picture — restore and retag");
+                    self.apply_transition(p.id, &[], enter, true).await?;
+                }
+                TrashedDuplicate::Ignore => {
+                    trace!("vfs put: hash matched trashed picture — the delete stands");
+                }
+            }
+            return Ok((p.id, true));
         }
 
         // Quota gate (feature 22 §6): a genuinely new picture bills its full size — reject before
@@ -228,7 +248,7 @@ impl<'a> Vfs<'a> {
         tracing::Span::current().record("picture_id", tracing::field::display(new_id));
         trace!("vfs put: ingest new picture");
         let key = s3::picture_key(self.user_id, new_id);
-        source
+        file.source
             .copy_to(
                 self.state,
                 &self.state.settings.get(keys::S3_BUCKET_PICTURES),
@@ -246,14 +266,14 @@ impl<'a> Vfs<'a> {
             &mut *tx,
             new_id,
             self.user_id,
-            Some(&name),
+            Some(name),
             content_type,
             Some(size),
             None,
             None,
             None,
             None,
-            original_file_created_at,
+            file.created_at,
             crate::services::jobs::ingest_exif_status(content_type),
         )
         .await?;
@@ -272,10 +292,8 @@ impl<'a> Vfs<'a> {
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         crate::services::storage::invalidate_committed(self.state.cache.as_ref(), self.user_id)
             .await;
-        self.apply_add_ops(&on_add, new_id).await?;
-        self.bust_tag_tree().await;
-        self.state.routines.pipeline.trigger_debounced(self.user_id);
-        Ok(true)
+        self.apply_transition(new_id, &[], enter, false).await?;
+        Ok((new_id, true))
     }
 
     /// Resolve a (possibly not-yet-existing) directory path to either an existing [`ResolvedDir`]
@@ -291,19 +309,12 @@ impl<'a> Vfs<'a> {
             let Some(anc) = self.dir(&segments[..i]) else {
                 continue;
             };
-            // The base tag + its writability: a `mirror` directory extends its own tag; a
-            // container hoisting a `keepDir=false` mirror (root/static/query) maps a brand-new
-            // child directory to that mirror's tagRoot (feature 18 §11).
-            let (base, writable) = if let Some(t) = anc.mirror_tag.as_ref() {
-                (t.clone(), anc.writable)
-            } else if let Some((t, w)) = anc.new_child_mirror.as_ref() {
-                (t.clone(), *w)
-            } else {
+            let Some(base) = anc.extension_base() else {
                 return Err(AppError::Forbidden(
                     "cannot create directories outside a mirror node".into(),
                 ));
             };
-            if !writable {
+            if !base.writable {
                 return Err(AppError::Forbidden(
                     "this part of the hierarchy is read-only".into(),
                 ));
@@ -316,32 +327,47 @@ impl<'a> Vfs<'a> {
                 .map(|s| TagPath::slugify_label(s))
                 .collect::<Vec<_>>()
                 .join(".");
-            let candidate = format!("{base}.{labels}");
+            let candidate = format!("{}.{labels}", base.tag);
             // Slugified labels are valid; `parse` still rejects a reserved (`SharedToMe`) prefix.
             let tag = TagPath::parse(&candidate, false)
                 .map_err(AppError::Conflict)?
                 .as_ltree()
                 .to_string();
-            return Ok(PathResolution::MirrorExtension { tag });
+            return Ok(PathResolution::MirrorExtension {
+                tag,
+                base_len: i,
+                base,
+            });
         }
         Err(AppError::NotFound)
     }
 
-    /// The onAdd ops to apply when a picture lands in `target`: the existing directory's op-list,
-    /// or a single assign of the synthesized mirror tag.
-    pub(super) fn on_add_ops(&self, target: &PathResolution<'_>) -> Result<Vec<TagOp>, AppError> {
+    /// The node chain a write enters (feature 39 §3.1); `403` on a read-only directory (a mirror
+    /// extension's writability was checked on resolution). An extension takes its mirror's step.
+    pub(super) fn writable_chain(
+        &self,
+        segments: &[String],
+        target: &PathResolution<'_>,
+    ) -> Result<Vec<ChainNode>, AppError> {
         match target {
-            PathResolution::Existing(dir) => Ok(dir
-                .write_back
-                .as_ref()
-                .ok_or_else(|| AppError::Forbidden("directory is read-only".into()))?
-                .on_add
-                .clone()),
-            PathResolution::MirrorExtension { tag } => Ok(vec![TagOp {
-                op: TagOpKind::Assign,
-                path: tag.clone(),
-            }]),
+            PathResolution::Existing(dir) if dir.write_back.is_none() => {
+                Err(AppError::Forbidden("directory is read-only".into()))
+            }
+            PathResolution::Existing(_) => Ok(node_chain(&self.root, segments).unwrap_or_default()),
+            PathResolution::MirrorExtension {
+                tag,
+                base_len,
+                base,
+            } => {
+                let parent = &segments[..*base_len];
+                let mut chain = node_chain(&self.root, parent).unwrap_or_default();
+                // Under the mirror's own directory, the new tag replaces that directory's step.
+                if self.dir(parent).and_then(|d| d.node_id.as_deref()) == Some(&base.node_id) {
+                    chain.pop();
+                }
+                chain.push(base.chain_node(tag));
+                Ok(chain)
+            }
         }
     }
-
 }
