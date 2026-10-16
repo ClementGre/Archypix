@@ -34,6 +34,8 @@ import {useCopyPicture, useTrashMutations} from '@/hooks/usePictureEdit'
 import {useIncomingShares, useOutgoingShares} from '@/hooks/useShares'
 import {useSettings} from '@/hooks/useSettings'
 import {useGalleryParams} from '@/hooks/useGalleryParams'
+import {useTimelineView} from '@/hooks/useTimelineView'
+import {streamTagFor} from '@/lib/timeline'
 import {useSelectionStore} from '@/stores/selection'
 import {useUIStore} from '@/stores/ui'
 import {bestLoaded, recordImage, useImageCache, VARIANT_RANK} from '@/stores/imageCache'
@@ -210,14 +212,10 @@ function SinglePicture({id}: { id: string }) {
 function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
     const navigate = useNavigate()
     const [, setSp] = useSearchParams()
-    const {params, update} = useGalleryParams()
+    const {update} = useGalleryParams()
     const {metaByPath: allTagMeta} = useTagTree()
     const writeTagMeta = useWriteTagMeta()
-
-    // The tag whose view you are standing in — a cover only makes sense for that one, and only for
-    // an owned picture (`cover_picture_id` is validated against the caller).
-    const coverTag = picture.owner_username == null ? params.tag : null
-    const coverTagName = coverTag ? tagDisplay(coverTag, allTagMeta.get(coverTag)) : ''
+    const view = useTimelineView()
 
     const isVideo = isVideoMime(picture.mime_type)
     const isAudio = isAudioMime(picture.mime_type)
@@ -267,6 +265,12 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
         }
     }
     const {data: plainTags} = usePictureTags(id)
+    // The tag whose stream shows the picture — a cover only makes sense for that one, and only for
+    // an owned picture (`cover_picture_id` is validated against the caller).
+    const coverTag = picture.owner_username == null && plainTags
+        ? streamTagFor(plainTags, view.root, view.mode, allTagMeta) || null
+        : null
+    const coverTagName = coverTag ? tagDisplay(coverTag, allTagMeta.get(coverTag)) : ''
     const {data: outgoing} = useOutgoingShares()
     const {data: incoming} = useIncomingShares()
 
@@ -544,7 +548,7 @@ function PictureBody({id, picture}: { id: string; picture: PictureDetail }) {
                                 {downloading ? <Loader2 className="h-4 w-4 animate-spin"/> : <MoreHorizontal className="h-4 w-4"/>}
                             </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuContent align="end" className="min-w-52 max-w-[min(22rem,90vw)]">
                             <DropdownMenuItem onSelect={download} disabled={downloading} className="gap-2">
                                 <Download className="h-4 w-4"/>
                                 Download original

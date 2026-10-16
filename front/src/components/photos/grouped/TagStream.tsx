@@ -22,7 +22,6 @@ import {
 } from '@/lib/grouping'
 import {partitionUndated, placingDate, resolvePlacement, resolveViewMode} from '@/lib/timeline'
 import {countsFor, effectiveDate, type TagNode, type TrashView} from '@/lib/tagTree'
-import {cn} from '@/lib/utils'
 import {useTimelineExpansion} from '@/stores/timelineExpansion'
 import {useUIStore} from '@/stores/ui'
 import type {PictureFilters, PictureListItem, TagViewMode} from '@/lib/types'
@@ -148,13 +147,26 @@ export function TagStream({path, node, order, modeOverride, groupingOverride, ga
     const topBlocks = inSections ? undated : [...dated, ...undated]
     const inner: StreamContext = ctx
 
+    // Pages in at the end of the last section holding loaded photos, not the stream's end: block-only
+    // sections merged past it would otherwise have to be scrolled through before the next page loads.
+    const lastLoaded = sections.findLastIndex((s) => s.items.length > 0)
+    const sentinel = q.hasNextPage && (
+        <Sentinel
+            key="sentinel"
+            onReach={q.fetchNextPage}
+            active={!q.isFetchingNextPage}
+            busy={q.isFetchingNextPage}
+        />
+    )
+
     const body = (
         <>
             {topBlocks.length > 0 && (
                 <Blocks blocks={topBlocks} order={[...order, TOP_BLOCKS]} autoExpand={autoExpand}
                         stickyTop={stickyTop} ctx={inner}/>
             )}
-            {sections.map((section, i) => (
+            {lastLoaded < 0 && sentinel}
+            {sections.flatMap((section, i) => [
                 <GroupSection
                     key={section.key || 'all'}
                     section={section}
@@ -172,13 +184,9 @@ export function TagStream({path, node, order, modeOverride, groupingOverride, ga
                     sourceTag={mode === 'all' ? null : path || null}
                     autoExpand={autoExpand}
                     ctx={inner}
-                />
-            ))}
-            <Sentinel
-                onReach={q.fetchNextPage}
-                active={!!q.hasNextPage && !q.isFetchingNextPage}
-                busy={q.isFetchingNextPage}
-            />
+                />,
+                i === lastLoaded && sentinel,
+            ])}
             {q.isError && (
                 <Notice icon={AlertCircle} big={!gated}>
                     {apiErrorMessage(q.error)}
@@ -237,17 +245,16 @@ function Notice({icon: Icon, big, children}: {
     )
 }
 
-/** Pages the owning stream in as it nears the end — one per stream, so a nested section advances
- *  its own query rather than a global one (§8). */
+/** Pages the owning stream in as it nears its last loaded photos — one per stream, so a nested
+ *  section advances its own query rather than a global one (§8). Unmounted once exhausted. */
 function Sentinel({onReach, active, busy}: { onReach: () => void; active: boolean; busy: boolean }) {
     const ref = useRef<HTMLDivElement>(null)
     const visible = useInView(ref, {rootMargin: '400px'})
     useEffect(() => {
         if (visible && active) onReach()
     }, [visible, active, onReach])
-    // Collapses once the stream is exhausted, so a nested block doesn't end in dead space.
     return (
-        <div ref={ref} className={cn('flex items-center justify-center', active || busy ? 'h-10' : 'h-0')}>
+        <div ref={ref} className="flex h-10 items-center justify-center">
             {busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground"/>}
         </div>
     )

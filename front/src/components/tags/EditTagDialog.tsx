@@ -120,7 +120,7 @@ export function EditTagDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
                 <DialogHeader>
                     <DialogTitle>{display(tagPath, meta)}</DialogTitle>
                     <DialogDescription className="font-mono text-xs">{TagPath.toDisplay(tagPath)}</DialogDescription>
@@ -149,8 +149,8 @@ export function EditTagDialog({
                     {/* The rename control — the path is the identity, so this is the async cascade. */}
                     <div className="space-y-1.5">
                         <Label>Rename tag path</Label>
-                        <div className="flex items-center gap-2 text-sm">
-                            <span className="truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                            <span className="max-w-full truncate rounded bg-muted px-2 py-1 font-mono text-xs">
                                 {TagPath.toDisplay(tagPath)}
                             </span>
                             <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground"/>

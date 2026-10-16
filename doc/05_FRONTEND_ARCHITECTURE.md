@@ -627,7 +627,7 @@ block alone, so it never renders twice.
   the sticky `TopBar`, so the grid content offsets every pin by `--sticky-base` (the bar's `--spacing-topbar`) and is `isolate`d, keeping the
   headers' z-indexes beneath the bar.
 - **Laziness:** a collapsed block costs zero requests; an expanded child mounts its own infinite query only once `useInView` says it is near the
-  viewport, and each stream carries its own pagination sentinel so a nested section advances its own query.
+  viewport, and each stream carries its own pagination sentinel so a nested section advances its own query — placed after the last section holding loaded photos, since `in_sections` can merge block-only sections past it.
 - `grouped/GroupedGridContext` is what keeps selection coherent across all that: every mounted section registers
   `(order, items, fetchNextPage, hasNextPage)` and the context exposes the flattened **visible render order**, which feeds `selectTo`
   (shift-click spans groups), `useGridItems` (feature 30's anchor scan) and the `Lightbox`'s items + `loadMore` (paging out of one group

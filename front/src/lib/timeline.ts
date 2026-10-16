@@ -11,6 +11,26 @@ export function resolveViewMode(meta: TagMeta | null | undefined): TagViewMode {
     return meta?.view_mode ?? DEFAULT_VIEW_MODE
 }
 
+/** The tag whose stream shows a picture carrying `tags`: descend from the view root through `subtag`
+ *  streams into the child block holding a deeper tag (the §2 deepest-tag match). */
+export function streamTagFor(
+    tags: string[],
+    root: string,
+    rootMode: TagViewMode,
+    metaByPath: Map<string, TagMeta>,
+): string {
+    let at = root
+    let mode = rootMode
+    while (mode === 'subtag') {
+        const prefix = at ? `${at}.` : ''
+        const deeper = tags.find((t) => t.length > prefix.length && t.startsWith(prefix))
+        if (!deeper) break
+        at = prefix + deeper.slice(prefix.length).split('.')[0]
+        mode = resolveViewMode(metaByPath.get(at))
+    }
+    return at
+}
+
 /**
  * Where a parent's child blocks sit (34 §3.4). `null` is derived, and the derived default is not
  * uniform: the root's children are namespaces spanning every month, so scattering them would be
