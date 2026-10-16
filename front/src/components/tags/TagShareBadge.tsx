@@ -51,14 +51,13 @@ function initials(username: string): string {
     return username.slice(0, 2).toUpperCase()
 }
 
-/** The popover rows are one line tall, so the shared revoke controls get a bare `X` here. */
-function CompactRevoke() {
-    return (
-        <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive" title="Revoke">
-            <X className="h-3.5 w-3.5"/>
-        </button>
-    )
-}
+/** The popover rows are one line tall, so the shared revoke controls get a bare `X` here. An element,
+ *  not a component: an `asChild` trigger hands its click handler to the root, which a wrapper drops. */
+const compactRevoke = (
+    <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive" title="Revoke">
+        <X className="h-3.5 w-3.5"/>
+    </button>
+)
 
 /**
  * The badge on a tag row: an avatar stack (≤3) or `Share2` + count for outgoing, `Link2` for public
@@ -131,7 +130,7 @@ export function TagShareBadge({
                         </span>
                         <ShareStatusBadge status={s.status}/>
                         <ShareInfoPopover entries={[outgoingEntry(s)]}/>
-                        <RevokeShareButton share={s} trigger={<CompactRevoke/>}/>
+                        <RevokeShareButton share={s} trigger={compactRevoke}/>
                     </div>
                 ))}
 
@@ -150,7 +149,7 @@ export function TagShareBadge({
                         >
                             <Copy className="h-3.5 w-3.5"/>
                         </button>
-                        <RevokePublicLinkButton share={l} trigger={<CompactRevoke/>}/>
+                        <RevokePublicLinkButton share={l} trigger={compactRevoke}/>
                     </div>
                 ))}
 

@@ -6,7 +6,6 @@ import {Button} from '@/components/ui/button'
 import {NumberInput} from '@/components/ui/number-input'
 import {Label} from '@/components/ui/label'
 import {MapView} from '@/components/common/MapView'
-import {useIsMobile} from '@/hooks/useMediaQuery'
 
 // ── Popover ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +25,6 @@ interface GpsPickerPopoverProps {
 
 export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverProps) {
     const [open, setOpen] = useState(false)
-    const isMobile = useIsMobile()
 
     const num = (s: string) => (s !== '' && !isNaN(parseFloat(s)) ? parseFloat(s) : null)
     const lat = num(value.lat)
@@ -40,14 +38,10 @@ export function GpsPickerPopover({value, onChange, children}: GpsPickerPopoverPr
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>{children}</PopoverTrigger>
-            {/* On small screens the trigger sits in the right-edge details drawer, leaving no room to
-                the left; drop below + right-aligned instead so Floating-UI can shift it horizontally
-                back into view (a left/right side only flips, never shifts, on the horizontal axis). */}
             <PopoverContent
-                className="max-h-[85vh] w-[min(24rem,92vw)] max-w-[calc(100vw-1rem)] space-y-3 overflow-y-auto p-3"
-                side={isMobile ? 'bottom' : 'left'}
-                align={isMobile ? 'end' : 'start'}
-                collisionPadding={8}
+                className="w-[min(24rem,92vw)] space-y-3 p-3"
+                side="left"
+                align="start"
             >
                 <div className="flex items-center justify-between">
                     <p className="text-sm font-medium">GPS location</p>

@@ -854,7 +854,7 @@ block alone, so it never renders twice.
 - **View state belongs in the URL** (`useGalleryParams`); UI preferences belong in the `ui`/`theme` stores.
 - **Strict TS:** type-only imports must use `import type`; avoid `any` (prefer `unknown`/`Record<string, unknown>`). `npm run build` (= `tsc -b` +
   `vite build`) must stay green.
-- shadcn primitives are editable project files under `components/ui/`; custom domain components live in their domain folder.
+- shadcn primitives are editable project files under `components/ui/`; custom domain components live in their domain folder. The popup primitives keep themselves on screen: popovers, menus and tooltips get an 8 px collision padding and a viewport-width cap (popovers also cap their height to the space Radix reports), a `left`/`right` popover drops `bottom` on mobile (a side only flips, never shifts horizontally), and dialogs keep a margin and scroll.
 - **Number inputs:** use `components/ui/number-input.tsx` (`NumberInput`) — native spin arrows are stripped in `index.css`; this component adds styled
   chevron steppers. Steppers auto-hide when `step="any"` (free-form decimals like GPS lat/lng).
 
