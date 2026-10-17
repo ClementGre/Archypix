@@ -302,7 +302,8 @@ services:
       - archypix
 
   postgres:
-    image: postgres:18-alpine
+    # postgres:18-trixie + pgvector. Coming from postgres:18-alpine: `REINDEX DATABASE` each database once (musl → glibc collation).
+    image: pgvector/pgvector:0.8.2-pg18-trixie
     container_name: archypix-postgres
     ports:
       - "5432:5432"

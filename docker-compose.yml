@@ -31,7 +31,8 @@
 
 services:
   postgres:
-    image: postgres:18-alpine
+    # postgres:18-trixie + pgvector. Upgrading from postgres:18-alpine: run `REINDEX DATABASE archypix;` once (musl → glibc collation).
+    image: pgvector/pgvector:0.8.2-pg18-trixie
     container_name: archypix-postgres
     restart: unless-stopped
     environment:

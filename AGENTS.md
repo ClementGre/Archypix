@@ -119,3 +119,6 @@ What each one is, since that is not derivable from its headings. Use the grep ab
 - **39_hierarchy_writeback_and_projection** — write-back as a node-chain transition, pipeline-side
   pruning of manual tags a service also produces (gate-derived anchors),
   `mirror.include`/`minDepth`, `trashedDuplicate`, drop-node verification listing (spec-only).
+- **40_ml_workers** — ML analysis & grouping models: `archypix-ml` (ort), content-keyed analyses,
+  people / concepts / timeline models projected by `grouping` trees (one primary = the decisions),
+  derived solvers, corrections, faces mode, covers, semantic search, federation. 12 phases (§19).

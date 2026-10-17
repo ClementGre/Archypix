@@ -88,6 +88,7 @@
 **Invariants**
 
 - Each backend is authoritative for its users (Postgres is the single source of truth per instance).
+- Backend databases need the `ltree` and **pgvector** extensions; the composes use `pgvector/pgvector:*-pg18-trixie` (feature 40 §6.1).
 - Workers publish results; backends persist — workers never write to backend databases or S3 directly.
 - All persistent storage uses the **global domain**. Backend domains are resolved on demand via `/archypix-resolver/resolve` and cached in Redis.
 - Job queue transport is Postgres (`SELECT FOR UPDATE SKIP LOCKED`). Workers are stateless HTTP clients.

@@ -174,6 +174,10 @@ A lone backend answers the resolution endpoints itself, so the Resolver is only 
 Archypix is deployed with Docker Compose, using the images CI publishes to `ghcr.io/clementgre/archypix-{back,worker,resolver,front}`. Every
 instance needs Postgres, Redis and an S3-compatible object store, plus a reverse proxy for TLS and routing (Traefik in the examples).
 
+Postgres must have the [pgvector](https://github.com/pgvector/pgvector) extension: the composes use `pgvector/pgvector:0.8.2-pg18-trixie`
+(`postgres:18-trixie` + pgvector). An existing `postgres:18`/`18-trixie` server can swap to it and restart; one coming from `postgres:18-alpine`
+must run `REINDEX DATABASE <db>;` once per database (the text collation changes from musl to glibc).
+
 ### Single backend (recommended)
 
 The simplest setup, and the right starting point for almost everyone: [`docker-compose.yml`](docker-compose.yml) at the repo root bundles

@@ -4,7 +4,7 @@ One line per item. Details live in the matching `doc/features/NN_*.md`.
 
 ## Next
 
--    **ML workers** — `ml_style`, `ml_people`, `ml_group_location` handlers; per-user ML snapshots.
+-    **ML workers & grouping models** — analyses, concepts, people, federation, semantic search, timeline. Spec ready in `features/40_ml_workers.md`, 12 phases (§19).
 
 ## Toward a real product (adoption, mobile, hosting)
 
